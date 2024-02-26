@@ -36,6 +36,7 @@ struct FdbUpdate
     Port port;
     string type;
     bool add;
+    sai_fdb_entry_type_t sai_fdb_type;
 };
 
 struct FdbFlushUpdate
@@ -63,6 +64,7 @@ struct FdbData
     string remote_ip;
     string    esi;
     unsigned int vni;
+    sai_fdb_entry_type_t sai_fdb_type;
 };
 
 struct SavedFdbEntry
@@ -91,7 +93,7 @@ public:
     }
 
     bool bake() override;
-    void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t);
+    void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t, const sai_fdb_entry_type_t &);
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
 
@@ -111,6 +113,7 @@ private:
     Table m_mclagFdbStateTable;
     NotificationConsumer* m_flushNotificationsConsumer;
     NotificationConsumer* m_fdbNotificationConsumer;
+    shared_ptr<DBConnector> m_notificationsDb;
 
     void doTask(Consumer& consumer);
     void doTask(NotificationConsumer& consumer);
@@ -125,7 +128,8 @@ private:
     void notifyTunnelOrch(Port& port);
 
     void clearFdbEntry(const FdbEntry&);
-    void handleSyncdFlushNotif(const sai_object_id_t&, const sai_object_id_t&, const MacAddress& );
+    void handleSyncdFlushNotif(const sai_object_id_t&, const sai_object_id_t&, const MacAddress&,
+                               const sai_fdb_entry_type_t&);
 };
 
 #endif /* SWSS_FDBORCH_H */

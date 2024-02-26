@@ -37,14 +37,9 @@ sai_object_id_t kMirrorSessionOid2 = 9002;
 sai_object_id_t gUnderlayIfId;
 
 #define DEFAULT_BATCH_SIZE 128
-int gBatchSize = DEFAULT_BATCH_SIZE;
 #define DEFAULT_MAX_BULK_SIZE 1000
+extern int gBatchSize;
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
-bool gSairedisRecord = true;
-bool gSwssRecord = true;
-bool gLogRotate = false;
-bool gResponsePublisherRecord = false;
-bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
 bool gIsNatSupported = false;
 
@@ -55,8 +50,6 @@ VRFOrch *gVrfOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch *> gDirectory;
-ofstream gRecordOfs;
-string gRecordFile;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
 swss::DBConnector *gConfigDb;
@@ -72,6 +65,7 @@ sai_acl_api_t *sai_acl_api;
 sai_policer_api_t *sai_policer_api;
 sai_virtual_router_api_t *sai_virtual_router_api;
 sai_hostif_api_t *sai_hostif_api;
+sai_hash_api_t *sai_hash_api;
 sai_switch_api_t *sai_switch_api;
 sai_mirror_api_t *sai_mirror_api;
 sai_udf_api_t *sai_udf_api;
@@ -79,6 +73,32 @@ sai_tunnel_api_t *sai_tunnel_api;
 sai_my_mac_api_t *sai_my_mac_api;
 sai_counter_api_t *sai_counter_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
+
+task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+bool parseHandleSaiStatusFailure(task_process_status status)
+{
+    return true;
+}
+
 
 namespace
 {
@@ -153,7 +173,8 @@ void AddVrf()
 } // namespace
 
 int main(int argc, char *argv[])
-{
+{   
+    gBatchSize = DEFAULT_BATCH_SIZE;
     testing::InitGoogleTest(&argc, argv);
 
     sai_router_interface_api_t router_intfs_api;
@@ -165,6 +186,7 @@ int main(int argc, char *argv[])
     sai_policer_api_t policer_api;
     sai_virtual_router_api_t virtual_router_api;
     sai_hostif_api_t hostif_api;
+    sai_hash_api_t hash_api;
     sai_switch_api_t switch_api;
     sai_mirror_api_t mirror_api;
     sai_udf_api_t udf_api;
@@ -181,6 +203,7 @@ int main(int argc, char *argv[])
     sai_policer_api = &policer_api;
     sai_virtual_router_api = &virtual_router_api;
     sai_hostif_api = &hostif_api;
+    sai_hash_api = &hash_api;
     sai_switch_api = &switch_api;
     sai_mirror_api = &mirror_api;
     sai_udf_api = &udf_api;

@@ -8,6 +8,7 @@ class TestAdminStatus(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.countdb = swsscommon.DBConnector(2, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
@@ -42,6 +43,19 @@ class TestAdminStatus(object):
         for member in members:
             tbl._del(lag + "|" + member)
             time.sleep(1)
+
+    def update_host_tx_ready_status(self, dvs, port_id, switch_id, admin_state):
+        host_tx_ready = "SAI_PORT_HOST_TX_READY_STATUS_READY" if admin_state == "up" else "SAI_PORT_HOST_TX_READY_STATUS_NOT_READY"
+        ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+        fvp = swsscommon.FieldValuePairs()
+        ntf_data =  "[{\"host_tx_ready_status\":\""+host_tx_ready+"\",\"port_id\":\""+port_id+"\",\"switch_id\":\""+switch_id+"\"}]"
+        ntf.send("port_host_tx_ready", ntf_data, fvp)
+
+    def get_port_id(self, dvs, port_name):
+        port_name_map = swsscommon.Table(self.countdb, "COUNTERS_PORT_NAME_MAP")
+        status, returned_value = port_name_map.hget("", port_name)
+        assert status == True
+        return returned_value
 
     def check_admin_status(self, dvs, port, admin_status):
         assert admin_status == "up" or admin_status == "down"
@@ -91,7 +105,11 @@ class TestAdminStatus(object):
         self.remove_port_channel(dvs, "PortChannel6")
 
     def test_PortHostTxReadiness(self, dvs, testlog):
+        dvs.setup_db()
         self.setup_db(dvs)
+
+        #Find switch_id
+        switch_id = dvs.getSwitchOid()
 
         # configure admin status to interface
         self.set_admin_status("Ethernet0", "up")
@@ -102,6 +120,11 @@ class TestAdminStatus(object):
         self.check_admin_status(dvs, "Ethernet0", "up")
         self.check_admin_status(dvs, "Ethernet4", "down")
         self.check_admin_status(dvs, "Ethernet8", "up")
+
+        self.update_host_tx_ready_status(dvs, self.get_port_id(dvs, "Ethernet0") , switch_id, "up")
+        self.update_host_tx_ready_status(dvs, self.get_port_id(dvs, "Ethernet4") , switch_id, "down")
+        self.update_host_tx_ready_status(dvs, self.get_port_id(dvs, "Ethernet8") , switch_id, "up")
+        time.sleep(3)
 
         # check host readiness status in PORT TABLE of STATE-DB
         self.check_host_tx_ready_status(dvs, "Ethernet0", "up")

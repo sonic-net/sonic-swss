@@ -21,6 +21,7 @@ extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
+extern BfdOrch *gBfdOrch;
 
 const int neighorch_pri = 30;
 
@@ -34,6 +35,12 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
+
+    // Some UTs instantiate NeighOrch but gBfdOrch is null, it is not null in orchagent
+    if (gBfdOrch) 
+    {  
+        gBfdOrch->attach(this);
+    }
 
     if(gMySwitchType == "voq")
     {
@@ -151,6 +158,12 @@ void NeighOrch::update(SubjectType type, void *cntx)
             processFDBFlushUpdate(*update);
             break;
         }
+        case SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE:
+        {
+            BfdUpdate *update = static_cast<BfdUpdate *>(cntx);
+            updateNextHop (*update);
+            break;
+        }
         default:
             break;
     }
@@ -255,6 +268,12 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
+                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), status);
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
@@ -279,7 +298,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -425,6 +444,62 @@ bool NeighOrch::ifChangeInformNextHop(const string &alias, bool if_up)
     }
 
     return rc;
+}
+
+void NeighOrch::updateNextHop(const BfdUpdate& update)
+{
+    SWSS_LOG_ENTER();
+    bool rc = true;
+
+    auto key = update.peer;
+    sai_bfd_session_state_t state = update.state;
+
+    size_t found_vrf = key.find(state_db_key_delimiter);
+    if (found_vrf == string::npos)
+    {
+        SWSS_LOG_INFO("Failed to parse key %s, no vrf is given", key.c_str());
+        return;
+    }
+
+    size_t found_ifname = key.find(state_db_key_delimiter, found_vrf + 1);
+    if (found_ifname == string::npos)
+    {
+        SWSS_LOG_INFO("Failed to parse key %s, no ifname is given", key.c_str());
+        return;
+    }
+
+    string vrf_name = key.substr(0, found_vrf);
+    string alias = key.substr(found_vrf + 1, found_ifname - found_vrf - 1);
+    IpAddress peer_address(key.substr(found_ifname + 1));
+
+    if (alias != "default" || vrf_name != "default")
+    {
+        return;
+    }
+
+    for (auto nhop = m_syncdNextHops.begin(); nhop != m_syncdNextHops.end(); ++nhop)
+    {
+        if (nhop->first.ip_address != peer_address)
+        {
+            continue;
+        }
+
+        if (state == SAI_BFD_SESSION_STATE_UP)
+        {
+            SWSS_LOG_INFO("updateNextHop get BFD session UP event, key %s", key.c_str());
+            rc = clearNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
+        }
+        else
+        {
+            SWSS_LOG_INFO("updateNextHop get BFD session DOWN event, key %s", key.c_str());
+            rc = setNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
+        }
+
+        if (!rc)
+        {
+            break;
+        }
+    }
 }
 
 bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
@@ -591,6 +666,14 @@ void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t coun
     assert(hasNextHop(nexthop));
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
     {
+        if ((m_syncdNextHops[nexthop].ref_count - (int)count) < 0)
+        {
+            SWSS_LOG_ERROR("Ref count cannot be negative for next_hop_id: 0x%" PRIx64 " with ip: %s and alias: %s",
+                   m_syncdNextHops[nexthop].next_hop_id, nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            // Reset refcount to 0 to match expected value
+            m_syncdNextHops[nexthop].ref_count = 0;
+            return;
+        }
         m_syncdNextHops[nexthop].ref_count -= count;
     }
 }
@@ -731,17 +814,33 @@ void NeighOrch::doTask(Consumer &consumer)
                     mac_address = MacAddress(fvValue(*i));
             }
 
-            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
-                    || m_syncdNeighbors[neighbor_entry].mac != mac_address)
+            bool nbr_not_found = (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end());
+            if (nbr_not_found || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
-                // only for unresolvable neighbors that are new
-                if (!mac_address) 
+                if (!mac_address)
                 {
-                    if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
+                    if (nbr_not_found)
                     {
-                        addZeroMacTunnelRoute(neighbor_entry, mac_address);
+                        // only for unresolvable neighbors that are new
+                        if (addZeroMacTunnelRoute(neighbor_entry, mac_address))
+                        {
+                            it = consumer.m_toSync.erase(it);
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    it = consumer.m_toSync.erase(it);
+                    else
+                    {
+                        /*
+                         * For neighbors that were previously resolvable but are now unresolvable,
+                         * we expect such neighbor entries to be deleted prior to a zero MAC update
+                         * arriving for that same neighbor.
+                         */
+                        it = consumer.m_toSync.erase(it);
+                    }
                 }
                 else if (addNeighbor(neighbor_entry, mac_address))
                 {
@@ -912,15 +1011,18 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     }
     else if (isHwConfigured(neighborEntry))
     {
-        status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
-        if (status != SAI_STATUS_SUCCESS)
+        for (auto itr : neighbor_attrs)
         {
-            SWSS_LOG_ERROR("Failed to update neighbor %s on %s, rv:%d",
-                           macAddress.to_string().c_str(), alias.c_str(), status);
-            task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
-            if (handle_status != task_success)
+            status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
+            if (status != SAI_STATUS_SUCCESS)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                SWSS_LOG_ERROR("Failed to update neighbor %s on %s, attr.id=0x%x, rv:%d",
+                               macAddress.to_string().c_str(), alias.c_str(), itr.id, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
@@ -987,7 +1089,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
             /* When next hop is not found, we continue to remove neighbor entry. */
             if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
-                SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
+                SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
                                ip_address.to_string().c_str(), alias.c_str(), status);
             }
             else
@@ -1022,9 +1124,8 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         {
             if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
-                SWSS_LOG_ERROR("Failed to locate neighbor %s on %s, rv:%d",
+                SWSS_LOG_NOTICE("Neighbor %s on %s already removed, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-                return true;
             }
             else
             {
@@ -1037,22 +1138,24 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
                 }
             }
         }
-
-        if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-        {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-        }
         else
         {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-        }
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+            }
 
-        removeNextHop(ip_address, alias);
-        m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+            removeNextHop(ip_address, alias);
+            m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+            SWSS_LOG_NOTICE("Removed neighbor %s on %s",
+                    m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
+        }
     }
 
-    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-            m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
 
     /* Do not delete entry from cache if its disable request */
     if (disable)
@@ -1317,6 +1420,17 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     {
                         SWSS_LOG_NOTICE("VOQ encap index updated for neighbor %s", kfvKey(t).c_str());
                         it = consumer.m_toSync.erase(it);
+
+                       /* Remove remaining DEL operation in m_toSync for the same neighbor.
+                        * Since DEL operation is supposed to be executed before SET for the same neighbor
+                        * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
+                        */
+                       auto rit = make_reverse_iterator(it);
+                       while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
+                       {
+                           consumer.m_toSync.erase(next(rit).base());
+                           SWSS_LOG_NOTICE("Removed pending system neighbor DEL operation for %s after SET operation", key.c_str());
+                       }
                     }
                     continue;
                 }
@@ -1378,6 +1492,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 else
                 {
                     it++;
+                    continue;
                 }
             }
             else
@@ -1385,6 +1500,17 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 /* Duplicate entry */
                 SWSS_LOG_INFO("System neighbor %s already exists", kfvKey(t).c_str());
                 it = consumer.m_toSync.erase(it);
+            }
+
+            /* Remove remaining DEL operation in m_toSync for the same neighbor.
+             * Since DEL operation is supposed to be executed before SET for the same neighbor
+             * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
+             */
+            auto rit = make_reverse_iterator(it);
+            while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
+            {
+                consumer.m_toSync.erase(next(rit).base());
+                SWSS_LOG_NOTICE("Removed pending system neighbor DEL operation for %s after SET operation", key.c_str());
             }
         }
         else if (op == DEL_COMMAND)
@@ -1744,12 +1870,18 @@ void NeighOrch::updateSrv6Nexthop(const NextHopKey &nh, const sai_object_id_t &n
         m_syncdNextHops.erase(nh);
     }
 }
-void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac)
+
+bool NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac)
 {
     SWSS_LOG_INFO("Creating tunnel route for neighbor %s", entry.ip_address.to_string().c_str());
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     NeighborUpdate update = {entry, mac, true};
     mux_orch->update(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-    m_syncdNeighbors[entry] = { mac, false };
-}
+    if (mux_orch->isStandaloneTunnelRouteInstalled(entry.ip_address))
+    {
+        m_syncdNeighbors[entry] = { mac, false };
+        return true;
+    }
 
+    return false;
+}

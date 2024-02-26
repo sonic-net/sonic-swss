@@ -29,6 +29,12 @@ enum MuxStateChange
     MUX_STATE_UNKNOWN_STATE
 };
 
+enum MuxCableType
+{
+    ACTIVE_STANDBY,
+    ACTIVE_ACTIVE
+};
+
 // Forward Declarations
 class MuxOrch;
 class MuxCableOrch;
@@ -46,9 +52,8 @@ private:
     void createMuxAclRule(shared_ptr<AclRulePacket> rule, string strTable);
     void bindAllPorts(AclTable &acl_table);
 
-    // class shared dict: ACL table name -> ACL table
-    static std::map<std::string, AclTable> acl_table_;
     sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
+    bool is_ingress_acl_ = true;
     string alias_;
 };
 
@@ -66,6 +71,11 @@ public:
     void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     sai_object_id_t getNextHopId(const NextHopKey);
+    MuxNeighbor getNeighbors() const { return neighbors_; };
+    string getAlias() const { return alias_; };
+
+private:
+    inline void updateTunnelRoute(NextHopKey, bool = true);
 
 private:
     MuxNeighbor neighbors_;
@@ -76,7 +86,7 @@ private:
 class MuxCable
 {
 public:
-    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, std::set<IpAddress> skip_neighbors);
+    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type);
 
     bool isActive() const
     {
@@ -87,19 +97,17 @@ public:
     using state_machine_handlers = map<MuxStateChange, bool (MuxCable::*)()>;
 
     void setState(string state);
+    void rollbackStateChange();
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
     bool isStateChangeFailed() { return st_chg_failed_; }
 
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
+    void updateRoutes();
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
-    }
-    bool isSkipNeighbor(const IpAddress& nbr)
-    {
-        return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
     }
 
 private:
@@ -111,15 +119,15 @@ private:
     bool nbrHandler(bool enable, bool update_routes = true);
 
     string mux_name_;
+    MuxCableType cable_type_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
+    MuxState prev_state_;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
 
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;
-
-    std::set<IpAddress> skip_neighbors_;
 
     MuxOrch *mux_orch_;
     MuxCableOrch *mux_cb_orch_;
@@ -154,6 +162,7 @@ typedef std::unique_ptr<MuxCable> MuxCable_T;
 typedef std::map<std::string, MuxCable_T> MuxCableTb;
 typedef std::map<IpAddress, NHTunnel> MuxTunnelNHs;
 typedef std::map<NextHopKey, std::string> NextHopTb;
+typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 
 class MuxCfgRequest : public Request
 {
@@ -180,18 +189,28 @@ public:
         return mux_cable_tb_.at(portName).get();
     }
 
+    bool isSkipNeighbor(const IpAddress& nbr)
+    {
+        return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
+    }
+
     MuxCable* findMuxCableInSubnet(IpAddress);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
 
     void addNexthop(NextHopKey, string = "");
     void removeNexthop(NextHopKey);
+    bool containsNextHop(const NextHopKey&);
+    bool isMuxNexthops(const NextHopGroupKey&);
     string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
+
+    void updateRoute(const IpPrefix &pfx, bool add);
+    bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -212,6 +231,19 @@ private:
     void createStandaloneTunnelRoute(IpAddress neighborIp);
     void removeStandaloneTunnelRoute(IpAddress neighborIp);
 
+    void addSkipNeighbors(const std::set<IpAddress> &neighbors)
+    {
+        skip_neighbors_.insert(neighbors.begin(), neighbors.end());
+    }
+
+    void removeSkipNeighbors(const std::set<IpAddress> &neighbors)
+    {
+        for (const IpAddress &neighbor : neighbors)
+        {
+            skip_neighbors_.erase(neighbor);
+        }
+    }
+
     IpAddress mux_peer_switch_ = 0x0;
     sai_object_id_t mux_tunnel_id_ = SAI_NULL_OBJECT_ID;
 
@@ -227,6 +259,7 @@ private:
 
     MuxCfgRequest request_;
     std::set<IpAddress> standalone_tunnel_neighbors_;
+    std::set<IpAddress> skip_neighbors_;
 };
 
 const request_description_t mux_cable_request_description = {

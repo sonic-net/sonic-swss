@@ -19,6 +19,7 @@ extern VRFOrch *gVrfOrch;
 
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;
+extern sai_hash_api_t *sai_hash_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -312,6 +313,7 @@ namespace aclorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
             sai_api_query(SAI_API_SWITCH, (void **)&sai_switch_api);
+            sai_api_query(SAI_API_HASH, (void **)&sai_hash_api);
             sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
             sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
             sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
@@ -457,6 +459,10 @@ namespace aclorch_test
             gMirrorOrch = nullptr;
             delete gRouteOrch;
             gRouteOrch = nullptr;
+            delete gFlowCounterRouteOrch;
+            gFlowCounterRouteOrch = nullptr;
+            delete gSrv6Orch;
+            gSrv6Orch = nullptr;
             delete gNeighOrch;
             gNeighOrch = nullptr;
             delete gFdbOrch;
@@ -471,8 +477,6 @@ namespace aclorch_test
             gPortsOrch = nullptr;
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
-            delete gSrv6Orch;
-            gSrv6Orch = nullptr;
 
             auto status = sai_switch_api->remove_switch(gSwitchId);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
@@ -1409,7 +1413,7 @@ namespace aclorch_test
                         {
                             {
                                 ACL_TABLE_TYPE_MATCHES,
-                                string(MATCH_SRC_IP) +  comma + MATCH_ETHER_TYPE + comma + MATCH_L4_SRC_PORT_RANGE
+                                string(MATCH_SRC_IP) +  comma + MATCH_ETHER_TYPE + comma + MATCH_L4_SRC_PORT_RANGE + comma + MATCH_BTH_OPCODE + comma + MATCH_AETH_SYNDROME
                             },
                             {
                                 ACL_TABLE_TYPE_BPOINT_TYPES,
@@ -1431,6 +1435,8 @@ namespace aclorch_test
             { "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" },
             { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
             { "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "1:SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_BTH_OPCODE", "true" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_AETH_SYNDROME", "true" },
         };
 
         ASSERT_TRUE(validateAclTable(
@@ -1484,8 +1490,46 @@ namespace aclorch_test
                         aclTableName + "|" + aclRuleName,
                         SET_COMMAND,
                         {
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                            { MATCH_BTH_OPCODE, "0x60" },
+                        }
+                    }
+                }
+            )
+        );
+
+        // MATCH_BTH_OPCODE invalid format
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                            { MATCH_AETH_SYNDROME, "0x60" },
+                        }
+                    }
+                }
+            )
+        );
+
+        // MATCH_AETH_SYNDROME invalid format
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
                             { MATCH_SRC_IP, "1.1.1.1/32" },
                             { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                            { MATCH_BTH_OPCODE, "0x60/0xff" },
+                            { MATCH_AETH_SYNDROME, "0x60/0x60" },
                         }
                     }
                 }

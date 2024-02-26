@@ -10,6 +10,8 @@ extern "C" {
 #include "sai.h"
 }
 
+const std::string createAllAvailableBuffersStr = "create_all_available_buffers";
+
 class FlexCounterQueueStates
 {
 public:
@@ -42,8 +44,10 @@ public:
     virtual ~FlexCounterOrch(void);
     bool getPortCountersState() const;
     bool getPortBufferDropCountersState() const;
-    bool getPgWatermarkCountersState() const;
     bool getQueueCountersState() const;
+    bool getQueueWatermarkCountersState() const;
+    bool getPgCountersState() const;
+    bool getPgWatermarkCountersState() const;
     std::map<std::string, FlexCounterQueueStates> getQueueConfigurations();
     std::map<std::string, FlexCounterPgStates> getPgConfigurations();
     bool getHostIfTrapCounterState() const {return m_hostif_trap_counter_enabled;}
@@ -57,13 +61,16 @@ private:
     std::shared_ptr<ProducerTable> m_gbflexCounterGroupTable = nullptr;
     bool m_port_counter_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
-    bool m_pg_watermark_enabled = false;
     bool m_queue_enabled = false;
+    bool m_queue_watermark_enabled = false;
+    bool m_pg_enabled = false;
+    bool m_pg_watermark_enabled = false;
     bool m_hostif_trap_counter_enabled = false;
     bool m_route_flow_counter_enabled = false;
     Table m_flexCounterConfigTable;
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
+    Table m_deviceMetadataConfigTable;
 };
 
 #endif

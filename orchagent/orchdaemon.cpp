@@ -6,6 +6,7 @@
 #include "logger.h"
 #include <sairedis.h>
 #include "warm_restart.h"
+#include <iostream>
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -18,9 +19,12 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
 
+/* orchagent heart beat message interval */
+#define HEART_BEAT_INTERVAL_MSECS 10 * 1000
+
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
-extern bool                        gSaiRedisLogRotate;
+extern string                      gMySwitchType;
 
 extern void syncd_apply_view();
 /*
@@ -55,22 +59,24 @@ BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
+MonitorOrch *gMonitorOrch;
 
 bool gIsNatSupported = false;
-bool gSaiRedisLogRotate = false;
 event_handle_t g_events_handle;
 
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
         m_applDb(applDb),
         m_configDb(configDb),
         m_stateDb(stateDb),
-        m_chassisAppDb(chassisAppDb)
+        m_chassisAppDb(chassisAppDb),
+        m_zmqServer(zmqServer)
 {
     SWSS_LOG_ENTER();
     m_select = new Select();
+    m_lastHeartBeat = std::chrono::high_resolution_clock::now();
 }
 
 OrchDaemon::~OrchDaemon()
@@ -105,11 +111,13 @@ bool OrchDaemon::init()
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
-    TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    TableConnector stateDbSwitchTable(m_stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
+    TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
 
     vector<TableConnector> switch_tables = {
+        conf_switch_hash,
         conf_asic_sensors,
         app_switch_table
     };
@@ -120,6 +128,7 @@ bool OrchDaemon::init()
 
     vector<table_name_with_pri_t> ports_tables = {
         { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
+        { APP_SEND_TO_INGRESS_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
         { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
         { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
         { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
@@ -136,9 +145,15 @@ bool OrchDaemon::init()
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
-    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
-    gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
 
+    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
+
+    BgpGlobalStateOrch* bgp_global_state_orch;
+    bgp_global_state_orch = new BgpGlobalStateOrch(m_configDb, CFG_BGP_DEVICE_GLOBAL_TABLE_NAME);
+    gDirectory.set(bgp_global_state_orch);
+
+    gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
+    gDirectory.set(gBfdOrch);
     static const  vector<string> route_pattern_tables = {
         CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
     };
@@ -165,6 +180,8 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
+    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
+    gDirectory.set(gMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
@@ -221,6 +238,41 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
+	vector<string> dash_vnet_tables = {
+        APP_DASH_VNET_TABLE_NAME,
+        APP_DASH_VNET_MAPPING_TABLE_NAME
+    };
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_zmqServer);
+    gDirectory.set(dash_vnet_orch);
+
+    vector<string> dash_tables = {
+        APP_DASH_APPLIANCE_TABLE_NAME,
+        APP_DASH_ROUTING_TYPE_TABLE_NAME,
+        APP_DASH_ENI_TABLE_NAME,
+        APP_DASH_QOS_TABLE_NAME
+    };
+
+    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_zmqServer);
+    gDirectory.set(dash_orch);
+
+    vector<string> dash_route_tables = {
+        APP_DASH_ROUTE_TABLE_NAME,
+        APP_DASH_ROUTE_RULE_TABLE_NAME
+    };
+
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_zmqServer);
+    gDirectory.set(dash_route_orch);
+
+    vector<string> dash_acl_tables = {
+        APP_DASH_PREFIX_TAG_TABLE_NAME,
+        APP_DASH_ACL_IN_TABLE_NAME,
+        APP_DASH_ACL_OUT_TABLE_NAME,
+        APP_DASH_ACL_GROUP_TABLE_NAME,
+        APP_DASH_ACL_RULE_TABLE_NAME
+    };
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_zmqServer);
+    gDirectory.set(dash_acl_orch);
+
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
@@ -235,6 +287,7 @@ bool OrchDaemon::init()
         CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
         CFG_DSCP_TO_FC_MAP_TABLE_NAME,
         CFG_EXP_TO_FC_MAP_TABLE_NAME,
+        CFG_TC_TO_DOT1P_MAP_TABLE_NAME,
         CFG_TC_TO_DSCP_MAP_TABLE_NAME
     };
     gQosOrch = new QosOrch(m_configDb, qos_tables);
@@ -352,7 +405,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch, gMonitorOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -453,6 +506,10 @@ bool OrchDaemon::init()
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
+    m_orchList.push_back(dash_acl_orch);
+    m_orchList.push_back(dash_vnet_orch);
+    m_orchList.push_back(dash_route_orch);
+    m_orchList.push_back(dash_orch);
 
     if (m_fabricEnabled)
     {
@@ -605,7 +662,7 @@ bool OrchDaemon::init()
 
         if(gSwitchOrch->checkPfcDlrInitEnable())
         {
-            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>(
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
@@ -625,7 +682,25 @@ bool OrchDaemon::init()
         }
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
-        static const vector<sai_port_stat_t> portStatIds;
+        static const vector<sai_port_stat_t> portStatIds =
+        {
+            SAI_PORT_STAT_PFC_0_RX_PKTS,
+            SAI_PORT_STAT_PFC_1_RX_PKTS,
+            SAI_PORT_STAT_PFC_2_RX_PKTS,
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+            SAI_PORT_STAT_PFC_4_RX_PKTS,
+            SAI_PORT_STAT_PFC_5_RX_PKTS,
+            SAI_PORT_STAT_PFC_6_RX_PKTS,
+            SAI_PORT_STAT_PFC_7_RX_PKTS,
+            SAI_PORT_STAT_PFC_0_TX_PKTS,
+            SAI_PORT_STAT_PFC_1_TX_PKTS,
+            SAI_PORT_STAT_PFC_2_TX_PKTS,
+            SAI_PORT_STAT_PFC_3_TX_PKTS,
+            SAI_PORT_STAT_PFC_4_TX_PKTS,
+            SAI_PORT_STAT_PFC_5_TX_PKTS,
+            SAI_PORT_STAT_PFC_6_TX_PKTS,
+            SAI_PORT_STAT_PFC_7_TX_PKTS,
+        };
 
         static const vector<sai_queue_stat_t> queueStatIds =
         {
@@ -675,7 +750,12 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        abort();
+        handleSaiFailure(true);
+    }
+
+    for (auto* orch: m_orchList)
+    {
+        orch->flushResponses();
     }
 }
 
@@ -696,7 +776,8 @@ void OrchDaemon::logRotate() {
 void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
-    gSaiRedisLogRotate = false;
+
+    Recorder::Instance().sairedis.setRotate(false);
 
     for (Orch *o : m_orchList)
     {
@@ -713,6 +794,7 @@ void OrchDaemon::start()
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         auto tend = std::chrono::high_resolution_clock::now();
+        heartBeat(tend);
 
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
 
@@ -741,14 +823,11 @@ void OrchDaemon::start()
         }
 
         // check if logroate is requested
-        if (gSaiRedisLogRotate)
+        if (Recorder::Instance().sairedis.isRotate())
         {
-            SWSS_LOG_NOTICE("performing log rotate");
-
-            gSaiRedisLogRotate = false;
-
+            SWSS_LOG_NOTICE("Performing %s log rotate", Recorder::Instance().sairedis.getName().c_str());
+            Recorder::Instance().sairedis.setRotate(false);
             logRotate();
-            continue;
         }
 
         auto *c = (Executor *)s;
@@ -792,7 +871,7 @@ void OrchDaemon::start()
                     flush();
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
-                    sleep(UINT_MAX);
+                    freezeAndHeartBeat(UINT_MAX);
                 }
             }
         }
@@ -949,8 +1028,33 @@ void OrchDaemon::addOrchList(Orch *o)
     m_orchList.push_back(o);
 }
 
-FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
-    OrchDaemon(applDb, configDb, stateDb, chassisAppDb),
+void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent)
+{
+    // output heart beat message to SYSLOG
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - m_lastHeartBeat);
+    if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
+    {
+        m_lastHeartBeat = tcurrent;
+        // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
+        cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
+    }
+}
+
+void OrchDaemon::freezeAndHeartBeat(unsigned int duration)
+{
+    while (duration > 0)
+    {
+        // Send heartbeat message to prevent Orchagent stuck alert.
+        auto tend = std::chrono::high_resolution_clock::now();
+        heartBeat(tend);
+
+        duration--;
+        sleep(1);
+    }
+}
+
+FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
+    OrchDaemon(applDb, configDb, stateDb, chassisAppDb, zmqServer),
     m_applDb(applDb),
     m_configDb(configDb)
 {

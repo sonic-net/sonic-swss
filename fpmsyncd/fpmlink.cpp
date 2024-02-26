@@ -158,11 +158,17 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
 
     m_server_up = true;
     m_messageBuffer = new char[m_bufSize];
+    m_sendBuffer = new char[m_bufSize];
+
+    m_routesync->onFpmConnected(*this);
 }
 
 FpmLink::~FpmLink()
 {
+    m_routesync->onFpmDisconnected();
+
     delete[] m_messageBuffer;
+    delete[] m_sendBuffer;
     if (m_connected)
         close(m_connection_socket);
     if (m_server_up)
@@ -276,4 +282,37 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
         }
         nlmsg_free(msg);
     }
+}
+
+bool FpmLink::send(nlmsghdr* nl_hdr)
+{
+    fpm_msg_hdr_t hdr{};
+
+    size_t len = fpm_msg_align(sizeof(hdr) + nl_hdr->nlmsg_len);
+
+    if (len > m_bufSize)
+    {
+        SWSS_LOG_THROW("Message length %zu is greater than the send buffer size %d", len, m_bufSize);
+    }
+
+    hdr.version = FPM_PROTO_VERSION;
+    hdr.msg_type = FPM_MSG_TYPE_NETLINK;
+    hdr.msg_len = htons(static_cast<uint16_t>(len));
+
+    memcpy(m_sendBuffer, &hdr, sizeof(hdr));
+    memcpy(m_sendBuffer + sizeof(hdr), nl_hdr, nl_hdr->nlmsg_len);
+
+    size_t sent = 0;
+    while (sent != len)
+    {
+        auto rc = ::send(m_connection_socket, m_sendBuffer + sent, len - sent, 0);
+        if (rc == -1)
+        {
+            SWSS_LOG_ERROR("Failed to send FPM message: %s", strerror(errno));
+            return false;
+        }
+        sent += rc;
+    }
+
+    return true;
 }

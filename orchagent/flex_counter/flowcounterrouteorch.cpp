@@ -602,18 +602,25 @@ bool FlowCounterRouteOrch::isRouteAlreadyBound(const RoutePattern &route_pattern
 {
     SWSS_LOG_ENTER();
 
-    auto iter = mBoundRouteCounters.find(route_pattern);
-    if (iter == mBoundRouteCounters.end())
+    auto iter_bound = mBoundRouteCounters.find(route_pattern);
+    if (iter_bound != mBoundRouteCounters.end())
     {
-        auto pending_iter = mPendingAddToFlexCntr.find(route_pattern);
-        if (pending_iter != mPendingAddToFlexCntr.end())
+        if (iter_bound->second.find(ip_prefix) != iter_bound->second.end())
         {
-            return pending_iter->second.find(ip_prefix) != pending_iter->second.end();
+            return true;
         }
-        return false;
     }
 
-    return iter->second.find(ip_prefix) != iter->second.end();
+    auto iter_pending = mPendingAddToFlexCntr.find(route_pattern);
+    if (iter_pending != mPendingAddToFlexCntr.end())
+    {
+        if (iter_pending->second.find(ip_prefix) != iter_pending->second.end())
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void FlowCounterRouteOrch::createRouteFlowCounterByPattern(const RoutePattern &route_pattern, size_t current_bound_count)

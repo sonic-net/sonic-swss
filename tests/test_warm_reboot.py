@@ -60,6 +60,31 @@ def check_port_oper_status(appl_db, port_name, state):
             break
     assert oper_status == state
 
+def check_port_host_tx_ready_status(state_db, port_name, status):
+    portTable = swsscommon.Table(state_db, swsscommon.STATE_PORT_TABLE_NAME)
+    (status, fvs) = portTable.get(port_name)
+
+    assert status == True
+
+    assert "host_tx_ready" in [fv[0] for fv in fvs]
+    for fv in fvs:
+        if fv[0] == "host_tx_ready":
+            assert fv[1] == "true" if status == "up" else "false"
+
+def update_host_tx_ready_status(dvs, port_id, switch_id, admin_state):
+    host_tx_ready = "SAI_PORT_HOST_TX_READY_STATUS_READY" if admin_state == "up" else "SAI_PORT_HOST_TX_READY_STATUS_NOT_READY"
+    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    fvp = swsscommon.FieldValuePairs()
+    ntf_data =  "[{\"host_tx_ready_status\":\""+host_tx_ready+"\",\"port_id\":\""+port_id+"\",\"switch_id\":\""+switch_id+"\"}]"
+    ntf.send("port_host_tx_ready", ntf_data, fvp)
+
+def get_port_id(dvs, port_name):
+    count_db = swsscommon.DBConnector(2, dvs.redis_sock, 0)
+    port_name_map = swsscommon.Table(count_db, "COUNTERS_PORT_NAME_MAP")
+    status, returned_value = port_name_map.hget("", port_name)
+    assert status == True
+    return returned_value
+
 # function to check the restore count incremented by 1 for a single process
 def swss_app_check_RestoreCount_single(state_db, restore_count, name):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -256,6 +281,8 @@ def warm_restart_timer_set(dvs, app, timer, val):
 
 class TestWarmReboot(object):
     def test_PortSyncdWarmRestart(self, dvs, testlog):
+        dvs.setup_db()
+        switch_id = dvs.getSwitchOid()
 
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -293,6 +320,13 @@ class TestWarmReboot(object):
         # Ethernet port oper status should be up
         check_port_oper_status(appl_db, "Ethernet16", "up")
         check_port_oper_status(appl_db, "Ethernet20", "up")
+
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet16") , switch_id, "up")
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet20") , switch_id, "up")
+
+        # Ethernet port host_tx_ready status should be "true"
+        check_port_host_tx_ready_status(state_db, "Ethernet16", "up")
+        check_port_host_tx_ready_status(state_db, "Ethernet20", "up")
 
         # Ping should work between servers via vs vlan interfaces
         ping_stats = dvs.servers[4].runcmd("ping -c 1 11.0.0.10")
@@ -337,6 +371,13 @@ class TestWarmReboot(object):
         check_port_oper_status(appl_db, "Ethernet20", "up")
         check_port_oper_status(appl_db, "Ethernet24", "down")
 
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet16") , switch_id, "up")
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet20") , switch_id, "up")
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet24") , switch_id, "down")
+
+        check_port_host_tx_ready_status(state_db, "Ethernet16", "up")
+        check_port_host_tx_ready_status(state_db, "Ethernet20", "up")
+        check_port_host_tx_ready_status(state_db, "Ethernet24", "down")
 
         swss_app_check_RestoreCount_single(state_db, restore_count, "portsyncd")
 
@@ -891,23 +932,23 @@ class TestWarmReboot(object):
 
         time.sleep(1)
         # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK failed\n"
 
         # Should succeed, the option for skipPendingTaskCheck -s and noFreeze -n have been provided.
         # Wait up to 500 milliseconds for response from orchagent. Default wait time is 1000 milliseconds.
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
 
         # Remove unfinished routes
         ps._del("3.3.3.0/24")
 
         time.sleep(1)
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
 
         # Should fail since orchagent has been frozen at last step.
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
         assert result == "RESTARTCHECK failed\n"
 
         # Cleaning previously pushed route-entry to ease life of subsequent testcases.
@@ -2397,7 +2438,7 @@ class TestWarmReboot(object):
             "ecn_mode": "standard",
             "ttl_mode": "pipe"
         }
-        
+
         pubsub = dvs.SubscribeAppDbObject(tunnel_table)
 
         dvs.runcmd("config warm_restart enable swss")

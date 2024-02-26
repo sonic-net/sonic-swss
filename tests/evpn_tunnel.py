@@ -485,6 +485,22 @@ class VxlanTunnel(object):
             (exitcode, out) = dvs.runcmd(iplinkcmd)
             assert exitcode == 0, "Kernel device not created"
 
+    def check_vxlan_tunnel_map_entry_removed(self, dvs, tunnel_name, vidlist, vnidlist):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        expected_attributes_1 = {
+        'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
+        'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': self.tunnel_map_map[tunnel_name][0],
+        'SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE': vidlist[0],
+        'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vnidlist[0],
+        }
+
+        for x in range(len(vidlist)):
+            expected_attributes_1['SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE'] = vidlist[x]
+            expected_attributes_1['SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY'] = vnidlist[x]
+            ret = self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, expected_attributes_1)
+            assert len(ret) == 0, "SIP TunnelMap entry not removed"
+
     def check_vxlan_sip_tunnel_delete(self, dvs, tunnel_name, sip, ignore_bp = True):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -517,7 +533,8 @@ class VxlanTunnel(object):
             assert status == False, "Tunnel bridgeport entry not deleted"
 
     def check_vxlan_sip_tunnel(self, dvs, tunnel_name, src_ip, vidlist, vnidlist, 
-                               dst_ip = '0.0.0.0', skip_dst_ip = 'True', ignore_bp = True):
+                               dst_ip = '0.0.0.0', skip_dst_ip = 'True', ignore_bp = True,
+                               tunnel_map_entry_count = 3):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
@@ -527,7 +544,7 @@ class VxlanTunnel(object):
 
         # check that the vxlan tunnel termination are there
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP) == (len(self.tunnel_map_ids) + 4), "The TUNNEL_MAP wasn't created"
-        assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == (len(self.tunnel_map_entry_ids) + 3), "The TUNNEL_MAP_ENTRY is created"
+        assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == (len(self.tunnel_map_entry_ids) + tunnel_map_entry_count), "The TUNNEL_MAP_ENTRY is created"
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TABLE) == (len(self.tunnel_ids) + 1), "The TUNNEL wasn't created"
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TERM_ENTRY) == (len(self.tunnel_term_ids) + 1), "The TUNNEL_TERM_TABLE_ENTRY wasm't created"
 
@@ -680,6 +697,18 @@ class VxlanTunnel(object):
         
         self.bridgeport_map[dip] = ret[0]
 
+    def check_vxlan_dip_tunnel_not_created(self, dvs, vtep_name, src_ip, dip):
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        expected_state_attributes = {
+            'src_ip': src_ip,
+            'dst_ip': dip,
+            'tnl_src': 'EVPN',
+        }
+
+        ret = self.helper.get_key_with_attr(state_db, 'VXLAN_TUNNEL_TABLE', expected_state_attributes)
+        assert len(ret) == 0, "Tunnel Statetable entry created"
+
     def check_vlan_extension_delete(self, dvs, vlan_name, dip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -693,6 +722,17 @@ class VxlanTunnel(object):
         tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER')
         status, fvs = tbl.get(self.l2mcgroup_member_map[dip+vlan_name])
         assert status == False, "L2MC Group Member entry not deleted"
+
+    def check_vlan_obj(self, dvs, vlan_name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        expected_vlan_attributes = {
+            'SAI_VLAN_ATTR_VLAN_ID': vlan_name,
+        }
+        ret = self.helper.get_key_with_attr(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VLAN', expected_vlan_attributes)
+        assert len(ret) > 0, "VLAN entry not created"
+        assert len(ret) == 1, "More than 1 VLAN entry created"
+
+        self.vlan_id_map[vlan_name] = ret[0]
 
     def check_vlan_extension(self, dvs, vlan_name, dip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -713,6 +753,25 @@ class VxlanTunnel(object):
         assert len(ret) > 0, "VLAN Member not created"
         assert len(ret) == 1, "More than 1 VLAN member created"
         self.vlan_member_map[dip+vlan_name] = ret[0]
+
+    def check_vlan_extension_not_created(self, dvs, vlan_name, dip):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        expected_vlan_attributes = {
+            'SAI_VLAN_ATTR_VLAN_ID': vlan_name,
+        }
+        ret = self.helper.get_key_with_attr(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VLAN', expected_vlan_attributes)
+        assert len(ret) > 0, "VLAN entry not created"
+        assert len(ret) == 1, "More than 1 VLAN entry created"
+
+        self.vlan_id_map[vlan_name] = ret[0]
+
+        if dip in self.bridgeport_map:
+            expected_vlan_member_attributes = {
+                    'SAI_VLAN_MEMBER_ATTR_VLAN_ID': self.vlan_id_map[vlan_name],
+                    'SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID': self.bridgeport_map[dip],
+                    }
+            ret = self.helper.get_key_with_attr(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER', expected_vlan_member_attributes)
+            assert len(ret) == 0, "VLAN member created"
 
     def check_vlan_extension_p2mp(self, dvs, vlan_name, sip, dip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -760,6 +819,32 @@ class VxlanTunnel(object):
         assert len(ret) == 1, "More than 1 L2MC group member created"
         self.l2mcgroup_member_map[dip+vlan_name] =  ret[0]
         
+    def check_vlan_extension_not_created_p2mp(self, dvs, vlan_name, sip, dip):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VLAN')
+        expected_vlan_attributes = {
+            'SAI_VLAN_ATTR_VLAN_ID': vlan_name,
+        }
+        ret = self.helper.get_key_with_attr(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VLAN', expected_vlan_attributes)
+        assert len(ret) > 0, "VLAN entry not created"
+        assert len(ret) == 1, "More than 1 VLAN entry created"
+
+        self.vlan_id_map[vlan_name] = ret[0]
+        status, fvs = tbl.get(self.vlan_id_map[vlan_name])
+
+        print(fvs)
+
+        uuc_flood_type = None
+        bc_flood_type = None
+        uuc_flood_group = None
+        bc_flood_group = None
+
+        for attr,value in fvs:
+            assert attr != 'SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE', "Unknown unicast flood control type is set"
+            assert attr != 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE', "Broadcast flood control type is set"
+            assert attr != 'SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_GROUP', "Unknown unicast flood group is set"
+            assert attr != 'SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE', "Broadcast flood group is set"
+
     def check_vxlan_tunnel_entry(self, dvs, tunnel_name, vnet_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -798,10 +883,10 @@ class VxlanTunnel(object):
     def check_vxlan_tunnel_vrf_map_entry(self, dvs, tunnel_name, vrf_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
-        tunnel_map_entry_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, self.tunnel_map_entry_ids, 3)
+        tunnel_map_entry_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, self.tunnel_map_entry_ids, 2)
 
         # check that the vxlan tunnel termination are there
-        assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == (len(self.tunnel_map_entry_ids) + 3), "The TUNNEL_MAP_ENTRY is created too early"
+        assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == (len(self.tunnel_map_entry_ids) + 2), "The TUNNEL_MAP_ENTRY is created too early"
 
         ret = self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP_ENTRY,
             {
@@ -931,6 +1016,27 @@ class VxlanTunnel(object):
 
         return True
 
+    def check_vrf_routes_absence(self, dvs, prefix, vrf_name, endpoint, tunnel, mac="", vni=0, no_update=0):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        vr_ids = self.vrf_route_ids(dvs, vrf_name)
+        count = len(vr_ids)
+
+        # Check routes in ingress VRF
+        expected_attr = {
+                        "SAI_NEXT_HOP_ATTR_TYPE": "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP",
+                        "SAI_NEXT_HOP_ATTR_IP": endpoint,
+                        "SAI_NEXT_HOP_ATTR_TUNNEL_ID": self.tunnel[tunnel],
+                    }
+
+        if vni:
+            expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_VNI': vni})
+
+        if mac:
+            expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_MAC': mac})
+
+        self.helper.get_created_entries(asic_db, self.ASIC_NEXT_HOP, self.nhops, 0)
+
     def check_vrf_routes_ecmp(self, dvs, prefix, vrf_name, tunnel, nh_count, no_update=0):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -1050,7 +1156,7 @@ class VxlanTunnel(object):
             assert found_route
 
         self.helper.check_deleted_object(asic_db, self.ASIC_ROUTE_ENTRY, self.route_id[vrf_name + ":" + prefix])
-        self.route_id.clear()
+        del self.route_id[vrf_name + ":" + prefix]
 
         return True
 

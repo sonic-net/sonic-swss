@@ -470,6 +470,11 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
 {
     SWSS_LOG_ENTER();
 
+    if (m_removingIntfses.find(alias) != m_removingIntfses.end())
+    {
+        return false;
+    }
+
     Port port;
     gPortsOrch->getPort(alias, port);
 
@@ -691,7 +696,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         MacAddress mac;
 
         uint32_t mtu = 0;
-        bool adminUp;
+        bool adminUp = false;
         bool adminStateChanged = false;
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
@@ -860,10 +865,11 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (!ip_prefix_in_key && isSubIntf)
                 {
-                    if (adminStateChanged == false)
+                    if (!adminStateChanged)
                     {
                         adminUp = port.m_admin_state_up;
                     }
+
                     if (!gPortsOrch->addSubPort(port, alias, vlan, adminUp, mtu))
                     {
                         it++;
@@ -891,6 +897,12 @@ void IntfsOrch::doTask(Consumer &consumer)
                     it++;
                     continue;
                 }
+
+                if (!adminStateChanged)
+                {
+                    adminUp = port.m_admin_state_up;
+                }
+
                 if (!vnet_orch->setIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;
@@ -904,7 +916,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
-                if (adminStateChanged == false)
+                if (!adminStateChanged)
                 {
                     adminUp = port.m_admin_state_up;
                 }
@@ -1076,10 +1088,12 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (removeIntf(alias, port.m_vr_id, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
+                    m_removingIntfses.erase(alias);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
+                    m_removingIntfses.insert(alias);
                     it++;
                     continue;
                 }

@@ -17,6 +17,8 @@ const string pfc_enable_name                    = "pfc_enable";
 const string pfcwd_sw_enable_name               = "pfcwd_sw_enable";
 const string tc_to_pg_map_field_name            = "tc_to_pg_map";
 const string tc_to_queue_field_name             = "tc_to_queue_map";
+const string tc_to_dot1p_field_name             = "tc_to_dot1p_map";
+const string tc_to_dscp_field_name              = "tc_to_dscp_map";
 const string scheduler_field_name               = "scheduler";
 const string red_max_threshold_field_name       = "red_max_threshold";
 const string red_min_threshold_field_name       = "red_min_threshold";
@@ -44,7 +46,6 @@ const string scheduler_algo_DWRR                = "DWRR";
 const string scheduler_algo_WRR                 = "WRR";
 const string scheduler_algo_STRICT              = "STRICT";
 const string scheduler_weight_field_name        = "weight";
-const string scheduler_priority_field_name      = "priority";
 const string scheduler_meter_type_field_name    = "meter_type";
 const string scheduler_min_bandwidth_rate_field_name       = "cir";//Committed Information Rate
 const string scheduler_min_bandwidth_burst_rate_field_name = "cbs";//Committed Burst Size
@@ -176,6 +177,13 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
 };
 
+class TcToDot1pMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes);
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
+};
+
 class QosOrch : public Orch
 {
 public:
@@ -210,6 +218,7 @@ private:
     task_process_status handleDscpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     task_process_status handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     task_process_status handleTcToDscpTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleTcToDot1pTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
 
     task_process_status handleGlobalQosMap(const string &op, KeyOpFieldsValuesTuple &tuple);
 

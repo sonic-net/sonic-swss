@@ -1,7 +1,4 @@
-#include <fstream>
-#include <iostream>
 #include <inttypes.h>
-#include <sstream>
 #include <stdexcept>
 #include <sys/time.h>
 #include "timestamp.h"
@@ -12,16 +9,13 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "zmqserver.h"
+#include "zmqconsumerstatetable.h"
 #include "sai_serialize.h"
 
 using namespace swss;
 
-extern int gBatchSize;
-
-extern bool gSwssRecord;
-extern ofstream gRecordOfs;
-extern bool gLogRotate;
-extern string gRecordFile;
+int gBatchSize = 0;
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
@@ -52,12 +46,8 @@ Orch::Orch(const vector<TableConnector>& tables)
     }
 }
 
-Orch::~Orch()
+Orch::Orch()
 {
-    if (gRecordOfs.is_open())
-    {
-        gRecordOfs.close();
-    }
 }
 
 vector<Selectable *> Orch::getSelectables()
@@ -70,19 +60,15 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
+void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
-
 
     string key = kfvKey(entry);
     string op  = kfvOp(entry);
 
     /* Record incoming tasks */
-    if (gSwssRecord)
-    {
-        Orch::recordTuple(*this, entry);
-    }
+    Recorder::Instance().swss.record(dumpTuple(entry));
 
     /*
     * m_toSync is a multimap which will allow one key with multiple values,
@@ -157,7 +143,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
 
 }
 
-size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
 
@@ -170,7 +156,7 @@ size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 }
 
 // TODO: Table should be const
-size_t Consumer::refillToSync(Table* table)
+size_t ConsumerBase::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -192,11 +178,9 @@ size_t Consumer::refillToSync(Table* table)
     return addToSync(entries);
 }
 
-size_t Consumer::refillToSync()
+size_t ConsumerBase::refillToSync()
 {
-    ConsumerTableBase *consumerTable = getConsumerTable();
-
-    auto subTable = dynamic_cast<SubscriberStateTable *>(consumerTable);
+    auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
     if (subTable != NULL)
     {
         size_t update_size = 0;
@@ -210,38 +194,26 @@ size_t Consumer::refillToSync()
         } while (update_size != 0);
         return total_size;
     }
-    else
+    string tableName = getTableName();
+    auto consumerTable = dynamic_cast<ConsumerTableBase *>(getSelectable());
+    if (consumerTable != NULL)
     {
         // consumerTable is either ConsumerStateTable or ConsumerTable
         auto db = consumerTable->getDbConnector();
-        string tableName = consumerTable->getTableName();
         auto table = Table(db, tableName);
         return refillToSync(&table);
     }
-}
-
-void Consumer::execute()
-{
-    SWSS_LOG_ENTER();
-
-    size_t update_size = 0;
-    do
+    auto zmqTable = dynamic_cast<ZmqConsumerStateTable *>(getSelectable());
+    if (zmqTable != NULL)
     {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        getConsumerTable()->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
-
-    drain();
+        auto db = zmqTable->getDbConnector();
+        auto table = Table(db, tableName);
+        return refillToSync(&table);
+    }
+    return 0;
 }
 
-void Consumer::drain()
-{
-    if (!m_toSync.empty())
-        m_orch->doTask(*this);
-}
-
-string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
+string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
                + "|" + kfvOp(tuple);
@@ -253,7 +225,7 @@ string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
-void Consumer::dumpPendingTasks(vector<string> &ts)
+void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &tm : m_toSync)
     {
@@ -265,9 +237,32 @@ void Consumer::dumpPendingTasks(vector<string> &ts)
     }
 }
 
+void Consumer::execute()
+{
+    // ConsumerBase::execute_impl<swss::ConsumerTableBase>();
+    SWSS_LOG_ENTER();
+
+    size_t update_size = 0;
+    auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        table->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
+
+    drain();
+}
+
+void Consumer::drain()
+{
+    if (!m_toSync.empty())
+        ((Orch *)m_orch)->doTask((Consumer&)*this);
+}
+
 size_t Orch::addExistingData(const string& tableName)
 {
-    auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    auto consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -281,7 +276,7 @@ size_t Orch::addExistingData(const string& tableName)
 size_t Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
-    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -299,7 +294,7 @@ bool Orch::bake()
     {
         string executorName = it.first;
         auto executor = it.second;
-        auto consumer = dynamic_cast<Consumer *>(executor.get());
+        auto consumer = dynamic_cast<ConsumerBase *>(executor.get());
         if (consumer == NULL)
         {
             continue;
@@ -551,7 +546,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &it : m_consumerMap)
     {
-        Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
+        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
         if (consumer == NULL)
         {
             SWSS_LOG_DEBUG("Executor is not a Consumer");
@@ -562,43 +557,9 @@ void Orch::dumpPendingTasks(vector<string> &ts)
     }
 }
 
-void Orch::logfileReopen()
+void Orch::flushResponses()
 {
-    gRecordOfs.close();
-
-    /*
-     * On log rotate we will use the same file name, we are assuming that
-     * logrotate daemon move filename to filename.1 and we will create new
-     * empty file here.
-     */
-
-    gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
-
-    if (!gRecordOfs.is_open())
-    {
-        SWSS_LOG_ERROR("failed to open gRecordOfs file %s: %s", gRecordFile.c_str(), strerror(errno));
-        return;
-    }
-}
-
-void Orch::recordTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
-{
-    string s = consumer.dumpTuple(tuple);
-
-    gRecordOfs << getTimestamp() << "|" << s << endl;
-
-    if (gLogRotate)
-    {
-        gLogRotate = false;
-
-        logfileReopen();
-    }
-}
-
-string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
-{
-    string s = consumer.dumpTuple(tuple);
-    return s;
+    m_publisher.flush();
 }
 
 ref_resolve_status Orch::resolveFieldRefArray(
@@ -736,7 +697,7 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
 {
     unsigned long currentIdMask = 1;
     bool started = false, needGenerateMap = false;
-    sai_uint32_t lower, upper;
+    sai_uint32_t lower = 0, upper = 0;
     set<string> idStringList;
     for (sai_uint32_t id = 0; id <= maxId; id ++)
     {
@@ -854,193 +815,6 @@ Executor *Orch::getExecutor(string executorName)
     }
 
     return NULL;
-}
-
-task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
-{
-    /*
-     * This function aims to provide coarse handling of failures in sairedis create
-     * operation (i.e., notify users by throwing excepions when failures happen).
-     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
-     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
-     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
-     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
-     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
-     *          in each orch.
-     *       3. Take the type of sai api into consideration.
-     */
-    switch (api)
-    {
-        case SAI_API_FDB:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-                    return task_success;
-                case SAI_STATUS_ITEM_ALREADY_EXISTS:
-                    /*
-                     *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
-                     *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
-                     *  and orchagent should ignore the error and treat it as entry was explicitly created.
-                     */
-                    return task_success;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    abort();
-            }
-            break;
-        case SAI_API_HOSTIF:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    return task_success;
-                case SAI_STATUS_FAILURE:
-                    /*
-                     * Host interface maybe failed due to lane not available.
-                     * In some scenarios, like SONiC virtual machine, the invalid lane may be not enabled by VM configuration,
-                     * So just ignore the failure and report an error log.
-                     */
-                    return task_ignore;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    abort();
-            }
-        default:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-                    return task_success;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    abort();
-            }
-    }
-    return task_need_retry;
-}
-
-task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
-{
-    /*
-     * This function aims to provide coarse handling of failures in sairedis set
-     * operation (i.e., notify users by throwing excepions when failures happen).
-     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
-     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
-     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
-     * TODO: 1. Add general handling logic for specific statuses
-     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
-     *          in each orch.
-     *       3. Take the type of sai api into consideration.
-     */
-    if (status == SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
-        return task_success;
-    }
-
-    switch (api)
-    {
-        case SAI_API_PORT:
-            switch (status)
-            {
-                case SAI_STATUS_INVALID_ATTR_VALUE_0:
-                    /*
-                     * If user gives an invalid attribute value, no need to retry or exit orchagent, just fail the current task
-                     * and let user correct the configuration.
-                     */
-                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INVALID_ATTR_VALUE_0 in set operation, task failed, SAI API: %s, status: %s",
-                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    return task_failed;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
-                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    abort();
-            }
-        default:
-            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            abort();
-    }
-
-    return task_need_retry;
-}
-
-task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
-{
-    /*
-     * This function aims to provide coarse handling of failures in sairedis remove
-     * operation (i.e., notify users by throwing excepions when failures happen).
-     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
-     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
-     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
-     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
-     *          SAI_STATUS_ITEM_NOT_FOUND)
-     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
-     *          in each orch.
-     *       3. Take the type of sai api into consideration.
-     */
-    switch (status)
-    {
-        case SAI_STATUS_SUCCESS:
-            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
-            return task_success;
-        default:
-            SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            abort();
-    }
-    return task_need_retry;
-}
-
-task_process_status Orch::handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
-{
-    /*
-     * This function aims to provide coarse handling of failures in sairedis get
-     * operation (i.e., notify users by throwing excepions when failures happen).
-     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
-     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
-     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
-     * TODO: 1. Add general handling logic for specific statuses
-     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
-     *          in each orch.
-     *       3. Take the type of sai api into consideration.
-     */
-    switch (status)
-    {
-        case SAI_STATUS_SUCCESS:
-            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiGetStatus");
-            return task_success;
-        case SAI_STATUS_NOT_IMPLEMENTED:
-            SWSS_LOG_ERROR("Encountered failure in get operation due to the function is not implemented, exiting orchagent, SAI API: %s",
-                        sai_serialize_api(api).c_str());
-            throw std::logic_error("SAI get function not implemented");
-        default:
-            SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-    }
-    return task_failed;
-}
-
-bool Orch::parseHandleSaiStatusFailure(task_process_status status)
-{
-    /*
-     * This function parses task process status from SAI failure handling function to whether a retry is needed.
-     * Return value: true - no retry is needed.
-     *               false - retry is needed.
-     */
-    switch (status)
-    {
-        case task_need_retry:
-            return false;
-        case task_failed:
-            return true;
-        default:
-            SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
-    }
-    return true;
 }
 
 void Orch2::doTask(Consumer &consumer)
