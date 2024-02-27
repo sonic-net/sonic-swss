@@ -1140,6 +1140,11 @@ map<string, Port>& PortsOrch::getAllPorts()
     return m_portList;
 }
 
+unordered_set<string>& PortsOrch::getAllVlans()
+{
+    return m_vlanPorts;
+}
+
 bool PortsOrch::getPort(string alias, Port &p)
 {
     SWSS_LOG_ENTER();
@@ -5727,6 +5732,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     m_portList[vlan_alias] = vlan;
     m_port_ref_count[vlan_alias] = 0;
     saiOidToAlias[vlan_oid] =  vlan_alias;
+    m_vlanPorts.emplace(vlan_alias);
 
     return true;
 }
@@ -5793,6 +5799,7 @@ bool PortsOrch::removeVlan(Port vlan)
     saiOidToAlias.erase(vlan.m_vlan_info.vlan_oid);
     m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
+    m_vlanPorts.erase(vlan.m_alias);
 
     return true;
 }

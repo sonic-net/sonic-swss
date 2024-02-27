@@ -44,6 +44,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_table.cpp \
                 mock_hiredis.cpp \
                 mock_redisreply.cpp \
+                mock_sai_api.cpp \
                 bulker_ut.cpp \
                 portmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
@@ -55,6 +56,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
+                neighorch_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/lib/recorder.cpp \
