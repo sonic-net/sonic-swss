@@ -52,6 +52,11 @@
 #define PORT_ROLE_INB "Inb"
 #define PORT_ROLE_REC "Rec"
 
+#define PORT_PT_TIMESTAMP_TEMPLATE_1 "template1"
+#define PORT_PT_TIMESTAMP_TEMPLATE_2 "template2"
+#define PORT_PT_TIMESTAMP_TEMPLATE_3 "template3"
+#define PORT_PT_TIMESTAMP_TEMPLATE_4 "template4"
+
 #define PORT_ALIAS               "alias"
 #define PORT_INDEX               "index"
 #define PORT_LANES               "lanes"
@@ -86,3 +91,5 @@
 #define PORT_ROLE                "role"
 #define PORT_ADMIN_STATUS        "admin_status"
 #define PORT_DESCRIPTION         "description"
+#define PORT_PT_INTF_ID            "pt_interface_id"
+#define PORT_PT_TIMESTAMP_TEMPLATE "pt_timestamp_template"

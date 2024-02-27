@@ -202,6 +202,16 @@ public:
         bool is_set = false;
     } description; // Port description
 
+    struct {
+        std::uint16_t value;
+        bool is_set = false;
+    } pt_intf_id; // Port interface ID for Path Tracing
+
+    struct {
+        sai_port_path_tracing_timestamp_type_t value;
+        bool is_set = false;
+    } pt_timestamp_template; // Port timestamp template for Path Tracing
+
     std::string key;
     std::string op;
 

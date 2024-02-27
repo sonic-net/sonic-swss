@@ -305,6 +305,72 @@ class TestPort(object):
         expected_fields = {"SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE":"false"}
         adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
+    def test_PortPtDefaultTimestampTemplate(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # set PT on the port
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("pt_interface_id", "129")])
+        tbl.set("Ethernet8", fvs)
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "pt_interface_id":
+                assert fv[1] == "129"
+            if fv[0] == "pt_timestamp_template":
+                assert fv[1] == "template3"
+
+        # Check ASIC DB
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        # get PT Interface ID and validate it to be 129
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet8"])
+        assert status == True
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_INTF":
+                assert fv[1] == "129"
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE":
+                assert fv[1] == "SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23"
+
+    def test_PortPtNonDefaultTimestampTemplate(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # set PT on the port
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("pt_interface_id", "129"), ("pt_timestamp_template", "template2")])
+        tbl.set("Ethernet8", fvs)
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "pt_interface_id":
+                assert fv[1] == "129"
+            if fv[0] == "pt_timestamp_template":
+                assert fv[1] == "template2"
+
+        # Check ASIC DB
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        # get PT Interface ID and validate it to be 129
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet8"])
+        assert status == True
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_INTF":
+                assert fv[1] == "129"
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE":
+                assert fv[1] == "SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19"
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

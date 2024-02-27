@@ -107,6 +107,41 @@ namespace portsorch_test
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
 
+    vector<sai_object_type_t> supported_sai_objects = {
+        SAI_OBJECT_TYPE_PORT,
+        SAI_OBJECT_TYPE_LAG,
+        SAI_OBJECT_TYPE_TAM,
+        SAI_OBJECT_TYPE_TAM_INT,
+        SAI_OBJECT_TYPE_TAM_COLLECTOR,
+        SAI_OBJECT_TYPE_TAM_REPORT,
+        SAI_OBJECT_TYPE_TAM_TRANSPORT,
+        SAI_OBJECT_TYPE_TAM_TELEMETRY,
+        SAI_OBJECT_TYPE_TAM_EVENT_THRESHOLD
+    };
+
+    sai_status_t _ut_stub_sai_get_switch_attribute(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        sai_status_t status;
+        if (attr_count == 1 && attr_list[0].id == SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST)
+        {
+            uint32_t i;
+            for (i = 0; i < attr_list[0].value.s32list.count && i < supported_sai_objects.size(); i++)
+            {
+                attr_list[0].value.s32list.list[i] = supported_sai_objects[i];
+            }
+            attr_list[0].value.s32list.count = i;
+            status = SAI_STATUS_SUCCESS;
+        }
+        else
+        {
+            status = pold_sai_switch_api->get_switch_attribute(switch_id, attr_count, attr_list);
+        }
+        return status;
+    }
+
     uint32_t *_sai_syncd_notifications_count;
     int32_t *_sai_syncd_notification_event;
     uint32_t _sai_switch_dlr_packet_action_count;
@@ -147,6 +182,7 @@ namespace portsorch_test
         ut_sai_switch_api = *sai_switch_api;
         pold_sai_switch_api = sai_switch_api;
         ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
+        ut_sai_switch_api.get_switch_attribute = _ut_stub_sai_get_switch_attribute;
         sai_switch_api = &ut_sai_switch_api;
     }
 
@@ -323,7 +359,9 @@ namespace portsorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
 
+            _hook_sai_switch_api();
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            _unhook_sai_switch_api();
 
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
@@ -952,6 +990,329 @@ namespace portsorch_test
         ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
         ASSERT_EQ(gPortsOrch->m_queueInfo.find(queue_id), gPortsOrch->m_queueInfo.end());
         _unhook_sai_queue_api();
+    }
+
+    TEST_F(PortsOrchTest, PortPTConfigDefaultTimestampTemplate)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Port p;
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Get SAI default ports to populate DB
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet8", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Enable Path Tracing on Ethernet8 with Interface ID 128 and default Timestamp Template
+        kfvList = {{
+            "Ethernet8",
+            SET_COMMAND, {
+                { "pt_interface_id", "128" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet8", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 128);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Disable Path Tracing on Ethernet8
+        kfvList = {{
+            "Ethernet8",
+            SET_COMMAND, {
+                { "pt_interface_id", "None" },
+                { "pt_timestamp_template", "None" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet8", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+    }
+
+    TEST_F(PortsOrchTest, PortPTConfigNonDefaultTimestampTemplate)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Port p;
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Enable Path Tracing on Ethernet9 with Interface ID 129 and Timestamp Template template2
+        kfvList = {{
+            "Ethernet9",
+            SET_COMMAND, {
+                { "pt_interface_id",       "129"       },
+                { "pt_timestamp_template", "template2" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 129);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19);
+
+        // Disable Path Tracing on Ethernet9
+        kfvList = {{
+            "Ethernet9",
+            SET_COMMAND, {
+                { "pt_interface_id", "None" },
+                { "pt_timestamp_template", "None" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+    }
+
+    TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceID)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Port p;
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Enable Path Tracing on Ethernet9 with Interface ID 4096 (INVALID) and Timestamp Template template2
+        kfvList = {{
+            "Ethernet9",
+            SET_COMMAND, {
+                { "pt_interface_id",       "4096"      },
+                { "pt_timestamp_template", "template2" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        // We provided an invalid Path Tracing Interface ID, therefore we expect PortsOrch rejects the port
+        // configuration and Path Tracing remains disabled (i.e., Tracing Interface ID should be 0)
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+    }
+
+    TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceTimestampTemplate)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Port p;
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Enable Path Tracing on Ethernet9 with Interface ID 129 and Timestamp Template template5 (INVALID)
+        kfvList = {{
+            "Ethernet9",
+            SET_COMMAND, {
+                { "pt_interface_id",       "129"      },
+                { "pt_timestamp_template", "template5" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        // We provided an invalid Timestamp Template, therefore we expect PortsOrch rejects the port
+        // configuration and Path Tracing remains disabled (i.e., Tracing Interface ID should be 0)
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
     }
 
     /**
