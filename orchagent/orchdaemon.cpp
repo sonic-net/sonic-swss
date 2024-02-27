@@ -189,7 +189,12 @@ bool OrchDaemon::init()
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
-    gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
+    vector<table_name_with_pri_t> intf_tables = {
+        { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+        { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+    };
+
+    gIntfsOrch = new IntfsOrch(m_applDb, intf_tables, vrf_orch, m_chassisAppDb);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
 
     const int fgnhgorch_pri = 15;

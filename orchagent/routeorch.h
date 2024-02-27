@@ -217,7 +217,7 @@ public:
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
-    std::string getLinkLocalEui64Addr(void);
+    std::string getLinkLocalEui64Addr(const MacAddress &mac);
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
