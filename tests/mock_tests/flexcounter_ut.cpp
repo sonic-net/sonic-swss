@@ -18,7 +18,7 @@
 
 #include <sstream>
 
-extern redisReply *mockReply;
+extern bool gTraditionalFlexCounter;
 
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "60000"
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
@@ -135,16 +135,19 @@ namespace flexcounter_test
         {
             if (mode == "")
             {
+                // only 1 item: counter IDs
                 return true;
             }
             else
             {
+                // 1st item: counter ID, 2nd item: mode
                 return (fvField(entries[1]) == "mode") && (fvValue(entries[1]) == mode);
             }
         }
         else if (mode != "")
         {
-            return (fvField(entries[1]) == counter_field_name) && (fvField(entries[0]) == "mode") && (fvValue(entries[0]) == mode);
+            // 1st item: mode, 2nd item: counter ID
+            return (fvField(entries[0]) == "mode") && (fvValue(entries[0]) == mode) && (fvField(entries[1]) == counter_field_name);
         }
 
         return false;
@@ -379,7 +382,7 @@ namespace flexcounter_test
 
     TEST_F(FlexCounterTest, CounterTest)
     {
-        // Check flex counter database
+        // Check flex counter database after system initialization
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
@@ -547,9 +550,9 @@ namespace flexcounter_test
         sai_object_id_t oid;
         oid = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME])["test_pool"].m_saiObjectId;
         ASSERT_TRUE(checkFlexCounter("BUFFER_POOL_WATERMARK_STAT_COUNTER", oid, "BUFFER_POOL_COUNTER_ID_LIST"));
-        Port port;
-        gPortsOrch->getPort(ports.begin()->first, port);
-        oid = port.m_priority_group_ids[3];
+        Port firstPort;
+        gPortsOrch->getPort(ports.begin()->first, firstPort);
+        oid = firstPort.m_priority_group_ids[3];
         ASSERT_TRUE(checkFlexCounter("PG_DROP_STAT_COUNTER", oid,
                                      {
                                          {"PG_COUNTER_ID_LIST",
@@ -563,7 +566,7 @@ namespace flexcounter_test
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES"
                                          }
                                      }));
-        oid = port.m_queue_ids[3];
+        oid = firstPort.m_queue_ids[3];
         ASSERT_TRUE(checkFlexCounter("QUEUE_WATERMARK_STAT_COUNTER", oid,
                                      {
                                          {"QUEUE_COUNTER_ID_LIST",
@@ -577,7 +580,7 @@ namespace flexcounter_test
                                           "SAI_QUEUE_STAT_BYTES,SAI_QUEUE_STAT_PACKETS"
                                          }
                                      }));
-        oid = port.m_port_id;
+        oid = firstPort.m_port_id;
         ASSERT_TRUE(checkFlexCounter("PORT_BUFFER_DROP_STAT", oid,
                                      {
                                          {"PORT_COUNTER_ID_LIST",
@@ -589,7 +592,7 @@ namespace flexcounter_test
 
         // create a routing interface
         std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"}}});
+        entries.push_back({firstPort.m_alias, "SET", { {"mtu", "9100"}}});
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
@@ -609,10 +612,120 @@ namespace flexcounter_test
 
         // remove the dependency, expect delete and create a new one
         entries.clear();
-        entries.push_back({"Ethernet0", "DEL", { {} }});
+        entries.push_back({firstPort.m_alias, "DEL", { {} }});
+        consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
         // Check flex counter database
         ASSERT_TRUE(!checkFlexCounter(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, rifOid, RIF_COUNTER_ID_LIST));
+
+        // PFC watchdog counter test
+        vector<string> pfc_wd_tables = {
+            CFG_PFC_WD_TABLE_NAME
+        };
+
+        static const vector<sai_port_stat_t> portStatIds =
+        {
+            SAI_PORT_STAT_PFC_0_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_1_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_2_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_4_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_5_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_6_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_7_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_0_RX_PKTS,
+            SAI_PORT_STAT_PFC_1_RX_PKTS,
+            SAI_PORT_STAT_PFC_2_RX_PKTS,
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+            SAI_PORT_STAT_PFC_4_RX_PKTS,
+            SAI_PORT_STAT_PFC_5_RX_PKTS,
+            SAI_PORT_STAT_PFC_6_RX_PKTS,
+            SAI_PORT_STAT_PFC_7_RX_PKTS,
+        };
+
+        static const vector<sai_queue_stat_t> queueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+        };
+
+        static const vector<sai_queue_attr_t> queueAttrIds =
+        {
+            SAI_QUEUE_ATTR_PAUSE_STATUS,
+        };
+
+        gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler> = new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+            m_config_db.get(),
+            pfc_wd_tables,
+            portStatIds,
+            queueStatIds,
+            queueAttrIds,
+            100);
+        gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>->m_platform = MLNX_PLATFORM_SUBSTRING;
+
+            vector<string> qos_tables = {
+                CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
+                CFG_SCHEDULER_TABLE_NAME,
+                CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+                CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME,
+                CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
+                CFG_QUEUE_TABLE_NAME,
+                CFG_PORT_QOS_MAP_TABLE_NAME,
+                CFG_WRED_PROFILE_TABLE_NAME,
+                CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+                CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+                CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
+                CFG_DSCP_TO_FC_MAP_TABLE_NAME,
+                CFG_EXP_TO_FC_MAP_TABLE_NAME,
+                CFG_TC_TO_DSCP_MAP_TABLE_NAME
+            };
+            gQosOrch = new QosOrch(m_config_db.get(), qos_tables);
+        entries.clear();
+	entries.push_back({firstPort.m_alias, "SET",
+			    {
+			      {"pfc_enable", "3,4"},
+			      {"pfcwd_sw_enable", "3,4"}
+			  }});
+        auto portQosMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        portQosMapConsumer->addToSync(entries);
+        entries.clear();
+	static_cast<Orch *>(gQosOrch)->doTask();
+
+        // create pfcwd entry for first port with drop action
+//	sai_packet_action_t packet_action = SAI_PACKET_ACTION_DROP;
+        entries.clear();
+	entries.push_back({"GLOBAL", "SET",
+			  {
+			    {"POLL_INTERVAL", "200"},
+			  }});
+	entries.push_back({firstPort.m_alias, "SET",
+			  {
+			    {"action", "drop"},
+			    {"detection_time", "200"},
+			    {"restoration_time", "200"}
+			  }});
+
+        auto PfcwdConsumer = dynamic_cast<Consumer *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>->getExecutor(CFG_PFC_WD_TABLE_NAME));
+	PfcwdConsumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>)->doTask();
+
+        ASSERT_TRUE(checkFlexCounterGroup("PFC_WD",
+                                          {
+                                              {"POLL_INTERVAL", "200"},
+                                          }));
+
+        ASSERT_TRUE(checkFlexCounter("PFC_WD", firstPort.m_port_id,
+                                     {
+                                         {"PORT_COUNTER_ID_LIST", "SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION_US,SAI_PORT_STAT_PFC_4_RX_PAUSE_DURATION_US,SAI_PORT_STAT_PFC_3_RX_PKTS,SAI_PORT_STAT_PFC_4_RX_PKTS"}
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter("PFC_WD", firstPort.m_queue_ids[3],
+                                     {
+                                         {"QUEUE_COUNTER_ID_LIST", "SAI_QUEUE_STAT_PACKETS,SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES"},
+                                         {"QUEUE_ATTR_ID_LIST", "SAI_QUEUE_ATTR_PAUSE_STATUS"}
+                                     }));
     }
 }
