@@ -794,6 +794,9 @@ class VnetVxlanVrfTunnel(object):
             expected_attr = { 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
             check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
 
+            expected_attr = { 'SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
+            check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
+
         check_linux_intf_arp_proxy(dvs, intf_name)
 
         self.rifs.add(new_rif)
