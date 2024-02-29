@@ -1,5 +1,4 @@
-extern "C"
-{
+extern "C" {
 #include "sai.h"
 }
 
@@ -12,686 +11,475 @@ extern "C"
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS 60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
-PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
-                     DBConnector *chassisAppDb)
-    : Orch(db, tableNames), m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
+PortsOrch::PortsOrch(DBConnector* db, DBConnector* stateDb,
+                     vector<table_name_with_pri_t>& tableNames,
+                     DBConnector* chassisAppDb)
+    : Orch(db, tableNames),
+      m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
       port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                         PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
-      port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ,
-                                    PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
+      port_buffer_drop_stat_manager(
+          PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ,
+          PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
       queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
-                         QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
-{
+                         QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true) {}
+
+bool PortsOrch::allPortsReady() { return true; }
+
+bool PortsOrch::isInitDone() { return true; }
+
+bool PortsOrch::isConfigDone() { return true; }
+
+bool PortsOrch::isPortAdminUp(const string& alias) { return true; }
+
+std::map<string, Port>& PortsOrch::getAllPorts() { return m_portList; }
+
+bool PortsOrch::bake() { return true; }
+
+void PortsOrch::cleanPortTable(const vector<string>& keys) {}
+
+bool PortsOrch::getBridgePort(sai_object_id_t id, Port& port) { return true; }
+
+bool PortsOrch::setBridgePortLearningFDB(
+    Port& port, sai_bridge_port_fdb_learning_mode_t mode) {
+  return true;
 }
 
-bool PortsOrch::allPortsReady()
-{
-    return true;
-}
-
-bool PortsOrch::isInitDone()
-{
-    return true;
-}
-
-bool PortsOrch::isConfigDone()
-{
-    return true;
-}
-
-bool PortsOrch::isPortAdminUp(const string &alias)
-{
-    return true;
-}
-
-std::map<string, Port> &PortsOrch::getAllPorts()
-{
-    return m_portList;
-}
-
-bool PortsOrch::bake()
-{
-    return true;
-}
-
-void PortsOrch::cleanPortTable(const vector<string> &keys)
-{
-}
-
-bool PortsOrch::getBridgePort(sai_object_id_t id, Port &port)
-{
-    return true;
-}
-
-bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
-{
-    return true;
-}
-
-bool PortsOrch::getPort(string alias, Port &port)
-{
-    if (m_portList.find(alias) == m_portList.end())
-    {
-        return false;
-    }
-    port = m_portList[alias];
-    return true;
-}
-
-bool PortsOrch::getPort(sai_object_id_t id, Port &port)
-{
-    for (const auto &p : m_portList)
-    {
-        if (p.second.m_port_id == id)
-        {
-            port = p.second;
-            return true;
-        }
-    }
+bool PortsOrch::getPort(string alias, Port& port) {
+  if (m_portList.find(alias) == m_portList.end()) {
     return false;
+  }
+  port = m_portList[alias];
+  return true;
 }
 
-void PortsOrch::increasePortRefCount(const string &alias)
-{
+bool PortsOrch::getPort(sai_object_id_t id, Port& port) {
+  for (const auto& p : m_portList) {
+    if (p.second.m_port_id == id) {
+      port = p.second;
+      return true;
+    }
+  }
+  return false;
 }
 
-void PortsOrch::decreasePortRefCount(const string &alias)
-{
-}
+void PortsOrch::increasePortRefCount(const string& alias) {}
 
-bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port)
-{
-    return true;
-}
+void PortsOrch::decreasePortRefCount(const string& alias) {}
 
-void PortsOrch::setPort(string alias, Port port)
-{
-    m_portList[alias] = port;
+bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id,
+                                      Port& port) {
+  return true;
 }
 
-void PortsOrch::getCpuPort(Port &port)
-{
-}
+void PortsOrch::setPort(string alias, Port port) { m_portList[alias] = port; }
 
-bool PortsOrch::getInbandPort(Port &port)
-{
-    return true;
-}
+void PortsOrch::getCpuPort(Port& port) {}
 
-bool PortsOrch::getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan)
-{
-    return true;
-}
+bool PortsOrch::getInbandPort(Port& port) { return true; }
 
-bool PortsOrch::setHostIntfsOperStatus(const Port &port, bool up) const
-{
-    return true;
+bool PortsOrch::getVlanByVlanId(sai_vlan_id_t vlan_id, Port& vlan) {
+  return true;
 }
 
-void PortsOrch::updateDbPortOperStatus(const Port &port, sai_port_oper_status_t status) const
-{
+bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool up) const {
+  return true;
 }
 
-bool PortsOrch::createVlanHostIntf(Port &vl, string hostif_name)
-{
-    return true;
-}
+void PortsOrch::updateDbPortOperStatus(const Port& port,
+                                       sai_port_oper_status_t status) const {}
 
-bool PortsOrch::removeVlanHostIntf(Port vl)
-{
-    return true;
+bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name) {
+  return true;
 }
 
-bool PortsOrch::createBindAclTableGroup(sai_object_id_t port_oid, sai_object_id_t acl_table_oid,
-                                        sai_object_id_t &group_oid, acl_stage_type_t acl_stage)
-{
-    return true;
-}
+bool PortsOrch::removeVlanHostIntf(Port vl) { return true; }
 
-bool PortsOrch::unbindRemoveAclTableGroup(sai_object_id_t port_oid, sai_object_id_t acl_table_oid,
-                                          acl_stage_type_t acl_stage)
-{
-    return true;
+bool PortsOrch::createBindAclTableGroup(sai_object_id_t port_oid,
+                                        sai_object_id_t acl_table_oid,
+                                        sai_object_id_t& group_oid,
+                                        acl_stage_type_t acl_stage) {
+  return true;
 }
 
-bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid,
-                             acl_stage_type_t acl_stage)
-{
-    return true;
+bool PortsOrch::unbindRemoveAclTableGroup(sai_object_id_t port_oid,
+                                          sai_object_id_t acl_table_oid,
+                                          acl_stage_type_t acl_stage) {
+  return true;
 }
 
-bool PortsOrch::unbindAclTable(sai_object_id_t port_oid, sai_object_id_t acl_table_oid,
-                               sai_object_id_t acl_group_member_oid, acl_stage_type_t acl_stage)
-{
-    return true;
+bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid,
+                             sai_object_id_t& group_member_oid,
+                             acl_stage_type_t acl_stage) {
+  return true;
 }
 
-bool PortsOrch::bindUnbindAclTableGroup(Port &port, bool ingress, bool bind)
-{
-    return true;
+bool PortsOrch::unbindAclTable(sai_object_id_t port_oid,
+                               sai_object_id_t acl_table_oid,
+                               sai_object_id_t acl_group_member_oid,
+                               acl_stage_type_t acl_stage) {
+  return true;
 }
 
-bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
-{
-    return true;
+bool PortsOrch::bindUnbindAclTableGroup(Port& port, bool ingress, bool bind) {
+  return true;
 }
 
-bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
-{
-    return true;
+bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t* pfc_bitmask) {
+  return true;
 }
 
-void PortsOrch::generateQueueMap(std::map<string, FlexCounterQueueStates> queuesStateVector)
-{
+bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask) {
+  return true;
 }
 
-void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq)
-{
-}
+void PortsOrch::generateQueueMap(
+    std::map<string, FlexCounterQueueStates> queuesStateVector) {}
 
-void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
-{
-}
+void PortsOrch::generateQueueMapPerPort(const Port& port,
+                                        FlexCounterQueueStates& queuesState,
+                                        bool voq) {}
 
-void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
-{
+void PortsOrch::createPortBufferQueueCounters(const Port& port, string queues) {
 }
 
-void PortsOrch::generatePriorityGroupMap(std::map<string, FlexCounterPgStates> pgsStateVector)
-{
+void PortsOrch::removePortBufferQueueCounters(const Port& port, string queues) {
 }
 
-void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState)
-{
-}
+void PortsOrch::generatePriorityGroupMap(
+    std::map<string, FlexCounterPgStates> pgsStateVector) {}
 
-void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
-{
+void PortsOrch::generatePriorityGroupMapPerPort(const Port& port,
+                                                FlexCounterPgStates& pgsState) {
 }
 
-void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
-{
-}
+void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs) {}
 
-void PortsOrch::generatePortCounterMap()
-{
-}
+void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs) {}
 
-void PortsOrch::generatePortBufferDropCounterMap()
-{
-}
+void PortsOrch::generatePortCounterMap() {}
 
-void PortsOrch::refreshPortStatus()
-{
-}
+void PortsOrch::generatePortBufferDropCounterMap() {}
 
-bool PortsOrch::removeAclTableGroup(const Port &p)
-{
-    return true;
-}
+void PortsOrch::refreshPortStatus() {}
 
-bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, const bool &adminUp,
-                           const uint32_t &mtu)
-{
-    return true;
-}
+bool PortsOrch::removeAclTableGroup(const Port& p) { return true; }
 
-bool PortsOrch::removeSubPort(const string &alias)
-{
-    return true;
+bool PortsOrch::addSubPort(Port& port, const string& alias, const string& vlan,
+                           const bool& adminUp, const uint32_t& mtu) {
+  return true;
 }
 
-bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool status)
-{
-    return true;
-}
+bool PortsOrch::removeSubPort(const string& alias) { return true; }
 
-void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
-{
+bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool status) {
+  return true;
 }
 
-void PortsOrch::updateChildPortsMtu(const Port &p, const uint32_t mtu)
-{
-}
+void PortsOrch::getLagMember(Port& lag, vector<Port>& portv) {}
 
-bool PortsOrch::addTunnel(string tunnel, sai_object_id_t, bool learning)
-{
-    return true;
-}
+void PortsOrch::updateChildPortsMtu(const Port& p, const uint32_t mtu) {}
 
-bool PortsOrch::removeTunnel(Port tunnel)
-{
-    return true;
+bool PortsOrch::addTunnel(string tunnel, sai_object_id_t, bool learning) {
+  return true;
 }
 
-bool PortsOrch::addBridgePort(Port &port)
-{
-    return true;
-}
+bool PortsOrch::removeTunnel(Port tunnel) { return true; }
 
-bool PortsOrch::removeBridgePort(Port &port)
-{
-    return true;
-}
+bool PortsOrch::addBridgePort(Port& port) { return true; }
 
-bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, string end_point_ip)
-{
-    return true;
-}
+bool PortsOrch::removeBridgePort(Port& port) { return true; }
 
-bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
-{
-    return true;
+bool PortsOrch::addVlanMember(Port& vlan, Port& port, string& tagging_mode,
+                              string end_point_ip) {
+  return true;
 }
 
-bool PortsOrch::isVlanMember(Port &vlan, Port &port, string end_point_ip)
-{
-    return true;
+bool PortsOrch::removeVlanMember(Port& vlan, Port& port, string end_point_ip) {
+  return true;
 }
 
-bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
-{
-    return true;
+bool PortsOrch::isVlanMember(Port& vlan, Port& port, string end_point_ip) {
+  return true;
 }
 
-bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip)
-{
-    return true;
+bool PortsOrch::addVlanFloodGroups(Port& vlan, Port& port,
+                                   string end_point_ip) {
+  return true;
 }
 
-void PortsOrch::increaseBridgePortRefCount(Port &port)
-{
+bool PortsOrch::removeVlanEndPointIp(Port& vlan, Port& port,
+                                     string end_point_ip) {
+  return true;
 }
 
-void PortsOrch::decreaseBridgePortRefCount(Port &port)
-{
-}
+void PortsOrch::increaseBridgePortRefCount(Port& port) {}
 
-bool PortsOrch::getBridgePortReferenceCount(Port &port)
-{
-    return true;
-}
+void PortsOrch::decreaseBridgePortRefCount(Port& port) {}
 
-bool PortsOrch::isInbandPort(const string &alias)
-{
-    return true;
-}
+bool PortsOrch::getBridgePortReferenceCount(Port& port) { return true; }
 
-bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
-{
-    return true;
-}
+bool PortsOrch::isInbandPort(const string& alias) { return true; }
 
-bool PortsOrch::getRecircPort(Port &p, Port::Role role)
-{
-    return true;
-}
+bool PortsOrch::setVoqInbandIntf(string& alias, string& type) { return true; }
 
-const gearbox_phy_t *PortsOrch::getGearboxPhy(const Port &port)
-{
-    return nullptr;
-}
+bool PortsOrch::getRecircPort(Port& p, Port::Role role) { return true; }
 
-bool PortsOrch::getPortIPG(sai_object_id_t port_id, uint32_t &ipg)
-{
-    return true;
+const gearbox_phy_t* PortsOrch::getGearboxPhy(const Port& port) {
+  return nullptr;
 }
 
-bool PortsOrch::setPortIPG(sai_object_id_t port_id, uint32_t ipg)
-{
-    return true;
+bool PortsOrch::getPortIPG(sai_object_id_t port_id, uint32_t& ipg) {
+  return true;
 }
 
-bool PortsOrch::getPortOperStatus(const Port &port, sai_port_oper_status_t &status) const
-{
-    status = port.m_oper_status;
-    return true;
+bool PortsOrch::setPortIPG(sai_object_id_t port_id, uint32_t ipg) {
+  return true;
 }
 
-std::string PortsOrch::getQueueWatermarkFlexCounterTableKey(std::string s)
-{
-    return "";
+bool PortsOrch::getPortOperStatus(const Port& port,
+                                  sai_port_oper_status_t& status) const {
+  status = port.m_oper_status;
+  return true;
 }
 
-std::string PortsOrch::getPriorityGroupWatermarkFlexCounterTableKey(std::string s)
-{
-    return "";
+std::string PortsOrch::getQueueWatermarkFlexCounterTableKey(std::string s) {
+  return "";
 }
 
-std::string PortsOrch::getPriorityGroupDropPacketsFlexCounterTableKey(std::string s)
-{
-    return "";
+std::string PortsOrch::getPriorityGroupWatermarkFlexCounterTableKey(
+    std::string s) {
+  return "";
 }
 
-std::string PortsOrch::getPortRateFlexCounterTableKey(std::string s)
-{
-    return "";
+std::string PortsOrch::getPriorityGroupDropPacketsFlexCounterTableKey(
+    std::string s) {
+  return "";
 }
 
-void PortsOrch::doTask()
-{
+std::string PortsOrch::getPortRateFlexCounterTableKey(std::string s) {
+  return "";
 }
 
-void PortsOrch::doTask(Consumer &consumer)
-{
-}
+void PortsOrch::doTask() {}
 
-void PortsOrch::doPortTask(Consumer &consumer)
-{
-}
+void PortsOrch::doTask(Consumer& consumer) {}
 
-void PortsOrch::doVlanTask(Consumer &consumer)
-{
-}
+void PortsOrch::doPortTask(Consumer& consumer) {}
 
-void PortsOrch::doVlanMemberTask(Consumer &consumer)
-{
-}
+void PortsOrch::doVlanTask(Consumer& consumer) {}
 
-void PortsOrch::doLagTask(Consumer &consumer)
-{
-}
+void PortsOrch::doVlanMemberTask(Consumer& consumer) {}
 
-void PortsOrch::doLagMemberTask(Consumer &consumer)
-{
-}
+void PortsOrch::doLagTask(Consumer& consumer) {}
 
-void PortsOrch::doTask(NotificationConsumer &consumer)
-{
-}
+void PortsOrch::doLagMemberTask(Consumer& consumer) {}
 
-void PortsOrch::removePortFromLanesMap(string alias)
-{
-}
+void PortsOrch::doTask(NotificationConsumer& consumer) {}
 
-void PortsOrch::removePortFromPortListMap(sai_object_id_t port_id)
-{
-}
+void PortsOrch::removePortFromLanesMap(string alias) {}
 
-void PortsOrch::removeDefaultVlanMembers()
-{
-}
+void PortsOrch::removePortFromPortListMap(sai_object_id_t port_id) {}
 
-void PortsOrch::removeDefaultBridgePorts()
-{
-}
+void PortsOrch::removeDefaultVlanMembers() {}
 
-bool PortsOrch::initializePort(Port &port)
-{
-    return true;
-}
+void PortsOrch::removeDefaultBridgePorts() {}
 
-void PortsOrch::initializePriorityGroups(Port &port)
-{
-}
+bool PortsOrch::initializePort(Port& port) { return true; }
 
-void PortsOrch::initializePortBufferMaximumParameters(Port &port)
-{
-}
+void PortsOrch::initializePriorityGroups(Port& port) {}
 
-void PortsOrch::initializeQueues(Port &port)
-{
-}
+void PortsOrch::initializePortBufferMaximumParameters(Port& port) {}
 
-bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id)
-{
-    return true;
-}
+void PortsOrch::initializeQueues(Port& port) {}
 
-bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
-{
-    return true;
+bool PortsOrch::addHostIntfs(Port& port, string alias,
+                             sai_object_id_t& host_intfs_id) {
+  return true;
 }
 
-bool PortsOrch::setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode)
-{
-    return true;
+bool PortsOrch::setHostIntfsStripTag(Port& port, sai_hostif_vlan_tag_t strip) {
+  return true;
 }
 
-bool PortsOrch::addVlan(string vlan)
-{
-    return true;
+bool PortsOrch::setBridgePortLearnMode(
+    Port& port, sai_bridge_port_fdb_learning_mode_t learn_mode) {
+  return true;
 }
 
-bool PortsOrch::removeVlan(Port vlan)
-{
-    return true;
-}
+bool PortsOrch::addVlan(string vlan) { return true; }
 
-bool PortsOrch::addLag(string lag, uint32_t spa_id, int32_t switch_id)
-{
-    return true;
-}
+bool PortsOrch::removeVlan(Port vlan) { return true; }
 
-bool PortsOrch::removeLag(Port lag)
-{
-    return true;
+bool PortsOrch::addLag(string lag, uint32_t spa_id, int32_t switch_id) {
+  return true;
 }
 
-bool PortsOrch::setLagTpid(sai_object_id_t id, sai_uint16_t tpid)
-{
-    return true;
-}
+bool PortsOrch::removeLag(Port lag) { return true; }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
-{
-    return true;
+bool PortsOrch::setLagTpid(sai_object_id_t id, sai_uint16_t tpid) {
+  return true;
 }
 
-bool PortsOrch::removeLagMember(Port &lag, Port &port)
-{
-    return true;
+bool PortsOrch::addLagMember(Port& lag, Port& port, string member_status) {
+  return true;
 }
 
-bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
-{
-    return true;
-}
+bool PortsOrch::removeLagMember(Port& lag, Port& port) { return true; }
 
-bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribution)
-{
-    return true;
+bool PortsOrch::setCollectionOnLagMember(Port& lagMember,
+                                         bool enableCollection) {
+  return true;
 }
 
-sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
-{
-    return SAI_STATUS_SUCCESS;
+bool PortsOrch::setDistributionOnLagMember(Port& lagMember,
+                                           bool enableDistribution) {
+  return true;
 }
 
-bool PortsOrch::initPort(const PortConfig &port)
-{
-    return true;
+sai_status_t PortsOrch::removePort(sai_object_id_t port_id) {
+  return SAI_STATUS_SUCCESS;
 }
 
-void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
-{
-}
+bool PortsOrch::initPort(const PortConfig& port) { return true; }
 
-bool PortsOrch::setPortAdminStatus(Port &port, bool up)
-{
-    return true;
-}
+void PortsOrch::deInitPort(string alias, sai_object_id_t port_id) {}
 
-bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
-{
-    return true;
-}
+bool PortsOrch::setPortAdminStatus(Port& port, bool up) { return true; }
 
-bool PortsOrch::setPortMtu(const Port &port, sai_uint32_t mtu)
-{
-    return true;
+bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool& up) {
+  return true;
 }
 
-bool PortsOrch::setPortTpid(Port &port, sai_uint16_t tpid)
-{
-    return true;
-}
+bool PortsOrch::setPortMtu(const Port& port, sai_uint32_t mtu) { return true; }
 
-bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
-{
-    return true;
-}
+bool PortsOrch::setPortTpid(Port& port, sai_uint16_t tpid) { return true; }
 
-bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
-{
-    return true;
-}
+bool PortsOrch::setPortPvid(Port& port, sai_uint32_t pvid) { return true; }
 
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool override_fec)
-{
-    return true;
-}
+bool PortsOrch::getPortPvid(Port& port, sai_uint32_t& pvid) { return true; }
 
-bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode)
-{
-    return true;
+bool PortsOrch::setPortFec(Port& port, sai_port_fec_mode_t fec_mode,
+                           bool override_fec) {
+  return true;
 }
 
-bool PortsOrch::setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t pfc_asym)
-{
-    return true;
+bool PortsOrch::isFecModeSupported(const Port& port,
+                                   sai_port_fec_mode_t fec_mode) {
+  return true;
 }
 
-bool PortsOrch::getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id)
-{
-    return true;
+bool PortsOrch::setPortPfcAsym(Port& port,
+                               sai_port_priority_flow_control_mode_t pfc_asym) {
+  return true;
 }
 
-bool PortsOrch::setBridgePortAdminStatus(sai_object_id_t id, bool up)
-{
-    return true;
+bool PortsOrch::getDestPortId(sai_object_id_t src_port_id,
+                              dest_port_type_t port_type,
+                              sai_object_id_t& des_port_id) {
+  return true;
 }
 
-bool PortsOrch::isSpeedSupported(const std::string &alias, sai_object_id_t port_id, sai_uint32_t speed)
-{
-    return true;
+bool PortsOrch::setBridgePortAdminStatus(sai_object_id_t id, bool up) {
+  return true;
 }
 
-void PortsOrch::getPortSupportedSpeeds(const std::string &alias, sai_object_id_t port_id,
-                                       PortSupportedSpeeds &supported_speeds)
-{
+bool PortsOrch::isSpeedSupported(const std::string& alias,
+                                 sai_object_id_t port_id, sai_uint32_t speed) {
+  return true;
 }
 
-void PortsOrch::initPortSupportedSpeeds(const std::string &alias, sai_object_id_t port_id)
-{
-}
+void PortsOrch::getPortSupportedSpeeds(const std::string& alias,
+                                       sai_object_id_t port_id,
+                                       PortSupportedSpeeds& supported_speeds) {}
 
-task_process_status PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
-{
-    return task_success;
-}
+void PortsOrch::initPortSupportedSpeeds(const std::string& alias,
+                                        sai_object_id_t port_id) {}
 
-bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
-{
-    return true;
+task_process_status PortsOrch::setPortSpeed(Port& port, sai_uint32_t speed) {
+  return task_success;
 }
 
-bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value, bool override_fec)
-{
-    return true;
+bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t& speed) {
+  return true;
 }
 
-bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value, bool override_fec)
-{
-    return true;
+bool PortsOrch::setGearboxPortsAttr(const Port& port, sai_port_attr_t id,
+                                    void* value, bool override_fec) {
+  return true;
 }
 
-task_process_status PortsOrch::setPortAdvSpeeds(Port &port, std::set<sai_uint32_t> &speed_list)
-{
-    return task_success;
+bool PortsOrch::setGearboxPortAttr(const Port& port, dest_port_type_t port_type,
+                                   sai_port_attr_t id, void* value,
+                                   bool override_fec) {
+  return true;
 }
 
-bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
-{
-    return true;
+task_process_status PortsOrch::setPortAdvSpeeds(
+    Port& port, std::set<sai_uint32_t>& speed_list) {
+  return task_success;
 }
 
-bool PortsOrch::isAutoNegEnabled(sai_object_id_t id)
-{
-    return true;
+bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string& type,
+                                     uint8_t& index) {
+  return true;
 }
 
-task_process_status PortsOrch::setPortAutoNeg(Port &port, bool autoneg)
-{
-    return task_success;
-}
+bool PortsOrch::isAutoNegEnabled(sai_object_id_t id) { return true; }
 
-task_process_status PortsOrch::setPortInterfaceType(Port &port, sai_port_interface_type_t interface_type)
-{
-    return task_success;
+task_process_status PortsOrch::setPortAutoNeg(Port& port, bool autoneg) {
+  return task_success;
 }
 
-task_process_status PortsOrch::setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types)
-{
-    return task_success;
+task_process_status PortsOrch::setPortInterfaceType(
+    Port& port, sai_port_interface_type_t interface_type) {
+  return task_success;
 }
 
-void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
-{
+task_process_status PortsOrch::setPortAdvInterfaceTypes(
+    Port& port, std::set<sai_port_interface_type_t>& interface_types) {
+  return task_success;
 }
 
-bool PortsOrch::getPortOperSpeed(const Port &port, sai_uint32_t &speed) const
-{
-    return true;
-}
+void PortsOrch::updatePortOperStatus(Port& port,
+                                     sai_port_oper_status_t status) {}
 
-void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
-{
+bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const {
+  return true;
 }
 
-void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values, int base)
-{
-}
+void PortsOrch::updateDbPortOperSpeed(Port& port, sai_uint32_t speed) {}
 
-void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
-{
+void PortsOrch::getPortSerdesVal(const std::string& s,
+                                 std::vector<uint32_t>& lane_values, int base) {
 }
 
-bool PortsOrch::getSaiAclBindPointType(Port::Type type, sai_acl_bind_point_type_t &sai_acl_bind_type)
-{
-    return true;
-}
+void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id) {}
 
-void PortsOrch::initGearbox()
-{
+bool PortsOrch::getSaiAclBindPointType(
+    Port::Type type, sai_acl_bind_point_type_t& sai_acl_bind_type) {
+  return true;
 }
 
-bool PortsOrch::initGearboxPort(Port &port)
-{
-    return true;
-}
+void PortsOrch::initGearbox() {}
 
-bool PortsOrch::getSystemPorts()
-{
-    return true;
-}
+bool PortsOrch::initGearboxPort(Port& port) { return true; }
 
-bool PortsOrch::addSystemPorts()
-{
-    return true;
-}
+bool PortsOrch::getSystemPorts() { return true; }
 
-void PortsOrch::voqSyncAddLag(Port &lag)
-{
-}
+bool PortsOrch::addSystemPorts() { return true; }
 
-void PortsOrch::voqSyncDelLag(Port &lag)
-{
-}
+void PortsOrch::voqSyncAddLag(Port& lag) {}
 
-void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port, string status)
-{
-}
+void PortsOrch::voqSyncDelLag(Port& lag) {}
 
-void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
-{
-}
+void PortsOrch::voqSyncAddLagMember(Port& lag, Port& port, string status) {}
 
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string &type, bool gearbox)
-{
-    return {};
-}
+void PortsOrch::voqSyncDelLagMember(Port& lag, Port& port) {}
 
-void PortsOrch::doTask(swss::SelectableTimer &timer)
-{
+std::unordered_set<std::string> PortsOrch::generateCounterStats(
+    const string& type, bool gearbox) {
+  return {};
 }
+
+void PortsOrch::doTask(swss::SelectableTimer& timer) {}
