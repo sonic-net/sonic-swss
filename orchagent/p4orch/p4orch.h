@@ -38,55 +38,53 @@ static const std::map<std::string, std::string> FixedTablesMap = {
     {"l3_admit_table", APP_P4RT_L3_ADMIT_TABLE_NAME},
     {"tunnel_table", APP_P4RT_TUNNEL_TABLE_NAME}};
 
-class P4Orch : public Orch {
- public:
-  P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
-         VRFOrch* vrfOrch, CoppOrch* coppOrch);
-  // Add ACL table to ACLRuleManager mapping in P4Orch.
-  bool addAclTableToManagerMapping(const std::string& acl_table_name);
-  // Remove the ACL table name to AclRuleManager mapping in P4Orch
-  bool removeAclTableToManagerMapping(const std::string& acl_table_name);
-  p4orch::AclTableManager* getAclTableManager();
-  p4orch::AclRuleManager* getAclRuleManager();
-  p4orch::WcmpManager* getWcmpManager();
-  GreTunnelManager* getGreTunnelManager();
-  TablesInfo* tablesinfo = NULL;
+class P4Orch : public Orch
+{
+  public:
+    P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOrch *vrfOrch, CoppOrch *coppOrch);
+    // Add ACL table to ACLRuleManager mapping in P4Orch.
+    bool addAclTableToManagerMapping(const std::string &acl_table_name);
+    // Remove the ACL table name to AclRuleManager mapping in P4Orch
+    bool removeAclTableToManagerMapping(const std::string &acl_table_name);
+    p4orch::AclTableManager *getAclTableManager();
+    p4orch::AclRuleManager *getAclRuleManager();
+    p4orch::WcmpManager *getWcmpManager();
+    GreTunnelManager *getGreTunnelManager();
+    TablesInfo *tablesinfo = NULL;
 
-  // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
-  std::unordered_map<std::string, ObjectManagerInterface*>
-      m_p4TableToManagerMap;
+    // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
+    std::unordered_map<std::string, ObjectManagerInterface *> m_p4TableToManagerMap;
 
- private:
-  void doTask(Consumer& consumer);
-  void doTask(swss::SelectableTimer& timer);
-  void doTask(swss::NotificationConsumer& consumer);
-  void handlePortStatusChangeNotification(const std::string& op,
-                                          const std::string& data);
+  private:
+    void doTask(Consumer &consumer);
+    void doTask(swss::SelectableTimer &timer);
+    void doTask(swss::NotificationConsumer &consumer);
+    void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
 
-  // P4 object manager request processing order.
-  std::vector<ObjectManagerInterface*> m_p4ManagerPrecedence;
+    // P4 object manager request processing order.
+    std::vector<ObjectManagerInterface *> m_p4ManagerPrecedence;
 
-  swss::SelectableTimer* m_aclCounterStatsTimer;
-  swss::SelectableTimer* m_extCounterStatsTimer;
-  P4OidMapper m_p4OidMapper;
-  std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
-  std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
-  std::unique_ptr<GreTunnelManager> m_greTunnelManager;
-  std::unique_ptr<NeighborManager> m_neighborManager;
-  std::unique_ptr<NextHopManager> m_nextHopManager;
-  std::unique_ptr<RouteManager> m_routeManager;
-  std::unique_ptr<p4orch::MirrorSessionManager> m_mirrorSessionManager;
-  std::unique_ptr<p4orch::AclTableManager> m_aclTableManager;
-  std::unique_ptr<p4orch::AclRuleManager> m_aclRuleManager;
-  std::unique_ptr<p4orch::WcmpManager> m_wcmpManager;
-  std::unique_ptr<L3AdmitManager> m_l3AdmitManager;
-  std::unique_ptr<ExtTablesManager> m_extTablesManager;
+    swss::SelectableTimer *m_aclCounterStatsTimer;
+    swss::SelectableTimer *m_extCounterStatsTimer;
+    P4OidMapper m_p4OidMapper;
+    std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
+    std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
+    std::unique_ptr<GreTunnelManager> m_greTunnelManager;
+    std::unique_ptr<NeighborManager> m_neighborManager;
+    std::unique_ptr<NextHopManager> m_nextHopManager;
+    std::unique_ptr<RouteManager> m_routeManager;
+    std::unique_ptr<p4orch::MirrorSessionManager> m_mirrorSessionManager;
+    std::unique_ptr<p4orch::AclTableManager> m_aclTableManager;
+    std::unique_ptr<p4orch::AclRuleManager> m_aclRuleManager;
+    std::unique_ptr<p4orch::WcmpManager> m_wcmpManager;
+    std::unique_ptr<L3AdmitManager> m_l3AdmitManager;
+    std::unique_ptr<ExtTablesManager> m_extTablesManager;
 
-  // Notification consumer for port state change
-  swss::NotificationConsumer* m_portStatusNotificationConsumer;
+    // Notification consumer for port state change
+    swss::NotificationConsumer *m_portStatusNotificationConsumer;
 
-  // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
-  ResponsePublisher m_publisher{"APPL_DB", /*bool buffered=*/true, /*db_write_thread=*/true};
+    // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
+    ResponsePublisher m_publisher{"APPL_DB", /*bool buffered=*/true, /*db_write_thread=*/true};
 
-  friend class p4orch::test::WcmpManagerTest;
+    friend class p4orch::test::WcmpManagerTest;
 };
