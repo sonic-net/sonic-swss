@@ -225,6 +225,7 @@ public:
     bool getRecircPort(Port &p, Port::Role role);
 
     const gearbox_phy_t* getGearboxPhy(const Port &port);
+    const map<int, sai_object_id_t>& getGearboxPhyOidMap();
 
     bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
@@ -309,6 +310,7 @@ private:
     map<int, gearbox_lane_t> m_gearboxLaneMap;
     map<int, gearbox_port_t> m_gearboxPortMap;
     map<sai_object_id_t, tuple<sai_object_id_t, sai_object_id_t>> m_gearboxPortListLaneMap;
+    map<int, sai_object_id_t> m_gearboxPhyOidMap;
 
     unordered_set<string> m_vlanPorts;
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;

@@ -287,7 +287,8 @@ void FlexCounterManager::disableFlexCounterGroup()
 void FlexCounterManager::setCounterIdList(
         const sai_object_id_t object_id,
         const CounterType counter_type,
-        const unordered_set<string>& counter_stats)
+        const unordered_set<string>& counter_stats,
+        const sai_object_id_t switch_id)
 {
     SWSS_LOG_ENTER();
 
@@ -321,7 +322,14 @@ void FlexCounterManager::setCounterIdList(
         counterParam.counter_field_name = counter_type_it->second.c_str();
         attr.value.ptr = &counterParam;
 
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (switch_id == SAI_NULL_OBJECT_ID)
+        {
+            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        }
+        else
+        {
+            sai_switch_api->set_switch_attribute(switch_id, &attr);
+        }
     }
     installed_counters.insert(object_id);
 
@@ -332,7 +340,7 @@ void FlexCounterManager::setCounterIdList(
 
 // clearCounterIdList clears all stats that are currently being polled from
 // the given object.
-void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
+void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id, const sai_object_id_t switch_id)
 {
     SWSS_LOG_ENTER();
 
@@ -359,7 +367,14 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
         counterParam.counter_key = key.c_str();
         attr.value.ptr = &counterParam;
 
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (switch_id == SAI_NULL_OBJECT_ID)
+        {
+            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        }
+        else
+        {
+            sai_switch_api->set_switch_attribute(switch_id, &attr);
+        }
     }
     installed_counters.erase(counter_it);
 

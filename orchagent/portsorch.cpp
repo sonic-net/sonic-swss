@@ -3320,10 +3320,10 @@ bool PortsOrch::initPort(const PortConfig &port)
                     auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
                     if (p.m_system_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
-                                CounterType::PORT, gbport_counter_stats);
+                                CounterType::PORT, gbport_counter_stats, p.m_switch_id);
                     if (p.m_line_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
-                                CounterType::PORT, gbport_counter_stats);
+                                CounterType::PORT, gbport_counter_stats, p.m_switch_id);
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
@@ -7660,10 +7660,10 @@ void PortsOrch::generatePortCounterMap()
                 CounterType::PORT, port_counter_stats);
         if (it.second.m_system_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
         if (it.second.m_line_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_line_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
     }
 
     m_isPortCounterMapGenerated = true;
@@ -8303,6 +8303,12 @@ void PortsOrch::initGearbox()
 
         m_gb_counter_db = shared_ptr<DBConnector>(new DBConnector("GB_COUNTERS_DB", 0));
         m_gbcounterTable = unique_ptr<Table>(new Table(m_gb_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+
+        std::map<int, gearbox_phy_t>::iterator it = m_gearboxPhyMap.begin();
+        while (it != m_gearboxPhyMap.end()) {
+            sai_deserialize_object_id(it->second.phy_oid, m_gearboxPhyOidMap[it->first]);
+            it++;
+        }
     }
 }
 
@@ -8632,6 +8638,11 @@ const gearbox_phy_t* PortsOrch::getGearboxPhy(const Port &port)
     }
 
     return &phy->second;
+}
+
+const map<int, sai_object_id_t>& PortsOrch::getGearboxPhyOidMap()
+{
+    return m_gearboxPhyOidMap;
 }
 
 bool PortsOrch::getPortIPG(sai_object_id_t port_id, uint32_t &ipg)

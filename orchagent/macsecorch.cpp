@@ -2352,16 +2352,16 @@ void MACsecOrch::installCounter(
     switch(counter_type)
     {
         case CounterType::MACSEC_SA_ATTR:
-            MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats, *ctx.get_switch_id());
             break;
 
         case CounterType::MACSEC_SA:
-            MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats, *ctx.get_switch_id());
             MACsecCountersMap(ctx).hset("", obj_name, sai_serialize_object_id(obj_id));
             break;
 
         case CounterType::MACSEC_FLOW:
-            MACsecFlowStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecFlowStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats, *ctx.get_switch_id());
             break;
 
         default:
@@ -2381,16 +2381,16 @@ void MACsecOrch::uninstallCounter(
     switch(counter_type)
     {
         case CounterType::MACSEC_SA_ATTR:
-            MACsecSaAttrStatManager(ctx).clearCounterIdList(obj_id);
+            MACsecSaAttrStatManager(ctx).clearCounterIdList(obj_id, *ctx.get_switch_id());
             break;
 
         case CounterType::MACSEC_SA:
-            MACsecSaStatManager(ctx).clearCounterIdList(obj_id);
+            MACsecSaStatManager(ctx).clearCounterIdList(obj_id, *ctx.get_switch_id());
             MACsecCountersMap(ctx).hdel("", obj_name);
             break;
 
         case CounterType::MACSEC_FLOW:
-            MACsecFlowStatManager(ctx).clearCounterIdList(obj_id);
+            MACsecFlowStatManager(ctx).clearCounterIdList(obj_id, *ctx.get_switch_id());
             break;
 
         default:

@@ -142,6 +142,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
                             {
+                                // This is buggy if there are more than one gearboxes on the system
+                                // ProducerTable/ConsumerTable is used to communicate between orchagent and syncd
+                                // However, for gearbox syncd daemons, the update will be consumed by the first daemon
+                                // The rest daemons will see nothing.
                                 m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
                             }
                         }
@@ -160,6 +164,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
                         attr.value.ptr = (void*)&flexCounterGroupParam;
                         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+                        auto &gbPhyOidMap =  gPortsOrch->getGearboxPhyOidMap();
+                        std::map<int, sai_object_id_t>::const_iterator it = gbPhyOidMap.begin();
+                        while (it != gbPhyOidMap.end()) {
+                            sai_switch_api->set_switch_attribute(it->second, &attr);
+                            it++;
+                        }
                     }
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
@@ -280,6 +291,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
                         attr.value.ptr = (void*)&flexCounterGroupParam;
                         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+                        auto &gbPhyOidMap = gPortsOrch->getGearboxPhyOidMap();
+                        std::map<int, sai_object_id_t>::const_iterator it = gbPhyOidMap.begin();
+                        while (it != gbPhyOidMap.end()) {
+                            sai_switch_api->set_switch_attribute(it->second, &attr);
+                            it++;
+                        }
                     }
                 }
                 else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
