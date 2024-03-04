@@ -5351,7 +5351,7 @@ bool PortsOrch::initializePort(Port &port)
             }
         }
     }
-    SWSS_LOG_NOTICE("Port %s with oper %s flap_count=%s", port.m_alias.c_str(), operStatus.c_str(), flapCount.c_str());
+    SWSS_LOG_INFO("Port %s with oper %s flap_count=%s", port.m_alias.c_str(), operStatus.c_str(), flapCount.c_str());
 
     /**
      * Create database port oper status as DOWN if attr missing
