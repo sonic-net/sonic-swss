@@ -509,6 +509,7 @@ namespace routeorch_test
         static_cast<Orch *>(gRouteOrch)->doTask();
 
         gMockResponsePublisher.reset();
+    }
 
     TEST_F(RouteOrchTest, RouteOrchTestInvalidEvpnRoute)
     {
