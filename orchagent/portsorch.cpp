@@ -3103,29 +3103,21 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("flap_count", std::to_string(port.m_flap_count));
     tuples.push_back(tuple);
-    m_portTable->set(port.m_alias, tuples);
-
+    
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
     if (pstatus == SAI_PORT_OPER_STATUS_DOWN)
     {
-        vector<FieldValueTuple> tuples;
-        auto now = std::chrono::system_clock::now();
-        std::time_t now_c = std::chrono::system_clock::to_time_t(now);
         FieldValueTuple tuple("last_down_time", std::ctime(&now_c));
         tuples.push_back(tuple);
-        m_portTable->set(port.m_alias, tuples);
-    }
-
-    if (pstatus == SAI_PORT_OPER_STATUS_UP) 
+    } 
+    else if (pstatus == SAI_PORT_OPER_STATUS_UP) 
     {
-        vector<FieldValueTuple> tuples;
-        auto now = std::chrono::system_clock::now();
-        std::time_t now_c = std::chrono::system_clock::to_time_t(now);
         FieldValueTuple tuple("last_up_time", std::ctime(&now_c));
         tuples.push_back(tuple);
-        m_portTable->set(port.m_alias, tuples);
     }
+    m_portTable->set(port.m_alias, tuples);
 }
-
 
 void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
