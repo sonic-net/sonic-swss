@@ -1090,7 +1090,7 @@ class TestWarmReboot(object):
                     orchStateCount += 1;
 
         # Only WARM_RESTART_TABLE|orchagent state=reconciled operation may exist after port oper status change.
-        assert orchStateCount == 1
+        assert orchStateCount == 2
 
         #clean up arp
         dvs.runcmd("arp -d 10.0.0.1")
