@@ -277,15 +277,16 @@ class TestBuffer(object):
             
             # Save original cable length
             fvs_cable_len = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
-            orig_cable_len = fvs_cable_len[self.INTF] if fvs_cable_len else None
+            orig_cable_len = fvs_cable_len.get(self.INTF) if fvs_cable_len else None
             
             # Save original port speed and admin status
             fvs_port = self.config_db.get_entry("PORT", self.INTF)
-            orig_port_speed, orig_port_status = (fvs_port["speed"], fvs_port["admin_status"]) if fvs_port else (None, None)
+            orig_port_speed = fvs_port.get("speed") if fvs_port else None
+            orig_port_status = fvs_port.get("admin_status") if fvs_port else None
 
             # Save original port qos map
             fvs_qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
-            orig_cable_len = fvs_qos_map["pfc_enable"] if fvs_qos_map else None
+            orig_cable_len = fvs_qos_map.get("pfc_enable") if fvs_qos_map else None
             
             ######################################
             ## Send configurations to CONFIG_DB ##
@@ -300,6 +301,10 @@ class TestBuffer(object):
             # Configure PFC enable
             self.set_port_qos_table(self.INTF, test_port_pfc_enable)
             
+            # Add marker to log to make syslog verification easier
+            # Set before setting admin status to not miss syslog
+            marker = dvs.add_log_marker()
+
             # Configure admin status
             dvs.port_admin_set(self.INTF, test_port_status)
             
@@ -310,8 +315,6 @@ class TestBuffer(object):
             ## Verification ##
             ##################
             
-            # Add marker to log to make syslog verification easier
-            marker = dvs.add_log_marker()
             
             # Check syslog if this error is present. This is expected.
             self.check_syslog(marker, "Failed to process invalid entry, drop it")
