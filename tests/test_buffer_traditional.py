@@ -79,7 +79,7 @@ class TestBuffer(object):
             pg_name_map[pg_name] = self.get_pg_oid(pg_name)
         return pg_name_map
     
-    def check_syslog(dvs, marker, err_log, expected_cnt=1):
+    def check_syslog(self, dvs, marker, err_log, expected_cnt=1):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
         assert num.strip() >= str(expected_cnt)
 
@@ -317,7 +317,7 @@ class TestBuffer(object):
             
             
             # Check syslog if this error is present. This is expected.
-            self.check_syslog(marker, "Failed to process invalid entry, drop it")
+            self.check_syslog(dvs, marker, "Failed to process invalid entry, drop it")
         
         finally:
             ###############################
