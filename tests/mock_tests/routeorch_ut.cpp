@@ -198,6 +198,10 @@ namespace routeorch_test
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+            gDirectory.set(gVrfOrch);
+
+            EvpnNvoOrch *evpn_orch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+            gDirectory.set(evpn_orch);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
@@ -506,5 +510,33 @@ namespace routeorch_test
         static_cast<Orch *>(gRouteOrch)->doTask();
 
         gMockResponsePublisher.reset();
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestInvalidEvpnRoute)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf1", "SET", { {"vni", "500100"}, {"v4", "true"}}});
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries.clear();
+        entries.push_back({"Vrf1:1.1.1.0/24", "SET", { {"ifname", "Ethernet0,Ethernet0"},
+                                                  {"nexthop", "10.0.0.2,10.0.0.3"},
+                                                  {"vni_label", "500100"},
+                                                  {"router_mac", "7e:f0:c0:e4:b2:5a,7e:f0:c0:e4:b2:5b"}}});
+        entries.push_back({"Vrf1:2.1.1.0/24", "SET", { {"ifname", "Ethernet0,Ethernet0"},
+                                                  {"nexthop", "10.0.0.2,10.0.0.3"},
+                                                  {"vni_label", "500100,500100"},
+                                                  {"router_mac", "7e:f0:c0:e4:b2:5b"}}});
+        consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        auto current_create_count = create_route_count;
+        auto current_set_count = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_EQ(current_set_count, set_route_count);
     }
 }
