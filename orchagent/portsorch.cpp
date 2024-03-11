@@ -5369,13 +5369,13 @@ bool PortsOrch::initializePort(Port &port)
     {
         try
         {
-            port.m_flap_count = to_uint<std::uint32_t>(flapCount);
+            port.m_flap_count = stoull(flapCount);
+            m_portTable->hset(port.m_alias, "flap_count", flapCount);
         }
         catch (const std::exception &e)
         {
             SWSS_LOG_ERROR("Failed to get port (%s) flap_count: %s", port.m_alias.c_str(), e.what());
         }
-        m_portTable->hset(port.m_alias, "flap_count", flapCount);
     }
 
     /* initialize port admin status */
