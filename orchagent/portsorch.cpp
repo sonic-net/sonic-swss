@@ -6,6 +6,7 @@
 #include "vxlanorch.h"
 #include "directory.h"
 #include "subintf.h"
+#include "notifications.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -581,6 +582,17 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     {
         SWSS_LOG_DEBUG("m_cmisModuleAsicSyncSupported is true");
         m_cmisModuleAsicSyncSupported = true;
+
+        // set HOST_TX_READY callback function attribute to SAI, only if the feature is enabled
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_PORT_HOST_TX_READY_NOTIFY;
+        attr.value.ptr = (void *)on_port_host_tx_ready;
+
+        if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("PortsOrch failed to set SAI_SWITCH_ATTR_PORT_HOST_TX_READY_NOTIFY attribute");
+        }
+
         Orch::addExecutor(new Consumer(new SubscriberStateTable(stateDb, STATE_TRANSCEIVER_INFO_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, STATE_TRANSCEIVER_INFO_TABLE_NAME));
     }
 
