@@ -165,11 +165,14 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         attr.value.ptr = (void*)&flexCounterGroupParam;
                         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
-                        auto &gbPhyOidMap =  gPortsOrch->getGearboxPhyOidMap();
-                        std::map<int, sai_object_id_t>::const_iterator it = gbPhyOidMap.begin();
-                        while (it != gbPhyOidMap.end()) {
-                            sai_switch_api->set_switch_attribute(it->second, &attr);
-                            it++;
+                        if (gPortsOrch)
+                        {
+                            auto &gbPhyOidMap =  gPortsOrch->getGearboxPhyOidMap();
+                            std::map<int, sai_object_id_t>::const_iterator it = gbPhyOidMap.begin();
+                            while (it != gbPhyOidMap.end()) {
+                                sai_switch_api->set_switch_attribute(it->second, &attr);
+                                it++;
+                            }
                         }
                     }
                 }
