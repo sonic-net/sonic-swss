@@ -26,7 +26,6 @@ extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern sai_object_id_t gSwitchId;
-extern bool gTraditionalFlexCounter;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -70,11 +69,7 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME),
     m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
-    m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME),
-    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
-    m_gbflexCounterDb(new DBConnector("GB_FLEX_COUNTER_DB", 0)),
-    m_gbflexCounterGroupTable(new ProducerTable(m_gbflexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
+    m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 }
@@ -132,47 +127,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
                 if (field == POLL_INTERVAL_FIELD)
                 {
-                    if (gTraditionalFlexCounter)
+                    setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value);
+
+                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
                     {
-                        vector<FieldValueTuple> fieldValues;
-                        fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
-                        m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
-
-                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
                         {
-                            if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
-                            {
-                                // This is buggy if there are more than one gearboxes on the system
-                                // ProducerTable/ConsumerTable is used to communicate between orchagent and syncd
-                                // However, for gearbox syncd daemons, the update will be consumed by the first daemon
-                                // The rest daemons will see nothing.
-                                m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
-                        sai_attribute_t attr;
-
-                        flexCounterGroupParam.counter_group_name = flexCounterGroupMap[key].c_str();
-                        flexCounterGroupParam.poll_interval = value.c_str();
-                        flexCounterGroupParam.plugins = nullptr;
-                        flexCounterGroupParam.stats_mode = nullptr;
-                        flexCounterGroupParam.operation = nullptr;
-
-                        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-                        attr.value.ptr = (void*)&flexCounterGroupParam;
-                        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-
-                        if (gPortsOrch)
-                        {
-                            auto &gbPhyOidMap =  gPortsOrch->getGearboxPhyOidMap();
-                            std::map<int, sai_object_id_t>::const_iterator it = gbPhyOidMap.begin();
-                            while (it != gbPhyOidMap.end()) {
-                                sai_switch_api->set_switch_attribute(it->second, &attr);
-                                it++;
-                            }
+                            setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
                         }
                     }
                 }
@@ -266,40 +227,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                     }
 
-                    if (gTraditionalFlexCounter)
-                    {
-                        vector<FieldValueTuple> fieldValues;
-                        fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
-                        m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                    setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
-                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    {
+                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
                         {
-                            if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
-                            {
-                                m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
-                        sai_attribute_t attr;
-
-                        flexCounterGroupParam.counter_group_name = flexCounterGroupMap[key].c_str();
-                        flexCounterGroupParam.poll_interval = nullptr;
-                        flexCounterGroupParam.plugins = nullptr;
-                        flexCounterGroupParam.stats_mode = nullptr;
-                        flexCounterGroupParam.operation = value.c_str();
-
-                        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-                        attr.value.ptr = (void*)&flexCounterGroupParam;
-                        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-
-                        auto &gbPhyOidMap = gPortsOrch->getGearboxPhyOidMap();
-                        std::map<int, sai_object_id_t>::const_iterator it = gbPhyOidMap.begin();
-                        while (it != gbPhyOidMap.end()) {
-                            sai_switch_api->set_switch_attribute(it->second, &attr);
-                            it++;
+                            setFlexCounterGroupOperation(flexCounterGroupMap[key], value, true);
                         }
                     }
                 }

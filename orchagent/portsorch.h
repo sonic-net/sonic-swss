@@ -31,6 +31,10 @@
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
 #define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
+#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "60000"
+#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
+#define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
+#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 typedef std::set<sai_port_fec_mode_t> PortSupportedFecModes;
@@ -225,7 +229,6 @@ public:
     bool getRecircPort(Port &p, Port::Role role);
 
     const gearbox_phy_t* getGearboxPhy(const Port &port);
-    const map<int, sai_object_id_t>& getGearboxPhyOidMap();
 
     bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
@@ -256,8 +259,6 @@ private:
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
-    unique_ptr<ProducerTable> m_flexCounterTable;
-    unique_ptr<ProducerTable> m_flexCounterGroupTable;
     Table m_portStateTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
@@ -266,7 +267,6 @@ private:
     std::string getPortRateFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
-    shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_state_db;
     shared_ptr<DBConnector> m_notificationsDb;
 
@@ -310,7 +310,6 @@ private:
     map<int, gearbox_lane_t> m_gearboxLaneMap;
     map<int, gearbox_port_t> m_gearboxPortMap;
     map<sai_object_id_t, tuple<sai_object_id_t, sai_object_id_t>> m_gearboxPortListLaneMap;
-    map<int, sai_object_id_t> m_gearboxPhyOidMap;
 
     unordered_set<string> m_vlanPorts;
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;

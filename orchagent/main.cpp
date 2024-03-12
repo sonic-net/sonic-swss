@@ -68,7 +68,7 @@ int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
-bool gTraditionalFlexCounter = true;
+bool gTraditionalFlexCounter = false;
 
 void usage()
 {
@@ -91,7 +91,7 @@ void usage()
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
-    cout << "    -c counter mode (traditional|asic_db), default: traditional" << endl;
+    cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
 }
 
 void sighup_handler(int signo)
@@ -398,9 +398,9 @@ int main(int argc, char **argv)
             sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
             break;
         case 'c':
-            if (optarg == string("asic_db"))
+            if (optarg == string("traditional"))
             {
-                gTraditionalFlexCounter = false;
+                gTraditionalFlexCounter = true;
             }
             break;
         case 'f':
@@ -454,6 +454,7 @@ int main(int argc, char **argv)
     /* Initialize sairedis */
     initSaiApi();
     initSaiRedis();
+    initFlexCounterTables();
 
     /* Initialize remaining recorder parameters  */
     Recorder::Instance().swss.setRecord(

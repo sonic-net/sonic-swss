@@ -332,11 +332,6 @@ const gearbox_phy_t *PortsOrch::getGearboxPhy(const Port &port)
     return nullptr;
 }
 
-const map<int, sai_object_id_t>& PortsOrch::getGearboxPhyOidMap()
-{
-    return m_gearboxPhyOidMap;
-}
-
 bool PortsOrch::getPortIPG(sai_object_id_t port_id, uint32_t &ipg)
 {
     return true;

@@ -20,11 +20,6 @@
 
 extern bool gTraditionalFlexCounter;
 
-#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "60000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
-#define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
-#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
-
 namespace flexcounter_test
 {
     using namespace std;
@@ -48,19 +43,24 @@ namespace flexcounter_test
 
     sai_status_t mockFlexCounterOperation(sai_object_id_t objectId, const sai_attribute_t *attr)
     {
+        if (objectId != gSwitchId)
+        {
+            return SAI_STATUS_FAILURE;
+        }
+
         auto *param = reinterpret_cast<sai_redis_flex_counter_parameter_t*>(attr->value.ptr);
         std::vector<swss::FieldValueTuple> entries;
         auto serializedObjectId = sai_serialize_object_id(objectId);
-        std::string key(param->counter_key);
+        std::string key((const char*)param->counter_key.list);
 
-        if (param->stats_mode != nullptr)
+        if (param->stats_mode.list != nullptr)
         {
-            entries.push_back({STATS_MODE_FIELD, param->stats_mode});
+            entries.push_back({STATS_MODE_FIELD, (const char*)param->stats_mode.list});
         }
 
-        if (param->counter_ids != nullptr)
+        if (param->counter_ids.list != nullptr)
         {
-            entries.push_back({param->counter_field_name, param->counter_ids});
+            entries.push_back({(const char*)param->counter_field_name.list, (const char*)param->counter_ids.list});
             mockFlexCounterTable->set(key, entries);
         }
         else
@@ -68,42 +68,47 @@ namespace flexcounter_test
             mockFlexCounterTable->del(key);
         }
 
-        return 0;
+        return SAI_STATUS_SUCCESS;
     }
 
     sai_status_t mockFlexCounterGroupOperation(sai_object_id_t objectId, const sai_attribute_t *attr)
     {
+        if (objectId != gSwitchId)
+        {
+            return SAI_STATUS_FAILURE;
+        }
+
         std::vector<swss::FieldValueTuple> entries;
         sai_redis_flex_counter_group_parameter_t *flexCounterGroupParam = reinterpret_cast<sai_redis_flex_counter_group_parameter_t*>(attr->value.ptr);
 
-        std::string key(flexCounterGroupParam->counter_group_name);
+        std::string key((const char*)flexCounterGroupParam->counter_group_name.list);
 
-        if (flexCounterGroupParam->poll_interval != nullptr)
+        if (flexCounterGroupParam->poll_interval.list != nullptr)
         {
-            entries.push_back({POLL_INTERVAL_FIELD, flexCounterGroupParam->poll_interval});
+            entries.push_back({POLL_INTERVAL_FIELD, (const char*)flexCounterGroupParam->poll_interval.list});
         }
 
-        if (flexCounterGroupParam->stats_mode != nullptr)
+        if (flexCounterGroupParam->stats_mode.list != nullptr)
         {
-            entries.push_back({STATS_MODE_FIELD, flexCounterGroupParam->stats_mode});
+            entries.push_back({STATS_MODE_FIELD, (const char*)flexCounterGroupParam->stats_mode.list});
         }
 
-        if (flexCounterGroupParam->plugins != nullptr && flexCounterGroupParam->plugin_name != nullptr)
+        if (flexCounterGroupParam->plugin_name.list != nullptr)
         {
-            entries.push_back({flexCounterGroupParam->plugin_name, flexCounterGroupParam->plugins});
+            entries.push_back({(const char*)flexCounterGroupParam->plugin_name.list, ""});
         }
 
-        if (flexCounterGroupParam->operation != nullptr)
+        if (flexCounterGroupParam->operation.list != nullptr)
         {
-            entries.push_back({FLEX_COUNTER_STATUS_FIELD, flexCounterGroupParam->operation});
+            entries.push_back({FLEX_COUNTER_STATUS_FIELD, (const char*)flexCounterGroupParam->operation.list});
         }
 
         mockFlexCounterGroupTable->set(key, entries);
 
-        return 0;
+        return SAI_STATUS_SUCCESS;
     }
 
-    bool _checkFlexCounterTableContent(std::shared_ptr<swss::Table> table, std::string key, std::vector<swss::FieldValueTuple> entries)
+    bool _checkFlexCounterTableContent(std::shared_ptr<swss::Table> table, const std::string key, std::vector<swss::FieldValueTuple> entries)
     {
         vector<FieldValueTuple> fieldValues;
         if (table->get(key, fieldValues))
@@ -117,12 +122,12 @@ namespace flexcounter_test
         return false;
     }
 
-    bool checkFlexCounterGroup(std::string group, std::vector<swss::FieldValueTuple> entries)
+    bool checkFlexCounterGroup(const std::string group, std::vector<swss::FieldValueTuple> entries)
     {
         return _checkFlexCounterTableContent(mockFlexCounterGroupTable, group, entries);
     }
 
-    bool checkFlexCounter(std::string group, sai_object_id_t oid, std::string counter_field_name, std::string mode="")
+    bool checkFlexCounter(const std::string group, sai_object_id_t oid, const std::string counter_field_name, const std::string mode="")
     {
         std::vector<swss::FieldValueTuple> entries;
 
@@ -153,7 +158,7 @@ namespace flexcounter_test
         return false;
     }
 
-    bool checkFlexCounter(std::string group, sai_object_id_t oid, std::vector<swss::FieldValueTuple> entries)
+    bool checkFlexCounter(const std::string group, sai_object_id_t oid, std::vector<swss::FieldValueTuple> entries)
     {
         return _checkFlexCounterTableContent(mockFlexCounterTable, group + ":" + sai_serialize_object_id(oid), entries);
     }
@@ -400,17 +405,18 @@ namespace flexcounter_test
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS},
                                               {PORT_PLUGIN_FIELD, ""},
-                                              {"FLEX_COUNTER_STATUS", "disable"}
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
-                                              {POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS}
+                                              {POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS},
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, "1000"},
+                                              {RIF_PLUGIN_FIELD, ""},
                                           }));
 
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -486,8 +492,8 @@ namespace flexcounter_test
         ASSERT_TRUE(gPortsOrch->allPortsReady());
 
         // Enable and check counters
-        const std::vector<FieldValueTuple> values({ {"FLEX_COUNTER_DELAY_STATUS", "false"},
-                                                    {"FLEX_COUNTER_STATUS", "enable"} });
+        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_DELAY_STATUS_FIELD, "false"},
+                                                    {FLEX_COUNTER_STATUS_FIELD, "enable"} });
         flexCounterCfg.set("PG_WATERMARK", values);
         flexCounterCfg.set("QUEUE_WATERMARK", values);
         flexCounterCfg.set("QUEUE", values);
@@ -495,100 +501,101 @@ namespace flexcounter_test
         flexCounterCfg.set("PG_DROP", values);
         flexCounterCfg.set("PORT", values);
         flexCounterCfg.set("BUFFER_POOL_WATERMARK", values);
+        flexCounterCfg.set("PFCWD", values);
 
         auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
         flexCounterOrch->addExistingData(&flexCounterCfg);
         static_cast<Orch *>(flexCounterOrch)->doTask();
 
-        ASSERT_TRUE(checkFlexCounterGroup("BUFFER_POOL_WATERMARK_STAT_COUNTER",
+        ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "60000"},
-                                              {"STATS_MODE", "STATS_MODE_READ_AND_CLEAR"},
-                                              {"FLEX_COUNTER_STATUS", "enable"},
-                                              {"BUFFER_POOL_PLUGIN_LIST", ""}
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                              {BUFFER_POOL_PLUGIN_FIELD, ""}
                                           }));
-        ASSERT_TRUE(checkFlexCounterGroup("QUEUE_WATERMARK_STAT_COUNTER",
+        ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "60000"},
-                                              {"STATS_MODE", "STATS_MODE_READ_AND_CLEAR"},
-                                              {"FLEX_COUNTER_STATUS", "enable"},
-                                              {"QUEUE_PLUGIN_LIST", ""}
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                              {QUEUE_PLUGIN_FIELD, ""}
                                           }));
-        ASSERT_TRUE(checkFlexCounterGroup("PG_WATERMARK_STAT_COUNTER",
+        ASSERT_TRUE(checkFlexCounterGroup(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "60000"},
-                                              {"STATS_MODE", "STATS_MODE_READ_AND_CLEAR"},
-                                              {"FLEX_COUNTER_STATUS", "enable"},
-                                              {"PG_PLUGIN_LIST", ""}
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                              {PG_PLUGIN_FIELD, ""}
                                           }));
-        ASSERT_TRUE(checkFlexCounterGroup("PORT_BUFFER_DROP_STAT",
+        ASSERT_TRUE(checkFlexCounterGroup(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "60000"},
-                                              {"STATS_MODE", "STATS_MODE_READ"},
-                                              {"FLEX_COUNTER_STATUS", "enable"}
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"}
                                           }));
-        ASSERT_TRUE(checkFlexCounterGroup("PG_DROP_STAT_COUNTER",
+        ASSERT_TRUE(checkFlexCounterGroup(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "10000"},
-                                              {"STATS_MODE", "STATS_MODE_READ"},
-                                              {"FLEX_COUNTER_STATUS", "enable"}
+                                              {POLL_INTERVAL_FIELD, "10000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"}
                                           }));
-        ASSERT_TRUE(checkFlexCounterGroup("PORT_STAT_COUNTER",
+        ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "1000"},
-                                              {"STATS_MODE", "STATS_MODE_READ"},
-                                              {"FLEX_COUNTER_STATUS", "enable"},
-                                              {"PORT_PLUGIN_LIST", ""}
+                                              {POLL_INTERVAL_FIELD, "1000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                              {PORT_PLUGIN_FIELD, ""}
                                           }));
-        ASSERT_TRUE(checkFlexCounterGroup("QUEUE_STAT_COUNTER",
+        ASSERT_TRUE(checkFlexCounterGroup(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "10000"},
-                                              {"STATS_MODE", "STATS_MODE_READ"},
-                                              {"FLEX_COUNTER_STATUS", "enable"},
+                                              {POLL_INTERVAL_FIELD, "10000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                           }));
 
         sai_object_id_t oid;
         oid = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME])["test_pool"].m_saiObjectId;
-        ASSERT_TRUE(checkFlexCounter("BUFFER_POOL_WATERMARK_STAT_COUNTER", oid, "BUFFER_POOL_COUNTER_ID_LIST"));
+        ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, BUFFER_POOL_COUNTER_ID_LIST));
         Port firstPort;
         gPortsOrch->getPort(ports.begin()->first, firstPort);
         oid = firstPort.m_priority_group_ids[3];
-        ASSERT_TRUE(checkFlexCounter("PG_DROP_STAT_COUNTER", oid,
+        ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
                                      {
-                                         {"PG_COUNTER_ID_LIST",
+                                         {PG_COUNTER_ID_LIST,
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS"
                                          }
                                      }));
-        ASSERT_TRUE(checkFlexCounter("PG_WATERMARK_STAT_COUNTER", oid,
+        ASSERT_TRUE(checkFlexCounter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
                                      {
-                                         {"PG_COUNTER_ID_LIST",
+                                         {PG_COUNTER_ID_LIST,
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES,"
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES"
                                          }
                                      }));
         oid = firstPort.m_queue_ids[3];
-        ASSERT_TRUE(checkFlexCounter("QUEUE_WATERMARK_STAT_COUNTER", oid,
+        ASSERT_TRUE(checkFlexCounter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
                                      {
-                                         {"QUEUE_COUNTER_ID_LIST",
+                                         {QUEUE_COUNTER_ID_LIST,
                                           "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES"
                                          }
                                      }));
-        ASSERT_TRUE(checkFlexCounter("QUEUE_STAT_COUNTER", oid,
+        ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
                                      {
-                                         {"QUEUE_COUNTER_ID_LIST",
+                                         {QUEUE_COUNTER_ID_LIST,
                                           "SAI_QUEUE_STAT_DROPPED_BYTES,SAI_QUEUE_STAT_DROPPED_PACKETS,"
                                           "SAI_QUEUE_STAT_BYTES,SAI_QUEUE_STAT_PACKETS"
                                          }
                                      }));
         oid = firstPort.m_port_id;
-        ASSERT_TRUE(checkFlexCounter("PORT_BUFFER_DROP_STAT", oid,
+        ASSERT_TRUE(checkFlexCounter(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, oid,
                                      {
-                                         {"PORT_COUNTER_ID_LIST",
+                                         {PORT_COUNTER_ID_LIST,
                                           "SAI_PORT_STAT_OUT_DROPPED_PKTS,SAI_PORT_STAT_IN_DROPPED_PKTS"
                                          }
                                      }));
         // Do not check the content of port counter since it's large and varies among platforms.
-        ASSERT_TRUE(checkFlexCounter("PORT_STAT_COUNTER", oid, "PORT_COUNTER_ID_LIST"));
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
 
         // create a routing interface
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -664,23 +671,23 @@ namespace flexcounter_test
             100);
         gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>->m_platform = MLNX_PLATFORM_SUBSTRING;
 
-            vector<string> qos_tables = {
-                CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
-                CFG_SCHEDULER_TABLE_NAME,
-                CFG_DSCP_TO_TC_MAP_TABLE_NAME,
-                CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME,
-                CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
-                CFG_QUEUE_TABLE_NAME,
-                CFG_PORT_QOS_MAP_TABLE_NAME,
-                CFG_WRED_PROFILE_TABLE_NAME,
-                CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
-                CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
-                CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
-                CFG_DSCP_TO_FC_MAP_TABLE_NAME,
-                CFG_EXP_TO_FC_MAP_TABLE_NAME,
-                CFG_TC_TO_DSCP_MAP_TABLE_NAME
-            };
-            gQosOrch = new QosOrch(m_config_db.get(), qos_tables);
+        vector<string> qos_tables = {
+            CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
+            CFG_SCHEDULER_TABLE_NAME,
+            CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+            CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME,
+            CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
+            CFG_QUEUE_TABLE_NAME,
+            CFG_PORT_QOS_MAP_TABLE_NAME,
+            CFG_WRED_PROFILE_TABLE_NAME,
+            CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+            CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+            CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
+            CFG_DSCP_TO_FC_MAP_TABLE_NAME,
+            CFG_EXP_TO_FC_MAP_TABLE_NAME,
+            CFG_TC_TO_DSCP_MAP_TABLE_NAME
+        };
+        gQosOrch = new QosOrch(m_config_db.get(), qos_tables);
         entries.clear();
 	entries.push_back({firstPort.m_alias, "SET",
 			    {
@@ -693,11 +700,10 @@ namespace flexcounter_test
 	static_cast<Orch *>(gQosOrch)->doTask();
 
         // create pfcwd entry for first port with drop action
-//	sai_packet_action_t packet_action = SAI_PACKET_ACTION_DROP;
         entries.clear();
 	entries.push_back({"GLOBAL", "SET",
 			  {
-			    {"POLL_INTERVAL", "200"},
+			    {POLL_INTERVAL_FIELD, "200"},
 			  }});
 	entries.push_back({firstPort.m_alias, "SET",
 			  {
@@ -712,20 +718,23 @@ namespace flexcounter_test
 
         static_cast<Orch *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>)->doTask();
 
-        ASSERT_TRUE(checkFlexCounterGroup("PFC_WD",
+        ASSERT_TRUE(checkFlexCounterGroup(PFC_WD_FLEX_COUNTER_GROUP,
                                           {
-                                              {"POLL_INTERVAL", "200"},
+                                              {POLL_INTERVAL_FIELD, "200"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                              {QUEUE_PLUGIN_FIELD, ""}
                                           }));
 
-        ASSERT_TRUE(checkFlexCounter("PFC_WD", firstPort.m_port_id,
+        ASSERT_TRUE(checkFlexCounter(PFC_WD_FLEX_COUNTER_GROUP, firstPort.m_port_id,
                                      {
-                                         {"PORT_COUNTER_ID_LIST", "SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION_US,SAI_PORT_STAT_PFC_4_RX_PAUSE_DURATION_US,SAI_PORT_STAT_PFC_3_RX_PKTS,SAI_PORT_STAT_PFC_4_RX_PKTS"}
+                                         {PORT_COUNTER_ID_LIST, "SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION_US,SAI_PORT_STAT_PFC_4_RX_PAUSE_DURATION_US,SAI_PORT_STAT_PFC_3_RX_PKTS,SAI_PORT_STAT_PFC_4_RX_PKTS"}
                                      }));
 
-        ASSERT_TRUE(checkFlexCounter("PFC_WD", firstPort.m_queue_ids[3],
+        ASSERT_TRUE(checkFlexCounter(PFC_WD_FLEX_COUNTER_GROUP, firstPort.m_queue_ids[3],
                                      {
-                                         {"QUEUE_COUNTER_ID_LIST", "SAI_QUEUE_STAT_PACKETS,SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES"},
-                                         {"QUEUE_ATTR_ID_LIST", "SAI_QUEUE_ATTR_PAUSE_STATUS"}
+                                         {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_PACKETS,SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES"},
+                                         {QUEUE_ATTR_ID_LIST, "SAI_QUEUE_ATTR_PAUSE_STATUS"}
                                      }));
     }
 }

@@ -23,7 +23,6 @@ private:
 
     shared_ptr<DBConnector> m_state_db;
     shared_ptr<DBConnector> m_counter_db;
-    shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_appl_db;
 
     unique_ptr<Table> m_stateTable;
@@ -31,7 +30,6 @@ private:
     unique_ptr<Table> m_portNamePortCounterTable;
     unique_ptr<Table> m_fabricCounterTable;
     unique_ptr<Table> m_applTable;
-    unique_ptr<ProducerTable> m_flexCounterTable;
 
     swss::SelectableTimer *m_timer = nullptr;
     swss::SelectableTimer *m_debugTimer = nullptr;

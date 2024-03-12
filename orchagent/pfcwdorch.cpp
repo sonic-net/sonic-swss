@@ -37,8 +37,6 @@ extern event_handle_t g_events_handle;
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
-extern bool gTraditionalFlexCounter;
-
 template <typename DropHandler, typename ForwardHandler>
 PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
@@ -347,27 +345,7 @@ task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const 
 
             if (field == POLL_INTERVAL_FIELD)
             {
-                if (gTraditionalFlexCounter)
-                {
-                    vector<FieldValueTuple> fieldValues;
-                    fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
-                    m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
-                }
-                else
-                {
-                    sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
-                    sai_attribute_t attr;
-
-                    flexCounterGroupParam.counter_group_name = PFC_WD_FLEX_COUNTER_GROUP;
-                    flexCounterGroupParam.poll_interval = value.c_str();
-                    flexCounterGroupParam.plugins = nullptr;
-                    flexCounterGroupParam.stats_mode = nullptr;
-                    flexCounterGroupParam.operation = nullptr;
-
-                    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-                    attr.value.ptr = (void*)&flexCounterGroupParam;
-                    sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-                }
+                setFlexCounterGroupPollInterval(PFC_WD_FLEX_COUNTER_GROUP, value);
             }
             else if (field == BIG_RED_SWITCH_FIELD)
             {
@@ -574,26 +552,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
         string filteredStr = filterPfcCounters(str, losslessTc);
 
-        if (gTraditionalFlexCounter)
-        {
-            vector<FieldValueTuple> fieldValues;
-            // Only register lossless tc counters in database.
-            fieldValues.emplace_back(PORT_COUNTER_ID_LIST, filteredStr);
-
-            m_flexCounterTable->set(key, fieldValues);
-        }
-        else
-        {
-            sai_attribute_t attr;
-            attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
-            sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
-            counterParam.counter_key = key.c_str();
-            counterParam.counter_ids = filteredStr.c_str();
-            counterParam.counter_field_name = PORT_COUNTER_ID_LIST;
-            attr.value.ptr = &counterParam;
-
-            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        }
+        startFlexCounterPolling(gSwitchId, key, filteredStr, PORT_COUNTER_ID_LIST);
     }
 
     for (auto i : losslessTc)
@@ -616,51 +575,16 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         // We register our queues in PFC_WD table so that syncd will know that it must poll them
         string key = getFlexCounterTableKey(queueIdStr);
 
-        if (gTraditionalFlexCounter)
+        if (!c_queueStatIds.empty())
         {
-            vector<FieldValueTuple> queueFieldValues;
-
-            if (!c_queueStatIds.empty())
-            {
-                string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-                queueFieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, str);
-            }
-
-            if (!c_queueAttrIds.empty())
-            {
-                string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-                queueFieldValues.emplace_back(QUEUE_ATTR_ID_LIST, str);
-            }
-
-            m_flexCounterTable->set(key, queueFieldValues);
+            string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
+            startFlexCounterPolling(gSwitchId, key, str, QUEUE_COUNTER_ID_LIST);
         }
-        else
+
+        if (!c_queueAttrIds.empty())
         {
-            sai_attribute_t attr;
-            sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
-            attr.value.ptr = &counterParam;
-
-            if (!c_queueStatIds.empty())
-            {
-                attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
-                string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-                counterParam.counter_key = key.c_str();
-                counterParam.counter_ids = str.c_str();
-                counterParam.counter_field_name = QUEUE_COUNTER_ID_LIST;
-
-                sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-            }
-
-            if (!c_queueAttrIds.empty())
-            {
-                attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
-                string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-                counterParam.counter_key = key.c_str();
-                counterParam.counter_ids = str.c_str();
-                counterParam.counter_field_name = QUEUE_ATTR_ID_LIST;
-
-                sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-            }
+            string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
+            startFlexCounterPolling(gSwitchId, key, str, QUEUE_ATTR_ID_LIST);
         }
 
         // Create internal entry
@@ -726,41 +650,15 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
     SWSS_LOG_ENTER();
 
     string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
-    if (gTraditionalFlexCounter)
-    {
-        m_flexCounterTable->del(key);
-    }
-    else
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
-        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
-        counterParam.counter_key = key.c_str();
-        attr.value.ptr = &counterParam;
-
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    }
+    stopFlexCounterPolling(gSwitchId, key);
 
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
-        if (gTraditionalFlexCounter)
-        {
-            string key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
+        key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
 
-            // Unregister in syncd
-            m_flexCounterTable->del(key);
-        }
-        else
-        {
-            sai_attribute_t attr;
-            sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
-            counterParam.counter_key = key.c_str();
-            attr.value.ptr = &counterParam;
-
-            attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
-            sai_queue_api->set_queue_attribute(queueId, &attr);
-        }
+        // Unregister in syncd
+        stopFlexCounterPolling(gSwitchId, key);
 
         auto entry = m_entryMap.find(queueId);
         if (entry != m_entryMap.end() && entry->second.handler != nullptr)
@@ -786,9 +684,6 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
-    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     c_portStatIds(portStatIds),
     c_queueStatIds(queueStatIds),
     c_queueAttrIds(queueAttrIds),
@@ -801,6 +696,8 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + this->m_platform + ".lua";
     string restorePluginName;
+    string pollIntervalStr = to_string(m_pollInterval);
+    string plugins;
     if (this->m_platform == CISCO_8000_PLATFORM_SUBSTRING) {
         restorePluginName = "pfc_restore_" + this->m_platform + ".lua";
     } else {
@@ -818,38 +715,18 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         restoreSha = swss::loadRedisScript(
                 this->getCountersDb().get(),
                 restoreLuaScript);
-        string plugins = detectSha + "," + restoreSha;
-        string pollInterval = to_string(m_pollInterval);
-
-        if (gTraditionalFlexCounter)
-        {
-            vector<FieldValueTuple> fieldValues;
-            fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, plugins);
-            fieldValues.emplace_back(POLL_INTERVAL_FIELD, pollInterval);
-            fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-            m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
-        }
-        else
-        {
-            sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
-            sai_attribute_t attr;
-
-            flexCounterGroupParam.counter_group_name = PFC_WD_FLEX_COUNTER_GROUP;
-            flexCounterGroupParam.poll_interval = pollInterval.c_str();
-            flexCounterGroupParam.plugin_name = QUEUE_PLUGIN_FIELD;
-            flexCounterGroupParam.plugins = plugins.c_str();
-            flexCounterGroupParam.stats_mode = STATS_MODE_READ;
-            flexCounterGroupParam.operation = nullptr;
-
-            attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-            attr.value.ptr = (void*)&flexCounterGroupParam;
-            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        }
+        plugins = detectSha + "," + restoreSha;
     }
     catch (...)
     {
         SWSS_LOG_WARN("Lua scripts and polling interval for PFC watchdog were not set successfully");
     }
+
+    setFlexCounterGroupParameter(PFC_WD_FLEX_COUNTER_GROUP,
+                                 pollIntervalStr,
+                                 STATS_MODE_READ,
+                                 QUEUE_PLUGIN_FIELD,
+                                 plugins);
 
     auto consumer = new swss::NotificationConsumer(
             this->getCountersDb().get(),
@@ -873,7 +750,7 @@ template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 {
     SWSS_LOG_ENTER();
-    m_flexCounterGroupTable->del(PFC_WD_FLEX_COUNTER_GROUP);
+    delFlexCounterGroup(PFC_WD_FLEX_COUNTER_GROUP);
 }
 
 template <typename DropHandler, typename ForwardHandler>

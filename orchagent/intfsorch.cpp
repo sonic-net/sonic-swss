@@ -41,7 +41,6 @@ extern bool gTraditionalFlexCounter;
 
 const int intfsorch_pri = 35;
 
-#define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
 
 #define MGMT_VRF            "mgmt"
@@ -65,80 +64,39 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
 
     /* Initialize DB connectors */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
     m_asic_db = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     /* Initialize COUNTER_DB tables */
     m_rifNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_NAME_MAP));
     m_rifTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_TYPE_MAP));
 
-    m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+    if (gTraditionalFlexCounter)
+    {
+        m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+    }
+
     auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
     m_updateMapsTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_updateMapsTimer, this, "UPDATE_MAPS_TIMER");
     Orch::addExecutor(executorT);
-    /* Initialize FLEX_COUNTER_DB tables */
-    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
-    m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
-
-    if (gTraditionalFlexCounter)
-    {
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-    }
-    else
-    {
-        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
-        sai_attribute_t attr;
-
-        flexCounterGroupParam.counter_group_name = RIF_STAT_COUNTER_FLEX_COUNTER_GROUP;
-        flexCounterGroupParam.poll_interval = RIF_FLEX_STAT_COUNTER_POLL_MSECS;
-        flexCounterGroupParam.plugins = nullptr;
-        flexCounterGroupParam.stats_mode = STATS_MODE_READ;
-        flexCounterGroupParam.operation = nullptr;
-
-        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-        attr.value.ptr = (void*)&flexCounterGroupParam;
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    }
 
     string rifRatePluginName = "rif_rates.lua";
+    string rifRateSha;
 
     try
     {
         string rifRateLuaScript = swss::loadLuaScript(rifRatePluginName);
-        string rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
-
-        if (gTraditionalFlexCounter)
-        {
-            vector<FieldValueTuple> fieldValues;
-            fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
-            fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
-            fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-            m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-        }
-        else
-        {
-            sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
-            sai_attribute_t attr;
-
-            flexCounterGroupParam.counter_group_name = RIF_STAT_COUNTER_FLEX_COUNTER_GROUP;
-            flexCounterGroupParam.poll_interval = RIF_FLEX_STAT_COUNTER_POLL_MSECS;
-            flexCounterGroupParam.plugin_name = RIF_PLUGIN_FIELD;
-            flexCounterGroupParam.plugins = rifRateSha.c_str();
-            flexCounterGroupParam.stats_mode = STATS_MODE_READ;
-            flexCounterGroupParam.operation = nullptr;
-
-            attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-            attr.value.ptr = (void*)&flexCounterGroupParam;
-            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        }
+        rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_WARN("RIF flex counter group plugins was not set successfully: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 RIF_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ,
+                                 RIF_PLUGIN_FIELD,
+                                 rifRateSha);
 
     if(gMySwitchType == "voq")
     {
@@ -1547,24 +1505,8 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     auto &&counters_str = counters_stream.str();
 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
-    if (gTraditionalFlexCounter)
-    {
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_str);
-        m_flexCounterTable->set(key, fieldValues);
-    }
-    else
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
-        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
-        counterParam.counter_key = key.c_str();
-        counterParam.counter_ids = counters_str.c_str();
-        counterParam.counter_field_name = RIF_COUNTER_ID_LIST;
-        attr.value.ptr = &counterParam;
+    startFlexCounterPolling(gSwitchId, key, counters_str.c_str(), RIF_COUNTER_ID_LIST);
 
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    }
     SWSS_LOG_DEBUG("Registered interface %s to Flex counter", name.c_str());
 }
 
@@ -1578,20 +1520,8 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     /* remove it from FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-    if (gTraditionalFlexCounter)
-    {
-        m_flexCounterTable->del(key);
-    }
-    else
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
-        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
-        counterParam.counter_key = key.c_str();
-        attr.value.ptr = &counterParam;
+    stopFlexCounterPolling(gSwitchId, key);
 
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    }
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
