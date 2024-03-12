@@ -149,9 +149,10 @@ void FlexCounterManager::applyGroupConfiguration()
     {
         sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
         sai_attribute_t attr;
+        auto &&polling_interval_string = std::to_string(polling_interval);
 
         flexCounterGroupParam.counter_group_name = group_name.c_str();
-        flexCounterGroupParam.poll_interval = std::to_string(polling_interval).c_str();
+        flexCounterGroupParam.poll_interval = polling_interval_string.c_str();
         flexCounterGroupParam.stats_mode = stats_mode_lookup.at(stats_mode).c_str();
         flexCounterGroupParam.operation = status_lookup.at(enabled).c_str();
         if (!fvField(fv_plugin).empty())
