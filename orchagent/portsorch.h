@@ -147,6 +147,7 @@ public:
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    void updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus);
 
     bool createVlanHostIntf(Port& vl, string hostif_name);
     bool removeVlanHostIntf(Port vl);
