@@ -185,6 +185,36 @@ public:
             bool is_set = false;
         } regn_bfm1n; // Port serdes regn_bfm1n
 
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } fir_pre3; // Port Serdes fir_pre3
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } fir_pre2; // Port Serdes fir_pre2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } fir_pre1; // Port Serdes fir_pre2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } fir_main; // Port Serdes fir_main
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } fir_post1; // Port Serdes fir_post1
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } fir_amp; // Port Serdes fir_amp
+
     } serdes; // Port serdes
 
     struct {

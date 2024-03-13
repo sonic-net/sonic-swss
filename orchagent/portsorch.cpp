@@ -388,7 +388,30 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
         map[SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG] = port.serdes.regn_bfm1n.value;
     }
 
+    if (port.serdes.fir_pre3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3] = port.serdes.fir_pre3.value;
+    }
 
+    if (port.serdes.fir_pre2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2] = port.serdes.fir_pre2.value;
+    }
+
+    if (port.serdes.fir_pre1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1] = port.serdes.fir_pre1.value;
+    }
+
+    if (port.serdes.fir_main.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN] = port.serdes.fir_main.value;
+    }
+
+    if (port.serdes.fir_amp.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_IDRIVER] = port.serdes.fir_amp.value;
+    }
 }
 
 // Port OA ------------------------------------------------------------------------------------------------------------
