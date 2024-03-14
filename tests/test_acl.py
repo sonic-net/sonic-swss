@@ -220,10 +220,10 @@ class TestAcl:
         dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
-    def test_AclRuleInPorts(self, dvs_acl, mirror_acl_table):
+    def test_AclRuleInPorts(self, dvs_acl, l3_acl_table):
         """
         Verify IN_PORTS matches on ACL rule.
-        Using MIRROR table type for IN_PORTS matches.
+        Using L3 table type for IN_PORTS matches.
         """
         config_qualifiers = {
             "IN_PORTS": "Ethernet8,Ethernet12",
@@ -233,14 +233,14 @@ class TestAcl:
             "SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS": dvs_acl.get_port_list_comparator(["Ethernet8", "Ethernet12"])
         }
 
-        dvs_acl.create_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, config_qualifiers)
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         # Verify status is written into STATE_DB
-        dvs_acl.verify_acl_rule_status(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, "Active")
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
 
-        dvs_acl.remove_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME)
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         # Verify the STATE_DB entry is removed
-        dvs_acl.verify_acl_rule_status(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, None)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleOutPorts(self, dvs_acl, mclag_acl_table):
