@@ -757,7 +757,9 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
     {
         if (!m_getFabricPortListDone)
         {
-            getFabricPortList();
+            // Skip collecting debug information
+            // as we don't have all fabric ports yet.
+            return;
         }   
 
         if (m_getFabricPortListDone)
