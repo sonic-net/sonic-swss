@@ -3107,6 +3107,30 @@ bool PortsOrch::removeVlanHostIntf(Port vl)
     return true;
 }
 
+void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus)
+{
+    SWSS_LOG_ENTER();
+
+    ++port.m_flap_count;
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("flap_count", std::to_string(port.m_flap_count));
+    tuples.push_back(tuple);
+    
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    if (pstatus == SAI_PORT_OPER_STATUS_DOWN)
+    {
+        FieldValueTuple tuple("last_down_time", std::ctime(&now_c));
+        tuples.push_back(tuple);
+    } 
+    else if (pstatus == SAI_PORT_OPER_STATUS_UP) 
+    {
+        FieldValueTuple tuple("last_up_time", std::ctime(&now_c));
+        tuples.push_back(tuple);
+    }
+    m_portTable->set(port.m_alias, tuples);
+}
+
 void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
     SWSS_LOG_ENTER();
@@ -5315,7 +5339,7 @@ bool PortsOrch::initializePort(Port &port)
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
     bool exist = m_portTable->get(port.m_alias, tuples);
-    string operStatus;
+    string operStatus, flapCount = "0";
     if (exist)
     {
         for (auto i : tuples)
@@ -5324,9 +5348,14 @@ bool PortsOrch::initializePort(Port &port)
             {
                 operStatus = fvValue(i);
             }
+
+            if (fvField(i) == "flap_count")
+            {
+                flapCount = fvValue(i);
+            }
         }
     }
-    SWSS_LOG_DEBUG("initializePort %s with oper %s", port.m_alias.c_str(), operStatus.c_str());
+    SWSS_LOG_INFO("Port %s with oper %s flap_count=%s", port.m_alias.c_str(), operStatus.c_str(), flapCount.c_str());
 
     /**
      * Create database port oper status as DOWN if attr missing
@@ -5345,6 +5374,20 @@ bool PortsOrch::initializePort(Port &port)
     else
     {
         port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+    }
+
+    // initalize port flap count
+    if (!flapCount.empty())
+    {
+        try
+        {
+            port.m_flap_count = stoull(flapCount);
+            m_portTable->hset(port.m_alias, "flap_count", flapCount);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Failed to get port (%s) flap_count: %s", port.m_alias.c_str(), e.what());
+        }
     }
 
     /* initialize port admin status */
@@ -7580,6 +7623,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     if (port.m_type == Port::PHY)
     {
         updateDbPortOperStatus(port, status);
+        updateDbPortFlapCount(port, status);
         updateGearboxPortOperStatus(port);
 
         /* Refresh the port states and reschedule the poller tasks */
