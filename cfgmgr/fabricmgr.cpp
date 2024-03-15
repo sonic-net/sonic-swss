@@ -105,12 +105,12 @@ bool FabricMgr::writeConfigToAppDb(const std::string &key, const std::string &fi
     if (key == "FABRIC_MONITOR_DATA")
     {
         m_appFabricMonitorTable.set(key, fvs);
-        SWSS_LOG_NOTICE("Write FABRIC_MONITOR:%s %s to %s", key.c_str(), field.c_str(), value.c_str());
+        SWSS_LOG_INFO("Write FABRIC_MONITOR:%s %s to %s", key.c_str(), field.c_str(), value.c_str());
     }
     else
     {
         m_appFabricPortTable.set(key, fvs);
-        SWSS_LOG_NOTICE("Write FABRIC_PORT:%s %s to %s", key.c_str(), field.c_str(), value.c_str());
+        SWSS_LOG_INFO("Write FABRIC_PORT:%s %s to %s", key.c_str(), field.c_str(), value.c_str());
     }
 
     return true;

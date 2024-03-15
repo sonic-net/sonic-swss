@@ -697,7 +697,7 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
 {
     unsigned long currentIdMask = 1;
     bool started = false, needGenerateMap = false;
-    sai_uint32_t lower, upper;
+    sai_uint32_t lower = 0, upper = 0;
     set<string> idStringList;
     for (sai_uint32_t id = 0; id <= maxId; id ++)
     {
