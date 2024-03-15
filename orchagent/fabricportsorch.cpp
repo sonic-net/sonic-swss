@@ -472,85 +472,85 @@ void FabricPortsOrch::updateFabricDebugCounters()
         std::vector<FieldValueTuple> values;
         string valuePt;
         bool exist = m_stateTable->get(key, values);
-        if(!exist)
+        if (!exist)
         {
-           SWSS_LOG_INFO("No state infor for port %s", key.c_str());
-           return;
+            SWSS_LOG_INFO("No state infor for port %s", key.c_str());
+            return;
         }
         for (auto val : values)
         {
-           valuePt = fvValue(val);
-           if (fvField(val) == "STATUS")
-           {
-              lnkStatus = valuePt;
-              continue;
-           }
-           if (fvField(val) == "POLL_WITH_ERRORS")
-           {
-              consecutivePollsWithErrors = to_uint<uint8_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "POLL_WITH_NO_ERRORS")
-           {
-              consecutivePollsWithNoErrors = to_uint<uint8_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "POLL_WITH_FEC_ERRORS")
-           {
-              consecutivePollsWithFecErrs = to_uint<uint8_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "POLL_WITH_NOFEC_ERRORS")
-           {
-              consecutivePollsWithNoFecErrs = to_uint<uint8_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "SKIP_CRC_ERR_ON_LNKUP_CNT")
-           {
-              skipCrcErrorsOnLinkupCount = to_uint<uint8_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "SKIP_FEC_ERR_ON_LNKUP_CNT")
-           {
-              skipFecErrorsOnLinkupCount = to_uint<uint8_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "RX_CELLS")
-           {
-              prevRxCells = to_uint<uint64_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "CRC_ERRORS")
-           {
-              prevCrcErrors = to_uint<uint64_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "CODE_ERRORS")
-           {
-              prevCodeErrors = to_uint<uint64_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "AUTO_ISOLATED")
-           {
-              autoIsolated = to_uint<uint8_t>(valuePt);
-              SWSS_LOG_INFO("port %s currently isolated: %s", key.c_str(),valuePt.c_str());
-              continue;
-           }
-           if (fvField(val) == "TEST_CRC_ERRORS")
-           {
-              testCrcErrors = to_uint<uint64_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "TEST_CODE_ERRORS")
-           {
-              testCodeErrors = to_uint<uint64_t>(valuePt);
-              continue;
-           }
-           if (fvField(val) == "TEST")
-           {
-              testState = valuePt;
-              continue;
-           }
+            valuePt = fvValue(val);
+            if (fvField(val) == "STATUS")
+            {
+                lnkStatus = valuePt;
+                continue;
+            }
+            if (fvField(val) == "POLL_WITH_ERRORS")
+            {
+                consecutivePollsWithErrors = to_uint<uint8_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "POLL_WITH_NO_ERRORS")
+            {
+                consecutivePollsWithNoErrors = to_uint<uint8_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "POLL_WITH_FEC_ERRORS")
+            {
+                consecutivePollsWithFecErrs = to_uint<uint8_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "POLL_WITH_NOFEC_ERRORS")
+            {
+                consecutivePollsWithNoFecErrs = to_uint<uint8_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "SKIP_CRC_ERR_ON_LNKUP_CNT")
+            {
+                skipCrcErrorsOnLinkupCount = to_uint<uint8_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "SKIP_FEC_ERR_ON_LNKUP_CNT")
+            {
+                skipFecErrorsOnLinkupCount = to_uint<uint8_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "RX_CELLS")
+            {
+                prevRxCells = to_uint<uint64_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "CRC_ERRORS")
+            {
+                prevCrcErrors = to_uint<uint64_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "CODE_ERRORS")
+            {
+                prevCodeErrors = to_uint<uint64_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "AUTO_ISOLATED")
+            {
+                autoIsolated = to_uint<uint8_t>(valuePt);
+                SWSS_LOG_INFO("port %s currently isolated: %s", key.c_str(),valuePt.c_str());
+                continue;
+            }
+            if (fvField(val) == "TEST_CRC_ERRORS")
+            {
+                testCrcErrors = to_uint<uint64_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "TEST_CODE_ERRORS")
+            {
+                testCodeErrors = to_uint<uint64_t>(valuePt);
+                continue;
+            }
+            if (fvField(val) == "TEST")
+            {
+                testState = valuePt;
+                continue;
+            }
         }
 
         // checking crc errors
@@ -575,36 +575,35 @@ void FabricPortsOrch::updateFabricDebugCounters()
 
             diffRxCells = rxCells - prevRxCells;
             if (testState == "TEST"){
-               diffCrcCells = testCrcErrors - prevCrcErrors;
-               prevCrcErrors = 0;
-               isolationPollsCfg = isolationPollsCfg + 1;
+                diffCrcCells = testCrcErrors - prevCrcErrors;
+                prevCrcErrors = 0;
+                isolationPollsCfg = isolationPollsCfg + 1;
             }
             else
             {
-               diffCrcCells = crcErrors - prevCrcErrors;
-               prevCrcErrors = crcErrors;
+                diffCrcCells = crcErrors - prevCrcErrors;
+                prevCrcErrors = crcErrors;
             }
             bool isErrorRateMore =
                ((diffCrcCells * errorRateRxCellsCfg) >
                 (diffRxCells * errorRateCrcCellsCfg));
             if (isErrorRateMore)
             {
-               if (consecutivePollsWithErrors < isolationPollsCfg)
-               {
-                   consecutivePollsWithErrors += 1;
-                   consecutivePollsWithNoErrors = 0;
-               }
-
+                if (consecutivePollsWithErrors < isolationPollsCfg)
+                {
+                    consecutivePollsWithErrors += 1;
+                    consecutivePollsWithNoErrors = 0;
+                }
             } else {
-               if (consecutivePollsWithNoErrors < recoveryPollsCfg)
-               {
-                  consecutivePollsWithNoErrors += 1;
-                  consecutivePollsWithErrors = 0;
-               }
+                if (consecutivePollsWithNoErrors < recoveryPollsCfg)
+                {
+                    consecutivePollsWithNoErrors += 1;
+                    consecutivePollsWithErrors = 0;
+                }
             }
             SWSS_LOG_INFO("port %s diffCrcCells %lld", key.c_str(), (long long)diffCrcCells);
             SWSS_LOG_INFO("consecutivePollsWithCRCErrs %d consecutivePollsWithNoCRCErrs %d",
-                            consecutivePollsWithErrors, consecutivePollsWithNoErrors);
+                           consecutivePollsWithErrors, consecutivePollsWithNoErrors);
         }
 
         // checking FEC errors
@@ -624,75 +623,75 @@ void FabricPortsOrch::updateFabricDebugCounters()
         }
         else
         {
-           uint64_t diffCodeErrors = 0;
-           if (testState == "TEST"){
-              diffCodeErrors = testCodeErrors - prevCodeErrors;
-              prevCodeErrors = 0;
-              fecIsolatedPolls = fecIsolatedPolls + 1;
-           }
-           else
-           {
-              diffCodeErrors = codeErrors - prevCodeErrors;
-              prevCodeErrors = codeErrors;
-           }
-           SWSS_LOG_INFO("port %s diffCodeErrors %lld", key.c_str(), (long long)diffCodeErrors);
-           if (diffCodeErrors > 0)
-           {
-               if (consecutivePollsWithFecErrs < fecIsolatedPolls)
-               {
-                  consecutivePollsWithFecErrs += 1;
-                  consecutivePollsWithNoFecErrs = 0;
-               }
-           }
-           else if (diffCodeErrors <= 0)
-           {
-              if (consecutivePollsWithNoFecErrs < fecUnisolatePolls)
-              {
-                 consecutivePollsWithNoFecErrs += 1;
-                 consecutivePollsWithFecErrs = 0;
-              }
-           }
-           SWSS_LOG_INFO("consecutivePollsWithFecErrs %d consecutivePollsWithNoFecErrs %d",
-                         consecutivePollsWithFecErrs,consecutivePollsWithNoFecErrs);
-           SWSS_LOG_INFO("fecUnisolatePolls %d", fecUnisolatePolls);
+            uint64_t diffCodeErrors = 0;
+            if (testState == "TEST"){
+                diffCodeErrors = testCodeErrors - prevCodeErrors;
+                prevCodeErrors = 0;
+                fecIsolatedPolls = fecIsolatedPolls + 1;
+            }
+            else
+            {
+                diffCodeErrors = codeErrors - prevCodeErrors;
+                prevCodeErrors = codeErrors;
+            }
+            SWSS_LOG_INFO("port %s diffCodeErrors %lld", key.c_str(), (long long)diffCodeErrors);
+            if (diffCodeErrors > 0)
+            {
+                if (consecutivePollsWithFecErrs < fecIsolatedPolls)
+                {
+                    consecutivePollsWithFecErrs += 1;
+                    consecutivePollsWithNoFecErrs = 0;
+                }
+            }
+            else if (diffCodeErrors <= 0)
+            {
+                if (consecutivePollsWithNoFecErrs < fecUnisolatePolls)
+                {
+                    consecutivePollsWithNoFecErrs += 1;
+                    consecutivePollsWithFecErrs = 0;
+                }
+            }
+            SWSS_LOG_INFO("consecutivePollsWithFecErrs %d consecutivePollsWithNoFecErrs %d",
+                          consecutivePollsWithFecErrs,consecutivePollsWithNoFecErrs);
+            SWSS_LOG_INFO("fecUnisolatePolls %d", fecUnisolatePolls);
         }
 
         // take care serdes link shut state setting
         if (lnkStatus == "up")
         {
-           // debug information
-           SWSS_LOG_INFO("port %s status up autoIsolated %d",
-                         key.c_str(), autoIsolated);
-           SWSS_LOG_INFO("consecutivePollsWithErrors %d consecutivePollsWithFecErrs %d",
-                         consecutivePollsWithErrors, consecutivePollsWithFecErrs);
-           SWSS_LOG_INFO("consecutivePollsWithNoErrors %d consecutivePollsWithNoFecErrs %d",
-                         consecutivePollsWithNoErrors, consecutivePollsWithNoFecErrs);
-           if (autoIsolated == 0 && (consecutivePollsWithErrors >= isolationPollsCfg
-                                  || consecutivePollsWithFecErrs >= fecIsolatedPolls))
-           {
-              // Link needs to be isolated.
-              SWSS_LOG_INFO("port %s auto isolated", key.c_str());
-              autoIsolated = 1;
-              valuePt = to_string(autoIsolated);
-              m_stateTable->hset(key, "AUTO_ISOLATED", valuePt);
-              SWSS_LOG_INFO("port %s set AUTO_ISOLATED %s", key.c_str(), valuePt.c_str());
-              // Call SAI api here to actually isolated the link
-           }
-           else if (autoIsolated == 1 && consecutivePollsWithNoErrors >= recoveryPollsCfg
-                 && consecutivePollsWithNoFecErrs >= fecUnisolatePolls)
-           {
-              // Link is isolated, but no longer needs to be.
-              SWSS_LOG_INFO("port %s healthy again", key.c_str());
-              autoIsolated = 0;
-              valuePt = to_string(autoIsolated);
-              m_stateTable->hset(key, "AUTO_ISOLATED", valuePt);
-              SWSS_LOG_INFO("port %s set AUTO_ISOLATED %s", key.c_str(), valuePt.c_str());
-              // Can we call SAI api here to unisolate the link?
-           }
+            // debug information
+            SWSS_LOG_INFO("port %s status up autoIsolated %d",
+                          key.c_str(), autoIsolated);
+            SWSS_LOG_INFO("consecutivePollsWithErrors %d consecutivePollsWithFecErrs %d",
+                          consecutivePollsWithErrors, consecutivePollsWithFecErrs);
+            SWSS_LOG_INFO("consecutivePollsWithNoErrors %d consecutivePollsWithNoFecErrs %d",
+                          consecutivePollsWithNoErrors, consecutivePollsWithNoFecErrs);
+            if (autoIsolated == 0 && (consecutivePollsWithErrors >= isolationPollsCfg
+                                   || consecutivePollsWithFecErrs >= fecIsolatedPolls))
+            {
+                // Link needs to be isolated.
+                SWSS_LOG_INFO("port %s auto isolated", key.c_str());
+                autoIsolated = 1;
+                valuePt = to_string(autoIsolated);
+                m_stateTable->hset(key, "AUTO_ISOLATED", valuePt);
+                SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %s", key.c_str(), valuePt.c_str());
+                // Call SAI api here to actually isolated the link
+            }
+            else if (autoIsolated == 1 && consecutivePollsWithNoErrors >= recoveryPollsCfg
+                  && consecutivePollsWithNoFecErrs >= fecUnisolatePolls)
+            {
+                // Link is isolated, but no longer needs to be.
+                SWSS_LOG_INFO("port %s healthy again", key.c_str());
+                autoIsolated = 0;
+                valuePt = to_string(autoIsolated);
+                m_stateTable->hset(key, "AUTO_ISOLATED", valuePt);
+                SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %s", key.c_str(), valuePt.c_str());
+                // Can we call SAI api here to unisolate the link?
+            }
         }
         else
         {
-           SWSS_LOG_INFO("link down");
+            SWSS_LOG_INFO("link down");
         }
 
         // Update state_db with new data
