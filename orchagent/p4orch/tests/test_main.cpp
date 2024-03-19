@@ -37,14 +37,9 @@ sai_object_id_t kMirrorSessionOid2 = 9002;
 sai_object_id_t gUnderlayIfId;
 
 #define DEFAULT_BATCH_SIZE 128
-int gBatchSize = DEFAULT_BATCH_SIZE;
 #define DEFAULT_MAX_BULK_SIZE 1000
+extern int gBatchSize;
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
-bool gSairedisRecord = true;
-bool gSwssRecord = true;
-bool gLogRotate = false;
-bool gResponsePublisherRecord = false;
-bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
 bool gIsNatSupported = false;
 
@@ -55,8 +50,6 @@ VRFOrch *gVrfOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch *> gDirectory;
-ofstream gRecordOfs;
-string gRecordFile;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
 swss::DBConnector *gConfigDb;
@@ -180,7 +173,8 @@ void AddVrf()
 } // namespace
 
 int main(int argc, char *argv[])
-{
+{   
+    gBatchSize = DEFAULT_BATCH_SIZE;
     testing::InitGoogleTest(&argc, argv);
 
     sai_router_interface_api_t router_intfs_api;

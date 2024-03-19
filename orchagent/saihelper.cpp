@@ -73,12 +73,17 @@ sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
 sai_my_mac_api_t*           sai_my_mac_api;
 sai_generic_programmable_api_t* sai_generic_programmable_api;
+sai_dash_acl_api_t*                 sai_dash_acl_api;
+sai_dash_vnet_api_t                 sai_dash_vnet_api;
+sai_dash_outbound_ca_to_pa_api_t*   sai_dash_outbound_ca_to_pa_api;
+sai_dash_pa_validation_api_t *      sai_dash_pa_validation_api;
+sai_dash_outbound_routing_api_t*    sai_dash_outbound_routing_api;
+sai_dash_inbound_routing_api_t*     sai_dash_inbound_routing_api;
+sai_dash_eni_api_t*                 sai_dash_eni_api;
+sai_dash_vip_api_t*                 sai_dash_vip_api;
+sai_dash_direction_lookup_api_t*    sai_dash_direction_lookup_api;
 
 extern sai_object_id_t gSwitchId;
-extern bool gSairedisRecord;
-extern bool gSwssRecord;
-extern ofstream gRecordOfs;
-extern string gRecordFile;
 
 static map<string, sai_switch_hardware_access_bus_t> hardware_access_map =
 {
@@ -203,6 +208,15 @@ void initSaiApi()
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
     sai_api_query(SAI_API_MY_MAC,               (void **)&sai_my_mac_api);
     sai_api_query(SAI_API_GENERIC_PROGRAMMABLE, (void **)&sai_generic_programmable_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_ACL,                  (void**)&sai_dash_acl_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_VNET,                 (void**)&sai_dash_vnet_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_CA_TO_PA,    (void**)&sai_dash_outbound_ca_to_pa_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION,        (void**)&sai_dash_pa_validation_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_ROUTING,     (void**)&sai_dash_outbound_routing_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_INBOUND_ROUTING,      (void**)&sai_dash_inbound_routing_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_ENI,                  (void**)&sai_dash_eni_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -244,7 +258,7 @@ void initSaiApi()
     sai_log_set(SAI_API_GENERIC_PROGRAMMABLE,   SAI_LOG_LEVEL_NOTICE);
 }
 
-void initSaiRedis(const string &record_location, const std::string &record_filename)
+void initSaiRedis()
 {
     /**
      * NOTE: Notice that all Redis attributes here are using SAI_NULL_OBJECT_ID
@@ -255,9 +269,11 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     sai_attribute_t attr;
     sai_status_t status;
 
-    /* set recording dir before enable recording */
+    auto record_filename = Recorder::Instance().sairedis.getFile();
+    auto record_location = Recorder::Instance().sairedis.getLoc();
 
-    if (gSairedisRecord)
+    /* set recording dir before enable recording */
+    if (Recorder::Instance().sairedis.isRecord())
     {
         attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_OUTPUT_DIR;
         attr.value.s8list.count = (uint32_t)record_location.size();
@@ -286,15 +302,14 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     }
 
     /* Disable/enable SAI Redis recording */
-
     attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
-    attr.value.booldata = gSairedisRecord;
+    attr.value.booldata = Recorder::Instance().sairedis.isRecord();
 
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
-            gSairedisRecord ? "enable" : "disable", status);
+            Recorder::Instance().sairedis.isRecord() ? "enable" : "disable", status);
         exit(EXIT_FAILURE);
     }
 
@@ -619,6 +634,20 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
                 case SAI_STATUS_ATTR_NOT_SUPPORTED_0:
                     SWSS_LOG_ERROR("Encountered SAI_STATUS_ATTR_NOT_SUPPORTED_0 in set operation, task failed, SAI API: %s, status: %s",
                             sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_failed;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        case SAI_API_BUFFER:
+            switch (status)
+            {
+                case SAI_STATUS_INSUFFICIENT_RESOURCES:
+                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INSUFFICIENT_RESOURCES in set operation, task failed, SAI API: %s, status: %s",
+                                   sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     return task_failed;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",

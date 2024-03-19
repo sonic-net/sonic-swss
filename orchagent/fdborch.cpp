@@ -42,8 +42,8 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
     Orch::addExecutor(flushNotifier);
 
     /* Add FDB notifications support from ASIC */
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
+    m_fdbNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
 }
@@ -1170,7 +1170,10 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     if (update.operStatus == SAI_PORT_OPER_STATUS_DOWN)
     {
         swss::Port p = update.port;
-        flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+        if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+        {
+            flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+        }
 
         // Get BVID of each VLAN that this port is a member of
         // and call notifyObserversFDBFlush

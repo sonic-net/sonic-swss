@@ -329,7 +329,7 @@ bool MirrorOrch::validateSrcPortList(const string& srcPortList)
                 vector<Port> portv;
                 int portCount = 0;
                 m_portsOrch->getLagMember(port, portv);
-                for (const auto p : portv)
+                for (const auto &p : portv)
                 {
                     if (checkPortExistsInSrcPortList(p.m_alias, srcPortList))
                     {
@@ -588,7 +588,7 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
         Port port;
         if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
         {
-             if (!m_portsOrch->getRecircPort(port, "Rec"))
+             if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
              {
                  SWSS_LOG_ERROR("Failed to get recirc port for mirror session %s", name.c_str());
                  return;
@@ -828,7 +828,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
     {
         vector<Port> portv;
         m_portsOrch->getLagMember(port, portv);
-        for (const auto p : portv)
+        for (const auto &p : portv)
         {
             if (p.m_type != Port::PHY)
             {
@@ -946,7 +946,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         if (gMySwitchType == "voq")
         {
             Port recirc_port;
-            if (!m_portsOrch->getRecircPort(recirc_port, "Rec"))
+            if (!m_portsOrch->getRecircPort(recirc_port, Port::Role::Rec))
             {
                 SWSS_LOG_ERROR("Failed to get recirc port");
                 return false;
@@ -1177,7 +1177,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     // Set monitor port to recirc port in voq switch.
     if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
     {
-         if (!m_portsOrch->getRecircPort(port, "Rec"))
+         if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
          {
              SWSS_LOG_ERROR("Failed to get recirc port for mirror session %s", name.c_str());
              return false;

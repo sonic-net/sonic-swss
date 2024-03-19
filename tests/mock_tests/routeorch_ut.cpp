@@ -182,6 +182,7 @@ namespace routeorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            gDirectory.set(gPortsOrch);
 
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
@@ -197,6 +198,10 @@ namespace routeorch_test
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+            gDirectory.set(gVrfOrch);
+
+            EvpnNvoOrch *evpn_orch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+            gDirectory.set(evpn_orch);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
@@ -282,6 +287,10 @@ namespace routeorch_test
             static_cast<Orch *>(gPortsOrch)->doTask();
 
             Table intfTable = Table(m_app_db.get(), APP_INTF_TABLE_NAME);
+            intfTable.set("Loopback0", { {"NULL", "NULL" },
+                                         {"mac_addr", "00:00:00:00:00:00" }});
+            intfTable.set("Loopback0:10.1.0.32/32", { { "scope", "global" },
+                                                      { "family", "IPv4" }});
             intfTable.set("Ethernet0", { {"NULL", "NULL" },
                                          {"mac_addr", "00:00:00:00:00:00" }});
             intfTable.set("Ethernet0:10.0.0.1/24", { { "scope", "global" },
@@ -329,6 +338,9 @@ namespace routeorch_test
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
 
+            delete gSrv6Orch;
+            gSrv6Orch = nullptr;
+
             delete gNeighOrch;
             gNeighOrch = nullptr;
 
@@ -337,9 +349,6 @@ namespace routeorch_test
 
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
-
-            delete gSrv6Orch;
-            gSrv6Orch = nullptr;
 
             delete gRouteOrch;
             gRouteOrch = nullptr;
@@ -483,5 +492,51 @@ namespace routeorch_test
         static_cast<Orch *>(gRouteOrch)->doTask();
 
         gMockResponsePublisher.reset();
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchLoopbackRoute)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        std::string key = "fc00:1::/64";
+        std::vector<FieldValueTuple> fvs{{"ifname", "Loopback"}, {"nexthop", "::"}, {"protocol", "static"}};
+        entries.push_back({key, "SET", fvs});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, key, std::vector<FieldValueTuple>{{"protocol", "static"}}, ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        gMockResponsePublisher.reset();
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestInvalidEvpnRoute)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf1", "SET", { {"vni", "500100"}, {"v4", "true"}}});
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries.clear();
+        entries.push_back({"Vrf1:1.1.1.0/24", "SET", { {"ifname", "Ethernet0,Ethernet0"},
+                                                  {"nexthop", "10.0.0.2,10.0.0.3"},
+                                                  {"vni_label", "500100"},
+                                                  {"router_mac", "7e:f0:c0:e4:b2:5a,7e:f0:c0:e4:b2:5b"}}});
+        entries.push_back({"Vrf1:2.1.1.0/24", "SET", { {"ifname", "Ethernet0,Ethernet0"},
+                                                  {"nexthop", "10.0.0.2,10.0.0.3"},
+                                                  {"vni_label", "500100,500100"},
+                                                  {"router_mac", "7e:f0:c0:e4:b2:5b"}}});
+        consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        auto current_create_count = create_route_count;
+        auto current_set_count = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_EQ(current_set_count, set_route_count);
     }
 }

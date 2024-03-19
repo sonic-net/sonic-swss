@@ -298,7 +298,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -933,6 +933,27 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
         }
     }
 
+    PortsOrch* ports_orch = gDirectory.get<PortsOrch*>();
+    auto vlan_ports = ports_orch->getAllVlans();
+
+    for (auto vlan_port: vlan_ports)
+    {
+        if (vlan_port == alias)
+        {
+            continue;
+        }
+        NeighborEntry temp_entry = { ip_address, vlan_port };
+        if (m_syncdNeighbors.find(temp_entry) != m_syncdNeighbors.end())
+        {
+            SWSS_LOG_NOTICE("Neighbor %s on %s already exists, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str());
+            if (!removeNeighbor(temp_entry))
+            {
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s", ip_address.to_string().c_str(), vlan_port.c_str());
+                return false;
+            }
+        }
+    }
+
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     bool hw_config = isHwConfigured(neighborEntry);
 
@@ -1420,6 +1441,17 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     {
                         SWSS_LOG_NOTICE("VOQ encap index updated for neighbor %s", kfvKey(t).c_str());
                         it = consumer.m_toSync.erase(it);
+
+                       /* Remove remaining DEL operation in m_toSync for the same neighbor.
+                        * Since DEL operation is supposed to be executed before SET for the same neighbor
+                        * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
+                        */
+                       auto rit = make_reverse_iterator(it);
+                       while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
+                       {
+                           consumer.m_toSync.erase(next(rit).base());
+                           SWSS_LOG_NOTICE("Removed pending system neighbor DEL operation for %s after SET operation", key.c_str());
+                       }
                     }
                     continue;
                 }
@@ -1481,6 +1513,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 else
                 {
                     it++;
+                    continue;
                 }
             }
             else
@@ -1488,6 +1521,17 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 /* Duplicate entry */
                 SWSS_LOG_INFO("System neighbor %s already exists", kfvKey(t).c_str());
                 it = consumer.m_toSync.erase(it);
+            }
+
+            /* Remove remaining DEL operation in m_toSync for the same neighbor.
+             * Since DEL operation is supposed to be executed before SET for the same neighbor
+             * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
+             */
+            auto rit = make_reverse_iterator(it);
+            while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
+            {
+                consumer.m_toSync.erase(next(rit).base());
+                SWSS_LOG_NOTICE("Removed pending system neighbor DEL operation for %s after SET operation", key.c_str());
             }
         }
         else if (op == DEL_COMMAND)

@@ -32,6 +32,15 @@ DEFAULT_HASH_FIELD_LIST = [
     "ETHERTYPE",
     "IN_PORT"
 ]
+HASH_ALGORITHM = [
+    "CRC",
+    "XOR",
+    "RANDOM",
+    "CRC_32LO",
+    "CRC_32HI",
+    "CRC_CCITT",
+    "CRC_XOR"
+]
 
 SAI_HASH_FIELD_LIST = [
     "SAI_NATIVE_HASH_FIELD_DST_MAC",
@@ -59,9 +68,19 @@ SAI_DEFAULT_HASH_FIELD_LIST = [
     "SAI_NATIVE_HASH_FIELD_ETHERTYPE",
     "SAI_NATIVE_HASH_FIELD_IN_PORT"
 ]
+SAI_HASH_ALGORITHM = [
+    "SAI_HASH_ALGORITHM_CRC",
+    "SAI_HASH_ALGORITHM_XOR",
+    "SAI_HASH_ALGORITHM_RANDOM",
+    "SAI_HASH_ALGORITHM_CRC_32LO",
+    "SAI_HASH_ALGORITHM_CRC_32HI",
+    "SAI_HASH_ALGORITHM_CRC_CCITT",
+    "SAI_HASH_ALGORITHM_CRC_XOR"
+]
 
 
 @pytest.mark.usefixtures("dvs_hash_manager")
+@pytest.mark.usefixtures("dvs_switch_manager")
 class TestHashBasicFlows:
     @pytest.fixture(scope="class")
     def hashData(self, dvs_hash_manager):
@@ -82,6 +101,25 @@ class TestHashBasicFlows:
         yield meta_dict
 
         hashlogger.info("Deinitialize HASH data")
+
+    @pytest.fixture(scope="class")
+    def switchData(self, dvs_switch_manager):
+        hashlogger.info("Initialize SWITCH data")
+
+        hashlogger.info("Verify SWITCH count")
+        self.dvs_switch.verify_switch_count(0)
+
+        hashlogger.info("Get SWITCH id")
+        switchIdList = self.dvs_switch.get_switch_ids()
+
+        # Assumption: VS has only one SWITCH object
+        meta_dict = {
+            "id": switchIdList[0]
+        }
+
+        yield meta_dict
+
+        hashlogger.info("Deinitialize SWITCH data")
 
     @pytest.mark.parametrize(
         "hash,field", [
@@ -164,6 +202,86 @@ class TestHashBasicFlows:
         hashlogger.info("Validate {} hash".format(hash.upper()))
         self.dvs_hash.verify_hash_generic(
             sai_hash_id=hashId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+    @pytest.mark.parametrize(
+        "algorithm,attr,field", [
+            pytest.param(
+                "ecmp",
+                "SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM",
+                "ecmp_hash_algorithm",
+                id="ecmp-hash-algorithm"
+            ),
+            pytest.param(
+                "lag",
+                "SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM",
+                "lag_hash_algorithm",
+                id="lag-hash-algorithm"
+            )
+        ]
+    )
+    @pytest.mark.parametrize(
+        "value", HASH_ALGORITHM
+    )
+    def test_HashAlgorithmSwitchGlobalConfiguration(self, algorithm, attr, field, value, testlog, switchData):
+        attr_dict = {
+            field: value
+        }
+
+        hashlogger.info("Update {} hash algorithm".format(algorithm.upper()))
+        self.dvs_hash.update_switch_hash(
+            qualifiers=attr_dict
+        )
+
+        switchId = switchData["id"]
+        sai_attr_dict = {
+            attr: SAI_HASH_ALGORITHM[HASH_ALGORITHM.index(value)]
+        }
+
+        hashlogger.info("Validate {} hash algorithm".format(algorithm.upper()))
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+    @pytest.mark.parametrize(
+        "algorithm,attr,field", [
+            pytest.param(
+                "ecmp",
+                "SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM",
+                "ecmp_hash_algorithm",
+                id="ecmp-hash-algorithm"
+            ),
+            pytest.param(
+                "lag",
+                "SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM",
+                "lag_hash_algorithm",
+                id="lag-hash-algorithm"
+            )
+        ]
+    )
+    @pytest.mark.parametrize(
+        "value", [ "CRC" ]
+    )
+    def test_HashDefaultAlgorithmSwitchGlobalConfiguration(self, algorithm, attr, field, value, testlog, switchData):
+        attr_dict = {
+            field: value
+        }
+
+        hashlogger.info("Update {} hash algorithm".format(algorithm.upper()))
+        self.dvs_hash.update_switch_hash(
+            qualifiers=attr_dict
+        )
+
+        switchId = switchData["id"]
+        sai_attr_dict = {
+            attr: SAI_HASH_ALGORITHM[HASH_ALGORITHM.index(value)]
+        }
+
+        hashlogger.info("Validate {} hash algorithm".format(algorithm.upper()))
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
             sai_qualifiers=sai_attr_dict
         )
 
