@@ -933,6 +933,27 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
         }
     }
 
+    PortsOrch* ports_orch = gDirectory.get<PortsOrch*>();
+    auto vlan_ports = ports_orch->getAllVlans();
+
+    for (auto vlan_port: vlan_ports)
+    {
+        if (vlan_port == alias)
+        {
+            continue;
+        }
+        NeighborEntry temp_entry = { ip_address, vlan_port };
+        if (m_syncdNeighbors.find(temp_entry) != m_syncdNeighbors.end())
+        {
+            SWSS_LOG_NOTICE("Neighbor %s on %s already exists, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str());
+            if (!removeNeighbor(temp_entry))
+            {
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s", ip_address.to_string().c_str(), vlan_port.c_str());
+                return false;
+            }
+        }
+    }
+
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     bool hw_config = isHwConfigured(neighborEntry);
 
