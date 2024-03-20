@@ -5,6 +5,8 @@ import time
 import pytest
 import buffer_model
 
+DVS_ENV = ["ASIC_VENDOR=vs"]
+
 class TestVirtualChassis(object):
 
     def set_lag_id_boundaries(self, vct):
@@ -216,7 +218,6 @@ class TestVirtualChassis(object):
                     # Remote system ports's switch id should not match local switch id
                     assert spcfginfo["attached_switch_id"] != lc_switch_id, "RIF system port with wrong switch_id"
 
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_neigh(self, vct):
         """Test neigh record create/delete and syncing to chassis app db.
 
@@ -372,7 +373,7 @@ class TestVirtualChassis(object):
                         # Check for kernel entries
 
                         _, output = dvs.runcmd("ip neigh show")
-                        assert f"{test_neigh_ip} dev {inband_port}" in output, "Kernel neigh not found for remote neighbor"
+                        assert f"{test_neigh_ip} dev {inband_port} lladdr {mac_address}" in output, "Kernel neigh not found for remote neighbor"
 
                         _, output = dvs.runcmd("ip route show")
                         assert f"{test_neigh_ip} dev {inband_port} scope link" in output, "Kernel route not found for remote neighbor"
