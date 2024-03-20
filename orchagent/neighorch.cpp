@@ -1385,7 +1385,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 continue;
             }
 
-            MacAddress mac_address;
+            MacAddress mac_address, original_mac_address;
             uint32_t encap_index = 0;
             for (auto i = kfvFieldsValues(t).begin();
                  i  != kfvFieldsValues(t).end(); i++)
@@ -1465,11 +1465,13 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     //kernel programming.
                     if(ibif.m_type != Port::VLAN)
                     {
+                        original_mac_address = mac_address;
+                        mac_address = gMacAddress;
                         string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "";
-                        // For VS platform, dont overwrite the MAC address
-                        if (platform != VS_PLATFORM_SUBSTRING) 
+                        // For VS platform, use the original MAC address
+                        if (platform == VS_PLATFORM_SUBSTRING)
                         {
-                            mac_address = gMacAddress;
+                            mac_address = original_mac_address;
                         }
                     }
                     vector<FieldValueTuple> fvVector;
