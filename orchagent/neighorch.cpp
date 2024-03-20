@@ -1467,7 +1467,8 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     {
                         string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "";
                         // For VS platform, dont overwrite the MAC address
-                        if (platform != VS_PLATFORM_SUBSTRING) {
+                        if (platform != VS_PLATFORM_SUBSTRING) 
+                        {
                             mac_address = gMacAddress;
                         }
                     }
