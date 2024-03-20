@@ -99,7 +99,6 @@ bool parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
-
 namespace
 {
 
@@ -173,7 +172,7 @@ void AddVrf()
 } // namespace
 
 int main(int argc, char *argv[])
-{   
+{
     gBatchSize = DEFAULT_BATCH_SIZE;
     testing::InitGoogleTest(&argc, argv);
 

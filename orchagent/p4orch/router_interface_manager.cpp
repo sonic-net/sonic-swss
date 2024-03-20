@@ -10,7 +10,6 @@
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
 #include "directory.h"
-#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "orch.h"
 #include "p4orch/p4orch_util.h"
@@ -18,6 +17,7 @@
 #include "sai_serialize.h"
 #include "table.h"
 #include "vrforch.h"
+#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 
@@ -337,13 +337,14 @@ ReturnCode RouterInterfaceManager::processDeleteRequest(const std::string &route
     return status;
 }
 
-ReturnCode RouterInterfaceManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+ReturnCode RouterInterfaceManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                                std::string &object_key)
 {
-    std::string     value;
+    std::string value;
 
     try
     {
-        nlohmann::json  j = nlohmann::json::parse(json_key);
+        nlohmann::json j = nlohmann::json::parse(json_key);
         if (j.find(prependMatchField(p4orch::kRouterInterfaceId)) != j.end())
         {
             value = j.at(prependMatchField(p4orch::kRouterInterfaceId)).get<std::string>();
@@ -353,7 +354,8 @@ ReturnCode RouterInterfaceManager::getSaiObject(const std::string &json_key, sai
         }
         else
         {
-            SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kRouterInterfaceId);
+            SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query",
+                           p4orch::kRouterInterfaceId);
         }
     }
     catch (std::exception &ex)
