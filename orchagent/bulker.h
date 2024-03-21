@@ -96,6 +96,14 @@ static inline bool operator==(const sai_inseg_entry_t& a, const sai_inseg_entry_
         ;
 }
 
+static inline bool operator==(const sai_neighbor_entry_t& a, const sai_neighbor_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.rif_id == b.rif_id
+        && a.ip_address == b.ip_address
+        ;
+}
+
 static inline bool operator==(const sai_inbound_routing_entry_t& a, const sai_inbound_routing_entry_t& b)
 {
     return a.switch_id == b.switch_id
@@ -203,6 +211,19 @@ namespace std
         }
     };
 
+    template <>
+    struct hash<sai_neighbor_entry_t>
+    {
+        size_t operator()(const sai_neighbor_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.rif_id);
+            boost::hash_combine(seed, a.ip_address);
+            return seed;
+        }
+    };
+  
     template <>
     struct hash<sai_outbound_ca_to_pa_entry_t>
     {
@@ -332,6 +353,19 @@ struct SaiBulkerTraits<sai_mpls_api_t>
     using bulk_create_entry_fn = sai_bulk_create_inseg_entry_fn;
     using bulk_remove_entry_fn = sai_bulk_remove_inseg_entry_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_set_inseg_entry_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_neighbor_api_t>
+{
+    using entry_t = sai_neighbor_entry_t;
+    using api_t = sai_neighbor_api_t;
+    using create_entry_fn = sai_create_neighbor_entry_fn;
+    using remove_entry_fn = sai_remove_neighbor_entry_fn;
+    using set_entry_attribute_fn = sai_set_neighbor_entry_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_create_neighbor_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_neighbor_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_neighbor_entry_attribute_fn;
 };
 
 template<>
@@ -809,6 +843,15 @@ inline EntityBulker<sai_mpls_api_t>::EntityBulker(sai_mpls_api_t *api, size_t ma
     create_entries = api->create_inseg_entries;
     remove_entries = api->remove_inseg_entries;
     set_entries_attribute = api->set_inseg_entries_attribute;
+}
+
+template <>
+inline EntityBulker<sai_neighbor_api_t>::EntityBulker(sai_neighbor_api_t *api, size_t max_bulk_size) :
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_neighbor_entries;
+    remove_entries = api->remove_neighbor_entries;
+    set_entries_attribute = api->set_neighbor_entries_attribute;
 }
 
 template <>
