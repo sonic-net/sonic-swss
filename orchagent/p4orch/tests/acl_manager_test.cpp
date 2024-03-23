@@ -9,7 +9,7 @@
 #include "acl_table_manager.h"
 #include "acl_util.h"
 #include "acltable.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"
 #include "mock_sai_policer.h"
