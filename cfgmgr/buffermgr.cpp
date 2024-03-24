@@ -567,5 +567,9 @@ void BufferMgr::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 break;
         }
+        else
+        {
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
