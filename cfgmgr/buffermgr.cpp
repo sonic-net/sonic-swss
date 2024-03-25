@@ -549,24 +549,23 @@ void BufferMgr::doTask(Consumer &consumer)
                     task_status = doSpeedUpdateTask(port);
                 }
             }
-
-            switch (task_status)
-            {
-                case task_process_status::task_failed:
-                    SWSS_LOG_ERROR("Failed to process table update");
-                    return;
-                case task_process_status::task_need_retry:
-                    SWSS_LOG_INFO("Unable to process table update. Will retry...");
-                    ++it;
-                    break;
-                case task_process_status::task_invalid_entry:
-                    SWSS_LOG_ERROR("Failed to process invalid entry, drop it");
-                    it = consumer.m_toSync.erase(it);
-                    break;
-                default:
-                    it = consumer.m_toSync.erase(it);
-                    break;
-            }
+        }
+        switch (task_status)
+        {
+            case task_process_status::task_failed:
+                SWSS_LOG_ERROR("Failed to process table update");
+                return;
+            case task_process_status::task_need_retry:
+                SWSS_LOG_INFO("Unable to process table update. Will retry...");
+                ++it;
+                break;
+            case task_process_status::task_invalid_entry:
+                SWSS_LOG_ERROR("Failed to process invalid entry, drop it");
+                it = consumer.m_toSync.erase(it);
+                break;
+            default:
+                it = consumer.m_toSync.erase(it);
+                break;
         }
     }
 }
