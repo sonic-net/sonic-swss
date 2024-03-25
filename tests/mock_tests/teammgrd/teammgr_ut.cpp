@@ -75,4 +75,22 @@ namespace teammgr_ut
         }
         ASSERT_EQ(kill_cmd_called, 1);
     }
+
+    TEST_F(TeamMgrTest, testProcessKilledAfterAddStaticFailure)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table = swss::Table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel1", { { "admin_status", "up" },
+                                            { "mtu", "9100" },
+					    { "static", "true" } });
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+        int kill_cmd_called = 0;
+        for (auto cmd : mockCallArgs){
+            if (cmd.find("kill -TERM 1234") != std::string::npos){
+                kill_cmd_called++;
+            }
+        }
+        ASSERT_EQ(kill_cmd_called, 1);
+    }
 }
