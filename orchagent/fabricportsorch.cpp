@@ -22,6 +22,8 @@
 #define FABRIC_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP        "FABRIC_QUEUE_STAT_COUNTER"
 #define FABRIC_QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS  100000
 #define FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT   (60)
+#define FABRIC_MONITOR_DATA "FABRIC_MONITOR_DATA"
+#define APPL_FABRIC_PORT_PREFIX "Fabric"
 
 // constants for link monitoring
 #define MAX_SKIP_CRCERR_ON_LNKUP_POLLS 20
@@ -84,6 +86,7 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), APP_FABRIC_PORT_TABLE_NAME));
     m_appl_db = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
     m_applTable = unique_ptr<Table>(new Table(m_appl_db.get(), APP_FABRIC_MONITOR_PORT_TABLE_NAME));
+    m_applMonitorConstTable = unique_ptr<Table>(new Table(m_appl_db.get(), APP_FABRIC_MONITOR_DATA_TABLE_NAME));
 
     m_fabricPortStatEnabled = fabricPortStatEnabled;
     m_fabricQueueStatEnabled = fabricQueueStatEnabled;
@@ -379,8 +382,50 @@ void FabricPortsOrch::updateFabricDebugCounters()
     int recoveryPollsCfg = RECOVERY_POLLS_CFG;           // monPollThreshRecovery
     int errorRateCrcCellsCfg = ERROR_RATE_CRC_CELLS_CFG; // monErrThreshCrcCells
     int errorRateRxCellsCfg = ERROR_RATE_RX_CELLS_CFG;   // monErrThreshRxCells
+    string applConstKey = FABRIC_MONITOR_DATA;
     std::vector<FieldValueTuple> constValues;
     SWSS_LOG_INFO("updateFabricDebugCounters");
+
+    bool setCfgVal = m_applMonitorConstTable->get("FABRIC_MONITOR_DATA", constValues);
+    if (!setCfgVal)
+    {
+        SWSS_LOG_INFO("applConstKey %s default values not set", applConstKey.c_str());
+    }
+    else
+    {
+        SWSS_LOG_INFO("applConstKey %s default values get set", applConstKey.c_str());
+    }
+    string configVal = "1";
+    for (auto cv : constValues)
+    {
+        configVal = fvValue(cv);
+        if (fvField(cv) == "monErrThreshCrcCells")
+        {
+            errorRateCrcCellsCfg = stoi(configVal);
+            SWSS_LOG_INFO("monErrThreshCrcCells: %s %s", configVal.c_str(), fvField(cv).c_str());
+            continue;
+        }
+        if (fvField(cv) == "monErrThreshRxCells")
+        {
+            errorRateRxCellsCfg = stoi(configVal);
+            SWSS_LOG_INFO("monErrThreshRxCells: %s %s", configVal.c_str(), fvField(cv).c_str());
+            continue;
+        }
+        if (fvField(cv) == "monPollThreshIsolation")
+        {
+            fecIsolatedPolls = stoi(configVal);
+            isolationPollsCfg = stoi(configVal);
+            SWSS_LOG_INFO("monPollThreshIsolation: %s %s", configVal.c_str(), fvField(cv).c_str());
+            continue;
+        }
+        if (fvField(cv) == "monPollThreshRecovery")
+        {
+            fecUnisolatePolls = stoi(configVal);
+            recoveryPollsCfg = stoi(configVal);
+            SWSS_LOG_INFO("monPollThreshRecovery: %s", configVal.c_str());
+            continue;
+        }
+    }
 
     // Get debug countesrs (e.g. # of cells with crc errors, # of cells)
     for (auto p : m_fabricLanePortMap)
@@ -449,6 +494,8 @@ void FabricPortsOrch::updateFabricDebugCounters()
         //    skipCrcErrorsOnLinkupCount      SKIP_CRC_ERR_ON_LNKUP_CNT
         //    skipFecErrorsOnLinkupCount      SKIP_FEC_ERR_ON_LNKUP_CNT
         //    removeProblemLinkCount          RM_PROBLEM_LNK_CNT -- this is for feature of remove a flaky link permanently
+        //
+        //    cfgIsolated                     CONFIG_ISOLATED
 
         int consecutivePollsWithErrors = 0;
         int consecutivePollsWithNoErrors = 0;
@@ -465,13 +512,45 @@ void FabricPortsOrch::updateFabricDebugCounters()
         uint64_t testCodeErrors = 0;
 
         int autoIsolated = 0;
+        int cfgIsolated = 0;
+        int isolated = 0;
         string lnkStatus = "down";
         string testState = "product";
+
+        // Get appl_db values, and update state_db later with other attributes
+        string applKey = APPL_FABRIC_PORT_PREFIX + to_string(lane);
+        std::vector<FieldValueTuple> applValues;
+        string applResult = "False";
+        bool exist = m_applTable->get(applKey, applValues);
+        if (!exist)
+        {
+            SWSS_LOG_NOTICE("No app infor for port %s", applKey.c_str());
+        }
+        else
+        {
+            for (auto v : applValues)
+            {
+                applResult = fvValue(v);
+                if (fvField(v) == "isolateStatus")
+                {
+                    if (applResult == "True")
+                    {
+                        cfgIsolated = 1;
+                    }
+                    else
+                    {
+                        cfgIsolated = 0;
+                    }
+                    SWSS_LOG_INFO("Port %s isolateStatus: %s %d",
+                                  applKey.c_str(), applResult.c_str(), cfgIsolated);
+                }
+            }
+        }
 
         // Get the consecutive polls from the state db
         std::vector<FieldValueTuple> values;
         string valuePt;
-        bool exist = m_stateTable->get(key, values);
+        exist = m_stateTable->get(key, values);
         if (!exist)
         {
             SWSS_LOG_INFO("No state infor for port %s", key.c_str());
@@ -675,7 +754,6 @@ void FabricPortsOrch::updateFabricDebugCounters()
                 valuePt = to_string(autoIsolated);
                 m_stateTable->hset(key, "AUTO_ISOLATED", valuePt);
                 SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %s", key.c_str(), valuePt.c_str());
-                // Call SAI api here to actually isolated the link
             }
             else if (autoIsolated == 1 && consecutivePollsWithNoErrors >= recoveryPollsCfg
                   && consecutivePollsWithNoFecErrs >= fecUnisolatePolls)
@@ -685,9 +763,28 @@ void FabricPortsOrch::updateFabricDebugCounters()
                 autoIsolated = 0;
                 valuePt = to_string(autoIsolated);
                 m_stateTable->hset(key, "AUTO_ISOLATED", valuePt);
-                SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %s", key.c_str(), valuePt.c_str());
-                // Can we call SAI api here to unisolate the link?
+                SWSS_LOG_INFO("port %s set AUTO_ISOLATED %s", key.c_str(), valuePt.c_str());
             }
+            if (cfgIsolated == 1)
+            {
+                isolated = 1;
+                SWSS_LOG_INFO("port %s keep isolated due to configuation",key.c_str());
+            }
+            else
+            {
+                if (autoIsolated == 1)
+                {
+                    isolated = 1;
+                    SWSS_LOG_INFO("port %s keep isolated due to autoisolation",key.c_str());
+                }
+                else
+                {
+                    isolated = 0;
+                    SWSS_LOG_INFO("port %s unisolated",key.c_str());
+                }
+            }
+            // if "ISOLATED" is true, Call SAI api here to actually isolated the link
+            // if "ISOLATED" is false, Call SAP api to actually unisolate the link
         }
         else
         {
@@ -726,6 +823,16 @@ void FabricPortsOrch::updateFabricDebugCounters()
         m_stateTable->hset(key, "CODE_ERRORS", valuePt.c_str());
         SWSS_LOG_INFO("port %s set CODE_ERRORS %s",
                       key.c_str(), valuePt.c_str());
+
+        valuePt = to_string(cfgIsolated);
+        m_stateTable->hset(key, "CONFIG_ISOLATED", valuePt.c_str());
+        SWSS_LOG_INFO("port %s set CONFIG_ISOLATED %s",
+                        key.c_str(), valuePt.c_str());
+
+        valuePt = to_string(isolated);
+        m_stateTable->hset(key, "ISOLATED", valuePt.c_str());
+        SWSS_LOG_INFO("port %s set ISOLATED %s",
+                      key.c_str(), valuePt.c_str());
     }
 }
 
@@ -733,8 +840,175 @@ void FabricPortsOrch::doTask()
 {
 }
 
+void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
+{
+    SWSS_LOG_NOTICE("FabricPortsOrch::doFabricPortTask");
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            string alias, lanes;
+            string isolateStatus;
+            int forceIsolateCnt = 0;
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "alias")
+                {
+                    alias = fvValue(i);
+                }
+                else if (fvField(i) == "lanes")
+                {
+                    lanes = fvValue(i);
+                }
+                else if (fvField(i) == "isolateStatus")
+                {
+                    isolateStatus = fvValue(i);
+                }
+                else if (fvField(i) == "forceUnisolateStatus")
+                {
+                    forceIsolateCnt = stoi(fvValue(i));
+                }
+            }
+            // This method may be called with only some fields included.
+            // In that case read in the missing field data.
+            if (alias == "")
+            {
+                string new_alias;
+                SWSS_LOG_NOTICE("alias is NULL, key: %s", key.c_str());
+                if (m_applTable->hget(key, "alias", new_alias))
+                {
+                    alias = new_alias;
+                    SWSS_LOG_NOTICE("read new_alias, key: '%s', value: '%s'", key.c_str(), new_alias.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("hget failed for key: %s, alias", key.c_str());
+                }
+            }
+            if (lanes == "")
+            {
+                string new_lanes;
+                SWSS_LOG_NOTICE("lanes is NULL, key: %s", key.c_str());
+                if (m_applTable->hget(key, "lanes", new_lanes))
+                {
+                    lanes = new_lanes;
+                    SWSS_LOG_NOTICE("read new_lanes, key: '%s', value: '%s'", key.c_str(), new_lanes.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("hget failed for key: %s, lanes", key.c_str());
+                }
+
+            }
+            if (isolateStatus == "")
+            {
+                string new_isolateStatus;
+                SWSS_LOG_NOTICE("isolateStatus is NULL, key: %s", key.c_str());
+                if (m_applTable->hget(key, "isolateStatus", new_isolateStatus))
+                {
+                    isolateStatus = new_isolateStatus;
+                    SWSS_LOG_NOTICE("read new_isolateStatus, key: '%s', value: '%s'", key.c_str(), new_isolateStatus.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("hget failed for key: %s, isolateStatus", key.c_str());
+                }
+            }
+            // Do not process if some data is still missing.
+            if (alias == "" || lanes == "" || isolateStatus == "" )
+            {
+                SWSS_LOG_NOTICE("NULL values, skipping %s", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            SWSS_LOG_NOTICE("key %s alias %s isolateStatus %s lanes %s",
+                  key.c_str(), alias.c_str(), isolateStatus.c_str(), lanes.c_str());
+            // Call SAI api to isolate/unisolate the link here.
+            // Isolate the link if isolateStatus is True.
+            // Unisolate the link if isolateStatus is False.
+
+            if (isolateStatus == "False")
+            {
+                // get state db value of forceIolatedCntInStateDb,
+                // if forceIolatedCnt != forceIolatedCntInStateDb
+                //    1) clear all isolate related flags in stateDb
+                //    2) replace the cnt in stateb
+                //
+
+                std::vector<FieldValueTuple> values;
+                string state_key = FABRIC_PORT_PREFIX + lanes;
+                bool exist = m_stateTable->get(state_key, values);
+                if (!exist)
+                {
+                    SWSS_LOG_NOTICE("React to unshut No state infor for port %s", state_key.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("React to unshut port %s", state_key.c_str());
+                }
+                int curVal = 0;
+                for (auto val : values)
+                {
+                    if(fvField(val) == "FORCE_UN_ISOLATE")
+                    {
+                        curVal = stoi(fvValue(val));
+                    }
+                }
+                SWSS_LOG_INFO("Current %d Config %d", curVal, forceIsolateCnt);
+                if (curVal != forceIsolateCnt)
+                {
+                    //update state_db;
+                    string value_update;
+                    value_update = to_string(forceIsolateCnt);
+                    m_stateTable->hset(state_key, "FORCE_UN_ISOLATE", value_update.c_str());
+                    SWSS_LOG_NOTICE("port %s set FORCE_UN_ISOLATE %s", state_key.c_str(), value_update.c_str());
+
+
+                    // update all related fields in state_db:
+                    // POLL_WITH_ERRORS 0
+                    m_stateTable->hset(state_key, "POLL_WITH_ERRORS",
+                                       m_defaultPollWithErrors.c_str());
+                    // POLL_WITH_NO_ERRORS 8
+                    m_stateTable->hset(state_key, "POLL_WITH_NO_ERRORS",
+                                       m_defaultPollWithNoErrors.c_str());
+                    // POLL_WITH_FEC_ERRORS 0
+                    m_stateTable->hset(state_key, "POLL_WITH_FEC_ERRORS",
+                                       m_defaultPollWithFecErrors.c_str());
+                    // POLL_WITH_NOFEC_ERRORS 8
+                    m_stateTable->hset(state_key, "POLL_WITH_NOFEC_ERRORS",
+                                       m_defaultPollWithNoFecErrors.c_str());
+                    // CONFIG_ISOLATED 0
+                    m_stateTable->hset(state_key, "CONFIG_ISOLATED",
+                                       m_defaultConfigIsolated.c_str());
+                    // ISOLATED 0
+                    m_stateTable->hset(state_key, "ISOLATED",
+                                       m_defaultIsolated.c_str());
+                    // AUTO_ISOLATED 0
+                    m_stateTable->hset(state_key, "AUTO_ISOLATED",
+                                       m_defaultAutoIsolated.c_str());
+                }
+            }
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void FabricPortsOrch::doTask(Consumer &consumer)
 {
+    SWSS_LOG_NOTICE("doTask from FabricPortsOrch");
+
+    string table_name = consumer.getTableName();
+
+    if (table_name == APP_FABRIC_MONITOR_PORT_TABLE_NAME)
+    {
+        doFabricPortTask(consumer);
+    }
 }
 
 void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
@@ -760,7 +1034,7 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
             // Skip collecting debug information
             // as we don't have all fabric ports yet.
             return;
-        }   
+        }
 
         if (m_getFabricPortListDone)
         {
