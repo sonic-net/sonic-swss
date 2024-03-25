@@ -1001,7 +1001,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         }
     }
 
-    return this->validatePortConfig(port);
+    return true;
 }
 
 bool PortHelper::validatePortConfig(PortConfig &port) const
