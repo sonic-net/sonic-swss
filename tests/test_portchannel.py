@@ -472,7 +472,7 @@ class TestPortchannel(object):
 
         # create port-channel
         tbl = swsscommon.Table(config_db, "PORTCHANNEL")
-        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up"),("static": "true")])
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up"),("static", "true")])
         tbl.set("PortChannel111", fvs)
 
         # set port-channel oper status
