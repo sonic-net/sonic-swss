@@ -3572,28 +3572,59 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            auto &fvMap = m_portConfigMap[key];
-
-            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            auto parsePortFvs = [&](auto& fvMap) -> bool
             {
-                auto fieldName = fvField(cit);
-                auto fieldValue = fvValue(cit);
+                for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+                {
+                    auto fieldName = fvField(cit);
+                    auto fieldValue = fvValue(cit);
 
-                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+                    SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
 
-                fvMap[fieldName] = fieldValue;
-            }
+                    fvMap[fieldName] = fieldValue;
+                }
 
-            pCfg.fieldValueMap = fvMap;
+                pCfg.fieldValueMap = fvMap;
 
-            if (!m_portHlpr.parsePortConfig(pCfg))
+                if (!m_portHlpr.parsePortConfig(pCfg))
+                {
+                    return false;
+                }
+
+                return true;
+            };
+
+            if (m_portList.find(key) == m_portList.end())
             {
-                it = taskMap.erase(it);
-                continue;
-            }
+                // Aggregate configuration while the port is not created.
+                auto &fvMap = m_portConfigMap[key];
 
-            /* Collect information about all received ports */
-            m_lanesAliasSpeedMap[pCfg.lanes.value] = pCfg;
+                if (!parsePortFvs(fvMap))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+
+                if (!m_portHlpr.validatePortConfig(pCfg))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+
+                /* Collect information about all received ports */
+                m_lanesAliasSpeedMap[pCfg.lanes.value] = pCfg;
+            }
+            else
+            {
+                // Port is already created, gather updated field-values.
+                std::unordered_map<std::string, std::string> fvMap;
+
+                if (!parsePortFvs(fvMap))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+            }
 
             // TODO:
             // Fix the issue below
@@ -3708,6 +3739,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
             {
                 PortSerdesAttrMap_t serdes_attr;
                 getPortSerdesAttr(serdes_attr, pCfg);
+
+                // Saved configured admin status
+                bool admin_status = p.m_admin_state_up;
 
                 if (pCfg.autoneg.is_set)
                 {
@@ -4268,6 +4302,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* create host_tx_ready field in state-db */
                 initHostTxReadyState(p);
+
+                // Restore admin status if the port was brought down
+                if (admin_status != p.m_admin_state_up)
+                {
+                    pCfg.admin_status.is_set = true;
+                    pCfg.admin_status.value = admin_status;
+                }
 
                 /* Last step set port admin status */
                 if (pCfg.admin_status.is_set)
