@@ -31,6 +31,8 @@
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
 #define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
+#define WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "WRED_ECN_QUEUE_STAT_COUNTER"
+#define WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "WRED_ECN_PORT_STAT_COUNTER"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 typedef std::set<sai_port_fec_mode_t> PortSupportedFecModes;
@@ -184,6 +186,7 @@ public:
     void removePortBufferQueueCounters(const Port &port, string queues);
     void addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
+    void addWredQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
 
     void generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector);
     uint32_t getNumberOfPortSupportedPgCounters(string port);
@@ -194,6 +197,9 @@ public:
 
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
+
+    void generateWredPortCounterMap();
+    void generateWredQueueCounterMap();
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
@@ -263,6 +269,7 @@ private:
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupDropPacketsFlexCounterTableKey(std::string s);
     std::string getPortRateFlexCounterTableKey(std::string s);
+    std::string getWredQueueFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
@@ -272,6 +279,8 @@ private:
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
     FlexCounterManager queue_stat_manager;
+    FlexCounterManager wred_port_stat_manager;
+    FlexCounterManager wred_queue_stat_manager;
 
     FlexCounterManager gb_port_stat_manager;
     shared_ptr<DBConnector> m_gb_counter_db;
@@ -437,6 +446,10 @@ private:
     void addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
     void addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex);
 
+    bool m_isWredQueueCounterMapGenerated = false;
+    void addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
+    void addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq);
+
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState);
     bool m_isPriorityGroupFlexCountersAdded = false;
@@ -520,6 +533,11 @@ private:
 
     bool addPortBulk(const std::vector<PortConfig> &portList);
     bool removePortBulk(const std::vector<sai_object_id_t> &portList);
+
+    void initCounterCapabilities(sai_object_id_t switchId);
+    bool m_isWredPortCounterMapGenerated = false;
+    std::unique_ptr<swss::Table> m_queueCounterCapabilitiesTable = nullptr;
+    std::unique_ptr<swss::Table> m_portCounterCapabilitiesTable = nullptr;
 
 private:
     // Port config aggregator
