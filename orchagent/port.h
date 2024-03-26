@@ -97,7 +97,8 @@ public:
         Ext, // external
         Int, // internal
         Inb, // inband
-        Rec  // recirculation
+        Rec, // recirculation
+        Dpc  // DPU Connect Port on SmartSwitch
     };
 
 public:

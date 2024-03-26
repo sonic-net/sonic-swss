@@ -51,6 +51,7 @@
 #define PORT_ROLE_INT "Int"
 #define PORT_ROLE_INB "Inb"
 #define PORT_ROLE_REC "Rec"
+#define PORT_ROLE_DPC "Dpc"
 
 #define PORT_ALIAS               "alias"
 #define PORT_INDEX               "index"
