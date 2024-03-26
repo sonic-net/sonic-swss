@@ -865,3 +865,41 @@ class TestBufferMgrDyn(object):
             dvs.port_admin_set('Ethernet0', 'down')
 
         self.cleanup_db(dvs)
+
+
+    def test_bufferPoolInitWithSHP(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        try:
+            # 1. Enable the shared headroom pool
+            default_lossless_buffer_parameter = self.config_db.get_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
+            default_lossless_buffer_parameter['over_subscribe_ratio'] = '2'
+            self.config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_buffer_parameter)
+
+            # 2. Stop the orchagent
+            _, oa_pid = dvs.runcmd("pgrep orchagent")
+            dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
+
+            # 3. Remove the size from CONFIG_DB|BUFFER_POOL.ingress_lossless_pool
+            original_ingress_lossless_pool = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            try:
+                self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'size')
+                self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'xoff')
+            except Exception as e:
+                pass
+
+            # 4. Remove the ingress_lossless_pool from the APPL_DB
+            self.app_db.delete_entry('BUFFER_POOL_TABLE', 'ingress_lossless_pool')
+
+            # 5. Mock it by adding a "TABLE_SET" entry to trigger the fallback logic
+            self.app_db.update_entry("BUFFER_PG_TABLE_SET", "", {"NULL": "NULL"})
+
+            # 6. Invoke the lua plugin
+            _, output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            assert "ingress_lossless_pool:2048:1024" in output
+
+        finally:
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)
+            self.config_db.delete_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
+            self.app_db.delete_entry("BUFFER_PG_TABLE_SET", "")
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
