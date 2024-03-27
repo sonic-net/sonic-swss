@@ -28,6 +28,7 @@ public:
     std::string getAdminStatusStr(const PortConfig &port) const;
 
     bool parsePortConfig(PortConfig &port) const;
+    bool validatePortConfig(PortConfig &port) const;
 
 private:
     std::string getFieldValueStr(const PortConfig &port, const std::string &field) const;
@@ -52,6 +53,4 @@ private:
     bool parsePortRole(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdminStatus(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortDescription(PortConfig &port, const std::string &field, const std::string &value) const;
-
-    bool validatePortConfig(PortConfig &port) const;
 };
