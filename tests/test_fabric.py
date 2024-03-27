@@ -73,6 +73,14 @@ class TestVirtualChassis(object):
                   port_counters_stat_keys = flex_db.get_keys("FLEX_COUNTER_TABLE:" + meta_data['group_name'])
                   for port_stat in port_counters_stat_keys:
                      assert port_stat in dict(port_counters_keys.items()).values(), "Non port created on PORT_STAT_COUNTER group: {}".format(port_stat)
+
+               # update some config_db entries
+               cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB,  dvs.redis_sock, 0)
+               tb = swsscommon.Table(cfg_db, "FABRIC_PORT")
+               fvs = swsscommon.FieldValuePairs([("isolateStatus","True")])
+               tb.set("FABRIC_PORT|Fabric0", fvs )
+               fvs = swsscommon.FieldValuePairs([("forceUnisolateStatus", "1")])
+               tb.set("FABRIC_PORT|Fabric0", fvs )
             else:
                print( "We do not check switch type:", cfg_switch_type )
 
