@@ -23,6 +23,26 @@ namespace swss
 
     using namespace testing_db;
 
+    void merge_values(std::vector<FieldValueTuple> &existing_values, const std::vector<FieldValueTuple> &values)
+    {
+        std::vector<FieldValueTuple> new_values(values);
+        std::set<std::string> field_set;
+        for (auto &value : values)
+        {
+            field_set.insert(fvField(value));
+        }
+        for (auto &value : existing_values)
+        {
+            auto &field = fvField(value);
+            if (field_set.find(field) != field_set.end())
+            {
+                continue;
+            }
+            new_values.push_back(value);
+        }
+        existing_values.swap(new_values);
+    }
+
     bool Table::get(const std::string &key, std::vector<FieldValueTuple> &ovalues)
     {
         auto table = gDB[m_pipe->getDbId()][getTableName()];
@@ -61,7 +81,15 @@ namespace swss
                     const std::string &prefix)
     {
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
-        table[key] = values;
+        auto iter = table.find(key);
+        if (iter == table.end())
+        {
+            table[key] = values;
+        }
+        else
+        {
+            merge_values(iter->second, values);
+        }
     }
 
     void Table::getKeys(std::vector<std::string> &keys)
@@ -95,22 +123,7 @@ namespace swss
         }
         else
         {
-            std::vector<FieldValueTuple> new_values(values);
-            std::set<std::string> field_set;
-            for (auto &value : values)
-            {
-                field_set.insert(fvField(value));
-            }
-            for (auto &value : iter->second)
-            {
-                auto &field = fvField(value);
-                if (field_set.find(field) != field_set.end())
-                {
-                    continue;
-                }
-                new_values.push_back(value);
-            }
-            iter->second.swap(new_values);
+            merge_values(iter->second, values);
         }
     }
 
