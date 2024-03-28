@@ -4,10 +4,10 @@
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 
-#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_my_mac.h"
 #include "p4oidmapper.h"

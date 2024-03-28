@@ -3,7 +3,7 @@ CFLAGS_SAI = -I /usr/include/sai
 LIBNL_CFLAGS = -I/usr/include/libnl3
 LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
-COMMON_LIBS = -lswsscommon
+COMMON_LIBS = -lswsscommon -lpthread
 
 bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd
 
