@@ -3878,8 +3878,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            auto parsePortFvs = [&](auto& fvMap) -> bool
             bool apply_port_speed_on_an_change_to_disabled = false;
+            auto parsePortFvs = [&](auto& fvMap) -> bool
             {
                 for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
                 {
