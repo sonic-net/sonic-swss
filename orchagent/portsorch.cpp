@@ -3572,6 +3572,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            bool apply_port_speed_on_an_change_to_disabled = false;
             auto parsePortFvs = [&](auto& fvMap) -> bool
             {
                 for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
@@ -3804,6 +3805,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             "Set port %s autoneg to %s",
                             p.m_alias.c_str(), m_portHlpr.getAutonegStr(pCfg).c_str()
                         );
+
+                        /* Reapply port speed after AN disabled */
+                        if (p.m_autoneg < 1)
+                        {
+                            pCfg.speed.is_set = true;
+                            pCfg.speed.value = p.m_speed;
+                            apply_port_speed_on_an_change_to_disabled = true;
+                        }
                     }
                 }
 
@@ -3863,7 +3872,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (pCfg.speed.is_set)
                 {
-                    if (p.m_speed != pCfg.speed.value)
+                    if (p.m_speed != pCfg.speed.value || apply_port_speed_on_an_change_to_disabled)
                     {
                         if (!isSpeedSupported(p.m_alias, p.m_port_id, pCfg.speed.value))
                         {
