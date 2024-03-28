@@ -298,7 +298,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -930,6 +930,27 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
             neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
             neighbor_attr.value.booldata = 1;
             neighbor_attrs.push_back(neighbor_attr);
+        }
+    }
+
+    PortsOrch* ports_orch = gDirectory.get<PortsOrch*>();
+    auto vlan_ports = ports_orch->getAllVlans();
+
+    for (auto vlan_port: vlan_ports)
+    {
+        if (vlan_port == alias)
+        {
+            continue;
+        }
+        NeighborEntry temp_entry = { ip_address, vlan_port };
+        if (m_syncdNeighbors.find(temp_entry) != m_syncdNeighbors.end())
+        {
+            SWSS_LOG_NOTICE("Neighbor %s on %s already exists, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str());
+            if (!removeNeighbor(temp_entry))
+            {
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s", ip_address.to_string().c_str(), vlan_port.c_str());
+                return false;
+            }
         }
     }
 

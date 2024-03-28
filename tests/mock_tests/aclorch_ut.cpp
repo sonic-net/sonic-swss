@@ -459,6 +459,8 @@ namespace aclorch_test
             gMirrorOrch = nullptr;
             delete gRouteOrch;
             gRouteOrch = nullptr;
+            delete gFlowCounterRouteOrch;
+            gFlowCounterRouteOrch = nullptr;
             delete gSrv6Orch;
             gSrv6Orch = nullptr;
             delete gNeighOrch;

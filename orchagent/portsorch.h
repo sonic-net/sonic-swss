@@ -2,6 +2,7 @@
 #define SWSS_PORTSORCH_H
 
 #include <map>
+#include <unordered_set>
 
 #include "acltable.h"
 #include "orch.h"
@@ -146,9 +147,12 @@ public:
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    void updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus);
 
     bool createVlanHostIntf(Port& vl, string hostif_name);
     bool removeVlanHostIntf(Port vl);
+
+    unordered_set<string>& getAllVlans();
 
     bool createBindAclTableGroup(sai_object_id_t  port_oid,
                    sai_object_id_t  acl_table_oid,
@@ -263,6 +267,7 @@ private:
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_state_db;
+    shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
@@ -305,6 +310,7 @@ private:
     map<int, gearbox_port_t> m_gearboxPortMap;
     map<sai_object_id_t, tuple<sai_object_id_t, sai_object_id_t>> m_gearboxPortListLaneMap;
 
+    unordered_set<string> m_vlanPorts;
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<uint32_t>, sai_object_id_t> m_portListLaneMap;

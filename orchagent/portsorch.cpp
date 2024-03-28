@@ -6,6 +6,7 @@
 #include "vxlanorch.h"
 #include "directory.h"
 #include "subintf.h"
+#include "notifications.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -215,7 +216,23 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IP_IN_RECEIVES,
     SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES,
     SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES,
-    SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS
+    SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S0,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S1,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S2,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S3,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S4,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S5,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S6,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S7,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S8,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S9,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S10,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S11,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S12,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S13,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -565,6 +582,17 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     {
         SWSS_LOG_DEBUG("m_cmisModuleAsicSyncSupported is true");
         m_cmisModuleAsicSyncSupported = true;
+
+        // set HOST_TX_READY callback function attribute to SAI, only if the feature is enabled
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_PORT_HOST_TX_READY_NOTIFY;
+        attr.value.ptr = (void *)on_port_host_tx_ready;
+
+        if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("PortsOrch failed to set SAI_SWITCH_ATTR_PORT_HOST_TX_READY_NOTIFY attribute");
+        }
+
         Orch::addExecutor(new Consumer(new SubscriberStateTable(stateDb, STATE_TRANSCEIVER_INFO_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, STATE_TRANSCEIVER_INFO_TABLE_NAME));
     }
 
@@ -628,14 +656,14 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     }
 
     /* Add port oper status notification support */
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
 
     if (m_cmisModuleAsicSyncSupported)
     {
-        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
         auto portHostTxReadyNotificatier = new Notifier(m_portHostTxReadyNotificationConsumer, this, "PORT_HOST_TX_NOTIFICATIONS");
         Orch::addExecutor(portHostTxReadyNotificatier);
     }
@@ -1138,6 +1166,11 @@ bool PortsOrch::isPortAdminUp(const string &alias)
 map<string, Port>& PortsOrch::getAllPorts()
 {
     return m_portList;
+}
+
+unordered_set<string>& PortsOrch::getAllVlans()
+{
+    return m_vlanPorts;
 }
 
 bool PortsOrch::getPort(string alias, Port &p)
@@ -2335,7 +2368,7 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
         return false;
     }
 
-    for (const auto p: portv)
+    for (const auto &p: portv)
     {
         sai_attribute_t attr;
         attr.id = SAI_HOSTIF_ATTR_VLAN_TAG;
@@ -3074,6 +3107,30 @@ bool PortsOrch::removeVlanHostIntf(Port vl)
     return true;
 }
 
+void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus)
+{
+    SWSS_LOG_ENTER();
+
+    ++port.m_flap_count;
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("flap_count", std::to_string(port.m_flap_count));
+    tuples.push_back(tuple);
+    
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    if (pstatus == SAI_PORT_OPER_STATUS_DOWN)
+    {
+        FieldValueTuple tuple("last_down_time", std::ctime(&now_c));
+        tuples.push_back(tuple);
+    } 
+    else if (pstatus == SAI_PORT_OPER_STATUS_UP) 
+    {
+        FieldValueTuple tuple("last_up_time", std::ctime(&now_c));
+        tuples.push_back(tuple);
+    }
+    m_portTable->set(port.m_alias, tuples);
+}
+
 void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
     SWSS_LOG_ENTER();
@@ -3515,28 +3572,59 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            auto &fvMap = m_portConfigMap[key];
-
-            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            auto parsePortFvs = [&](auto& fvMap) -> bool
             {
-                auto fieldName = fvField(cit);
-                auto fieldValue = fvValue(cit);
+                for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+                {
+                    auto fieldName = fvField(cit);
+                    auto fieldValue = fvValue(cit);
 
-                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+                    SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
 
-                fvMap[fieldName] = fieldValue;
-            }
+                    fvMap[fieldName] = fieldValue;
+                }
 
-            pCfg.fieldValueMap = fvMap;
+                pCfg.fieldValueMap = fvMap;
 
-            if (!m_portHlpr.parsePortConfig(pCfg))
+                if (!m_portHlpr.parsePortConfig(pCfg))
+                {
+                    return false;
+                }
+
+                return true;
+            };
+
+            if (m_portList.find(key) == m_portList.end())
             {
-                it = taskMap.erase(it);
-                continue;
-            }
+                // Aggregate configuration while the port is not created.
+                auto &fvMap = m_portConfigMap[key];
 
-            /* Collect information about all received ports */
-            m_lanesAliasSpeedMap[pCfg.lanes.value] = pCfg;
+                if (!parsePortFvs(fvMap))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+
+                if (!m_portHlpr.validatePortConfig(pCfg))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+
+                /* Collect information about all received ports */
+                m_lanesAliasSpeedMap[pCfg.lanes.value] = pCfg;
+            }
+            else
+            {
+                // Port is already created, gather updated field-values.
+                std::unordered_map<std::string, std::string> fvMap;
+
+                if (!parsePortFvs(fvMap))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+            }
 
             // TODO:
             // Fix the issue below
@@ -3651,6 +3739,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
             {
                 PortSerdesAttrMap_t serdes_attr;
                 getPortSerdesAttr(serdes_attr, pCfg);
+
+                // Saved configured admin status
+                bool admin_status = p.m_admin_state_up;
 
                 if (pCfg.autoneg.is_set)
                 {
@@ -4211,6 +4302,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* create host_tx_ready field in state-db */
                 initHostTxReadyState(p);
+
+                // Restore admin status if the port was brought down
+                if (admin_status != p.m_admin_state_up)
+                {
+                    pCfg.admin_status.is_set = true;
+                    pCfg.admin_status.value = admin_status;
+                }
 
                 /* Last step set port admin status */
                 if (pCfg.admin_status.is_set)
@@ -5282,7 +5380,7 @@ bool PortsOrch::initializePort(Port &port)
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
     bool exist = m_portTable->get(port.m_alias, tuples);
-    string operStatus;
+    string operStatus, flapCount = "0";
     if (exist)
     {
         for (auto i : tuples)
@@ -5291,9 +5389,14 @@ bool PortsOrch::initializePort(Port &port)
             {
                 operStatus = fvValue(i);
             }
+
+            if (fvField(i) == "flap_count")
+            {
+                flapCount = fvValue(i);
+            }
         }
     }
-    SWSS_LOG_DEBUG("initializePort %s with oper %s", port.m_alias.c_str(), operStatus.c_str());
+    SWSS_LOG_INFO("Port %s with oper %s flap_count=%s", port.m_alias.c_str(), operStatus.c_str(), flapCount.c_str());
 
     /**
      * Create database port oper status as DOWN if attr missing
@@ -5312,6 +5415,20 @@ bool PortsOrch::initializePort(Port &port)
     else
     {
         port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+    }
+
+    // initalize port flap count
+    if (!flapCount.empty())
+    {
+        try
+        {
+            port.m_flap_count = stoull(flapCount);
+            m_portTable->hset(port.m_alias, "flap_count", flapCount);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Failed to get port (%s) flap_count: %s", port.m_alias.c_str(), e.what());
+        }
     }
 
     /* initialize port admin status */
@@ -5727,6 +5844,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     m_portList[vlan_alias] = vlan;
     m_port_ref_count[vlan_alias] = 0;
     saiOidToAlias[vlan_oid] =  vlan_alias;
+    m_vlanPorts.emplace(vlan_alias);
 
     return true;
 }
@@ -5793,6 +5911,7 @@ bool PortsOrch::removeVlan(Port vlan)
     saiOidToAlias.erase(vlan.m_vlan_info.vlan_oid);
     m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
+    m_vlanPorts.erase(vlan.m_alias);
 
     return true;
 }
@@ -7545,6 +7664,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     if (port.m_type == Port::PHY)
     {
         updateDbPortOperStatus(port, status);
+        updateDbPortFlapCount(port, status);
         updateGearboxPortOperStatus(port);
 
         /* Refresh the port states and reschedule the poller tasks */

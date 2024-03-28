@@ -133,7 +133,7 @@ local function iterate_profile_list(all_items)
     return 0
 end
 
-local function fetch_buffer_pool_size_from_appldb()
+local function fetch_buffer_pool_size_from_appldb(shp_enabled)
     local buffer_pools = {}
     redis.call('SELECT', config_db)
     local buffer_pool_keys = redis.call('KEYS', 'BUFFER_POOL|*')
@@ -158,7 +158,18 @@ local function fetch_buffer_pool_size_from_appldb()
         end
         xoff = redis.call('HGET', 'BUFFER_POOL_TABLE:' .. buffer_pools[i], 'xoff')
         if not xoff then
-            table.insert(result, buffer_pools[i] .. ':' .. size)
+            if shp_enabled and size == "0" and buffer_pools[i] == "ingress_lossless_pool" then
+                -- During initialization, if SHP is enabled
+                --   1. the buffer pool sizes, xoff have initialized to 0, which means the shared headroom pool is disabled
+                --   2. but the buffer profiles already indicate the shared headroom pool is enabled
+                --   3. later on the buffer pool sizes are updated with xoff being non-zero
+                -- In case the orchagent starts handling buffer configuration between 2 and 3,
+                -- It is inconsistent between buffer pools and profiles, which fails Mellanox SAI sanity check
+                -- To avoid it, it indicates the shared headroom pool is enabled by setting a very small buffer pool and shared headroom pool sizes
+                table.insert(result, buffer_pools[i] .. ':2048:1024')
+            else
+                table.insert(result, buffer_pools[i] .. ':' .. size)
+            end
         else
             table.insert(result, buffer_pools[i] .. ':' .. size .. ':' .. xoff)
         end
@@ -295,7 +306,7 @@ local fail_count = 0
 fail_count = fail_count + iterate_all_items(all_pgs, true)
 fail_count = fail_count + iterate_all_items(all_tcs, false)
 if fail_count > 0 then
-    fetch_buffer_pool_size_from_appldb()
+    fetch_buffer_pool_size_from_appldb(shp_enabled)
     return result
 end
 
@@ -305,7 +316,7 @@ local all_egress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_EGRESS_PROFILE_
 fail_count = fail_count + iterate_profile_list(all_ingress_profile_lists)
 fail_count = fail_count + iterate_profile_list(all_egress_profile_lists)
 if fail_count > 0 then
-    fetch_buffer_pool_size_from_appldb()
+    fetch_buffer_pool_size_from_appldb(shp_enabled)
     return result
 end
 
