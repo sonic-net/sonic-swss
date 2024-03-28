@@ -855,10 +855,6 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
     {
         sai_attribute_t attr;
         vector<sai_attribute_t> add_trap_attr;
-        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_GROUP;
-        attr.value.oid = m_trap_group_map[trap_group_name];
-
-        add_trap_attr.push_back(attr);
 
         for(auto i: add_trap_ids)
         {
@@ -871,12 +867,26 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
             }
         }
 
+        bool associate_trap_group = false;
         for (auto it: m_trap_group_trap_id_attrs[trap_group_name])
         {
             attr.id = it.first;
             attr.value = it.second;
             add_trap_attr.push_back(attr);
+            if (attr.id == SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION &&
+                (attr.value.s32 == SAI_PACKET_ACTION_TRAP || attr.value.s32 == SAI_PACKET_ACTION_COPY))
+            {
+                associate_trap_group = true;
+            }
         }
+
+        if (associate_trap_group)
+        {
+            attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_GROUP;
+            attr.value.oid = m_trap_group_map[trap_group_name];
+            add_trap_attr.push_back(attr);
+        }
+
         if (!applyAttributesToTrapIds(m_trap_group_map[trap_group_name], add_trap_ids,
                                       add_trap_attr))
         {
