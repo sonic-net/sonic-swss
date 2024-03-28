@@ -8,7 +8,6 @@
 #include <unordered_map>
 
 #include "ipaddress.h"
-#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_hostif.h"
 #include "mock_sai_next_hop.h"
@@ -18,6 +17,7 @@
 #include "p4orch.h"
 #include "return_code.h"
 #include "swssnet.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

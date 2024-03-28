@@ -7,7 +7,6 @@
 #include "SaiAttributeList.h"
 #include "crmorch.h"
 #include "dbconnector.h"
-#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "orch.h"
 #include "p4orch.h"
@@ -16,6 +15,7 @@
 #include "switchorch.h"
 #include "table.h"
 #include "tokenize.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
@@ -205,7 +205,8 @@ ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getUdfSaiAttrs(const
     return udf_attrs;
 }
 
-ReturnCode AclTableManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+ReturnCode AclTableManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                         std::string &object_key)
 {
     return StatusCode::SWSS_RC_UNIMPLEMENTED;
 }

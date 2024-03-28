@@ -185,7 +185,7 @@ void PortsOrch::generateQueueMap(std::map<string, FlexCounterQueueStates> queues
 {
 }
 
-void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq)
+void PortsOrch::generateQueueMapPerPort(const Port &port, FlexCounterQueueStates &queuesState, bool voq)
 {
 }
 
@@ -201,15 +201,15 @@ void PortsOrch::generatePriorityGroupMap(std::map<string, FlexCounterPgStates> p
 {
 }
 
-void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState)
+void PortsOrch::generatePriorityGroupMapPerPort(const Port &port, FlexCounterPgStates &pgsState)
 {
 }
 
-void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
+void PortsOrch::createPortBufferPgCounters(const Port &port, string pgs)
 {
 }
 
-void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
+void PortsOrch::removePortBufferPgCounters(const Port &port, string pgs)
 {
 }
 
@@ -591,7 +591,8 @@ bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *
     return true;
 }
 
-bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value, bool override_fec)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value,
+                                   bool override_fec)
 {
     return true;
 }
@@ -621,7 +622,8 @@ task_process_status PortsOrch::setPortInterfaceType(Port &port, sai_port_interfa
     return task_success;
 }
 
-task_process_status PortsOrch::setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types)
+task_process_status PortsOrch::setPortAdvInterfaceTypes(Port &port,
+                                                        std::set<sai_port_interface_type_t> &interface_types)
 {
     return task_success;
 }

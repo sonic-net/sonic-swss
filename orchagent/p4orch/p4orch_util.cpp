@@ -1,5 +1,5 @@
-#include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
+#include "p4orch/p4orch.h"
 
 #include "schema.h"
 
@@ -116,9 +116,7 @@ ActionInfo *getTableActionInfo(TableInfo *table, const std::string &action_name)
 
 std::string KeyGenerator::generateTablesInfoKey(const std::string &context)
 {
-    std::map<std::string, std::string> fv_map = {
-            {"context", context}
-    };
+    std::map<std::string, std::string> fv_map = {{"context", context}};
     return generateKey(fv_map);
 }
 

@@ -7,7 +7,6 @@
 
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
-#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
@@ -15,6 +14,7 @@
 #include "sai_serialize.h"
 #include "table.h"
 #include "tokenize.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
@@ -64,7 +64,8 @@ ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4L3AdmitEntry &l3_
 
 } // namespace
 
-ReturnCode L3AdmitManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+ReturnCode L3AdmitManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                        std::string &object_key)
 {
     return StatusCode::SWSS_RC_UNIMPLEMENTED;
 }

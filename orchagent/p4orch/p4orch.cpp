@@ -8,17 +8,17 @@
 #include "copporch.h"
 #include "logger.h"
 #include "orch.h"
-#include "p4orch/p4orch_util.h"
-#include "p4orch/tables_definition_manager.h"
 #include "p4orch/acl_rule_manager.h"
 #include "p4orch/acl_table_manager.h"
+#include "p4orch/ext_tables_manager.h"
 #include "p4orch/gre_tunnel_manager.h"
 #include "p4orch/l3_admit_manager.h"
 #include "p4orch/neighbor_manager.h"
 #include "p4orch/next_hop_manager.h"
+#include "p4orch/p4orch_util.h"
 #include "p4orch/route_manager.h"
 #include "p4orch/router_interface_manager.h"
-#include "p4orch/ext_tables_manager.h"
+#include "p4orch/tables_definition_manager.h"
 #include "portsorch.h"
 #include "return_code.h"
 #include "sai_serialize.h"
@@ -142,7 +142,7 @@ void P4Orch::doTask(Consumer &consumer)
             else
             {
                 auto status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                                  << "Failed to find P4Orch Manager for " << table_name << " P4RT DB table";
+                              << "Failed to find P4Orch Manager for " << table_name << " P4RT DB table";
                 SWSS_LOG_ERROR("%s", status.message().c_str());
                 m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                     status);

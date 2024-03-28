@@ -7,30 +7,23 @@
 #include <vector>
 
 #include "directory.h"
-#include <nlohmann/json.hpp>
 #include "logger.h"
-#include "tokenize.h"
 #include "orch.h"
 #include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
+#include "tokenize.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "saitypes.h"
 }
 
-
 extern Directory<Orch *> gDirectory;
 extern P4Orch *gP4Orch;
-const std::map<std::string, std::string> format_datatype_map =
-{
-    {"MAC",    "SAI_ATTR_VALUE_TYPE_MAC"},
-    {"IPV4",   "SAI_ATTR_VALUE_TYPE_IPV4"},
-    {"IPV6",   "SAI_ATTR_VALUE_TYPE_IPV6"}
-};
+const std::map<std::string, std::string> format_datatype_map = {
+    {"MAC", "SAI_ATTR_VALUE_TYPE_MAC"}, {"IPV4", "SAI_ATTR_VALUE_TYPE_IPV4"}, {"IPV6", "SAI_ATTR_VALUE_TYPE_IPV6"}};
 
-
-std::string
-BitwidthToDatatype (int bitwidth)
+std::string BitwidthToDatatype(int bitwidth)
 {
     std::string datatype = "SAI_ATTR_VALUE_TYPE_CHARDATA";
 
@@ -58,8 +51,7 @@ BitwidthToDatatype (int bitwidth)
     return datatype;
 }
 
-std::string
-parseBitwidthToDatatype (const nlohmann::json &json)
+std::string parseBitwidthToDatatype(const nlohmann::json &json)
 {
     int bitwidth;
     std::string datatype = "SAI_ATTR_VALUE_TYPE_CHARDATA";
@@ -73,8 +65,7 @@ parseBitwidthToDatatype (const nlohmann::json &json)
     return datatype;
 }
 
-std::string
-parseFormatToDatatype (const nlohmann::json &json, std::string datatype)
+std::string parseFormatToDatatype(const nlohmann::json &json, std::string datatype)
 {
     std::string format;
 
@@ -92,8 +83,7 @@ parseFormatToDatatype (const nlohmann::json &json, std::string datatype)
     return datatype;
 }
 
-ReturnCode
-parseTableMatchReferences (const nlohmann::json &match_json, TableMatchInfo &match)
+ReturnCode parseTableMatchReferences(const nlohmann::json &match_json, TableMatchInfo &match)
 {
     std::string table, field;
 
@@ -110,7 +100,7 @@ parseTableMatchReferences (const nlohmann::json &match_json, TableMatchInfo &mat
             catch (std::exception &ex)
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                     << "can not parse tables from app-db supplied table definition info";
+                       << "can not parse tables from app-db supplied table definition info";
             }
         }
     }
@@ -118,8 +108,7 @@ parseTableMatchReferences (const nlohmann::json &match_json, TableMatchInfo &mat
     return ReturnCode();
 }
 
-ReturnCode
-parseActionParamReferences (const nlohmann::json &param_json, ActionParamInfo &param)
+ReturnCode parseActionParamReferences(const nlohmann::json &param_json, ActionParamInfo &param)
 {
     std::string table, field;
 
@@ -136,7 +125,7 @@ parseActionParamReferences (const nlohmann::json &param_json, ActionParamInfo &p
             catch (std::exception &ex)
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                     << "can not parse tables from app-db supplied table definition info";
+                       << "can not parse tables from app-db supplied table definition info";
             }
         }
     }
@@ -144,8 +133,7 @@ parseActionParamReferences (const nlohmann::json &param_json, ActionParamInfo &p
     return ReturnCode();
 }
 
-ReturnCode
-parseTableActionParams (const nlohmann::json &action_json, ActionInfo &action)
+ReturnCode parseTableActionParams(const nlohmann::json &action_json, ActionInfo &action)
 {
     action.refers_to = false;
     if (action_json.find(p4orch::kActionParams) != action_json.end())
@@ -175,7 +163,7 @@ parseTableActionParams (const nlohmann::json &action_json, ActionInfo &action)
             catch (std::exception &ex)
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                     << "can not parse tables from app-db supplied table definition info";
+                       << "can not parse tables from app-db supplied table definition info";
             }
         }
     }
@@ -183,8 +171,7 @@ parseTableActionParams (const nlohmann::json &action_json, ActionInfo &action)
     return ReturnCode();
 }
 
-ReturnCode
-parseTableCounter (const nlohmann::json &table_json, TableInfo &table)
+ReturnCode parseTableCounter(const nlohmann::json &table_json, TableInfo &table)
 {
     if (table_json.find(p4orch::kCounterUnit) != table_json.end())
     {
@@ -207,8 +194,7 @@ parseTableCounter (const nlohmann::json &table_json, TableInfo &table)
     return ReturnCode();
 }
 
-ReturnCode
-parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
+ReturnCode parseTablesInfo(const nlohmann::json &info_json, TablesInfo &info_entry)
 {
     ReturnCode status;
     int table_id;
@@ -216,8 +202,7 @@ parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
 
     if (info_json.find(p4orch::kTables) == info_json.end())
     {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-       	         << "no tables in app-db supplied table definition info";
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "no tables in app-db supplied table definition info";
     }
 
     for (const auto &table_json : info_json[p4orch::kTables])
@@ -230,18 +215,17 @@ parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
         catch (std::exception &ex)
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                     << "can not parse tables from app-db supplied table definition info";
+                   << "can not parse tables from app-db supplied table definition info";
         }
 
-
-	TableInfo table = {};
+        TableInfo table = {};
         table.name = table_name;
-        table.id   = table_id;
+        table.id = table_id;
         try
         {
             for (const auto &match_json : table_json[p4orch::kmatchFields])
             {
-		TableMatchInfo match = {};
+                TableMatchInfo match = {};
                 std::string match_name;
 
                 match_name = match_json.at(p4orch::kName).get<std::string>();
@@ -254,7 +238,7 @@ parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
 
             for (const auto &action_json : table_json[p4orch::kActions])
             {
-		ActionInfo action = {};
+                ActionInfo action = {};
                 std::string action_name;
 
                 action_name = action_json.at(p4orch::kAlias).get<std::string>();
@@ -266,20 +250,18 @@ parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
                  * If any parameter of action refers to another table, add that one in the
                  * cross-reference list of current table
                  */
-                for (auto param_it = action.params.begin();
-                          param_it != action.params.end(); param_it++)
+                for (auto param_it = action.params.begin(); param_it != action.params.end(); param_it++)
                 {
                     ActionParamInfo action_param = param_it->second;
                     for (auto ref_it = action_param.table_reference_map.begin();
-                              ref_it != action_param.table_reference_map.end(); ref_it++)
+                         ref_it != action_param.table_reference_map.end(); ref_it++)
                     {
-                        if (std::find(table.action_ref_tables.begin(),
-                                      table.action_ref_tables.end(),
-                                      ref_it->first) == table.action_ref_tables.end())
+                        if (std::find(table.action_ref_tables.begin(), table.action_ref_tables.end(), ref_it->first) ==
+                            table.action_ref_tables.end())
                         {
                             table.action_ref_tables.push_back(ref_it->first);
                         }
-                   }
+                    }
                 }
             }
 
@@ -288,9 +270,8 @@ parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
         catch (std::exception &ex)
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                     << "can not parse table " << QuotedVar(table_name.c_str()) << "match fields";
+                   << "can not parse table " << QuotedVar(table_name.c_str()) << "match fields";
         }
-
 
         info_entry.m_tableIdNameMap[std::to_string(table_id)] = table_name;
         info_entry.m_tableInfoMap[table_name] = table;
@@ -298,7 +279,6 @@ parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
 
     return ReturnCode();
 }
-
 
 ReturnCodeOr<TablesInfoAppDbEntry> TablesDefnManager::deserializeTablesInfoEntry(
     const std::string &key, const std::vector<swss::FieldValueTuple> &attributes)
@@ -327,7 +307,7 @@ ReturnCodeOr<TablesInfoAppDbEntry> TablesDefnManager::deserializeTablesInfoEntry
         else
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Unexpected field " << QuotedVar(field) << " in table entry";
+                   << "Unexpected field " << QuotedVar(field) << " in table entry";
         }
     }
 
@@ -416,14 +396,13 @@ ReturnCode TablesDefnManager::processDeleteRequest(const std::string &context_ke
     return ReturnCode();
 }
 
-ReturnCode TablesDefnManager::getSaiObject(const std::string &json_key,
-       	                                   sai_object_type_t &object_type, std::string &object_key)
+ReturnCode TablesDefnManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                           std::string &object_key)
 {
     return StatusCode::SWSS_RC_INVALID_PARAM;
 }
 
-std::unordered_map<int, std::unordered_set<int>>
-createGraph (std::vector<std::pair<int, int>> preReq)
+std::unordered_map<int, std::unordered_set<int>> createGraph(std::vector<std::pair<int, int>> preReq)
 {
     std::unordered_map<int, std::unordered_set<int>> graph;
 
@@ -443,8 +422,7 @@ createGraph (std::vector<std::pair<int, int>> preReq)
     return graph;
 }
 
-std::unordered_map<int, int>
-computeIndegree (std::unordered_map<int, std::unordered_set<int>> &graph)
+std::unordered_map<int, int> computeIndegree(std::unordered_map<int, std::unordered_set<int>> &graph)
 {
     std::unordered_map<int, int> degrees;
 
@@ -467,19 +445,16 @@ computeIndegree (std::unordered_map<int, std::unordered_set<int>> &graph)
     return degrees;
 }
 
-
-std::vector<int>
-findTablePrecedence (int tables, std::vector<std::pair<int, int>> preReq, TablesInfo *tables_info)
+std::vector<int> findTablePrecedence(int tables, std::vector<std::pair<int, int>> preReq, TablesInfo *tables_info)
 {
     std::unordered_map<int, std::unordered_set<int>> graph = createGraph(preReq);
     std::unordered_map<int, int> degrees = computeIndegree(graph);
     std::vector<int> visited;
     std::vector<int> toposort;
-    std::queue<int>  zeros;
+    std::queue<int> zeros;
 
     // initialize queue with tables having no dependencies
-    for (auto table_it = tables_info->m_tableInfoMap.begin();
-              table_it != tables_info->m_tableInfoMap.end(); table_it++)
+    for (auto table_it = tables_info->m_tableInfoMap.begin(); table_it != tables_info->m_tableInfoMap.end(); table_it++)
     {
         TableInfo table_info = table_it->second;
         if (degrees.find(table_info.id) == degrees.end())
@@ -530,21 +505,19 @@ findTablePrecedence (int tables, std::vector<std::pair<int, int>> preReq, Tables
     return toposort;
 }
 
-
-void
-buildTablePrecedence (TablesInfo *tables_info)
+void buildTablePrecedence(TablesInfo *tables_info)
 {
     std::vector<std::pair<int, int>> preReq;
     std::vector<int> orderedTables;
     int tables = 0;
 
-    if (!tables_info) {
+    if (!tables_info)
+    {
         return;
     }
 
     // build dependencies
-    for (auto table_it = tables_info->m_tableInfoMap.begin();
-              table_it != tables_info->m_tableInfoMap.end(); table_it++)
+    for (auto table_it = tables_info->m_tableInfoMap.begin(); table_it != tables_info->m_tableInfoMap.end(); table_it++)
     {
         TableInfo table_info = table_it->second;
         tables++;
@@ -552,18 +525,18 @@ buildTablePrecedence (TablesInfo *tables_info)
         for (std::size_t i = 0; i < table_info.action_ref_tables.size(); i++)
         {
             /**
-	     * For now processing precedence order is only amongst extension tables
-	     * Skip fixed tables, include them in precedence calculations when fixed
-	     * and extension tables processing precedence may be interleaved
-	     */
+             * For now processing precedence order is only amongst extension tables
+             * Skip fixed tables, include them in precedence calculations when fixed
+             * and extension tables processing precedence may be interleaved
+             */
             if (FixedTablesMap.find(table_info.action_ref_tables[i]) != FixedTablesMap.end())
             {
                 continue;
             }
 
             TableInfo ref_table_info = tables_info->m_tableInfoMap[table_info.action_ref_tables[i]];
-            if (std::find(preReq.begin(), preReq.end(),
-                          std::make_pair(table_info.id, ref_table_info.id)) == preReq.end())
+            if (std::find(preReq.begin(), preReq.end(), std::make_pair(table_info.id, ref_table_info.id)) ==
+                preReq.end())
             {
                 preReq.push_back(std::make_pair(table_info.id, ref_table_info.id));
             }
@@ -595,7 +568,6 @@ buildTablePrecedence (TablesInfo *tables_info)
 
     return;
 }
-
 
 void TablesDefnManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
@@ -672,8 +644,8 @@ void TablesDefnManager::drain()
         {
             buildTablePrecedence(gP4Orch->tablesinfo);
         }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                             status, /*replace=*/true);
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
     }
     m_entries.clear();
 }

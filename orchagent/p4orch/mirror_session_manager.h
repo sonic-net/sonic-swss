@@ -87,7 +87,8 @@ class MirrorSessionManager : public ObjectManagerInterface
 
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
 
-    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key) override;
+    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                            std::string &object_key) override;
 
   private:
     ReturnCodeOr<P4MirrorSessionAppDbEntry> deserializeP4MirrorSessionAppDbEntry(

@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 
-#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_mirror.h"
 #include "p4oidmapper.h"
@@ -15,6 +14,7 @@
 #include "swss/ipaddress.h"
 #include "swss/macaddress.h"
 #include "swssnet.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

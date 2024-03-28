@@ -5,7 +5,6 @@
 
 #include <string>
 
-#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"
@@ -18,6 +17,7 @@
 #include "p4orch_util.h"
 #include "return_code.h"
 #include "sai_serialize.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

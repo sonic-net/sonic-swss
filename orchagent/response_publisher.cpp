@@ -50,7 +50,7 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
 {
     if (!swss::Recorder::Instance().respub.isRecord())
     {
-       return;
+        return;
     }
 
     std::string s = response_channel + ":" + key + "|" + status;
@@ -64,10 +64,9 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
 
 } // namespace
 
-ResponsePublisher::ResponsePublisher(bool buffered) :
-    m_db(std::make_unique<swss::DBConnector>("APPL_STATE_DB", 0)),
-    m_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
-    m_buffered(buffered)
+ResponsePublisher::ResponsePublisher(bool buffered)
+    : m_db(std::make_unique<swss::DBConnector>("APPL_STATE_DB", 0)),
+      m_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())), m_buffered(buffered)
 {
 }
 

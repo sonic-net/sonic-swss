@@ -10,9 +10,9 @@
 #include "notificationconsumer.h"
 #include "notifier.h"
 #include "orch.h"
-#include "p4orch/tables_definition_manager.h"
 #include "p4orch/acl_rule_manager.h"
 #include "p4orch/acl_table_manager.h"
+#include "p4orch/ext_tables_manager.h"
 #include "p4orch/gre_tunnel_manager.h"
 #include "p4orch/l3_admit_manager.h"
 #include "p4orch/mirror_session_manager.h"
@@ -22,22 +22,21 @@
 #include "p4orch/p4oidmapper.h"
 #include "p4orch/route_manager.h"
 #include "p4orch/router_interface_manager.h"
+#include "p4orch/tables_definition_manager.h"
 #include "p4orch/wcmp_manager.h"
-#include "p4orch/ext_tables_manager.h"
 #include "response_publisher.h"
 #include "vrforch.h"
 
 static const std::map<std::string, std::string> FixedTablesMap = {
-    {"router_interface_table", APP_P4RT_ROUTER_INTERFACE_TABLE_NAME },
-    {"neighbor_table",         APP_P4RT_NEIGHBOR_TABLE_NAME},
-    {"nexthop_table",          APP_P4RT_NEXTHOP_TABLE_NAME},
-    {"wcmp_group_table",       APP_P4RT_WCMP_GROUP_TABLE_NAME},
-    {"ipv4_table",             APP_P4RT_IPV4_TABLE_NAME},
-    {"ipv6_table",             APP_P4RT_IPV6_TABLE_NAME},
-    {"mirror_session_table",   APP_P4RT_MIRROR_SESSION_TABLE_NAME},
-    {"l3_admit_table",         APP_P4RT_L3_ADMIT_TABLE_NAME},
-    {"tunnel_table",           APP_P4RT_TUNNEL_TABLE_NAME}
-};
+    {"router_interface_table", APP_P4RT_ROUTER_INTERFACE_TABLE_NAME},
+    {"neighbor_table", APP_P4RT_NEIGHBOR_TABLE_NAME},
+    {"nexthop_table", APP_P4RT_NEXTHOP_TABLE_NAME},
+    {"wcmp_group_table", APP_P4RT_WCMP_GROUP_TABLE_NAME},
+    {"ipv4_table", APP_P4RT_IPV4_TABLE_NAME},
+    {"ipv6_table", APP_P4RT_IPV6_TABLE_NAME},
+    {"mirror_session_table", APP_P4RT_MIRROR_SESSION_TABLE_NAME},
+    {"l3_admit_table", APP_P4RT_L3_ADMIT_TABLE_NAME},
+    {"tunnel_table", APP_P4RT_TUNNEL_TABLE_NAME}};
 
 class P4Orch : public Orch
 {
@@ -55,7 +54,6 @@ class P4Orch : public Orch
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
     std::unordered_map<std::string, ObjectManagerInterface *> m_p4TableToManagerMap;
- 
 
   private:
     void doTask(Consumer &consumer);
