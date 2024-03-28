@@ -5,6 +5,8 @@ import time
 import pytest
 import buffer_model
 
+DVS_ENV = ["ASIC_VENDOR=vs"]
+
 class TestVirtualChassis(object):
 
     def set_lag_id_boundaries(self, vct):
@@ -138,7 +140,6 @@ class TestVirtualChassis(object):
                 spcfg = ast.literal_eval(value)
                 assert spcfg['count'] == sp_count, "Number of systems ports configured is invalid"
 
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_app_db_sync(self, vct):
         """Test chassis app db syncing.
 
@@ -159,7 +160,6 @@ class TestVirtualChassis(object):
                 keys = chassis_app_db.get_keys("SYSTEM_INTERFACE")
                 assert len(keys), "No chassis app db syncing is done"
 
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_interface(self, vct):
         """Test RIF record creation in ASIC_DB for remote interfaces.
 
@@ -216,7 +216,6 @@ class TestVirtualChassis(object):
                     # Remote system ports's switch id should not match local switch id
                     assert spcfginfo["attached_switch_id"] != lc_switch_id, "RIF system port with wrong switch_id"
 
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_neigh(self, vct):
         """Test neigh record create/delete and syncing to chassis app db.
 
@@ -312,8 +311,8 @@ class TestVirtualChassis(object):
                     test_sysneigh = ""
                     for sysnk in sysneighkeys:
                         sysnk_tok = sysnk.split("|")
-                        assert len(sysnk_tok) == 3, "Invalid system neigh key in chassis app db"
-                        if sysnk_tok[2] == test_neigh_ip:
+                        assert len(sysnk_tok) == 4, "Invalid system neigh key in chassis app db"
+                        if sysnk_tok[3] == test_neigh_ip:
                             test_sysneigh = sysnk
                             break
 
@@ -372,7 +371,7 @@ class TestVirtualChassis(object):
                         # Check for kernel entries
 
                         _, output = dvs.runcmd("ip neigh show")
-                        assert f"{test_neigh_ip} dev {inband_port}" in output, "Kernel neigh not found for remote neighbor"
+                        assert f"{test_neigh_ip} dev {inband_port} lladdr {mac_address}" in output, "Kernel neigh not found for remote neighbor"
 
                         _, output = dvs.runcmd("ip route show")
                         assert f"{test_neigh_ip} dev {inband_port} scope link" in output, "Kernel route not found for remote neighbor"
@@ -487,7 +486,6 @@ class TestVirtualChassis(object):
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
         
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_lag(self, vct):
         """Test PortChannel in VOQ based chassis systems.
         
@@ -624,7 +622,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_lag_id_allocator_table_full(self, vct):
         """Test lag id allocator table full.
         
@@ -702,7 +699,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_lag_id_allocator_del_id(self, vct):
         """Test lag id allocator's release id and re-use id processing.
         
