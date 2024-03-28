@@ -23,11 +23,12 @@ extern PortsOrch *gPortsOrch;
 
 FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         Orch(db, tableNames),
+        m_zmqClient("tcp://localhost:8100"),
+        m_routeTable(appDb, APP_ROUTE_TABLE_NAME, m_zmqClient),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
-        m_stateWarmRestartRouteTable(stateDb, STATE_FG_ROUTE_TABLE_NAME),
-        m_routeTable(appDb, APP_ROUTE_TABLE_NAME)
+        m_stateWarmRestartRouteTable(stateDb, STATE_FG_ROUTE_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     isFineGrainedConfigured = false;

@@ -7,6 +7,7 @@
 #include "netlink.h"
 #include "notificationconsumer.h"
 #include "subscriberstatetable.h"
+#include "zmqclient.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
@@ -61,8 +62,12 @@ int main(int argc, char **argv)
     DBConnector applStateDb("APPL_STATE_DB", 0);
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
+    // [Hua] test code, need improve to a parameter
+    ZmqClient zmqClient("tcp://localhost:8100");
+
     RedisPipeline pipeline(&db);
-    RouteSync sync(&pipeline);
+    RouteSync sync(&pipeline, &zmqClient);
+
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
@@ -119,11 +124,11 @@ int main(int argc, char **argv)
             }
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
-            bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
+            bool warmStartEnabled = sync.m_warmStartHelper->checkAndStart();
             if (warmStartEnabled)
             {
                 /* Obtain warm-restart timer defined for routing application */
-                time_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
+                time_t warmRestartIval = sync.m_warmStartHelper->getRestartTimer();
                 if (!warmRestartIval)
                 {
                     warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
@@ -134,7 +139,7 @@ int main(int argc, char **argv)
                 }
 
                 /* Execute restoration instruction and kick off warm-restart timer */
-                if (sync.m_warmStartHelper.runRestoration())
+                if (sync.m_warmStartHelper->runRestoration())
                 {
                     warmStartTimer.start();
                     s.addSelectable(&warmStartTimer);
@@ -149,7 +154,7 @@ int main(int argc, char **argv)
             }
             else
             {
-                sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
+                sync.m_warmStartHelper->setState(WarmStart::WSDISABLED);
             }
 
             while (true)
@@ -185,7 +190,7 @@ int main(int argc, char **argv)
                 }
                 else if (temps == &eoiuCheckTimer)
                 {
-                    if (sync.m_warmStartHelper.inProgress())
+                    if (sync.m_warmStartHelper->inProgress())
                     {
                         if (eoiuFlagsSet(bgpStateTable))
                         {
@@ -284,7 +289,7 @@ int main(int argc, char **argv)
                         sync.onRouteResponse(key, fieldValues);
                     }
                 }
-                else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
+                else if (!warmStartEnabled || sync.m_warmStartHelper->isReconciled())
                 {
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");
