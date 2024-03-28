@@ -52,7 +52,6 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_BATCH_SIZE  128
 extern int gBatchSize;
 
-bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
@@ -71,7 +70,7 @@ string gMyAsicName = "";
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-z mode] [-k bulk_size] [-q zmq_server_address]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -84,7 +83,6 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
@@ -388,10 +386,6 @@ int main(int argc, char **argv)
         case 'h':
             usage();
             exit(EXIT_SUCCESS);
-        case 's':
-            gSyncMode = true;
-            SWSS_LOG_NOTICE("Enabling synchronous mode");
-            break;
         case 'z':
             sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
             break;
@@ -510,16 +504,6 @@ int main(int argc, char **argv)
         attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
         memcpy(attr.value.mac, gMacAddress.getMac(), 6);
         attrs.push_back(attr);
-    }
-
-    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
-    // since it is not using ASIC_DB, we can execute it before create_switch
-    // when g_syncMode is set to true here, create_switch will wait the response from syncd
-    if (gSyncMode)
-    {
-        SWSS_LOG_WARN("sync mode is depreacated, use -z param");
-
-        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
     }
 
     attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
