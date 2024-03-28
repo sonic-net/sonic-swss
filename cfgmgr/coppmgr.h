@@ -62,7 +62,7 @@ class CoppMgr : public Orch
 {
 public:
     CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
-        const std::vector<std::string> &tableNames);
+        const std::vector<std::string> &tableNames, const std::string copp_init_file = COPP_INIT_FILE);
 
     using Orch::doTask;
 private:
@@ -75,6 +75,7 @@ private:
     CoppCfg                m_coppGroupInitCfg;
     CoppCfg                m_coppTrapInitCfg;
     CoppCfg                m_featuresCfgTable;
+    std::string            m_coppCfgfile;
 
 
     void doTask(Consumer &consumer);

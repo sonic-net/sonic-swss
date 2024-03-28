@@ -4,34 +4,14 @@
 #include "warm_restart.h"
 #include "ut_helper.h"
 #include "coppmgr.h"
-#include "coppmgr.cpp"
 #include <fstream>
 #include <streambuf>
+
 using namespace std;
 using namespace swss;
 
-void create_init_file()
-{
-    int status = system("sudo mkdir /etc/sonic/");
-    ASSERT_EQ(status, 0);
-
-    status = system("sudo chmod 777 /etc/sonic/");
-    ASSERT_EQ(status, 0);
-    
-    status = system("sudo cp copp_cfg.json /etc/sonic/");
-    ASSERT_EQ(status, 0);
-}
-
-void cleanup()
-{
-    int status = system("sudo rm -rf /etc/sonic/");
-    ASSERT_EQ(status, 0);
-}
-
 TEST(CoppMgrTest, CoppTest)
 {
-    create_init_file();
-
     const vector<string> cfg_copp_tables = {
                 CFG_COPP_TRAP_TABLE_NAME,
                 CFG_COPP_GROUP_TABLE_NAME,
@@ -65,12 +45,10 @@ TEST(CoppMgrTest, CoppTest)
                     {"trap_ids", "ip2me"}
                 });
 
-    CoppMgr coppmgr(&cfgDb, &appDb, &stateDb, cfg_copp_tables);
+    CoppMgr coppmgr(&cfgDb, &appDb, &stateDb, cfg_copp_tables, "./copp_cfg.json");
 
     string overide_val;
     coppTable.hget("queue1_group1", "cbs",overide_val);
     EXPECT_EQ( overide_val, "6000");
-
-    cleanup();
 }
 

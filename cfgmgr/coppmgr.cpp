@@ -21,10 +21,11 @@ static set<string> g_copp_init_set;
 
 void CoppMgr::parseInitFile(void)
 {
-    std::ifstream ifs(COPP_INIT_FILE);
+    std::ifstream ifs(m_coppCfgfile);
+
     if (ifs.fail())
     {
-        SWSS_LOG_ERROR("COPP init file %s not found", COPP_INIT_FILE);
+        SWSS_LOG_ERROR("COPP init file %s not found", m_coppCfgfile.c_str());
         return;
     }
     json j = json::parse(ifs);
@@ -293,7 +294,7 @@ bool CoppMgr::isDupEntry(const std::string &key, std::vector<FieldValueTuple> &f
     return true;
 }
 
-CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
+CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames, const string copp_init_file) :
         Orch(cfgDb, tableNames),
         m_cfgCoppTrapTable(cfgDb, CFG_COPP_TRAP_TABLE_NAME),
         m_cfgCoppGroupTable(cfgDb, CFG_COPP_GROUP_TABLE_NAME),
@@ -301,7 +302,8 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_appCoppTable(appDb, APP_COPP_TABLE_NAME),
         m_stateCoppTrapTable(stateDb, STATE_COPP_TRAP_TABLE_NAME),
         m_stateCoppGroupTable(stateDb, STATE_COPP_GROUP_TABLE_NAME),
-        m_coppTable(appDb, APP_COPP_TABLE_NAME)
+        m_coppTable(appDb, APP_COPP_TABLE_NAME),
+        m_coppCfgfile(copp_init_file)
 {
     SWSS_LOG_ENTER();
     parseInitFile();
