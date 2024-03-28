@@ -235,7 +235,7 @@ class TestDash(object):
         self.underlay_ip = "101.1.2.3"
         pb = VnetMapping()
         pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
-        pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
+        pb.routing_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
         pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
 
         dashobj.create_vnet_map(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
@@ -264,10 +264,10 @@ class TestDash(object):
         self.vnet = "Vnet1"
         self.mac_string = "F4939FEFC47E"
         self.ip = "10.1.0.0/24"
-        self.action_type = "vnet_direct"
+        self.routing_type = "vnet_direct"
         self.overlay_ip= "10.0.0.6"
         pb = Route()
-        pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
+        pb.routing_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
         pb.vnet_direct.vnet = self.vnet
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
         dashobj.create_outbound_routing(self.mac_string, self.ip, {"pb": pb.SerializeToString()})
@@ -295,7 +295,6 @@ class TestDash(object):
         self.priority = "1"
         self.protocol = "0"
         pb = RouteRule()
-# pb.action_type = RoutingType.ROUTING_TYPE_DECAP
         pb.pa_validation = True
         pb.priority = int(self.priority)
         pb.protocol = int(self.protocol)
