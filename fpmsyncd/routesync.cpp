@@ -76,7 +76,7 @@ static decltype(auto) makeNlAddr(const T& ip)
 }
 
 
-RouteSync::RouteSync(RedisPipeline *pipeline, ZmqClient *zmqClient) :
+RouteSync::RouteSync(RedisPipeline *pipeline, std::shared_ptr<ZmqClient> zmqClient) :
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
