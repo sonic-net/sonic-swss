@@ -134,6 +134,7 @@ int main(int argc, char **argv)
     {
         char address[100];
         snprintf(address, sizeof(address), "tcp://127.0.0.1:%d", options.m_zmq_port);
+        SWSS_LOG_NOTICE("fpmsyncd start with ZMQ enabled, zmq address: %s", address);
         zmqClient = std::make_shared<ZmqClient>(address);
     }
 
