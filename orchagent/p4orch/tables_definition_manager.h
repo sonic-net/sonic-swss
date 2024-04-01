@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -12,7 +13,6 @@
 #include "p4orch/p4orch_util.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
@@ -29,7 +29,7 @@ struct TablesInfo
     std::unordered_map<std::string, TableInfo> m_tableInfoMap;
     std::map<int, std::string> m_tablePrecedenceMap;
 
-    TablesInfo(){};
+    TablesInfo() {};
     TablesInfo(const std::string &context_key, const nlohmann::json &info_value)
         : context(context_key), info(info_value)
     {

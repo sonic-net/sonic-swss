@@ -1,6 +1,7 @@
 #include "p4orch/mirror_session_manager.h"
 
 #include <map>
+#include <nlohmann/json.hpp>
 
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
@@ -10,7 +11,6 @@
 #include "swss/logger.h"
 #include "swssnet.h"
 #include "table.h"
-#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 
