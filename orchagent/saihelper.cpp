@@ -832,13 +832,13 @@ void handleSaiFailure(bool abort_on_failure)
 }
 
 
-inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
+static inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
 {
     sai_s8_list.list = nullptr;
     sai_s8_list.count = 0;
 }
 
-inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_parameter_t &flex_counter_group_param)
+static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_parameter_t &flex_counter_group_param)
 {
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.poll_interval);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.operation);
@@ -847,7 +847,7 @@ inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_param
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugins);
 }
 
-inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, const std::string &str)
+static inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, const std::string &str)
 {
     if (str.length() > 0)
     {
@@ -861,7 +861,7 @@ inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, c
     }
 }
 
-inline void notifySyncdCounterOperation(bool is_gearbox, const sai_attribute_t &attr)
+static inline void notifySyncdCounterOperation(bool is_gearbox, const sai_attribute_t &attr)
 {
     if (sai_switch_api == nullptr)
     {
@@ -883,7 +883,7 @@ inline void notifySyncdCounterOperation(bool is_gearbox, const sai_attribute_t &
     }
 }
 
-inline void operateFlexCounterDbSingleField(std::vector<FieldValueTuple> &fvTuples,
+static inline void operateFlexCounterDbSingleField(std::vector<FieldValueTuple> &fvTuples,
                                             const string &field, const string &value)
 {
     if (!field.empty() && !value.empty())
@@ -892,7 +892,7 @@ inline void operateFlexCounterDbSingleField(std::vector<FieldValueTuple> &fvTupl
     }
 }
 
-inline void operateFlexCounterGroupDatabase(const string &group,
+static inline void operateFlexCounterGroupDatabase(const string &group,
                                             const string &poll_interval,
                                             const string &stats_mode,
                                             const string &plugin_name,
