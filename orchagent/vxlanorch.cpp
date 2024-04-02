@@ -1222,7 +1222,7 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
 
     if (gTraditionalFlexCounter)
     {
-        m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+        m_vidToRidTable = make_unique<Table>(m_asic_db.get(), "VIDTORID");
     }
 
     auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
