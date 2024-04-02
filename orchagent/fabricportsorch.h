@@ -31,6 +31,7 @@ private:
     unique_ptr<Table> m_portNamePortCounterTable;
     unique_ptr<Table> m_fabricCounterTable;
     unique_ptr<Table> m_applTable;
+    unique_ptr<Table> m_fabricCapacityTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
 
     swss::SelectableTimer *m_timer = nullptr;
@@ -51,6 +52,7 @@ private:
     void generatePortStats();
     void updateFabricPortState();
     void updateFabricDebugCounters();
+    void updateFabricCapacity();
 
     void doTask() override;
     void doTask(Consumer &consumer);
