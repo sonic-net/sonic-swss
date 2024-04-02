@@ -7,6 +7,7 @@
 #include "crmorch.h"
 #include "copporch.h"
 #include "sfloworch.h"
+#include "twamporch.h"
 #include "directory.h"
 
 #undef protected
@@ -103,6 +104,19 @@ struct Portal
         static SflowPortInfoMap getSflowPortInfoMap(SflowOrch &obj)
         {
             return obj.m_sflowPortInfoMap;
+        }
+    };
+
+    struct TwampOrchInternal
+    {
+        static bool getTwampSessionStatus(TwampOrch &obj, const string &name, string& status)
+        {
+            return obj.getSessionStatus(name, status);
+        }
+
+        static TwampStatsTable getTwampSessionStatistics(TwampOrch &obj)
+        {
+            return obj.m_twampStatistics;
         }
     };
 

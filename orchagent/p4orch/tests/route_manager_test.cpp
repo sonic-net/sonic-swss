@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "ipprefix.h"
-#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_route.h"
 #include "p4orch.h"
@@ -17,6 +16,7 @@
 #include "return_code.h"
 #include "swssnet.h"
 #include "vrforch.h"
+#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 

@@ -7,9 +7,9 @@
 
 #include "dbconnector.h"
 #include "notificationproducer.h"
+#include "recorder.h"
 #include "response_publisher_interface.h"
 #include "table.h"
-#include "recorder.h"
 
 // This class performs two tasks when publish is called:
 // 1. Sends a notification into the redis channel.
@@ -46,14 +46,14 @@ class ResponsePublisher : public ResponsePublisherInterface
 
     /**
      * @brief Flush pending responses
-    */
+     */
     void flush();
 
     /**
      * @brief Set buffering mode
      *
      * @param buffered Flag whether responses are buffered
-    */
+     */
     void setBuffered(bool buffered);
 
   private:

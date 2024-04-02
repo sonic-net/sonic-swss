@@ -7,12 +7,12 @@
 #include "SaiAttributeList.h"
 #include "crmorch.h"
 #include "dbconnector.h"
-#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
 #include "table.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
@@ -734,13 +734,14 @@ void WcmpManager::updatePortOperStatusMap(const std::string &port, const sai_por
     port_oper_status_map[port] = status;
 }
 
-ReturnCode WcmpManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+ReturnCode WcmpManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                     std::string &object_key)
 {
-    std::string     value;
+    std::string value;
 
     try
     {
-        nlohmann::json  j = nlohmann::json::parse(json_key);
+        nlohmann::json j = nlohmann::json::parse(json_key);
         if (j.find(prependMatchField(p4orch::kWcmpGroupId)) != j.end())
         {
             value = j.at(prependMatchField(p4orch::kWcmpGroupId)).get<std::string>();
