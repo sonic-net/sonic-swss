@@ -9,6 +9,9 @@
 #include "producertable.h"
 #include "flex_counter_manager.h"
 
+#define STATE_FABRIC_CAPACITY_TABLE_NAME "FABRIC_CAPACITY_TABLE"
+#define STATE_PORT_CAPACITY_TABLE_NAME "PORT_CAPACITY_TABLE"
+
 class FabricPortsOrch : public Orch, public Subject
 {
 public:
