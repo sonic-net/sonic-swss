@@ -1,12 +1,10 @@
 #include "copporch.h"
 #include "flexcounterorch.h"
 
-FlexCounterOrch::FlexCounterOrch(swss::DBConnector *db, std::vector<std::string> &tableNames) :
-    Orch(db, tableNames),
-    m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
-    m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME),
-    m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
-    m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
+FlexCounterOrch::FlexCounterOrch(swss::DBConnector *db, std::vector<std::string> &tableNames)
+    : Orch(db, tableNames), m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
+      m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME), m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
+      m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
 {
 }
 

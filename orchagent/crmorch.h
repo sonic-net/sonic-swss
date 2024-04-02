@@ -49,7 +49,8 @@ enum class CrmResourceType
     CRM_DASH_IPV4_ACL_GROUP,
     CRM_DASH_IPV6_ACL_GROUP,
     CRM_DASH_IPV4_ACL_RULE,
-    CRM_DASH_IPV6_ACL_RULE
+    CRM_DASH_IPV6_ACL_RULE,
+    CRM_TWAMP_ENTRY
 };
 
 enum class CrmThresholdType
