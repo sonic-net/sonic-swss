@@ -499,6 +499,73 @@ namespace portsorch_test
         }
 
     };
+    
+    /*
+    * Test port flap count 
+    */
+    TEST_F(PortsOrchTest, PortFlapCount)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Get first port, expect the oper status is not UP
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_TRUE(port.m_oper_status != SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(port.m_flap_count == 0);
+
+        auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
+        auto consumer = exec->getNotificationConsumer();
+
+        // mock a redis reply for notification, it notifies that Ehernet0 is going to up
+        for (uint32_t count=0; count < 5; count++) {
+            sai_port_oper_status_t oper_status = (count % 2 == 0) ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
+            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+            sai_port_oper_status_notification_t port_oper_status;
+            port_oper_status.port_state = oper_status;
+            port_oper_status.port_id = port.m_port_id;
+            std::string data = sai_serialize_port_oper_status_ntf(1, &port_oper_status);
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata("port_state_change", data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            // trigger the notification
+            consumer->readData();
+            gPortsOrch->doTask(*consumer);
+            mockReply = nullptr;
+
+            gPortsOrch->getPort("Ethernet0", port);
+            ASSERT_TRUE(port.m_oper_status == oper_status);
+            ASSERT_TRUE(port.m_flap_count == count+1);
+        }
+
+        cleanupPorts(gPortsOrch);
+    }
 
     TEST_F(PortsOrchTest, PortBulkCreateRemove)
     {
@@ -859,7 +926,6 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvSerdes = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "admin_status", "up"              },
                 { "idriver"     , "0x6,0x6,0x6,0x6" }
             }
         }};
@@ -884,6 +950,35 @@ namespace portsorch_test
 
         // Verify admin-disable then admin-enable
         ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+
+        // Configure non-serdes attribute that does not trigger admin state change
+        std::deque<KeyOpFieldsValuesTuple> kfvMtu = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "mtu", "1234" },
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvMtu);
+
+        _hook_sai_port_api();
+        current_sai_api_call_count = _sai_set_admin_state_down_count;
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        _unhook_sai_port_api();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Verify mtu is set
+        ASSERT_EQ(p.m_mtu, 1234);
+
+        // Verify no admin-disable then admin-enable
+        ASSERT_EQ(_sai_set_admin_state_down_count, current_sai_api_call_count);
         ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
 
         // Dump pending tasks
@@ -1956,6 +2051,7 @@ namespace portsorch_test
 
         gPortsOrch->getPort("Ethernet0", port);
         ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(port.m_flap_count == 1);
 
         std::vector<FieldValueTuple> values;
         portTable.get("Ethernet0", values);

@@ -18,5 +18,6 @@ class ObjectManagerInterface
 
     // For sai extension objects depending on a sai object
     // return sai object id for a given table with a given key
-    virtual ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key) = 0;
+    virtual ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                    std::string &object_key) = 0;
 };
