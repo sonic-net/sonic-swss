@@ -6,13 +6,13 @@
 #include <string>
 #include <unordered_set>
 
-#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_neighbor.h"
 #include "p4orch.h"
 #include "p4orch/p4orch_util.h"
 #include "return_code.h"
 #include "swssnet.h"
+#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 
