@@ -865,7 +865,7 @@ static inline void notifySyncdCounterOperation(bool is_gearbox, const sai_attrib
 {
     if (sai_switch_api == nullptr)
     {
-        // This can happen during destrction of the orchagent daemon.
+        // This can happen during destruction of the orchagent daemon.
         SWSS_LOG_ERROR("sai_switch_api is NULL");
         return;
     }
@@ -901,7 +901,7 @@ static inline void operateFlexCounterGroupDatabase(const string &group,
                                             bool is_gearbox)
 {
     std::vector<FieldValueTuple> fvTuples;
-    auto &flexCounterGroupTable = is_gearbox ? gFlexCounterGroupTable : gGearBoxFlexCounterGroupTable;
+    auto &flexCounterGroupTable = is_gearbox ? gGearBoxFlexCounterGroupTable : gFlexCounterGroupTable;
 
     operateFlexCounterDbSingleField(fvTuples, POLL_INTERVAL_FIELD, poll_interval);
     operateFlexCounterDbSingleField(fvTuples, STATS_MODE_FIELD, stats_mode);
@@ -1014,7 +1014,7 @@ void delFlexCounterGroup(const std::string &group,
 {
     if (gTraditionalFlexCounter)
     {
-        auto &flexCounterGroupTable = is_gearbox ? gFlexCounterGroupTable : gGearBoxFlexCounterGroupTable;
+        auto &flexCounterGroupTable = is_gearbox ? gGearBoxFlexCounterGroupTable : gFlexCounterGroupTable;
 
         if (flexCounterGroupTable != nullptr)
         {
