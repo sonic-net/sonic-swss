@@ -5464,7 +5464,7 @@ bool PortsOrch::initializePort(Port &port)
         string hostTxReadyStr = hostTxReadyVal ? "true" : "false";
 
         SWSS_LOG_DEBUG("Received host_tx_ready current status: port_id: 0x%" PRIx64 " status: %s", port.m_port_id, hostTxReadyStr.c_str());
-	m_portStateTable.hset(port.m_alias, "host_tx_ready", hostTxReadyStr);
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", hostTxReadyStr);
     }
 
     /*
