@@ -1,5 +1,6 @@
 #include "table.h"
 #include "producerstatetable.h"
+#include "producertable.h"
 #include <set>
 #include <memory>
 
@@ -153,5 +154,30 @@ namespace swss
         {
             return std::shared_ptr<std::string>(NULL);
         }
+    }
+
+    void ProducerTable::set(const std::string &key,
+                            const std::vector<FieldValueTuple> &values,
+                            const std::string &op,
+                            const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        auto iter = table.find(key);
+        if (iter == table.end())
+        {
+            table[key] = values;
+        }
+        else
+        {
+            merge_values(iter->second, values);
+        }
+    }
+
+    void ProducerTable::del(const std::string &key,
+                            const std::string &op,
+                            const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        table.erase(key);
     }
 }

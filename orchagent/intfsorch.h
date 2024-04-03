@@ -20,10 +20,6 @@ extern MacAddress gMacAddress;
 #define RIF_RATE_COUNTER_FLEX_COUNTER_GROUP "RIF_RATE_COUNTER"
 #define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 
-const string rif_stat_counter_flex_counter_group = RIF_STAT_COUNTER_FLEX_COUNTER_GROUP;
-const string rif_rate_counter_flex_counter_group = RIF_RATE_COUNTER_FLEX_COUNTER_GROUP;
-const string rif_flex_stat_counter_poll_msecs = RIF_FLEX_STAT_COUNTER_POLL_MSECS;
-
 struct IntfsEntry
 {
     std::set<IpPrefix>  ip_addresses;

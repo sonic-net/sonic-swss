@@ -103,7 +103,14 @@ namespace flexcounter_test
             entries.push_back({FLEX_COUNTER_STATUS_FIELD, (const char*)flexCounterGroupParam->operation.list});
         }
 
-        mockFlexCounterGroupTable->set(key, entries);
+        if (entries.size() > 0)
+        {
+            mockFlexCounterGroupTable->set(key, entries);
+        }
+        else
+        {
+            mockFlexCounterGroupTable->del(key);
+        }
 
         return SAI_STATUS_SUCCESS;
     }
@@ -111,15 +118,27 @@ namespace flexcounter_test
     bool _checkFlexCounterTableContent(std::shared_ptr<swss::Table> table, const std::string key, std::vector<swss::FieldValueTuple> entries)
     {
         vector<FieldValueTuple> fieldValues;
+
         if (table->get(key, fieldValues))
         {
             set<FieldValueTuple> fvSet(fieldValues.begin(), fieldValues.end());
             set<FieldValueTuple> expectedSet(entries.begin(), entries.end());
 
-            return (fvSet == expectedSet);
+            bool result = (fvSet == expectedSet);
+            if (!result && gTraditionalFlexCounter && !entries.empty())
+            {
+                // We can not mock plugin when counter model is traditional and plugin is empty string.
+                // As a result, the plugin field will not be inserted into the database.
+                // We add it into the entries fetched from database manually and redo comparing
+                // The plugin field must be the last one in entries vector
+                fvSet.insert(entries.back());
+                result = (fvSet == expectedSet);
+            }
+
+            return result;
         }
 
-        return false;
+        return entries.empty();
     }
 
     bool checkFlexCounterGroup(const std::string group, std::vector<swss::FieldValueTuple> entries)
@@ -127,13 +146,13 @@ namespace flexcounter_test
         return _checkFlexCounterTableContent(mockFlexCounterGroupTable, group, entries);
     }
 
-    bool checkFlexCounter(const std::string group, sai_object_id_t oid, const std::string counter_field_name, const std::string mode="")
+    bool checkFlexCounter(const std::string group, sai_object_id_t oid, const std::string counter_field_name="", const std::string mode="")
     {
         std::vector<swss::FieldValueTuple> entries;
 
         if (!mockFlexCounterTable->get(group + ":" + sai_serialize_object_id(oid), entries))
         {
-            return false;
+            return counter_field_name.empty();
         }
 
         if (fvField(entries[0]) == counter_field_name)
@@ -195,7 +214,7 @@ namespace flexcounter_test
         sai_switch_api = pold_sai_switch_api;
     }
 
-    struct FlexCounterTest : public ::testing::Test
+    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool>>
     {
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
@@ -204,6 +223,7 @@ namespace flexcounter_test
         shared_ptr<swss::DBConnector> m_chassis_app_db;
         shared_ptr<swss::DBConnector> m_asic_db;
         shared_ptr<swss::DBConnector> m_flex_counter_db;
+        bool create_only_config_db_buffers;
 
         FlexCounterTest()
         {
@@ -228,7 +248,12 @@ namespace flexcounter_test
         {
             ::testing_db::reset();
 
-            gTraditionalFlexCounter = false;
+            gTraditionalFlexCounter = get<0>(GetParam());
+            create_only_config_db_buffers = get<1>(GetParam());
+            if (gTraditionalFlexCounter)
+            {
+                initFlexCounterTables();
+            }
 
             _hook_sai_switch_api();
 
@@ -236,6 +261,12 @@ namespace flexcounter_test
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
             TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
             TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+
+            if (create_only_config_db_buffers)
+            {
+                Table deviceMetadata(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+                deviceMetadata.set("localhost", { { "create_only_config_db_buffers", "true" } });
+            }
 
             vector<TableConnector> switch_tables = {
                 conf_asic_sensors,
@@ -320,8 +351,6 @@ namespace flexcounter_test
             gPortsOrch = nullptr;
             delete gBufferOrch;
             gBufferOrch = nullptr;
-            delete gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>;
-            gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler> = nullptr;
             delete gQosOrch;
             gQosOrch = nullptr;
             delete gSwitchOrch;
@@ -385,7 +414,7 @@ namespace flexcounter_test
 
     };
 
-    TEST_F(FlexCounterTest, CounterTest)
+    TEST_P(FlexCounterTest, CounterTest)
     {
         // Check flex counter database after system initialization
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
@@ -404,8 +433,8 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS},
-                                              {PORT_PLUGIN_FIELD, ""},
-                                              {FLEX_COUNTER_STATUS_FIELD, "disable"}
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"},
+                                              {PORT_PLUGIN_FIELD, ""}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
@@ -423,40 +452,54 @@ namespace flexcounter_test
         Table sendToIngressPortTable = Table(m_app_db.get(), APP_SEND_TO_INGRESS_PORT_TABLE_NAME);
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
         Table pgTableCfg = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
+        Table queueTable = Table(m_app_db.get(), APP_BUFFER_QUEUE_TABLE_NAME);
+        Table queueTableCfg = Table(m_config_db.get(), CFG_BUFFER_QUEUE_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
         Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
         Table flexCounterCfg = Table(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
 
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
+        auto firstPortName = ports.begin()->first;
 
         // Create test buffer pool
         poolTable.set(
-            "test_pool",
+            "ingress_lossless_pool",
             {
                 { "type", "ingress" },
                 { "mode", "dynamic" },
                 { "size", "4200000" },
             });
+        poolTable.set(
+            "egress_lossless_pool",
+            {
+                { "type", "egress" },
+                { "mode", "dynamic" },
+                { "size", "4200000" },
+            });
 
-        // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "test_pool" },
-                                           { "xon", "14832" },
-                                           { "xoff", "14832" },
-                                           { "size", "35000" },
-                                           { "dynamic_th", "0" } });
-
-        // Apply profile on PGs 3-4 all ports
-        for (const auto &it : ports)
+        if (create_only_config_db_buffers)
         {
-            std::ostringstream ossAppl, ossCfg;
-            ossAppl << it.first << ":3-4";
-            pgTable.set(ossAppl.str(), { { "profile", "test_profile" } });
-            ossCfg << it.first << "|3-4";
-            pgTableCfg.set(ossCfg.str(), { { "profile", "test_profile" } });
+            // Create test buffer profile
+            profileTable.set("ingress_lossless_profile", { { "pool", "ingress_lossless_pool" },
+                                                           { "xon", "14832" },
+                                                           { "xoff", "14832" },
+                                                           { "size", "35000" },
+                                                           { "dynamic_th", "0" } });
+            profileTable.set("egress_lossless_profile", { { "pool", "egress_lossless_pool" },
+                                                          { "size", "0" },
+                                                          { "dynamic_th", "7" } });
+
+            // Apply profile on PGs 3-4 all ports
+            auto appdbKey = firstPortName + ":3-4";
+            auto cfgdbKey = firstPortName + "|3-4";
+            pgTable.set(appdbKey, { { "profile", "ingress_lossless_profile" } });
+            pgTableCfg.set(cfgdbKey, { { "profile", "ingress_lossless_profile" } });
+            queueTable.set(appdbKey, { { "profile", "egress_lossless_profile" } });
+            queueTableCfg.set(cfgdbKey, { { "profile", "egress_lossless_profile" } });
         }
 
-        // Populate pot table with SAI ports
+        // Populate port table with SAI ports
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
@@ -470,6 +513,7 @@ namespace flexcounter_test
         // refill consumer
         gPortsOrch->addExistingData(&portTable);
         gBufferOrch->addExistingData(&pgTable);
+        gBufferOrch->addExistingData(&queueTable);
         gBufferOrch->addExistingData(&poolTable);
         gBufferOrch->addExistingData(&profileTable);
 
@@ -554,40 +598,40 @@ namespace flexcounter_test
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                           }));
 
-        sai_object_id_t oid;
-        oid = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME])["test_pool"].m_saiObjectId;
-        ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, BUFFER_POOL_COUNTER_ID_LIST));
+        sai_object_id_t pool_oid;
+        pool_oid = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME])["ingress_lossless_pool"].m_saiObjectId;
+        ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pool_oid, BUFFER_POOL_COUNTER_ID_LIST));
         Port firstPort;
-        gPortsOrch->getPort(ports.begin()->first, firstPort);
-        oid = firstPort.m_priority_group_ids[3];
-        ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
+        gPortsOrch->getPort(firstPortName, firstPort);
+        auto pgOid = firstPort.m_priority_group_ids[3];
+        ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid,
                                      {
                                          {PG_COUNTER_ID_LIST,
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS"
                                          }
                                      }));
-        ASSERT_TRUE(checkFlexCounter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
+        ASSERT_TRUE(checkFlexCounter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid,
                                      {
                                          {PG_COUNTER_ID_LIST,
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES,"
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES"
                                          }
                                      }));
-        oid = firstPort.m_queue_ids[3];
-        ASSERT_TRUE(checkFlexCounter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
+        auto queueOid = firstPort.m_queue_ids[3];
+        ASSERT_TRUE(checkFlexCounter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid,
                                      {
                                          {QUEUE_COUNTER_ID_LIST,
                                           "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES"
                                          }
                                      }));
-        ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, oid,
+        ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid,
                                      {
                                          {QUEUE_COUNTER_ID_LIST,
                                           "SAI_QUEUE_STAT_DROPPED_BYTES,SAI_QUEUE_STAT_DROPPED_PACKETS,"
                                           "SAI_QUEUE_STAT_BYTES,SAI_QUEUE_STAT_PACKETS"
                                          }
                                      }));
-        oid = firstPort.m_port_id;
+        auto oid = firstPort.m_port_id;
         ASSERT_TRUE(checkFlexCounter(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, oid,
                                      {
                                          {PORT_COUNTER_ID_LIST,
@@ -606,6 +650,12 @@ namespace flexcounter_test
 
         // Check flex counter database
         auto rifOid = gIntfsOrch->m_rifsToAdd[0].m_rif_id;
+        Table vid2rid = Table(m_asic_db.get(), "VIDTORID");
+        if (gTraditionalFlexCounter)
+        {
+            const auto id = sai_serialize_object_id(rifOid);
+            vid2rid.set("", { {id, ""} });
+        }
         (gIntfsOrch)->doTask(*gIntfsOrch->m_updateMapsTimer);
         ASSERT_TRUE(checkFlexCounter(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, rifOid,
                                      {
@@ -624,7 +674,7 @@ namespace flexcounter_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
         // Check flex counter database
-        ASSERT_TRUE(!checkFlexCounter(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, rifOid, RIF_COUNTER_ID_LIST));
+        ASSERT_TRUE(checkFlexCounter(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, rifOid));
 
         // PFC watchdog counter test
         vector<string> pfc_wd_tables = {
@@ -712,8 +762,8 @@ namespace flexcounter_test
 			    {"restoration_time", "200"}
 			  }});
 
-        auto PfcwdConsumer = dynamic_cast<Consumer *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>->getExecutor(CFG_PFC_WD_TABLE_NAME));
-	PfcwdConsumer->addToSync(entries);
+        consumer = dynamic_cast<Consumer *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>->getExecutor(CFG_PFC_WD_TABLE_NAME));
+	consumer->addToSync(entries);
         entries.clear();
 
         static_cast<Orch *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>)->doTask();
@@ -736,5 +786,60 @@ namespace flexcounter_test
                                          {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_PACKETS,SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES"},
                                          {QUEUE_ATTR_ID_LIST, "SAI_QUEUE_ATTR_PAUSE_STATUS"}
                                      }));
+
+        entries.push_back({firstPort.m_alias, "DEL", { {}}});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>)->doTask();
+        ASSERT_TRUE(checkFlexCounter(PFC_WD_FLEX_COUNTER_GROUP, firstPort.m_port_id));
+        ASSERT_TRUE(checkFlexCounter(PFC_WD_FLEX_COUNTER_GROUP, firstPort.m_queue_ids[3]));
+
+        delete gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
+        gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler> = nullptr;
+        std::vector<FieldValueTuple> pfcValues;
+        ASSERT_TRUE(checkFlexCounterGroup(PFC_WD_FLEX_COUNTER_GROUP, pfcValues));
+
+        if (create_only_config_db_buffers)
+        {
+            auto appdbKey = firstPortName + ":3-4";
+            // Remove buffer PGs/queues
+            entries.push_back({appdbKey, "DEL", { {} }});
+            consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
+            consumer->addToSync(entries);
+            consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_QUEUE_TABLE_NAME));
+            consumer->addToSync(entries);
+            entries.clear();
+            static_cast<Orch *>(gBufferOrch)->doTask();
+
+            ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid));
+            ASSERT_TRUE(checkFlexCounter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid));
+            ASSERT_TRUE(checkFlexCounter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid));
+            ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid));
+
+            // Remove buffer profiles
+            entries.push_back({"ingress_lossless_profile", "DEL", { {} }});
+            consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+            consumer->addToSync(entries);
+            entries.clear();
+            static_cast<Orch *>(gBufferOrch)->doTask();
+        }
+
+        // Remove buffer pools
+        entries.push_back({"ingress_lossless_pool", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pool_oid));
     }
+
+    INSTANTIATE_TEST_CASE_P(
+        FlexCounterTests,
+        FlexCounterTest,
+        ::testing::Values(
+            std::make_tuple(false, true),
+            std::make_tuple(false, false),
+            std::make_tuple(true, true),
+            std::make_tuple(true, false))
+    );
 }
