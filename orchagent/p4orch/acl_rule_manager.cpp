@@ -9,7 +9,6 @@
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "intfsorch.h"
-#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "orch.h"
 #include "p4orch.h"
@@ -18,6 +17,7 @@
 #include "sai_serialize.h"
 #include "table.h"
 #include "tokenize.h"
+#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
@@ -165,7 +165,8 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
 
 } // namespace
 
-ReturnCode AclRuleManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+ReturnCode AclRuleManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                        std::string &object_key)
 {
     return StatusCode::SWSS_RC_UNIMPLEMENTED;
 }

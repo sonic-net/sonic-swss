@@ -3,14 +3,18 @@ import time
 
 
 class TestBuffer(object):
+    from conftest import DockerVirtualSwitch
     lossless_pgs = []
     INTF = "Ethernet0"
 
     def setup_db(self, dvs):
-        self.app_db = dvs.get_app_db()
-        self.asic_db = dvs.get_asic_db()
-        self.config_db = dvs.get_config_db()
-        self.counter_db = dvs.get_counters_db()
+        from conftest import ApplDbValidator, AsicDbValidator
+        from dvslib.dvs_database import DVSDatabase
+        
+        self.app_db: ApplDbValidator = dvs.get_app_db()
+        self.asic_db: AsicDbValidator = dvs.get_asic_db()
+        self.config_db: DVSDatabase = dvs.get_config_db()
+        self.counter_db: DVSDatabase = dvs.get_counters_db()
 
         # enable PG watermark
         self.set_pg_wm_status('enable')
@@ -74,6 +78,10 @@ class TestBuffer(object):
             pg_name = "{}:{}".format(self.INTF, pg)
             pg_name_map[pg_name] = self.get_pg_oid(pg_name)
         return pg_name_map
+    
+    def check_syslog(self, dvs, marker, err_log, expected_cnt=1):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        assert num.strip() >= str(expected_cnt)
 
     @pytest.fixture
     def setup_teardown_test(self, dvs):
@@ -246,3 +254,102 @@ class TestBuffer(object):
                 dvs.port_field_set(extra_port, "speed", orig_speed)
             dvs.port_admin_set(self.INTF, "down")
             dvs.port_admin_set(extra_port, "down")
+            
+    def test_no_pg_profile_for_speed_and_length(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        Test to verify that buffermgrd correctly handles a scenario where no PG profile
+        is configured for a given speed (10000) and cable length (80m) for Ethernet0 (self.INTF).
+        """
+        orig_cable_len = None
+        orig_port_speed = None
+        orig_port_status = None
+        orig_port_qos_map = None
+        
+        test_cable_len = "80m" # cable length must not exist for test_speed in 
+        test_speed = "10000"
+        test_port_status ="down" # can be up or down, but it must exist in port configuration
+        test_port_pfc_enable = "3,4" # does not matter, but must exist
+        
+        try:
+            ##################################
+            ## Save original configurations ##
+            ##################################
+            
+            # Save original cable length
+            fvs_cable_len = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
+            orig_cable_len = fvs_cable_len.get(self.INTF) if fvs_cable_len else None
+            
+            # Save original port speed and admin status
+            fvs_port = self.config_db.get_entry("PORT", self.INTF)
+            orig_port_speed = fvs_port.get("speed") if fvs_port else None
+            orig_port_status = fvs_port.get("admin_status") if fvs_port else None
+
+            # Save original port qos map
+            fvs_qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
+            orig_cable_len = fvs_qos_map.get("pfc_enable") if fvs_qos_map else None
+            
+            ######################################
+            ## Send configurations to CONFIG_DB ##
+            ######################################
+            
+            # Configure cable length 
+            self.change_cable_len(test_cable_len)
+
+            # Configure port speed
+            dvs.port_field_set(self.INTF, "speed", test_speed)
+
+            # Configure PFC enable
+            self.set_port_qos_table(self.INTF, test_port_pfc_enable)
+            
+            # Add marker to log to make syslog verification easier
+            # Set before setting admin status to not miss syslog
+            marker = dvs.add_log_marker()
+
+            # Configure admin status
+            dvs.port_admin_set(self.INTF, test_port_status)
+            
+            # Wait for buffermgrd to process the changes
+            time.sleep(2)
+            
+            ##################
+            ## Verification ##
+            ##################
+            
+            
+            # Check syslog if this error is present. This is expected.
+            self.check_syslog(dvs, marker, "Failed to process invalid entry, drop it")
+        
+        finally:
+            ###############################
+            ## Revert to original values ##
+            ###############################
+            
+            # Revert values to original values
+            # If there are none, then assume entry/field never existed and should be deleted
+            
+            # Revert cable length
+            if orig_cable_len:
+                self.change_cable_len(orig_cable_len)
+            else:
+                self.config_db.delete_entry("CABLE_LENGTH", "AZURE")
+               
+            # Revert port speed 
+            if orig_port_speed:
+                dvs.port_field_set(self.INTF, "speed", orig_port_speed)
+            else:
+                self.config_db.delete_field("PORT", self.INTF, "speed")
+            
+            # Revert admin status
+            if orig_port_status:
+                dvs.port_admin_set(self.INTF, orig_port_status)
+            else:
+                self.config_db.delete_field("PORT", self.INTF, "admin_status")
+            
+            # Revert port qos map
+            if orig_port_qos_map:
+                self.config_db.update_entry("PORT_QOS_MAP", self.INTF, orig_port_qos_map)
+            else:
+                self.config_db.delete_entry("PORT_QOS_MAP", self.INTF)
+            
+                
+
