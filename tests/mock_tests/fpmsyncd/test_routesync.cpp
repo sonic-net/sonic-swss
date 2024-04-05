@@ -206,6 +206,7 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
     rtm.rtm_protocol = 200;
     rtm.rtm_type = RTN_UNICAST;
     rtm.rtm_table = 0;
+    rtm.rtm_dst_len = 32;
     nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
     memcpy(NLMSG_DATA(nlh), &rtm, sizeof(rtm));
 
