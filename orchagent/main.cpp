@@ -588,6 +588,10 @@ int main(int argc, char **argv)
         attr.value.u32 = SAI_SWITCH_TYPE_FABRIC;
         attrs.push_back(attr);
 
+        //Read switch_id from config_db.
+        Table cfgDeviceMetaDataTable(&config_db, CFG_DEVICE_METADATA_TABLE_NAME);
+        cfgDeviceMetaDataTable.hget("localhost", "switch_id", gVoqMySwitchId));
+
         attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
         attr.value.u32 = gVoqMySwitchId;
         attrs.push_back(attr);
