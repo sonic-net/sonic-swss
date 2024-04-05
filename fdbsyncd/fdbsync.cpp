@@ -324,7 +324,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
-        type = "dynamic";
+        type = "dynamic extern_learn";
     }
     else
     {
@@ -384,7 +384,7 @@ void FdbSync::addLocalMac(string key, string op)
 
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
-            type = "dynamic";
+            type = "dynamic extern_learn";
         }
         else
         {
@@ -432,7 +432,7 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
 
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
-        type = "dynamic";
+        type = "dynamic extern_learn";
     }
     else
     {
@@ -511,7 +511,7 @@ void FdbSync::macRefreshStateDB(int vlan, string kmac)
 
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
-            type = "dynamic";
+            type = "dynamic extern_learn";
         }
         else
         {
