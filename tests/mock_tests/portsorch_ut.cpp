@@ -68,6 +68,11 @@ namespace portsorch_test
             attr_list[0].value.s32 = _sai_port_fec_mode;
             status = SAI_STATUS_SUCCESS;
         }
+        else if (attr_count== 1 && attr_list[0].id == SAI_PORT_ATTR_OPER_STATUS)
+        {
+            attr_list[0].value.u32 = (uint32_t)SAI_PORT_OPER_STATUS_UP;
+            status = SAI_STATUS_SUCCESS;
+        }
         else
         {
             status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
@@ -1261,6 +1266,7 @@ namespace portsorch_test
     {
         _hook_sai_port_api();
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
         std::deque<KeyOpFieldsValuesTuple> entries;
 
         not_support_fetching_fec = false;
@@ -1310,6 +1316,33 @@ namespace portsorch_test
 
         ASSERT_EQ(fec_mode, SAI_PORT_FEC_MODE_RS);
 
+        gPortsOrch->refreshPortStatus();
+        std::vector<FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+        bool fec_found = false;
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "fec")
+            {
+                fec_found = true;
+                ASSERT_TRUE(fvValue(valueTuple) == "rs");
+            }
+        }
+        ASSERT_TRUE(fec_found == true);
+
+        /*Mock an invalid fec mode with high value*/
+        _sai_port_fec_mode = 100;
+        gPortsOrch->refreshPortStatus();
+        statePortTable.get("Ethernet0", values);
+        fec_found = false;
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "fec")
+            {
+                fec_found = true;
+                ASSERT_TRUE(fvValue(valueTuple) == "N/A");
+            }
+        }
         mock_port_fec_modes = old_mock_port_fec_modes;
         _unhook_sai_port_api();
     }
