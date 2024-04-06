@@ -115,7 +115,7 @@ private:
                           string& mac_list, string& intf_list,
                           string rmac, string vlan_id);
 
-    bool getEvpnNextHop(struct nlmsghdr *h, int received_bytes, struct rtattr *tb[],
+    virtual bool getEvpnNextHop(struct nlmsghdr *h, int received_bytes, struct rtattr *tb[],
                         string& nexthops, string& vni_list, string& mac_list,
                         string& intf_list);
 
