@@ -5,7 +5,6 @@
 #include <string>
 #include "orch.h"
 #include "producertable.h"
-#include <sairedis.h>
 
 #define IS_ATTR_ID_IN_RANGE(attrId, objectType, attrPrefix) \
     ((attrId) >= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _START && (attrId) <= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _END)

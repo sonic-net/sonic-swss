@@ -3,6 +3,7 @@ extern "C" {
 #include "sai.h"
 #include "saistatus.h"
 #include "saiextensions.h"
+#include "sairedis.h"
 }
 
 #include <inttypes.h>
