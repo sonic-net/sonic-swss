@@ -8,6 +8,7 @@
 
 extern sai_object_id_t gSwitchId;
 
+extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
 extern NhgOrch *gNhgOrch;
@@ -58,6 +59,8 @@ void NhgOrch::doTask(Consumer& consumer)
             string aliases;
             string weights;
             string mpls_nhs;
+            string nhgs;
+            bool is_recursive = false;
 
             /* Get group's next hop IPs and aliases */
             for (auto i : kfvFieldsValues(t))
@@ -73,24 +76,96 @@ void NhgOrch::doTask(Consumer& consumer)
 
                 if (fvField(i) == "mpls_nh")
                     mpls_nhs = fvValue(i);
+
+                if (fvField(i) == "nexthop_group")
+                {
+                    nhgs = fvValue(i);
+                    if (!nhgs.empty())
+                        is_recursive = true;
+                }
             }
 
-            /* Split ips and alaises strings into vectors of tokens. */
+            /* Split ips and aliases strings into vectors of tokens. */
             vector<string> ipv = tokenize(ips, ',');
             vector<string> alsv = tokenize(aliases, ',');
             vector<string> mpls_nhv = tokenize(mpls_nhs, ',');
+            vector<string> nhgv = tokenize(nhgs, ',');
 
             /* Create the next hop group key. */
             string nhg_str;
 
-            for (uint32_t i = 0; i < ipv.size(); i++)
+            /* Keeps track of any non-existing member of a recursive nexthop group */
+            bool non_existent_member = false;
+
+            if (is_recursive)
             {
-                if (i) nhg_str += NHG_DELIMITER;
-                if (!mpls_nhv.empty() && mpls_nhv[i] != "na")
+                SWSS_LOG_INFO("Adding recursive nexthop group %s with %s", index.c_str(), nhgs.c_str());
+
+                /* Reset the "nexthop_group" field and update it with only the existing members */
+                nhgs = "";
+
+                /* Check if any of the members are a recursive or temporary nexthop group */
+                bool invalid_member = false;
+
+                for (auto& nhgm : nhgv)
                 {
-                    nhg_str += mpls_nhv[i] + LABELSTACK_DELIMITER;
+                    const auto& nhgm_it = m_syncdNextHopGroups.find(nhgm);
+                    if (nhgm_it == m_syncdNextHopGroups.end())
+                    {
+                        SWSS_LOG_INFO("Member nexthop group %s in parent nhg %s not ready",
+                                nhgm.c_str(), index.c_str());
+
+                        non_existent_member = true;
+                        continue;
+                    }
+                    if ((nhgm_it->second.nhg) &&
+                        (nhgm_it->second.nhg->isRecursive() || nhgm_it->second.nhg->isTemp()))
+                    {
+                        SWSS_LOG_ERROR("Invalid member nexthop group %s in parent nhg %s",
+                                nhgm.c_str(), index.c_str());
+
+                        invalid_member = true;
+                        break;
+                    }
+                    /* Keep only the members which exist in the local cache */
+                    if (nhgs.empty())
+                        nhgs = nhgm;
+                    else
+                        nhgs += ',' + nhgm;
                 }
-                nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
+                if (invalid_member)
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                /* If no members are present */
+                if (nhgs.empty())
+                {
+                    it++;
+                    continue;
+                }
+
+                /* Form nexthopgroup key with the nexthopgroup keys of available members */
+                nhgv = tokenize(nhgs, ',');
+
+                for (uint32_t i = 0; i < nhgv.size(); i++)
+                {
+                    if (i) nhg_str += NHG_DELIMITER;
+
+                    nhg_str += m_syncdNextHopGroups.at(nhgv[i]).nhg->getKey().to_string();
+                }
+            }
+            else
+            {
+                for (uint32_t i = 0; i < ipv.size(); i++)
+                {
+                    if (i) nhg_str += NHG_DELIMITER;
+                    if (!mpls_nhv.empty() && mpls_nhv[i] != "na")
+                    {
+                        nhg_str += mpls_nhv[i] + LABELSTACK_DELIMITER;
+                    }
+                    nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
+                }
             }
 
             NextHopGroupKey nhg_key = NextHopGroupKey(nhg_str, weights);
@@ -133,10 +208,21 @@ void NhgOrch::doTask(Consumer& consumer)
                 else
                 {
                     auto nhg = std::make_unique<NextHopGroup>(nhg_key, false);
-                    success = nhg->sync();
 
+                    /* 
+                    * Mark the nexthop group as recursive so as to create a
+                    * nexthop group object even if it has just one available path
+                    */
+                    nhg->setRecursive(is_recursive);
+
+                    success = nhg->sync();
                     if (success)
                     {
+                        /* Keep the msg in loop if any member path is not available yet */
+                        if (is_recursive && non_existent_member)
+                        {
+                            success = false;
+                        }
                         m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
                     }
                 }
@@ -216,6 +302,12 @@ void NhgOrch::doTask(Consumer& consumer)
                 else
                 {
                     success = nhg_ptr->update(nhg_key);
+
+                    /* Keep the msg in loop if any member path is not available yet */
+                    if (is_recursive && non_existent_member)
+                    {
+                        success = false;
+                    }
                 }
             }
         }
@@ -367,7 +459,19 @@ sai_object_id_t NextHopGroupMember::getNhId() const
 
     sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
 
-    if (gNeighOrch->hasNextHop(m_key))
+    if (m_key.isIntfNextHop())
+    {
+        nh_id = gIntfsOrch->getRouterIntfsId(m_key.alias);
+
+        if ((nh_id == SAI_NULL_OBJECT_ID) &&
+            !m_key.alias.compare(0, strlen("Loopback"), "Loopback"))
+        {
+            Port cpu_port;
+            gPortsOrch->getCpuPort(cpu_port);
+            nh_id = cpu_port.m_port_id;
+        }
+    }
+    else if (gNeighOrch->hasNextHop(m_key))
     {
         nh_id = gNeighOrch->getNextHopId(m_key);
     }
@@ -484,7 +588,7 @@ NextHopGroupMember::~NextHopGroupMember()
  * Params:      IN  key - The next hop group's key.
  * Returns:     Nothing.
  */
-NextHopGroup::NextHopGroup(const NextHopGroupKey& key, bool is_temp) : NhgCommon(key), m_is_temp(is_temp)
+NextHopGroup::NextHopGroup(const NextHopGroupKey& key, bool is_temp) : NhgCommon(key), m_is_temp(is_temp), m_is_recursive(false)
 {
     SWSS_LOG_ENTER();
 
@@ -506,6 +610,7 @@ NextHopGroup& NextHopGroup::operator=(NextHopGroup&& nhg)
     SWSS_LOG_ENTER();
 
     m_is_temp = nhg.m_is_temp;
+    m_is_recursive = nhg.m_is_recursive;
 
     NhgCommon::operator=(std::move(nhg));
 
@@ -532,11 +637,8 @@ bool NextHopGroup::sync()
         return true;
     }
 
-    /*
-     * If the group is temporary, the group ID will be the only member's NH
-     * ID.
-     */
-    if (m_is_temp)
+    /* If the group is non-recursive, the group ID will be the only member's NH ID */
+    if (!isRecursive())
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         sai_object_id_t nhid = nhgm.getNhId();
@@ -549,6 +651,12 @@ bool NextHopGroup::sync()
         else
         {
             m_id = nhid;
+
+            auto nh_key = nhgm.getKey();
+            if (nh_key.isIntfNextHop())
+                gIntfsOrch->increaseRouterIntfsRefCount(nh_key.alias);
+            else
+                gNeighOrch->increaseNextHopRefCount(nh_key);
         }
     }
     else
@@ -663,9 +771,16 @@ bool NextHopGroup::remove()
 {
     SWSS_LOG_ENTER();
 
-    //  If the group is temporary, there is nothing to be done - just reset the ID.
-    if (m_is_temp)
+    //  If the group is temporary or non-recursive, update the neigh or rif ref-count and reset the ID.
+    if (m_is_temp || !isRecursive())
     {
+        const NextHopGroupMember& nhgm = m_members.begin()->second;
+        auto nh_key = nhgm.getKey();
+        if (nh_key.isIntfNextHop())
+            gIntfsOrch->decreaseRouterIntfsRefCount(nh_key.alias);
+        else
+            gNeighOrch->decreaseNextHopRefCount(nh_key);
+
         m_id = SAI_NULL_OBJECT_ID;
         return true;
     }
@@ -686,6 +801,9 @@ bool NextHopGroup::remove()
 bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 {
     SWSS_LOG_ENTER();
+
+    /* This method should not be called for non-recursive nexthop groups */
+    assert(isRecursive());
 
     ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
@@ -775,6 +893,22 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
+
+    if (!(isRecursive() && isSynced()))
+    {
+        bool was_synced = isSynced();
+        bool was_temp = isTemp();
+        *this = NextHopGroup(nhg_key, false);
+
+        /*
+        * For temporary nexthop group being updated, set the recursive flag
+        * as it is expected to get promoted to multiple NHG
+        */
+        setRecursive(was_temp);
+
+        /* Sync the group only if it was synced before. */
+        return (was_synced ? sync() : true);
+    }
 
     /* Update the key. */
     m_key = nhg_key;
@@ -891,7 +1025,12 @@ bool NextHopGroup::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    return syncMembers({nh_key});
+    if (isRecursive())
+    {
+        return syncMembers({nh_key});
+    }
+
+    return true;
 }
 
 /*
@@ -905,5 +1044,10 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    return removeMembers({nh_key});
+    if (isRecursive())
+    {
+        return removeMembers({nh_key});
+    }
+
+    return true;
 }
