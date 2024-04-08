@@ -504,9 +504,9 @@ namespace portsorch_test
         }
 
     };
-    
+
     /*
-    * Test port flap count 
+    * Test port flap count
     */
     TEST_F(PortsOrchTest, PortFlapCount)
     {
@@ -1506,6 +1506,7 @@ namespace portsorch_test
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
         Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table transceieverInfoTable = Table(m_state_db.get(), STATE_TRANSCEIVER_INFO_TABLE_NAME);
 
         // Get SAI default ports to populate DB
 
@@ -1539,6 +1540,7 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
+            transceieverInfoTable.set(it.first, {});
         }
 
         // Set PortConfigDone, PortInitDone
@@ -1586,6 +1588,25 @@ namespace portsorch_test
 
         gBufferOrch->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+
+        // Verify port configuration
+        vector<sai_object_id_t> port_list;
+        port_list.resize(ports.size());
+        sai_attribute_t attr;
+        sai_status_t status;
+        attr.id = SAI_SWITCH_ATTR_PORT_LIST;
+        attr.value.objlist.count = static_cast<uint32_t>(port_list.size());
+        attr.value.objlist.list = port_list.data();
+        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        for (uint32_t i = 0; i < port_list.size(); i++)
+        {
+            attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
+            status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            ASSERT_TRUE(attr.value.booldata);
+        }
     }
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
