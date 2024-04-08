@@ -40,6 +40,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
                 mock_consumerstatetable.cpp \
+                mock_subscriberstatetable.cpp \
                 common/mock_shell_command.cpp \
                 mock_table.cpp \
                 mock_hiredis.cpp \
