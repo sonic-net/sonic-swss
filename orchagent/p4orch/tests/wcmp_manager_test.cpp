@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <nlohmann/json.hpp>
 #include <string>
 
 #include "mock_response_publisher.h"
@@ -17,7 +18,6 @@
 #include "p4orch_util.h"
 #include "return_code.h"
 #include "sai_serialize.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

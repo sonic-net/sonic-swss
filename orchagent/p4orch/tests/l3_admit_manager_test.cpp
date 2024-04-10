@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 
@@ -13,7 +14,6 @@
 #include "p4orch/p4orch_util.h"
 #include "p4orch_util.h"
 #include "return_code.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

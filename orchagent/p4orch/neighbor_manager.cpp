@@ -1,5 +1,6 @@
 #include "p4orch/neighbor_manager.h"
 
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -13,7 +14,6 @@
 #include "sai_serialize.h"
 #include "swssnet.h"
 #include "table.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

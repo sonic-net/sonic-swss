@@ -1,6 +1,7 @@
 #include "p4orch/tables_definition_manager.h"
 
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -12,7 +13,6 @@
 #include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
 #include "tokenize.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "saitypes.h"
@@ -100,7 +100,8 @@ ReturnCode parseTableMatchReferences(const nlohmann::json &match_json, TableMatc
             catch (std::exception &ex)
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "can not parse tables from app-db supplied table definition info";
+                       << "can not parse tables from app-db supplied table definition "
+                          "info";
             }
         }
     }
@@ -125,7 +126,8 @@ ReturnCode parseActionParamReferences(const nlohmann::json &param_json, ActionPa
             catch (std::exception &ex)
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "can not parse tables from app-db supplied table definition info";
+                       << "can not parse tables from app-db supplied table definition "
+                          "info";
             }
         }
     }
@@ -155,7 +157,8 @@ ReturnCode parseTableActionParams(const nlohmann::json &action_json, ActionInfo 
                 if (!param.table_reference_map.empty())
                 {
                     /**
-                     * Helps avoid walk of action parameters if this is set to false at action level
+                     * Helps avoid walk of action parameters if this is set to false at
+                     * action level
                      */
                     action.refers_to = true;
                 }
@@ -163,7 +166,8 @@ ReturnCode parseTableActionParams(const nlohmann::json &action_json, ActionInfo 
             catch (std::exception &ex)
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "can not parse tables from app-db supplied table definition info";
+                       << "can not parse tables from app-db supplied table definition "
+                          "info";
             }
         }
     }
@@ -215,7 +219,8 @@ ReturnCode parseTablesInfo(const nlohmann::json &info_json, TablesInfo &info_ent
         catch (std::exception &ex)
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "can not parse tables from app-db supplied table definition info";
+                   << "can not parse tables from app-db supplied table definition "
+                      "info";
         }
 
         TableInfo table = {};
@@ -247,8 +252,8 @@ ReturnCode parseTablesInfo(const nlohmann::json &info_json, TablesInfo &info_ent
                 table.action_fields[action_name] = action;
 
                 /**
-                 * If any parameter of action refers to another table, add that one in the
-                 * cross-reference list of current table
+                 * If any parameter of action refers to another table, add that one in
+                 * the cross-reference list of current table
                  */
                 for (auto param_it = action.params.begin(); param_it != action.params.end(); param_it++)
                 {
@@ -466,7 +471,8 @@ std::vector<int> findTablePrecedence(int tables, std::vector<std::pair<int, int>
 
     for (int i = 0; i < tables; i++)
     {
-        // Err input data like possible cyclic dependencies, could not build precedence order
+        // Err input data like possible cyclic dependencies, could not build
+        // precedence order
         if (zeros.empty())
         {
             SWSS_LOG_ERROR("Filed to build table precedence order");
@@ -546,7 +552,8 @@ void buildTablePrecedence(TablesInfo *tables_info)
     // find precedence of tables based on dependencies
     orderedTables = findTablePrecedence(tables, preReq, tables_info);
 
-    // update each table with calculated precedence value and build table precedence map
+    // update each table with calculated precedence value and build table
+    // precedence map
     for (std::size_t i = 0; i < orderedTables.size(); i++)
     {
         auto table_id = orderedTables[i];
@@ -593,7 +600,8 @@ void TablesDefnManager::drain()
             SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
                            QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status, /*replace=*/true);
+                                 status,
+                                 /*replace=*/true);
             continue;
         }
         auto &app_db_entry = *app_db_entry_or;
@@ -601,10 +609,12 @@ void TablesDefnManager::drain()
         status = validateTablesInfoAppDbEntry(app_db_entry);
         if (!status.ok())
         {
-            SWSS_LOG_ERROR("Validation failed for tables definition APP DB entry with key %s: %s",
+            SWSS_LOG_ERROR("Validation failed for tables definition APP DB entry with key %s: "
+                           "%s",
                            QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status, /*replace=*/true);
+                                 status,
+                                 /*replace=*/true);
             continue;
         }
 
@@ -637,7 +647,8 @@ void TablesDefnManager::drain()
         }
         if (!status.ok())
         {
-            SWSS_LOG_ERROR("Processing failed for tables definition APP DB entry with key %s: %s",
+            SWSS_LOG_ERROR("Processing failed for tables definition APP DB entry with key %s: "
+                           "%s",
                            QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
         }
         else

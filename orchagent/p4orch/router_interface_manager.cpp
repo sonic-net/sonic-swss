@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -17,7 +18,6 @@
 #include "sai_serialize.h"
 #include "table.h"
 #include "vrforch.h"
-#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 
