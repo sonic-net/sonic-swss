@@ -1,6 +1,7 @@
 #include "p4orch/gre_tunnel_manager.h"
 
 #include <map>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -14,7 +15,6 @@
 #include "sai_serialize.h"
 #include "swssnet.h"
 #include "table.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

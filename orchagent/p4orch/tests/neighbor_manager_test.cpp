@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_set>
 
@@ -12,7 +13,6 @@
 #include "p4orch/p4orch_util.h"
 #include "return_code.h"
 #include "swssnet.h"
-#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 

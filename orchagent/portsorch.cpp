@@ -3391,6 +3391,7 @@ bool PortsOrch::bake()
     addExistingData(APP_LAG_MEMBER_TABLE_NAME);
     addExistingData(APP_VLAN_TABLE_NAME);
     addExistingData(APP_VLAN_MEMBER_TABLE_NAME);
+    addExistingData(STATE_TRANSCEIVER_INFO_TABLE_NAME);
 
     return true;
 }
@@ -7779,6 +7780,18 @@ void PortsOrch::refreshPortStatus()
             {
                 updateDbPortOperSpeed(port, 0);
             }
+            sai_port_fec_mode_t fec_mode;
+            string fec_str = "N/A";
+            if (oper_fec_sup && getPortOperFec(port, fec_mode))
+            {
+                if (!m_portHlpr.fecToStr(fec_str, fec_mode))
+                {
+                    SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
+                                   static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
+                    fec_str = "N/A";
+                }
+            }
+            updateDbPortOperFec(port,fec_str);
         }
     }
 }

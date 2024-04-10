@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 
@@ -17,7 +18,6 @@
 #include "p4orch.h"
 #include "return_code.h"
 #include "swssnet.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
