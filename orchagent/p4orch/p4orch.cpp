@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "copporch.h"
+#include "fabricportsorch.h"
 #include "logger.h"
 #include "orch.h"
 #include "p4orch/acl_rule_manager.h"
@@ -25,6 +26,7 @@
 #include "timer.h"
 
 extern PortsOrch *gPortsOrch;
+extern FabricPortsOrch *gFabricPortsOrch;
 #define P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME "P4_ACL_COUNTERS_STATS_POLL_TIMER"
 #define P4_EXT_COUNTERS_STATS_POLL_TIMER_NAME "P4_EXT_COUNTERS_STATS_POLL_TIMER"
 #define APP_P4RT_EXT_TABLES_MANAGER "EXT_TABLES_MANAGER"
@@ -182,6 +184,7 @@ void P4Orch::doTask(swss::SelectableTimer &timer)
 
 void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std::string &data)
 {
+    SWSS_LOG_ENTER();
     if (op == "port_state_change")
     {
         uint32_t count;
@@ -194,6 +197,16 @@ void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std
             sai_port_oper_status_t status = port_oper_status[i].port_state;
 
             Port port;
+            if (gFabricPortsOrch->getPort(id, port))
+            {
+                SWSS_LOG_INFO("This is from fabric port id 0x%" PRIx64, id);
+                continue;
+            }
+            else if (!gFabricPortsOrch->allPortsReady())
+            {
+                SWSS_LOG_INFO("FabricPortsOrch not all ports ready");
+                continue;
+            }
             if (!gPortsOrch->getPort(id, port))
             {
                 SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, id);

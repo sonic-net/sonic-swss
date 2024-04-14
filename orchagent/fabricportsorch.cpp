@@ -160,6 +160,7 @@ int FabricPortsOrch::getFabricPortList()
         }
         int lane = attr.value.u32list.list[0];
         m_fabricLanePortMap[lane] = fabric_port_list[i];
+        SWSS_LOG_DEBUG("Add m_fabricLanePortMap with fabric id %" PRIx64, fabric_port_list[i]);
     }
 
     generatePortStats();
@@ -172,6 +173,22 @@ int FabricPortsOrch::getFabricPortList()
 bool FabricPortsOrch::allPortsReady()
 {
     return m_getFabricPortListDone;
+}
+
+bool FabricPortsOrch::getPort(sai_object_id_t id, Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto p : m_fabricLanePortMap)
+    {
+        if (p.second == id)
+        {
+            SWSS_LOG_DEBUG("id %" PRIx64, id );
+            SWSS_LOG_DEBUG("p.second %" PRIx64, p.second);
+            return true;
+        }
+    }
+    return false;
 }
 
 void FabricPortsOrch::generatePortStats()

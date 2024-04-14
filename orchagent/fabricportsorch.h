@@ -6,6 +6,7 @@
 #include "orch.h"
 #include "observer.h"
 #include "observer.h"
+#include "port.h"
 #include "producertable.h"
 #include "flex_counter_manager.h"
 
@@ -15,6 +16,7 @@ public:
     FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pri_t> &tableNames,
                     bool fabricPortStatEnabled=true, bool fabricQueueStatEnabled=true);
     bool allPortsReady();
+    bool getPort(sai_object_id_t id, Port &port);
     void generateQueueStats();
 
 private:
