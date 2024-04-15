@@ -3122,7 +3122,7 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
     {
         char buffer[32];
         // Format: Www Mmm dd hh:mm:ss yyyy
-        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::localtime(&now_c));
+        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
         FieldValueTuple tuple("last_down_time", buffer);
         tuples.push_back(tuple);
     } 
@@ -3130,7 +3130,7 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
     {
         char buffer[32];
         // Format: Www Mmm dd hh:mm:ss yyyy
-        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::localtime(&now_c));
+        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
         FieldValueTuple tuple("last_up_time", buffer);
         tuples.push_back(tuple);
     }
