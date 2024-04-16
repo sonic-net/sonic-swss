@@ -2,6 +2,7 @@
 
 #include <boost/algorithm/string.hpp>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -14,7 +15,6 @@
 #include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
 #include "tokenize.h"
-#include <nlohmann/json.hpp>
 
 extern sai_counter_api_t *sai_counter_api;
 extern sai_generic_programmable_api_t *sai_generic_programmable_api;
@@ -111,15 +111,18 @@ ReturnCode ExtTablesManager::validateActionParamsCrossRef(P4ExtTableAppDbEntry &
                     SWSS_LOG_ERROR("Cross-table reference validation failed from extension-table %s",
                                    table_name.c_str());
                     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                           << "Cross-table reference valdiation failed from extension table";
+                           << "Cross-table reference valdiation failed from extension "
+                              "table";
                 }
             }
             else
             {
-                SWSS_LOG_ERROR("Cross-table reference validation failed due to non-existent table %s",
+                SWSS_LOG_ERROR("Cross-table reference validation failed due to non-existent table "
+                               "%s",
                                table_name.c_str());
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Cross-table reference valdiation failed due to non-existent table";
+                       << "Cross-table reference valdiation failed due to non-existent "
+                          "table";
             }
         }
 
@@ -132,7 +135,8 @@ ReturnCode ExtTablesManager::validateActionParamsCrossRef(P4ExtTableAppDbEntry &
 
         if (oid == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("Cross-table reference validation failed, null OID expected from table %s",
+            SWSS_LOG_ERROR("Cross-table reference validation failed, null OID expected from "
+                           "table %s",
                            table_name.c_str());
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Cross-table reference valdiation failed, null OID";
         }
@@ -724,7 +728,8 @@ void ExtTablesManager::drain()
                     SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
                                    QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
                     m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                                         kfvFieldsValues(key_op_fvs_tuple), status, /*replace=*/true);
+                                         kfvFieldsValues(key_op_fvs_tuple), status,
+                                         /*replace=*/true);
                     continue;
                 }
 
@@ -735,7 +740,8 @@ void ExtTablesManager::drain()
                     SWSS_LOG_ERROR("Validation failed for extension APP DB entry with key %s: %s",
                                    QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
                     m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                                         kfvFieldsValues(key_op_fvs_tuple), status, /*replace=*/true);
+                                         kfvFieldsValues(key_op_fvs_tuple), status,
+                                         /*replace=*/true);
                     continue;
                 }
 
@@ -772,7 +778,8 @@ void ExtTablesManager::drain()
                                    QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
                 }
                 m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status, /*replace=*/true);
+                                     status,
+                                     /*replace=*/true);
             }
 
             it_m->second.clear();
@@ -833,7 +840,8 @@ void ExtTablesManager::doExtCounterStatsTask()
                 sai_counter_api->get_counter_stats(ext_table_entry->sai_counter_oid, 2, stat_ids, stats);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_WARN("Failed to set counters stats for extension entry %s:%s in COUNTERS_DB: ",
+                SWSS_LOG_WARN("Failed to set counters stats for extension entry %s:%s in "
+                              "COUNTERS_DB: ",
                               table_name.c_str(), ext_table_entry->table_key.c_str());
                 continue;
             }

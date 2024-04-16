@@ -1,5 +1,6 @@
 #include "p4orch/wcmp_manager.h"
 
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -12,7 +13,6 @@
 #include "portsorch.h"
 #include "sai_serialize.h"
 #include "table.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

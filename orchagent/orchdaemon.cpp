@@ -19,6 +19,8 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
 
+#define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
+
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS 10 * 1000
 
@@ -513,8 +515,10 @@ bool OrchDaemon::init()
 
     if (m_fabricEnabled)
     {
+        // register APP_FABRIC_MONITOR_PORT_TABLE_NAME table
+        const int fabric_portsorch_base_pri = 30;
         vector<table_name_with_pri_t> fabric_port_tables = {
-           // empty for now
+           { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri }
         };
         gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
         m_orchList.push_back(gFabricPortsOrch);
@@ -1072,8 +1076,9 @@ bool FabricOrchDaemon::init()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("FabricOrchDaemon init");
 
+    const int fabric_portsorch_base_pri = 30;
     vector<table_name_with_pri_t> fabric_port_tables = {
-        // empty for now, I don't consume anything yet
+        { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri }
     };
     gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
     addOrchList(gFabricPortsOrch);

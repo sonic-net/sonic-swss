@@ -35,6 +35,7 @@ private:
     unique_ptr<Table> m_fabricCounterTable;
     unique_ptr<Table> m_applTable;
     unique_ptr<Table> m_fabricCapacityTable;
+    unique_ptr<Table> m_applMonitorConstTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
 
     swss::SelectableTimer *m_timer = nullptr;
@@ -51,6 +52,15 @@ private:
 
     bool m_getFabricPortListDone = false;
     bool m_isQueueStatsGenerated = false;
+
+    string m_defaultPollWithErrors = "0";
+    string m_defaultPollWithNoErrors = "8";
+    string m_defaultPollWithFecErrors = "0";
+    string m_defaultPollWithNoFecErrors = "8";
+    string m_defaultConfigIsolated = "0";
+    string m_defaultIsolated = "0";
+    string m_defaultAutoIsolated = "0";
+
     int getFabricPortList();
     void generatePortStats();
     void updateFabricPortState();
@@ -59,6 +69,7 @@ private:
 
     void doTask() override;
     void doTask(Consumer &consumer);
+    void doFabricPortTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
 };
 

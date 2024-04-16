@@ -1,5 +1,6 @@
 #include "p4orch/acl_rule_manager.h"
 
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -17,7 +18,6 @@
 #include "sai_serialize.h"
 #include "table.h"
 #include "tokenize.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

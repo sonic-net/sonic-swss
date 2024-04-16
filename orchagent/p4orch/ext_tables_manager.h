@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -14,7 +15,6 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
@@ -29,7 +29,7 @@ struct P4ExtTableEntry
     sai_object_id_t sai_counter_oid = SAI_NULL_OBJECT_ID;
     std::unordered_map<std::string, DepObject> action_dep_objects;
 
-    P4ExtTableEntry(){};
+    P4ExtTableEntry() {};
     P4ExtTableEntry(const std::string &db_key, const std::string &table_name, const std::string &table_key)
         : db_key(db_key), table_name(table_name), table_key(table_key)
     {

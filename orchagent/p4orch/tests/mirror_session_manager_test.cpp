@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -14,7 +15,6 @@
 #include "swss/ipaddress.h"
 #include "swss/macaddress.h"
 #include "swssnet.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

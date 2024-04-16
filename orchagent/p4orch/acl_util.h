@@ -1,13 +1,13 @@
 #pragma once
 
 #include <map>
+#include <nlohmann/json.hpp>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "p4orch/p4orch_util.h"
 #include "return_code.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"
@@ -243,7 +243,7 @@ struct P4AclTableDefinition
     P4AclTableDefinition(const std::string &acl_table_name, const sai_acl_stage_t stage, const uint32_t priority,
                          const uint32_t size, const std::string &meter_unit, const std::string &counter_unit)
         : acl_table_name(acl_table_name), stage(stage), priority(priority), size(size), meter_unit(meter_unit),
-          counter_unit(counter_unit){};
+          counter_unit(counter_unit) {};
 };
 
 struct P4UserDefinedTrapHostifTableEntry
@@ -251,7 +251,7 @@ struct P4UserDefinedTrapHostifTableEntry
     sai_object_id_t user_defined_trap;
     sai_object_id_t hostif_table_entry;
     P4UserDefinedTrapHostifTableEntry()
-        : user_defined_trap(SAI_NULL_OBJECT_ID), hostif_table_entry(SAI_NULL_OBJECT_ID){};
+        : user_defined_trap(SAI_NULL_OBJECT_ID), hostif_table_entry(SAI_NULL_OBJECT_ID) {};
 };
 
 using acl_rule_attr_lookup_t = std::map<std::string, acl_entry_attr_union_t>;

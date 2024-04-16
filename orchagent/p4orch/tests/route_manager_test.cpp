@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <map>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -16,7 +17,6 @@
 #include "return_code.h"
 #include "swssnet.h"
 #include "vrforch.h"
-#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 

@@ -68,6 +68,11 @@ namespace portsorch_test
             attr_list[0].value.s32 = _sai_port_fec_mode;
             status = SAI_STATUS_SUCCESS;
         }
+        else if (attr_count== 1 && attr_list[0].id == SAI_PORT_ATTR_OPER_STATUS)
+        {
+            attr_list[0].value.u32 = (uint32_t)SAI_PORT_OPER_STATUS_UP;
+            status = SAI_STATUS_SUCCESS;
+        }
         else
         {
             status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
@@ -499,9 +504,9 @@ namespace portsorch_test
         }
 
     };
-    
+
     /*
-    * Test port flap count 
+    * Test port flap count
     */
     TEST_F(PortsOrchTest, PortFlapCount)
     {
@@ -1261,6 +1266,7 @@ namespace portsorch_test
     {
         _hook_sai_port_api();
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
         std::deque<KeyOpFieldsValuesTuple> entries;
 
         not_support_fetching_fec = false;
@@ -1310,6 +1316,33 @@ namespace portsorch_test
 
         ASSERT_EQ(fec_mode, SAI_PORT_FEC_MODE_RS);
 
+        gPortsOrch->refreshPortStatus();
+        std::vector<FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+        bool fec_found = false;
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "fec")
+            {
+                fec_found = true;
+                ASSERT_TRUE(fvValue(valueTuple) == "rs");
+            }
+        }
+        ASSERT_TRUE(fec_found == true);
+
+        /*Mock an invalid fec mode with high value*/
+        _sai_port_fec_mode = 100;
+        gPortsOrch->refreshPortStatus();
+        statePortTable.get("Ethernet0", values);
+        fec_found = false;
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "fec")
+            {
+                fec_found = true;
+                ASSERT_TRUE(fvValue(valueTuple) == "N/A");
+            }
+        }
         mock_port_fec_modes = old_mock_port_fec_modes;
         _unhook_sai_port_api();
     }
@@ -1473,6 +1506,7 @@ namespace portsorch_test
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
         Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table transceieverInfoTable = Table(m_state_db.get(), STATE_TRANSCEIVER_INFO_TABLE_NAME);
 
         // Get SAI default ports to populate DB
 
@@ -1506,6 +1540,7 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
+            transceieverInfoTable.set(it.first, {});
         }
 
         // Set PortConfigDone, PortInitDone
@@ -1553,6 +1588,25 @@ namespace portsorch_test
 
         gBufferOrch->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+
+        // Verify port configuration
+        vector<sai_object_id_t> port_list;
+        port_list.resize(ports.size());
+        sai_attribute_t attr;
+        sai_status_t status;
+        attr.id = SAI_SWITCH_ATTR_PORT_LIST;
+        attr.value.objlist.count = static_cast<uint32_t>(port_list.size());
+        attr.value.objlist.list = port_list.data();
+        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        for (uint32_t i = 0; i < port_list.size(); i++)
+        {
+            attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
+            status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            ASSERT_TRUE(attr.value.booldata);
+        }
     }
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
