@@ -689,7 +689,7 @@ task_process_status TwampOrch::createEntry(const string& key, const vector<Field
 
     if (entry.role == SAI_TWAMP_SESSION_ROLE_SENDER)
     {
-        TwampStats hw_stats = {0};
+        TwampStats hw_stats{};
         m_twampStatistics.emplace(key, hw_stats);
         initSessionStats(key);
     }
