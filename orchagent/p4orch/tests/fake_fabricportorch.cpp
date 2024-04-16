@@ -16,7 +16,7 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
         port_stat_manager(FABRIC_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                           FABRIC_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
         queue_stat_manager(FABRIC_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
-                           FABRIC_QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                           FABRIC_QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
 }
 
@@ -26,7 +26,7 @@ bool FabricPortsOrch::getPort(sai_object_id_t id, Port &port)
     {
         if (p.second == id)
         {
-            retirm true;
+            return true;
         }
     }
     return false;
