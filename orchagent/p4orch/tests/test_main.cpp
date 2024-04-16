@@ -226,7 +226,7 @@ int main(int argc, char *argv[])
     PortsOrch ports_orch(gAppDb, gStateDb, ports_tables, gAppDb);
     FabricPortsOrch fabric_ports_orch(gAppDb, fabric_port_tables, false, false);
     gPortsOrch = &ports_orch;
-    gFabricPortsOrch &fabric_ports_orch;
+    gFabricPortsOrch = &fabric_ports_orch;
     CrmOrch crm_orch(gConfigDb, CFG_CRM_TABLE_NAME);
 
     gCrmOrch = &crm_orch;
