@@ -37,20 +37,11 @@ bool FabricPortsOrch::allPortsReady()
     return true;
 }
 
-bool FabricPortsOrch::bake()
-{
-    return true;
-}
-
 void FabricPortsOrch::doTask()
 {
 }
 
 void FabricPortsOrch::doTask(Consumer &consumer)
-{
-}
-
-void FabricPortsOrch::doTask(NotificationConsumer &consumer)
 {
 }
 
