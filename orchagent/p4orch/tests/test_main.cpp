@@ -11,6 +11,7 @@ extern "C"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "directory.h"
+#include "fabricportsorch.h"
 #include "flowcounterrouteorch.h"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
@@ -44,6 +45,7 @@ bool gSyncMode = false;
 bool gIsNatSupported = false;
 
 PortsOrch *gPortsOrch;
+FabricPortsOrch *gFabricPortsOrch;
 CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
@@ -220,8 +222,11 @@ int main(int argc, char *argv[])
     gConfigDb = &config_db;
     gCountersDb = &counters_db;
     std::vector<table_name_with_pri_t> ports_tables;
+    std::vector<table_name_with_pri_t> fabric_port_tables;
     PortsOrch ports_orch(gAppDb, gStateDb, ports_tables, gAppDb);
+    FabricPortsOrch fabric_ports_orch(gAppDb, fabric_port_tables, false, false);
     gPortsOrch = &ports_orch;
+    gFabricPortsOrch &fabric_ports_orch;
     CrmOrch crm_orch(gConfigDb, CFG_CRM_TABLE_NAME);
 
     gCrmOrch = &crm_orch;
