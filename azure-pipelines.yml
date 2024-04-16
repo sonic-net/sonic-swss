@@ -105,7 +105,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-bookworm
       sairedis_artifact_name: sonic-sairedis-bookworm
       artifact_name: sonic-swss-bookworm
-      archive_gcov: true
+      archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
     parameters:
