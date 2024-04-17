@@ -8,6 +8,7 @@
 #include "warm_restart.h"
 #include <iostream>
 
+#define APP_TUNNEL_DECAP_TERM_TABLE_NAME    "TUNNEL_DECAP_TERM_TABLE"
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
@@ -222,7 +223,12 @@ bool OrchDaemon::init()
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
     gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
-    TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
+
+    vector<string> tunnel_tables = {
+        APP_TUNNEL_DECAP_TABLE_NAME,
+        APP_TUNNEL_DECAP_TERM_TABLE_NAME
+    };
+    TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, m_stateDb, m_configDb, tunnel_tables);
 
     VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_stateDb, m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
