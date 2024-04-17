@@ -426,7 +426,11 @@ namespace qosorch_test
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
             ASSERT_EQ(tunnel_decap_orch, nullptr);
-            tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            vector<string> tunnel_tables = {
+                APP_TUNNEL_DECAP_TABLE_NAME,
+                APP_TUNNEL_DECAP_TERM_TABLE_NAME
+            };
+            tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
 
             vector<string> qos_tables = {
                 CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
