@@ -14,52 +14,53 @@ def create_fvs(**kwargs):
 tunnel_nh_id = 0
 
 class TestMuxTunnelBase():
-    APP_MUX_CABLE               = "MUX_CABLE_TABLE"
-    APP_NEIGH_TABLE             = "NEIGH_TABLE"
-    APP_ROUTE_TABLE             = "ROUTE_TABLE"
-    APP_TUNNEL_DECAP_TABLE_NAME = "TUNNEL_DECAP_TABLE"
-    APP_TUNNEL_ROUTE_TABLE_NAME = "TUNNEL_ROUTE_TABLE"
-    ASIC_TUNNEL_TABLE           = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
-    ASIC_TUNNEL_TERM_ENTRIES    = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
-    ASIC_RIF_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
-    ASIC_VRF_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
-    ASIC_NEIGH_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
-    ASIC_NEXTHOP_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
-    ASIC_NHG_MEMBER_TABLE       = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
-    ASIC_ROUTE_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
-    ASIC_FDB_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY"
-    ASIC_SWITCH_TABLE           = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
-    CONFIG_MUX_CABLE            = "MUX_CABLE"
-    CONFIG_PEER_SWITCH          = "PEER_SWITCH"
-    STATE_FDB_TABLE             = "FDB_TABLE"
-    MUX_TUNNEL_0                = "MuxTunnel0"
-    PEER_SWITCH_HOST            = "peer_switch_hostname"
-    CONFIG_TUNNEL_TABLE_NAME    = "TUNNEL"
-    ASIC_QOS_MAP_TABLE_KEY      = "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP"
-    TUNNEL_QOS_MAP_NAME         = "AZURE_TUNNEL"
+    APP_MUX_CABLE                       = "MUX_CABLE_TABLE"
+    APP_NEIGH_TABLE                     = "NEIGH_TABLE"
+    APP_ROUTE_TABLE                     = "ROUTE_TABLE"
+    APP_TUNNEL_DECAP_TABLE_NAME         = "TUNNEL_DECAP_TABLE"
+    APP_TUNNEL_DECAP_TERM_TABLE_NAME    = "TUNNEL_DECAP_TERM_TABLE"
+    APP_TUNNEL_ROUTE_TABLE_NAME         = "TUNNEL_ROUTE_TABLE"
+    ASIC_TUNNEL_TABLE                   = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
+    ASIC_TUNNEL_TERM_ENTRIES            = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
+    ASIC_RIF_TABLE                      = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
+    ASIC_VRF_TABLE                      = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
+    ASIC_NEIGH_TABLE                    = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
+    ASIC_NEXTHOP_TABLE                  = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+    ASIC_NHG_MEMBER_TABLE               = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
+    ASIC_ROUTE_TABLE                    = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
+    ASIC_FDB_TABLE                      = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY"
+    ASIC_SWITCH_TABLE                   = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
+    CONFIG_MUX_CABLE                    = "MUX_CABLE"
+    CONFIG_PEER_SWITCH                  = "PEER_SWITCH"
+    STATE_FDB_TABLE                     = "FDB_TABLE"
+    MUX_TUNNEL_0                        = "MuxTunnel0"
+    PEER_SWITCH_HOST                    = "peer_switch_hostname"
+    CONFIG_TUNNEL_TABLE_NAME            = "TUNNEL"
+    ASIC_QOS_MAP_TABLE_KEY              = "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP"
+    TUNNEL_QOS_MAP_NAME                 = "AZURE_TUNNEL"
 
-    SELF_IPV4                   = "10.1.0.32"
-    PEER_IPV4                   = "10.1.0.33"
-    SERV1_IPV4                  = "192.168.0.100"
-    SERV1_IPV6                  = "fc02:1000::100"
-    SERV1_SOC_IPV4              = "192.168.0.103"
-    SERV2_IPV4                  = "192.168.0.101"
-    SERV2_IPV6                  = "fc02:1000::101"
-    SERV3_IPV4                  = "192.168.0.102"
-    SERV3_IPV6                  = "fc02:1000::102"
-    NEIGH1_IPV4                 = "192.168.0.200"
-    NEIGH1_IPV6                 = "fc02:1000::200"
-    NEIGH2_IPV4                 = "192.168.0.201"
-    NEIGH2_IPV6                 = "fc02:1000::201"
-    NEIGH3_IPV4                 = "192.168.0.202"
-    NEIGH3_IPV6                 = "fc02:1000::202"
-    IPV4_MASK                   = "/32"
-    IPV6_MASK                   = "/128"
-    TUNNEL_NH_ID                = 0
-    ACL_PRIORITY                = "999"
-    VLAN_1000                   = "Vlan1000"
+    SELF_IPV4                           = "10.1.0.32"
+    PEER_IPV4                           = "10.1.0.33"
+    SERV1_IPV4                          = "192.168.0.100"
+    SERV1_IPV6                          = "fc02:1000::100"
+    SERV1_SOC_IPV4                      = "192.168.0.103"
+    SERV2_IPV4                          = "192.168.0.101"
+    SERV2_IPV6                          = "fc02:1000::101"
+    SERV3_IPV4                          = "192.168.0.102"
+    SERV3_IPV6                          = "fc02:1000::102"
+    NEIGH1_IPV4                         = "192.168.0.200"
+    NEIGH1_IPV6                         = "fc02:1000::200"
+    NEIGH2_IPV4                         = "192.168.0.201"
+    NEIGH2_IPV6                         = "fc02:1000::201"
+    NEIGH3_IPV4                         = "192.168.0.202"
+    NEIGH3_IPV6                         = "fc02:1000::202"
+    IPV4_MASK                           = "/32"
+    IPV6_MASK                           = "/128"
+    TUNNEL_NH_ID                        = 0
+    ACL_PRIORITY                        = "999"
+    VLAN_1000                           = "Vlan1000"
 
-    PING_CMD                    = "timeout 0.5 ping -c1 -W1 -i0 -n -q {ip}"
+    PING_CMD                            = "timeout 0.5 ping -c1 -W1 -i0 -n -q {ip}"
 
     SAI_ROUTER_INTERFACE_ATTR_TYPE = "SAI_ROUTER_INTERFACE_ATTR_TYPE"
     SAI_ROUTER_INTERFACE_TYPE_VLAN = "SAI_ROUTER_INTERFACE_TYPE_VLAN"
@@ -67,6 +68,7 @@ class TestMuxTunnelBase():
     DEFAULT_TUNNEL_PARAMS = {
         "tunnel_type": "IPINIP",
         "dst_ip": SELF_IPV4,
+        "src_ip": PEER_IPV4,
         "dscp_mode": "pipe",
         "ecn_mode": "standard",
         "ttl_mode": "pipe",
@@ -1124,12 +1126,10 @@ class TestMuxTunnelBase():
         src_ip = tunnel_params['src_ip'] if 'src_ip' in tunnel_params else None
         self.check_tunnel_termination_entry_exists_in_asicdb(asicdb, tunnel_sai_obj, tunnel_params["dst_ip"].split(","), src_ip)
 
-    def remove_and_test_tunnel(self, db, asicdb, tunnel_name):
+    def remove_and_test_tunnel(self, db, configdb, asicdb, tunnel_name):
         """ Removes tunnel and checks that ASIC db is clear"""
-
-        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
-        tunnel_term_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TERM_ENTRIES)
-        tunnel_app_table = swsscommon.Table(asicdb, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        tunnel_table = swsscommon.Table(asicdb.db_connection, self.ASIC_TUNNEL_TABLE)
+        tunnel_term_table = swsscommon.Table(asicdb.db_connection, self.ASIC_TUNNEL_TERM_ENTRIES)
 
         tunnels = tunnel_table.getKeys()
         tunnel_sai_obj = tunnels[0]
@@ -1139,16 +1139,15 @@ class TestMuxTunnelBase():
         # get overlay loopback interface oid to check if it is deleted with the tunnel
         overlay_infs_id = {f:v for f, v in fvs}["SAI_TUNNEL_ATTR_OVERLAY_INTERFACE"]
 
-        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        ps.set(tunnel_name, create_fvs(), 'DEL')
+        configdb.delete_entry(self.CONFIG_TUNNEL_TABLE_NAME, tunnel_name)
 
         # wait till config will be applied
         time.sleep(1)
 
         assert len(tunnel_table.getKeys()) == 0
         assert len(tunnel_term_table.getKeys()) == 0
-        assert len(tunnel_app_table.getKeys()) == 0
-        assert not self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
+        with pytest.raises(AssertionError):
+            self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
 
     def check_app_db_neigh_table(
             self, appdb, intf, neigh_ip,
@@ -1166,6 +1165,7 @@ class TestMuxTunnelBase():
             appdb.wait_for_field_match(self.APP_NEIGH_TABLE, key, {'neigh': mac})
         else:
             appdb.wait_for_deleted_keys(self.APP_NEIGH_TABLE, key)
+
     def add_qos_map(self, configdb, asicdb, qos_map_type_name, qos_map_name, qos_map):
         current_oids = asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)
         # Apply QoS map to config db
@@ -1251,10 +1251,12 @@ class TestMuxTunnelBase():
 
     @pytest.fixture(scope='module')
     def setup_tunnel(self, dvs):
-        app_db_connector = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        ps = swsscommon.ProducerStateTable(app_db_connector, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        fvs = create_fvs(**self.DEFAULT_TUNNEL_PARAMS)
-        ps.set(self.MUX_TUNNEL_0, fvs)
+        config_db = dvs.get_config_db()
+        config_db.create_entry(
+            self.CONFIG_TUNNEL_TABLE_NAME,
+            self.MUX_TUNNEL_0,
+            self.DEFAULT_TUNNEL_PARAMS
+        )
 
     @pytest.fixture
     def setup_peer_switch(self, dvs):
@@ -1579,6 +1581,24 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for key in fvs:
             if key == "state":
                 assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
+
+    def test_Tunnel_Removal(self, dvs, setup_tunnel, testlog, setup):
+        """Test IPv4 Mux tunnel removal."""
+        # NOTE: This testcase should be always placed at the end
+        # as the tunnel is removed and never restored again.
+        db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        configdb = dvs.get_config_db()
+
+        _, _, dscp_to_tc_map_oid, tc_to_pg_map_oid = setup
+        tunnel_params = self.DEFAULT_TUNNEL_PARAMS
+        tunnel_params["decap_dscp_to_tc_map_id"] = dscp_to_tc_map_oid
+        tunnel_params["decap_tc_to_pg_map_id"] = tc_to_pg_map_oid
+
+        # create tunnel IPv4 tunnel
+        self.create_and_test_tunnel(db, asicdb, self.MUX_TUNNEL_0, tunnel_params)
+        # delete tunnel IPv4 tunnel
+        self.remove_and_test_tunnel(db, configdb, asicdb, self.MUX_TUNNEL_0)
 
 
 # Add Dummy always-pass test at end as workaroud
