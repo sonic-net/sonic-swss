@@ -28,6 +28,9 @@ namespace switchorch_test
     shared_ptr<swss::DBConnector> m_state_db;
 
     sai_switch_attr_t _ut_stub_asic_sdk_health_event_attribute_to_check;
+    bool _ut_stub_asic_sdk_health_event_check_all;
+    uint32_t _ut_stub_asic_sdk_health_event_call_count;
+    map<sai_switch_attr_t, set<sai_switch_asic_sdk_health_category_t>> _ut_stub_asic_sdk_health_event_category_sets;
     set<sai_switch_asic_sdk_health_category_t> _ut_stub_asic_sdk_health_event_passed_categories;
 
     bool _ut_reg_event_unsupported;
@@ -47,10 +50,11 @@ namespace switchorch_test
         case SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY:
         case SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY:
         case SAI_SWITCH_ATTR_REG_NOTICE_SWITCH_ASIC_SDK_HEALTH_CATEGORY:
-            if (_ut_stub_asic_sdk_health_event_attribute_to_check == attr[0].id)
+            if (_ut_stub_asic_sdk_health_event_check_all)
             {
+                _ut_stub_asic_sdk_health_event_call_count++;
                 auto *passed_category_list = reinterpret_cast<sai_switch_asic_sdk_health_category_t*>(attr[0].value.s32list.list);
-                _ut_stub_asic_sdk_health_event_passed_categories = set<sai_switch_asic_sdk_health_category_t>(passed_category_list, passed_category_list + attr[0].value.s32list.count);
+                _ut_stub_asic_sdk_health_event_category_sets[(sai_switch_attr_t)attr[0].id] = set<sai_switch_asic_sdk_health_category_t>(passed_category_list, passed_category_list + attr[0].value.s32list.count);
             }
             return SAI_STATUS_SUCCESS;
         default:
@@ -80,6 +84,11 @@ namespace switchorch_test
 
         void SetUp() override
         {
+            // Init switch and create dependencies
+            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+            m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
+            m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+
             _ut_reg_event_unsupported = false;
 
             map<string, string> profile = {
@@ -100,11 +109,6 @@ namespace switchorch_test
 
         void initSwitchOrch()
         {
-            // Init switch and create dependencies
-            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
-            m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
-            m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
-
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
             TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
             TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
@@ -122,6 +126,10 @@ namespace switchorch_test
 
         void TearDown() override
         {
+            ::testing_db::reset();
+
+            _ut_stub_asic_sdk_health_event_category_sets.clear();
+
             gDirectory.m_values.clear();
 
             delete gSwitchOrch;
@@ -133,18 +141,39 @@ namespace switchorch_test
 
     TEST_F(SwitchOrchTest, SwitchOrchTestSuppressCategories)
     {
-        initSwitchOrch();
+        Table suppressAsicSdkHealthEventTable = Table(m_config_db.get(), CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
+
+        suppressAsicSdkHealthEventTable.set("fatal",
+                                {
+                                    {"max_events", "1000"}
+                                });
+        suppressAsicSdkHealthEventTable.set("warning",
+                                {
+                                    {"categories", "software,firmware,cpu_hw,asic_hw"}
+                                });
+
+        _ut_stub_asic_sdk_health_event_check_all = true;
+        auto call_count = _ut_stub_asic_sdk_health_event_call_count;
+
         _hook_sai_apis();
+        initSwitchOrch();
+
+        ASSERT_TRUE(gSwitchOrch->m_eliminateEventsTimer != nullptr);
 
         vector<string> ts;
         std::deque<KeyOpFieldsValuesTuple> entries;
-        Table suppressAsicSdkHealthEventTable = Table(m_config_db.get(), CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
         set<sai_switch_asic_sdk_health_category_t> all_categories({
                 SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_SW,
                 SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
                 SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_CPU_HW,
                 SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW});
         set<sai_switch_asic_sdk_health_category_t> empty_category;
+
+        call_count += 2;
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_call_count, call_count);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY], all_categories);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY], empty_category);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_NOTICE_SWITCH_ASIC_SDK_HEALTH_CATEGORY], all_categories);
 
         // case: severity: fatal, operation: suppress all categories
         entries.push_back({"fatal", "SET",
@@ -154,9 +183,10 @@ namespace switchorch_test
         auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME));
         consumer->addToSync(entries);
         entries.clear();
-        _ut_stub_asic_sdk_health_event_attribute_to_check = SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY;
         static_cast<Orch *>(gSwitchOrch)->doTask();
-        ASSERT_EQ(_ut_stub_asic_sdk_health_event_passed_categories, empty_category);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY], empty_category);
+        call_count++;
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_call_count, call_count);
 
         // case: severity: warning, operation: suppress partial categories
         entries.push_back({"warning", "SET",
@@ -165,11 +195,13 @@ namespace switchorch_test
                            }});
         consumer->addToSync(entries);
         entries.clear();
-        _ut_stub_asic_sdk_health_event_attribute_to_check = SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY;
         static_cast<Orch *>(gSwitchOrch)->doTask();
-        ASSERT_EQ(_ut_stub_asic_sdk_health_event_passed_categories, set<sai_switch_asic_sdk_health_category_t>({
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW}));
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY],
+                  set<sai_switch_asic_sdk_health_category_t>({
+                          SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
+                          SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW}));
+        call_count++;
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_call_count, call_count);
 
         // case: invalid severity, nothing changed (to satisfy coverate)
         entries.push_back({"warninga", "SET",
@@ -178,11 +210,9 @@ namespace switchorch_test
                            }});
         consumer->addToSync(entries);
         entries.clear();
-        _ut_stub_asic_sdk_health_event_attribute_to_check = SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY;
         static_cast<Orch *>(gSwitchOrch)->doTask();
-        ASSERT_EQ(_ut_stub_asic_sdk_health_event_passed_categories, set<sai_switch_asic_sdk_health_category_t>({
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW}));
+        // No SAI API called
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_call_count, call_count);
 
         // case: severity: warning, operation: set max_events only, which means to remove suppress list
         entries.push_back({"warning", "SET",
@@ -191,21 +221,19 @@ namespace switchorch_test
                            }});
         consumer->addToSync(entries);
         entries.clear();
-        _ut_stub_asic_sdk_health_event_attribute_to_check = SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY;
         static_cast<Orch *>(gSwitchOrch)->doTask();
-        ASSERT_EQ(_ut_stub_asic_sdk_health_event_passed_categories, set<sai_switch_asic_sdk_health_category_t>({
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_SW,
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_CPU_HW,
-                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW}));
+        call_count++;
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_call_count, call_count);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY], all_categories);
 
         // case: severity: notice, operation: suppress no category
         entries.push_back({"notice", "DEL", {}});
         consumer->addToSync(entries);
         entries.clear();
-        _ut_stub_asic_sdk_health_event_attribute_to_check = SAI_SWITCH_ATTR_REG_NOTICE_SWITCH_ASIC_SDK_HEALTH_CATEGORY;
         static_cast<Orch *>(gSwitchOrch)->doTask();
-        ASSERT_EQ(_ut_stub_asic_sdk_health_event_passed_categories, all_categories);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_NOTICE_SWITCH_ASIC_SDK_HEALTH_CATEGORY], all_categories);
+        call_count++;
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_call_count, call_count);
 
         _unhook_sai_apis();
     }
@@ -213,6 +241,8 @@ namespace switchorch_test
     TEST_F(SwitchOrchTest, SwitchOrchTestCheckCapability)
     {
         initSwitchOrch();
+
+        ASSERT_TRUE(gSwitchOrch->m_eliminateEventsTimer != nullptr);
 
         string value;
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE, value);
@@ -228,8 +258,12 @@ namespace switchorch_test
     TEST_F(SwitchOrchTest, SwitchOrchTestCheckCapabilityUnsupported)
     {
         _ut_reg_event_unsupported = true;
+        _ut_stub_asic_sdk_health_event_check_all = true;
+
         _hook_sai_apis();
         initSwitchOrch();
+
+        ASSERT_EQ(gSwitchOrch->m_eliminateEventsTimer, nullptr);
 
         string value;
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE, value);
@@ -253,15 +287,17 @@ namespace switchorch_test
         auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME));
         consumer->addToSync(entries);
         entries.clear();
-        _ut_stub_asic_sdk_health_event_attribute_to_check = SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY;
-        _ut_stub_asic_sdk_health_event_passed_categories = empty_category;
+        auto call_count = _ut_stub_asic_sdk_health_event_call_count;
         static_cast<Orch *>(gSwitchOrch)->doTask();
-        ASSERT_EQ(_ut_stub_asic_sdk_health_event_passed_categories, empty_category);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_category_sets[SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY], empty_category);
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_call_count, call_count);
     }
 
     TEST_F(SwitchOrchTest, SwitchOrchTestHandleEvent)
     {
         initSwitchOrch();
+
+        ASSERT_TRUE(gSwitchOrch->m_eliminateEventsTimer != nullptr);
 
         sai_timespec_t timestamp = {.tv_sec = 1701160447, .tv_nsec = 538710245};
         sai_switch_health_data_t data = {.data_type = SAI_HEALTH_DATA_TYPE_GENERAL};

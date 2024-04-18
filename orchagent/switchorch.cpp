@@ -171,6 +171,11 @@ void SwitchOrch::initAsicSdkHealthEventNotification()
         SWSS_LOG_NOTICE("ASIC/SDK health event is not supported");
     }
 
+    DBConnector cfgDb("CONFIG_DB", 0);
+    Table cfgSuppressASHETable(&cfgDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
+    string suppressedCategories;
+    bool atLeastOneSupported = false;
+
     if (!supported)
     {
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE, "false");
@@ -188,44 +193,43 @@ void SwitchOrch::initAsicSdkHealthEventNotification()
         supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, get<0>(c));
         if (supported)
         {
-            status = registerAsicSdkHealthEventCategories(get<0>(c), get<2>(c));
-            supported = (status == SAI_STATUS_SUCCESS);
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Unsupport to register ASIC/SDK health categories for severity %s", get<2>(c).c_str());
-        }
+            cfgSuppressASHETable.hget(get<2>(c), "categories", suppressedCategories);
+            registerAsicSdkHealthEventCategories(get<0>(c), get<2>(c), suppressedCategories, true);
+            suppressedCategories.clear();
 
-        if (supported)
-        {
             m_supportedAsicSdkHealthEventAttributes.insert(get<0>(c));
             fvVector.emplace_back(get<1>(c), "true");
         }
         else
         {
+            SWSS_LOG_NOTICE("Unsupport to register ASIC/SDK health categories for severity %s", get<2>(c).c_str());
             fvVector.emplace_back(get<1>(c), "false");
         }
+        atLeastOneSupported = atLeastOneSupported || supported;
     }
 
     set_switch_capability(fvVector);
 
-    try
+    if (atLeastOneSupported)
     {
-        // Load the Lua script to eliminate oldest entries
-        string eliminateEventsLuaScript = swss::loadLuaScript("eliminate_events.lua");
-        m_eliminateEventsSha = swss::loadRedisScript(m_stateDb.get(), eliminateEventsLuaScript);
+        try
+        {
+            // Load the Lua script to eliminate oldest entries
+            string eliminateEventsLuaScript = swss::loadLuaScript("eliminate_events.lua");
+            m_eliminateEventsSha = swss::loadRedisScript(m_stateDb.get(), eliminateEventsLuaScript);
 
-        // Init timer
-        auto interv = timespec { .tv_sec = ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL, .tv_nsec = 0 };
-        m_eliminateEventsTimer = new SelectableTimer(interv);
-        auto executor = new ExecutableTimer(m_eliminateEventsTimer, this, "ASIC_SDK_HEALTH_EVENT_ELIMINATE_TIMER");
-        Orch::addExecutor(executor);
-        m_eliminateEventsTimer->start();
-    }
-    catch (...)
-    {
-        // This can happen only on mock test. If it happens on a real switch, we should log an error message
-        SWSS_LOG_ERROR("Unable to load the Lua script to eliminate events\n");
+            // Init timer
+            auto interv = timespec { .tv_sec = ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL, .tv_nsec = 0 };
+            m_eliminateEventsTimer = new SelectableTimer(interv);
+            auto executor = new ExecutableTimer(m_eliminateEventsTimer, this, "ASIC_SDK_HEALTH_EVENT_ELIMINATE_TIMER");
+            Orch::addExecutor(executor);
+            m_eliminateEventsTimer->start();
+        }
+        catch (...)
+        {
+            // This can happen only on mock test. If it happens on a real switch, we should log an error message
+            SWSS_LOG_ERROR("Unable to load the Lua script to eliminate events\n");
+        }
     }
 }
 
@@ -862,7 +866,7 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
     }
 }
 
-sai_status_t SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const string &severityString, const string &suppressed_category_list)
+void SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const string &severityString, const string &suppressed_category_list, bool isInitializing)
 {
     sai_status_t status;
     set<sai_switch_asic_sdk_health_category_t> interested_categories_set = switch_asic_sdk_health_event_category_universal_set;
@@ -886,6 +890,12 @@ sai_status_t SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t 
         }
     }
 
+    if (isInitializing && interested_categories_set.empty())
+    {
+        SWSS_LOG_INFO("All categories are suppressed for severity %s", severityString.c_str());
+        return;
+    }
+
     vector<int32_t> sai_categories(interested_categories_set.begin(), interested_categories_set.end());
     sai_attribute_t attr;
 
@@ -898,8 +908,6 @@ sai_status_t SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t 
     {
         SWSS_LOG_ERROR("Failed to register ASIC/SDK health event categories for severity %s, status: %s", severityString.c_str(), sai_serialize_status(status).c_str());
     }
-
-    return status;
 }
 
 void SwitchOrch::doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer)

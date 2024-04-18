@@ -129,7 +129,7 @@ private:
     uint32_t m_fatalEventCount = 0;
 
     void initAsicSdkHealthEventNotification();
-    sai_status_t registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const std::string &severityString, const std::string &suppressed_category_list="");
+    void registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const std::string &severityString, const std::string &suppressed_category_list="", bool isInitializing=false);
 
     // Switch hash SAI defaults
     struct {
