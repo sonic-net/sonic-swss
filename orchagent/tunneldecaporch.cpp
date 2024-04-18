@@ -417,13 +417,6 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
                         break;
                     }
                     term_type = it->second;
-
-                    if ((is_subnet_decap_v4_term || is_subnet_decap_v6_term) && term_type != TUNNEL_TERM_TYPE_MP2MP)
-                    {
-                        SWSS_LOG_ERROR("%s: only MP2MP tunnel decap term is allowed for subnet decap tunnel.", key.c_str());
-                        valid = false;
-                        break;
-                    }
                 }
                 else if (fvField(fv) == "subnet_type")
                 {
@@ -443,6 +436,11 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
                 }
             }
 
+            if ((is_subnet_decap_v4_term || is_subnet_decap_v6_term) && term_type != TUNNEL_TERM_TYPE_MP2MP)
+            {
+                SWSS_LOG_ERROR("%s: only MP2MP tunnel decap term is allowed for subnet decap tunnel.", key.c_str());
+                valid = false;
+            }
             if (term_type == TUNNEL_TERM_TYPE_P2MP && set_src_ip)
             {
                 SWSS_LOG_ERROR("%s: source IP is not allowed for P2MP tunnel decap term.", key.c_str());
@@ -490,7 +488,7 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("%s: subnet decap is disabled, ignored.", key.c_str());
                     it = consumer.m_toSync.erase(it);
-                    continue; 
+                    continue;
                 }
 
                 if (tunnel_exists)
