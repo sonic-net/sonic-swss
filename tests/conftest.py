@@ -1791,8 +1791,8 @@ def manage_dvs(request) -> str:
     if sys.version_info[0] < 3:
         raise NameError("Python 2 is not supported, please install python 3")
 
-    if subprocess.check_call(["/sbin/modprobe", "team"]):
-        raise NameError("Cannot install kernel team module, please install a generic kernel")
+    # if subprocess.check_call(["/sbin/modprobe", "team"]):
+    #     raise NameError("Cannot install kernel team module, please install a generic kernel")
 
     name = request.config.getoption("--dvsname")
     using_persistent_dvs = name is not None
