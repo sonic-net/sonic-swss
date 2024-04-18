@@ -450,6 +450,31 @@ class TestDecapTunnel(TestTunnelBase):
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIPv6Decap")
 
+    def test_TunnelDecap_Invalid_Decap_Term_Attribute(self, dvs, testlog):
+        """ test IPv4 tunnel creation """
+
+        db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        self.cleanup_left_over(db, statedb, asicdb)
+
+        decap_terms = [
+            {"dst_ip": "2.2.2.2", "src_ip": "5.5.5.5", "term_type": "P2MP"}
+        ]
+        # create tunnel IPv4 tunnel
+        tunnel_sai_oid = self.create_and_test_tunnel(
+            db, asicdb, statedb, "IPINIPv4Decap", tunnel_type="IPINIP",
+            dscp_mode="uniform", ecn_mode="standard", ttl_mode="pipe"
+        )
+        self.create_and_test_tunnel_decap_terms(
+            db, asicdb, statedb, "IPINIPv4Decap",
+            tunnel_sai_oid, decap_terms,
+            is_decap_terms_existed=False
+        )
+
+        self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIPv4Decap")
+
     def test_TunnelDecap_Remove_Tunnel_First(self, dvs, testlog):
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -510,6 +535,10 @@ class TestDecapTunnel(TestTunnelBase):
             db, asicdb, statedb, "IPINIPv4Decap",
             self.SAI_NULL_OBJECT_ID, decap_terms, is_decap_terms_existed=False
         )
+        # remove decap terms of not-existed tunnel
+        self.remove_and_test_tunnel_decap_terms(
+            db, asicdb, statedb, "IPINIPv4Decap", decap_terms[:1]
+        )
         # create tunnel
         tunnel_sai_oid = self.create_and_test_tunnel(
             db, asicdb, statedb, "IPINIPv4Decap", tunnel_type="IPINIP",
@@ -518,11 +547,11 @@ class TestDecapTunnel(TestTunnelBase):
         # verify the decap terms are created
         self.create_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIPv4Decap",
-            tunnel_sai_oid, decap_terms, skip_decap_term_creation=True
+            tunnel_sai_oid, decap_terms[1:], skip_decap_term_creation=True
         )
 
         self.remove_and_test_tunnel_decap_terms(
-            db, asicdb, statedb, "IPINIPv4Decap", decap_terms
+            db, asicdb, statedb, "IPINIPv4Decap", decap_terms[1:]
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIPv4Decap")
 
@@ -616,6 +645,7 @@ class TestDecapTunnel(TestTunnelBase):
         self.remove_and_test_tunnel(db, asicdb, statedb, "MuxTunnel0")
         self.remove_qos_map(configdb, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, dscp_to_tc_map_oid)
         self.remove_qos_map(configdb, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, tc_to_pg_map_oid)
+
 
 class TestSymmetricTunnel(TestTunnelBase):
     """ Tests for symmetric tunnel creation and removal """
@@ -903,6 +933,45 @@ class TestSubnetDecap(TestTunnelBase):
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET")
         self.cleanup_subnet_decap_config(configdb)
+
+    def test_SubnetDecap_Invalid_Decap_Term_Attribute(self, dvs, testlog):
+        """Test adding decap terms with invalid attributes."""
+        db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+        self.cleanup_left_over(db, statedb, asicdb)
+        self.cleanup_subnet_decap_config(configdb)
+
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        decap_terms = [
+            {"dst_ip": "192.168.0.0abc", "term_type": "MP2MP", "subnet_type": "vlan"},
+            {"dst_ip": "192.168.1.0/24", "term_type": "MP2MPP", "subnet_type": "vlan"},
+            {"dst_ip": "192.168.2.0/24", "term_type": "P2MP", "subnet_type": "vlan"},
+            {"dst_ip": "192.168.3.0/24", "term_type": "MP2MP", "subnet_type": "uknown"},
+            {"dst_ip": "192.168.4.0/24", "term_type": "MP2MP", "subnet_type": "vlan", "bad_attr": "bad_val"}
+        ]
+        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        # create tunnel IPv4 tunnel
+        tunnel_sai_oid = self.create_and_test_tunnel(
+            db, asicdb, statedb, "IPINIP_SUBNET", tunnel_type="IPINIP",
+            dscp_mode="uniform", ecn_mode="standard", ttl_mode="pipe"
+        )
+        self.create_and_test_tunnel_decap_terms(
+            db, asicdb, statedb, "IPINIP_SUBNET",
+            tunnel_sai_oid, decap_terms,
+            subnet_decap_config=subnet_decap_config,
+            is_decap_terms_existed=False
+        )
+
+        self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET")
+        self.cleanup_subnet_decap_config(configdb)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
