@@ -158,8 +158,6 @@ namespace switchorch_test
         _hook_sai_apis();
         initSwitchOrch();
 
-        ASSERT_TRUE(gSwitchOrch->m_eliminateEventsTimer != nullptr);
-
         vector<string> ts;
         std::deque<KeyOpFieldsValuesTuple> entries;
         set<sai_switch_asic_sdk_health_category_t> all_categories({
@@ -242,8 +240,6 @@ namespace switchorch_test
     {
         initSwitchOrch();
 
-        ASSERT_TRUE(gSwitchOrch->m_eliminateEventsTimer != nullptr);
-
         string value;
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE, value);
         ASSERT_EQ(value, "true");
@@ -262,8 +258,6 @@ namespace switchorch_test
 
         _hook_sai_apis();
         initSwitchOrch();
-
-        ASSERT_EQ(gSwitchOrch->m_eliminateEventsTimer, nullptr);
 
         string value;
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE, value);
@@ -296,8 +290,6 @@ namespace switchorch_test
     TEST_F(SwitchOrchTest, SwitchOrchTestHandleEvent)
     {
         initSwitchOrch();
-
-        ASSERT_TRUE(gSwitchOrch->m_eliminateEventsTimer != nullptr);
 
         sai_timespec_t timestamp = {.tv_sec = 1701160447, .tv_nsec = 538710245};
         sai_switch_health_data_t data = {.data_type = SAI_HEALTH_DATA_TYPE_GENERAL};
