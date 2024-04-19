@@ -515,7 +515,9 @@ class TestDecapTunnel(TestTunnelBase):
         self.remove_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIPv4Decap", decap_terms
         )
-        self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIPv4Decap")
+        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
+        tunnels = tunnel_table.getKeys()
+        assert len(tunnels) == 0
 
     def test_TunnelDecap_Add_Decap_Term_First(self, dvs, testlog):
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)

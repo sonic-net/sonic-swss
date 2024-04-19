@@ -38,6 +38,7 @@ struct TunnelEntry
 {
     sai_object_id_t                             tunnel_id;                  // tunnel id
     sai_object_id_t                             overlay_intf_id;            // overlay interface id
+    int                                         ref_count;                  // reference count
     std::map<swss::IpPrefix, TunnelTermEntry>   tunnel_term_info;           // decap terms
     std::string                                 tunnel_type;                // tunnel type, IPINIP only
     std::string                                 dscp_mode;                  // dscp_mode, will be used in muxorch
@@ -155,5 +156,18 @@ private:
     void setDecapTunnelTermStatus(const std::string &tunnel_name, const std::string &dst_ip_str,
                                   const std::string &src_ip_str, TunnelTermType term_type, const std::string &subnet_type);
     void removeDecapTunnelTermStatus(const std::string &tunnel_name, const std::string &dst_ip_str);
+    void removeUnreferencedTunnels();
+    int getTunnelRefCount(const std::string &tunnel_name)
+    {
+        return tunnelTable[tunnel_name].ref_count;
+    }
+    void increaseTunnelRefCount(const std::string &tunnel_name)
+    {
+        ++tunnelTable[tunnel_name].ref_count;
+    }
+    void decreaseTunnelRefCount(const std::string &tunnel_name)
+    {
+        --tunnelTable[tunnel_name].ref_count;
+    }
 };
 #endif

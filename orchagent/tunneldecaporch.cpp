@@ -74,6 +74,9 @@ void TunnelDecapOrch::doTask(Consumer &consumer)
     {
         SWSS_LOG_ERROR("Invalid table %s", table_name.c_str());
     }
+
+    removeUnreferencedTunnels();
+    return;
 }
 
 void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
@@ -307,14 +310,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
         {
             if (exists)
             {
-                if (removeDecapTunnel(table_name, key))
-                {
-                    SWSS_LOG_NOTICE("Tunnel %s removed from ASIC_DB.", key.c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to remove tunnel %s from ASIC_DB.", key.c_str());
-                }
+                decreaseTunnelRefCount(key);
             }
             else
             {
@@ -622,7 +618,6 @@ void TunnelDecapOrch::doSubnetDecapTask(const KeyOpFieldsValuesTuple &tuple)
             valid = false;
         }
 
-        SWSS_LOG_NOTICE("%d, %s, %s", enable, src_ip_str.c_str(), src_ip_v6_str.c_str());
         if (valid)
         {
             subnetDecapConfig.enable = enable;
@@ -839,6 +834,7 @@ bool TunnelDecapOrch::addDecapTunnel(
     tunnelTable[key] = {
         tunnel_id,              // tunnel_id
         overlayIfId,            // overlay_intf_id
+        1,                      // ref count
         {},                     // tunnel_term_info
         type,                   // tunnel_type
         dscp,                   // dscp_mode
@@ -974,6 +970,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntry(
         term_type,                  // tunnel_type
         subnet_type                 // subnet_type
     };
+    increaseTunnelRefCount(tunnel_name);
     setDecapTunnelTermStatus(tunnel_name, dst_ip_str, src_ip_str, term_type, subnet_type);
 
     SWSS_LOG_NOTICE("Created tunnel decap term entry %s.", dst_ip_str.c_str());
@@ -1235,6 +1232,7 @@ bool TunnelDecapOrch::removeDecapTunnelTermEntry(std::string tunnel_name, std::s
 
     // making sure to remove all instances of the ip address
     tunnel_it->second.tunnel_term_info.erase(term_it);
+    decreaseTunnelRefCount(tunnel_name);
     removeDecapTunnelTermStatus(tunnel_name, dst_ip_str);
     SWSS_LOG_NOTICE("Removed decap tunnel term entry with ip address: %s.", dst_ip_str.c_str());
     return true;
@@ -1544,4 +1542,21 @@ void TunnelDecapOrch::removeDecapTunnelTermStatus(const std::string &tunnel_name
 {
     string tunnel_term_key = tunnel_name + state_db_key_delimiter + dst_ip_str;
     stateTunnelDecapTermTable->del(tunnel_term_key);
+}
+
+inline void TunnelDecapOrch::removeUnreferencedTunnels()
+{
+    vector<string> tunnels_to_remove{};
+    for (auto it = tunnelTable.begin(); it != tunnelTable.end(); ++it)
+    {
+        if (getTunnelRefCount(it->first) == 0)
+        {
+            tunnels_to_remove.push_back(it->first);
+        }
+    }
+    for (const auto &tunnel_name : tunnels_to_remove)
+    {
+        removeDecapTunnel(APP_TUNNEL_DECAP_TABLE_NAME, tunnel_name);
+        SWSS_LOG_NOTICE("Tunnel %s removed from ASIC_DB.", tunnel_name.c_str());
+    }
 }
