@@ -693,6 +693,9 @@ class DVSAcl:
         entry = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         counter_oid = entry.get("SAI_ACL_ENTRY_ATTR_ACTION_COUNTER")
         return counter_oid
+    
+    def get_acl_rule_id(self) -> str:
+        return self._get_acl_rule_id()
 
     def _get_acl_rule_id(self) -> str:
         num_keys = len(self.asic_db.default_acl_entries) + 1

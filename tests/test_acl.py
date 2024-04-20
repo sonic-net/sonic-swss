@@ -1,5 +1,6 @@
 import pytest
 from requests import request
+import time
 
 L3_TABLE_TYPE = "L3"
 L3_TABLE_NAME = "L3_TEST"
@@ -141,13 +142,21 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        
+        acl_rule_id = dvs_acl.get_acl_rule_id()
         counter_id = dvs_acl.get_acl_counter_oid()
+        
         new_config_qualifiers = {"SRC_IP": "10.10.10.11/32"}
         new_expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.10.10.11&mask:255.255.255.255")
         }
-        # Verify the rule has been updated
         dvs_acl.update_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, new_config_qualifiers)
+        # Verify the rule has been updated
+        retry = 5
+        while dvs_acl.get_acl_rule_id() == acl_rule_id and retry >= 0:
+            retry -= 1
+            time.sleep(1)
+        assert retry > 0
         dvs_acl.verify_acl_rule(new_expected_sai_qualifiers)
         # Verify the previous counter is removed
         if counter_id:
