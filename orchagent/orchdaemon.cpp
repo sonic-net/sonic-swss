@@ -8,7 +8,6 @@
 #include "warm_restart.h"
 #include <iostream>
 
-#define APP_TUNNEL_DECAP_TERM_TABLE_NAME    "TUNNEL_DECAP_TERM_TABLE"
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"

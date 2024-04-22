@@ -432,20 +432,33 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
                 }
             }
 
-            if ((is_subnet_decap_v4_term || is_subnet_decap_v6_term) && term_type != TUNNEL_TERM_TYPE_MP2MP)
+            if (valid)
             {
-                SWSS_LOG_ERROR("%s: only MP2MP tunnel decap term is allowed for subnet decap tunnel.", key.c_str());
-                valid = false;
-            }
-            if (term_type == TUNNEL_TERM_TYPE_P2MP && set_src_ip)
-            {
-                SWSS_LOG_ERROR("%s: source IP is not allowed for P2MP tunnel decap term.", key.c_str());
-                valid = false;
-            }
-            if (!subnet_type.empty() && term_type != TUNNEL_TERM_TYPE_MP2MP)
-            {
-                SWSS_LOG_ERROR("%s: only MP2MP is allowed for subnet decap term.", key.c_str());
-                valid = false;
+                if ((is_subnet_decap_v4_term || is_subnet_decap_v6_term) && term_type != TUNNEL_TERM_TYPE_MP2MP)
+                {
+                    SWSS_LOG_ERROR("%s: only MP2MP tunnel decap term is allowed for subnet decap tunnel.", key.c_str());
+                    valid = false;
+                }
+                else if (term_type == TUNNEL_TERM_TYPE_P2MP && set_src_ip)
+                {
+                    SWSS_LOG_ERROR("%s: source IP is not allowed for P2MP tunnel decap term.", key.c_str());
+                    valid = false;
+                }
+                else if (!subnet_type.empty() && term_type != TUNNEL_TERM_TYPE_MP2MP)
+                {
+                    SWSS_LOG_ERROR("%s: only MP2MP is allowed for subnet decap term.", key.c_str());
+                    valid = false;
+                }
+                else if (term_type == TUNNEL_TERM_TYPE_P2P && !set_src_ip)
+                {
+                    SWSS_LOG_ERROR("%s: no source IP is provided.", key.c_str());
+                    valid = false;
+                }
+                else if (term_type == TUNNEL_TERM_TYPE_MP2MP && !is_subnet_decap_v4_term && !is_subnet_decap_v6_term && !set_src_ip)
+                {
+                    SWSS_LOG_ERROR("%s: no source IP is provided.", key.c_str());
+                    valid = false;  
+                }
             }
 
             if (valid)
@@ -466,7 +479,7 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
                             continue;
                         }
                     }
-                    if (is_subnet_decap_v6_term)
+                    else if (is_subnet_decap_v6_term)
                     {
                         if (subnetDecapConfig.src_ip_v6)
                         {
@@ -489,11 +502,7 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
 
                 if (tunnel_exists)
                 {
-                    if (addDecapTunnelTermEntry(tunnel_name, src_ip_str, dst_ip_str, term_type, subnet_type))
-                    {
-                        SWSS_LOG_NOTICE("%s: added tunnel decap term to ASIC_DB.", key.c_str());
-                    }
-                    else
+                    if (!addDecapTunnelTermEntry(tunnel_name, src_ip_str, dst_ip_str, term_type, subnet_type))
                     {
                         SWSS_LOG_ERROR("%s: failed to add tunnel decap term to ASIC_DB.", key.c_str());
                     }
@@ -574,7 +583,7 @@ void TunnelDecapOrch::doSubnetDecapTask(const KeyOpFieldsValuesTuple &tuple)
                 }
                 if (!src_ip.isV4())
                 {
-                    SWSS_LOG_ERROR("Invalid source IP prefix %s.", src_ip.to_string().c_str());
+                    SWSS_LOG_ERROR("Invalid source IP prefix %s.", src_ip_str.c_str());
                     valid = false;
                     break;
                 }
@@ -595,14 +604,14 @@ void TunnelDecapOrch::doSubnetDecapTask(const KeyOpFieldsValuesTuple &tuple)
                 }
                 if (src_ip_v6.isV4())
                 {
-                    SWSS_LOG_ERROR("Invalid source IPv6 prefix %s.", src_ip_v6.to_string().c_str());
+                    SWSS_LOG_ERROR("Invalid source IPv6 prefix %s.", src_ip_v6_str.c_str());
                     valid = false;
                     break;
                 }
             }
             else if (fvField(fv) == "status")
             {
-                enable = (fvValue(fv) == "enable") ? true : false;
+                enable = (fvValue(fv) == "enable");
             }
             else
             {
@@ -612,7 +621,7 @@ void TunnelDecapOrch::doSubnetDecapTask(const KeyOpFieldsValuesTuple &tuple)
             }
         }
 
-        if (!set_src_ip && !set_src_ip_v6)
+        if (valid && !set_src_ip && !set_src_ip_v6)
         {
             SWSS_LOG_ERROR("Both src_ip and src_ip_v6 of subnet decap are not set.");
             valid = false;
@@ -1096,7 +1105,6 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, sai_object_id_t value, sa
 bool TunnelDecapOrch::setIpAttribute(string tunnel_name, string src_ip_str)
 {
     SWSS_LOG_ENTER();
-
     SWSS_LOG_NOTICE("Setting source IP for decap terms of tunnel %s to %s", tunnel_name.c_str(), src_ip_str.c_str());
 
     auto tunnel_it = tunnelTable.find(tunnel_name);
@@ -1490,15 +1498,9 @@ void TunnelDecapOrch::processUnhandledDecapTunnelTerms(const string &tunnel_name
     }
 }
 
-void TunnelDecapOrch::setDecapTunnelStatus(const std::string &tunnel_name)
+inline void TunnelDecapOrch::setDecapTunnelStatus(const std::string &tunnel_name)
 {
-    auto tunnel_it = tunnelTable.find(tunnel_name);
-    if (tunnel_it == tunnelTable.end())
-    {
-        SWSS_LOG_ERROR("Tunnel %s does not exist", tunnel_name.c_str());
-        return;
-    }
-    auto &tunnel = tunnel_it->second;
+    auto &tunnel = tunnelTable.at(tunnel_name);
 
     vector<FieldValueTuple> fv;
     APPEND_IF_NOT_EMPTY(fv, tunnel, tunnel_type);
@@ -1509,12 +1511,12 @@ void TunnelDecapOrch::setDecapTunnelStatus(const std::string &tunnel_name)
     stateTunnelDecapTable->set(tunnel_name, fv);
 }
 
-void TunnelDecapOrch::removeDecapTunnelStatus(const std::string &tunnel_name)
+inline void TunnelDecapOrch::removeDecapTunnelStatus(const std::string &tunnel_name)
 {
     stateTunnelDecapTable->del(tunnel_name);
 }
 
-void TunnelDecapOrch::setDecapTunnelTermStatus(
+inline void TunnelDecapOrch::setDecapTunnelTermStatus(
     const std::string &tunnel_name, const std::string &dst_ip_str, const std::string &src_ip_str,
     TunnelTermType term_type, const std::string &subnet_type)
 {
@@ -1538,7 +1540,7 @@ void TunnelDecapOrch::setDecapTunnelTermStatus(
     stateTunnelDecapTermTable->set(tunnel_term_key, fv);
 }
 
-void TunnelDecapOrch::removeDecapTunnelTermStatus(const std::string &tunnel_name, const std::string &dst_ip_str)
+inline void TunnelDecapOrch::removeDecapTunnelTermStatus(const std::string &tunnel_name, const std::string &dst_ip_str)
 {
     string tunnel_term_key = tunnel_name + state_db_key_delimiter + dst_ip_str;
     stateTunnelDecapTermTable->del(tunnel_term_key);

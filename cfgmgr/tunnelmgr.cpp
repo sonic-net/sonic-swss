@@ -17,7 +17,6 @@ using namespace swss;
 #define IPINIP "IPINIP"
 #define TUNIF "tun0"
 #define LOOPBACK_SRC "Loopback3"
-#define APP_TUNNEL_DECAP_TERM_TABLE_NAME    "TUNNEL_DECAP_TERM_TABLE"
 
 static int cmdIpTunnelIfCreate(const swss::TunnelInfo & info, std::string & res)
 {
