@@ -84,7 +84,7 @@ class TestTunnelBase(object):
         tunnel_term_entries = tunnel_term_table.getKeys()
         if not is_decap_terms_existed:
             assert len(tunnel_term_entries) == 0
-            return self.SAI_NULL_OBJECT_ID
+            return
         assert len(tunnel_term_entries) == len(decap_term_attr_list)
 
         decap_terms = {}
@@ -237,7 +237,7 @@ class TestTunnelBase(object):
         tunnels = tunnel_table.getKeys()
         if not is_tunnel_existed:
             assert len(tunnels) == 0
-            return 0
+            return self.SAI_NULL_OBJECT_ID
 
         assert len(tunnels) == 1
 
@@ -460,7 +460,9 @@ class TestDecapTunnel(TestTunnelBase):
         self.cleanup_left_over(db, statedb, asicdb)
 
         decap_terms = [
-            {"dst_ip": "2.2.2.2", "src_ip": "5.5.5.5", "term_type": "P2MP"}
+            {"dst_ip": "2.2.2.2", "src_ip": "5.5.5.5", "term_type": "P2MP"},
+            {"dst_ip": "3.3.3.3", "term_type": "P2P"},
+            {"dst_ip": "4.4.4.4", "term_type": "MP2MP"}
         ]
         # create tunnel IPv4 tunnel
         tunnel_sai_oid = self.create_and_test_tunnel(
@@ -712,27 +714,35 @@ class TestSymmetricTunnel(TestTunnelBase):
 class TestSubnetDecap(TestTunnelBase):
     """ Tests for subnet decap creation and removal """
 
-    def apply_subnet_decap_config(self, configdb, subnet_decap_config):
-        """Apply subnet decap config to CONFIG_DB."""
-        subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
-        fvs = create_fvs(**subnet_decap_config)
-        subnet_decap_tbl.set("AZURE", fvs)
+    @pytest.fixture
+    def setup_subnet_decap(self, dvs):
 
-    def cleanup_subnet_decap_config(self, configdb):
-        """Cleanup subnet decap config in CONFIG_DB."""
-        subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
-        for key in subnet_decap_tbl.getKeys():
-            subnet_decap_tbl._del(key)
+        def _apply_subnet_decap_config(subnet_decap_config):
+            """Apply subnet decap config to CONFIG_DB."""
+            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
+            fvs = create_fvs(**subnet_decap_config)
+            subnet_decap_tbl.set("AZURE", fvs)
 
-    def test_SubnetDecap_Enable_Source_IP_Update_v4(self, dvs, testlog):
+        def _cleanup_subnet_decap_config():
+            """Cleanup subnet decap config in CONFIG_DB."""
+            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
+            for key in subnet_decap_tbl.getKeys():
+                subnet_decap_tbl._del(key)
+
+        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        _cleanup_subnet_decap_config()
+
+        yield _apply_subnet_decap_config
+
+        _cleanup_subnet_decap_config()
+
+    def test_SubnetDecap_Enable_Source_IP_Update_v4(self, dvs, testlog, setup_subnet_decap):
         """Test subnet decap source IP update."""
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
         self.cleanup_left_over(db, statedb, asicdb)
-        self.cleanup_subnet_decap_config(configdb)
 
         subnet_decap_config = {
             "status": "enable",
@@ -744,7 +754,7 @@ class TestSubnetDecap(TestTunnelBase):
             {"dst_ip": "192.168.1.0/24", "term_type": "MP2MP", "subnet_type": "vlan"},
             {"dst_ip": "192.168.2.0/24", "term_type": "MP2MP", "subnet_type": "vlan"}
         ]
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         # create tunnel IPv4 tunnel
         tunnel_sai_oid = self.create_and_test_tunnel(
             db, asicdb, statedb, "IPINIP_SUBNET", tunnel_type="IPINIP",
@@ -761,7 +771,7 @@ class TestSubnetDecap(TestTunnelBase):
             "src_ip": "10.10.20.0/24",
             "src_ip_v6": "20c1:ba8::/64"
         }
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         self.create_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIP_SUBNET",
             tunnel_sai_oid, decap_terms,
@@ -773,17 +783,14 @@ class TestSubnetDecap(TestTunnelBase):
             db, asicdb, statedb, "IPINIP_SUBNET", decap_terms
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET")
-        self.cleanup_subnet_decap_config(configdb)
 
-    def test_SubnetDecap_Enable_Source_IP_Update_v6(self, dvs, testlog):
+    def test_SubnetDecap_Enable_Source_IP_Update_v6(self, dvs, testlog, setup_subnet_decap):
         """Test subnet decap source IPv6 update."""
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
         self.cleanup_left_over(db, statedb, asicdb)
-        self.cleanup_subnet_decap_config(configdb)
 
         subnet_decap_config = {
             "status": "enable",
@@ -795,7 +802,7 @@ class TestSubnetDecap(TestTunnelBase):
             {"dst_ip": "fc02:1001::/64", "term_type": "MP2MP", "subnet_type": "vlan"},
             {"dst_ip": "fc02:1002::/64", "term_type": "MP2MP", "subnet_type": "vlan"}
         ]
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         # create tunnel IPv4 tunnel
         tunnel_sai_oid = self.create_and_test_tunnel(
             db, asicdb, statedb, "IPINIP_SUBNET_V6", tunnel_type="IPINIP",
@@ -812,7 +819,7 @@ class TestSubnetDecap(TestTunnelBase):
             "src_ip": "10.10.10.0/24",
             "src_ip_v6": "20c1:ba9::/64"
         }
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         self.create_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIP_SUBNET_V6",
             tunnel_sai_oid, decap_terms,
@@ -824,9 +831,8 @@ class TestSubnetDecap(TestTunnelBase):
             db, asicdb, statedb, "IPINIP_SUBNET_V6", decap_terms
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET_V6")
-        self.cleanup_subnet_decap_config(configdb)
 
-    def test_SubnetDecap_Enable_Source_IP_Update_Add_Decap_Term_First(self, dvs, testlog):
+    def test_SubnetDecap_Enable_Source_IP_Update_Add_Decap_Term_First(self, dvs, testlog, setup_subnet_decap):
         """Test subnet decap source IP update."""
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -834,7 +840,6 @@ class TestSubnetDecap(TestTunnelBase):
         configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
         self.cleanup_left_over(db, statedb, asicdb)
-        self.cleanup_subnet_decap_config(configdb)
 
         subnet_decap_config = {
             "status": "enable",
@@ -846,7 +851,7 @@ class TestSubnetDecap(TestTunnelBase):
             {"dst_ip": "192.168.1.0/24", "term_type": "MP2MP", "subnet_type": "vlan"},
             {"dst_ip": "192.168.2.0/24", "term_type": "MP2MP", "subnet_type": "vlan"}
         ]
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         # create decap terms of not-existed tunnel
         self.create_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIP_SUBNET",
@@ -871,7 +876,7 @@ class TestSubnetDecap(TestTunnelBase):
             "src_ip": "10.10.20.0/24",
             "src_ip_v6": "20c1:ba8::/64"
         }
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         self.create_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIP_SUBNET",
             tunnel_sai_oid, decap_terms,
@@ -883,16 +888,14 @@ class TestSubnetDecap(TestTunnelBase):
             db, asicdb, statedb, "IPINIP_SUBNET", decap_terms
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET")
-        self.cleanup_subnet_decap_config(configdb)
 
-    def test_SubnetDecap_Disable(self, dvs, testlog):
+    def test_SubnetDecap_Disable(self, dvs, testlog, setup_subnet_decap):
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
         configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
         self.cleanup_left_over(db, statedb, asicdb)
-        self.cleanup_subnet_decap_config(configdb)
 
         subnet_decap_config = {
             "status": "disable",
@@ -904,7 +907,7 @@ class TestSubnetDecap(TestTunnelBase):
             {"dst_ip": "192.168.1.0/24", "term_type": "MP2MP", "subnet_type": "vlan"},
             {"dst_ip": "192.168.2.0/24", "term_type": "MP2MP", "subnet_type": "vlan"}
         ]
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         # create tunnel IPv4 tunnel
         tunnel_sai_oid = self.create_and_test_tunnel(
             db, asicdb, statedb, "IPINIP_SUBNET", tunnel_type="IPINIP",
@@ -923,7 +926,7 @@ class TestSubnetDecap(TestTunnelBase):
             "src_ip": "10.10.20.0/24",
             "src_ip_v6": "20c1:ba8::/64"
         }
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         self.create_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIP_SUBNET",
             tunnel_sai_oid, decap_terms,
@@ -934,9 +937,8 @@ class TestSubnetDecap(TestTunnelBase):
             db, asicdb, statedb, "IPINIP_SUBNET", decap_terms
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET")
-        self.cleanup_subnet_decap_config(configdb)
 
-    def test_SubnetDecap_Invalid_Decap_Term_Attribute(self, dvs, testlog):
+    def test_SubnetDecap_Invalid_Decap_Term_Attribute(self, dvs, testlog, setup_subnet_decap):
         """Test adding decap terms with invalid attributes."""
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -944,7 +946,6 @@ class TestSubnetDecap(TestTunnelBase):
         configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
         self.cleanup_left_over(db, statedb, asicdb)
-        self.cleanup_subnet_decap_config(configdb)
 
         subnet_decap_config = {
             "status": "enable",
@@ -958,7 +959,7 @@ class TestSubnetDecap(TestTunnelBase):
             {"dst_ip": "192.168.3.0/24", "term_type": "MP2MP", "subnet_type": "uknown"},
             {"dst_ip": "192.168.4.0/24", "term_type": "MP2MP", "subnet_type": "vlan", "bad_attr": "bad_val"}
         ]
-        self.apply_subnet_decap_config(configdb, subnet_decap_config)
+        setup_subnet_decap(subnet_decap_config)
         # create tunnel IPv4 tunnel
         tunnel_sai_oid = self.create_and_test_tunnel(
             db, asicdb, statedb, "IPINIP_SUBNET", tunnel_type="IPINIP",
@@ -972,7 +973,6 @@ class TestSubnetDecap(TestTunnelBase):
         )
 
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET")
-        self.cleanup_subnet_decap_config(configdb)
 
 
 # Add Dummy always-pass test at end as workaroud
