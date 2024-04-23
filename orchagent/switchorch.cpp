@@ -1119,14 +1119,20 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
         { "category", category_str },
         { "description", description_str }};
 
-    if (0 == gMyAsicName.size())
+    string asic_name_str;
+    if (!gMyAsicName.empty())
     {
-        SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, category %s: %s", severity_str.c_str(), time_ss.str().c_str(), category_str.c_str(), description_str.c_str());
+        asic_name_str = "asic " + gMyAsicName + ",";
+        params["asic_name"] = gMyAsicName;
+    }
+
+    if (severity == SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_FATAL)
+    {
+        SWSS_LOG_ERROR("[%s] ASIC/SDK health event occurred at %s, %scategory %s: %s", severity_str.c_str(), time_ss.str().c_str(), asic_name_str.c_str(), category_str.c_str(), description_str.c_str());
     }
     else
     {
-        SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, asic %s, category %s: %s", severity_str.c_str(), time_ss.str().c_str(), gMyAsicName.c_str(), category_str.c_str(), description_str.c_str());
-        params["asic_name"] = gMyAsicName;
+        SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, %scategory %s: %s", severity_str.c_str(), time_ss.str().c_str(), asic_name_str.c_str(), category_str.c_str(), description_str.c_str());
     }
 
     values.emplace_back("severity", severity_str);

@@ -45,6 +45,7 @@ void on_switch_shutdown_request(sai_object_id_t switch_id)
 
     if (gSwitchOrch->isFatalEventReceived())
     {
+        SWSS_LOG_ERROR("Orchagent aborted due to fatal SAI error received");
         abort();
     }
 
