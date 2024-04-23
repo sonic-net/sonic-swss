@@ -2586,6 +2586,12 @@ bool AclTable::add(shared_ptr<AclRule> newRule)
     if (ruleIter != rules.end())
     {
         // If ACL rule already exists, delete it first
+        if (ruleIter->second->hasCounter())
+        {
+            // Deregister the flex counter before deleting the rule
+            // A new flex counter will be created when the new rule is added
+            m_pAclOrch->deregisterFlexCounter(*(ruleIter->second));
+        }
         if (ruleIter->second->remove())
         {
             rules.erase(ruleIter);
