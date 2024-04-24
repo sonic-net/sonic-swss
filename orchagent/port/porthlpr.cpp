@@ -114,7 +114,8 @@ static const std::unordered_map<std::string, Port::Role> portRoleMap =
     { PORT_ROLE_EXT, Port::Role::Ext },
     { PORT_ROLE_INT, Port::Role::Int },
     { PORT_ROLE_INB, Port::Role::Inb },
-    { PORT_ROLE_REC, Port::Role::Rec }
+    { PORT_ROLE_REC, Port::Role::Rec },
+    { PORT_ROLE_DPC, Port::Role::Dpc }
 };
 
 // functions ----------------------------------------------------------------------------------------------------------
@@ -1001,7 +1002,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         }
     }
 
-    return this->validatePortConfig(port);
+    return true;
 }
 
 bool PortHelper::validatePortConfig(PortConfig &port) const

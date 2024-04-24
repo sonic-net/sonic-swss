@@ -103,7 +103,6 @@ bool parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
-
 namespace
 {
 
@@ -177,7 +176,7 @@ void AddVrf()
 } // namespace
 
 int main(int argc, char *argv[])
-{   
+{
     gBatchSize = DEFAULT_BATCH_SIZE;
     testing::InitGoogleTest(&argc, argv);
 
@@ -235,6 +234,15 @@ int main(int argc, char *argv[])
     VRFOrch vrf_orch(gAppDb, APP_VRF_TABLE_NAME, gStateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gVrfOrch = &vrf_orch;
     gDirectory.set(static_cast<VRFOrch *>(&vrf_orch));
+
+    const int routeorch_pri = 5;
+    vector<table_name_with_pri_t> route_tables = {
+        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
+        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+    };
+    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL, NULL);
+    gRouteOrch = &route_orch;
+    gDirectory.set(static_cast<RouteOrch *>(&route_orch));
 
     const int routeorch_pri = 5;
     vector<table_name_with_pri_t> route_tables = {

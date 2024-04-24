@@ -277,9 +277,11 @@ bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
 {
     SWSS_LOG_ENTER();
 
+    bool eni_enable = entry.metadata.admin_state() == dash::eni::State::STATE_ENABLED;
+
     sai_attribute_t eni_attr;
     eni_attr.id = SAI_ENI_ATTR_ADMIN_STATE;
-    eni_attr.value.booldata = entry.metadata.admin_state();
+    eni_attr.value.booldata = eni_enable;
 
     sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
                                 &eni_attr);
@@ -293,7 +295,7 @@ bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
         }
     }
     eni_entries_[eni].metadata.set_admin_state(entry.metadata.admin_state());
-    SWSS_LOG_NOTICE("Set ENI %s admin state to %s", eni.c_str(), entry.metadata.admin_state() ? "UP" : "DOWN");
+    SWSS_LOG_NOTICE("Set ENI %s admin state to %s", eni.c_str(), eni_enable ? "UP" : "DOWN");
 
     return true;
 }

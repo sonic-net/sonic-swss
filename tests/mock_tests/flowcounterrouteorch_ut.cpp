@@ -135,6 +135,7 @@ namespace flowcounterrouteorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            gDirectory.set(gPortsOrch);
 
             vector<string> vnet_tables = {
                 APP_VNET_RT_TABLE_NAME,

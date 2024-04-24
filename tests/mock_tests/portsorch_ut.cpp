@@ -68,6 +68,11 @@ namespace portsorch_test
             attr_list[0].value.s32 = _sai_port_fec_mode;
             status = SAI_STATUS_SUCCESS;
         }
+        else if (attr_count== 1 && attr_list[0].id == SAI_PORT_ATTR_OPER_STATUS)
+        {
+            attr_list[0].value.u32 = (uint32_t)SAI_PORT_OPER_STATUS_UP;
+            status = SAI_STATUS_SUCCESS;
+        }
         else
         {
             status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
@@ -505,6 +510,73 @@ namespace portsorch_test
 
     };
 
+    /*
+    * Test port flap count
+    */
+    TEST_F(PortsOrchTest, PortFlapCount)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Get first port, expect the oper status is not UP
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_TRUE(port.m_oper_status != SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(port.m_flap_count == 0);
+
+        auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
+        auto consumer = exec->getNotificationConsumer();
+
+        // mock a redis reply for notification, it notifies that Ehernet0 is going to up
+        for (uint32_t count=0; count < 5; count++) {
+            sai_port_oper_status_t oper_status = (count % 2 == 0) ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
+            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+            sai_port_oper_status_notification_t port_oper_status;
+            port_oper_status.port_state = oper_status;
+            port_oper_status.port_id = port.m_port_id;
+            std::string data = sai_serialize_port_oper_status_ntf(1, &port_oper_status);
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata("port_state_change", data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            // trigger the notification
+            consumer->readData();
+            gPortsOrch->doTask(*consumer);
+            mockReply = nullptr;
+
+            gPortsOrch->getPort("Ethernet0", port);
+            ASSERT_TRUE(port.m_oper_status == oper_status);
+            ASSERT_TRUE(port.m_flap_count == count+1);
+        }
+
+        cleanupPorts(gPortsOrch);
+    }
+
     TEST_F(PortsOrchTest, PortBulkCreateRemove)
     {
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -864,7 +936,6 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvSerdes = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "admin_status", "up"              },
                 { "idriver"     , "0x6,0x6,0x6,0x6" }
             }
         }};
@@ -889,6 +960,35 @@ namespace portsorch_test
 
         // Verify admin-disable then admin-enable
         ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+
+        // Configure non-serdes attribute that does not trigger admin state change
+        std::deque<KeyOpFieldsValuesTuple> kfvMtu = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "mtu", "1234" },
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvMtu);
+
+        _hook_sai_port_api();
+        current_sai_api_call_count = _sai_set_admin_state_down_count;
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        _unhook_sai_port_api();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Verify mtu is set
+        ASSERT_EQ(p.m_mtu, 1234);
+
+        // Verify no admin-disable then admin-enable
+        ASSERT_EQ(_sai_set_admin_state_down_count, current_sai_api_call_count);
         ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
 
         // Dump pending tasks
@@ -1171,6 +1271,7 @@ namespace portsorch_test
     {
         _hook_sai_port_api();
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
         std::deque<KeyOpFieldsValuesTuple> entries;
 
         not_support_fetching_fec = false;
@@ -1220,6 +1321,33 @@ namespace portsorch_test
 
         ASSERT_EQ(fec_mode, SAI_PORT_FEC_MODE_RS);
 
+        gPortsOrch->refreshPortStatus();
+        std::vector<FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+        bool fec_found = false;
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "fec")
+            {
+                fec_found = true;
+                ASSERT_TRUE(fvValue(valueTuple) == "rs");
+            }
+        }
+        ASSERT_TRUE(fec_found == true);
+
+        /*Mock an invalid fec mode with high value*/
+        _sai_port_fec_mode = 100;
+        gPortsOrch->refreshPortStatus();
+        statePortTable.get("Ethernet0", values);
+        fec_found = false;
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "fec")
+            {
+                fec_found = true;
+                ASSERT_TRUE(fvValue(valueTuple) == "N/A");
+            }
+        }
         mock_port_fec_modes = old_mock_port_fec_modes;
         _unhook_sai_port_api();
     }
@@ -1383,6 +1511,7 @@ namespace portsorch_test
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
         Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table transceieverInfoTable = Table(m_state_db.get(), STATE_TRANSCEIVER_INFO_TABLE_NAME);
 
         // Get SAI default ports to populate DB
 
@@ -1416,6 +1545,7 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
+            transceieverInfoTable.set(it.first, {});
         }
 
         // Set PortConfigDone, PortInitDone
@@ -1463,6 +1593,25 @@ namespace portsorch_test
 
         gBufferOrch->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+
+        // Verify port configuration
+        vector<sai_object_id_t> port_list;
+        port_list.resize(ports.size());
+        sai_attribute_t attr;
+        sai_status_t status;
+        attr.id = SAI_SWITCH_ATTR_PORT_LIST;
+        attr.value.objlist.count = static_cast<uint32_t>(port_list.size());
+        attr.value.objlist.list = port_list.data();
+        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        for (uint32_t i = 0; i < port_list.size(); i++)
+        {
+            attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
+            status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            ASSERT_TRUE(attr.value.booldata);
+        }
     }
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
@@ -1961,6 +2110,7 @@ namespace portsorch_test
 
         gPortsOrch->getPort("Ethernet0", port);
         ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(port.m_flap_count == 1);
 
         std::vector<FieldValueTuple> values;
         portTable.get("Ethernet0", values);

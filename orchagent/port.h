@@ -97,7 +97,8 @@ public:
         Ext, // external
         Int, // internal
         Inb, // inband
-        Rec  // recirculation
+        Rec, // recirculation
+        Dpc  // DPU Connect Port on SmartSwitch
     };
 
 public:
@@ -164,6 +165,7 @@ public:
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
+    uint64_t  m_flap_count = 0;
     uint32_t  m_up_member_count = 0;
     uint32_t  m_maximum_headroom = 0;
     std::set<uint32_t> m_adv_speeds;
