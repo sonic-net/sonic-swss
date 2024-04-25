@@ -29,9 +29,9 @@ class TestVirtualChassis(object):
                portNum = random.randint(1, 16)
                port = "PORT"+str(portNum)
                # wait for link monitoring algorithm skips init pollings
+               sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST": "TEST"})
                max_poll = PollingConfig(polling_interval=60, timeout=1200, strict=True)
                if sdb.get_entry("FABRIC_PORT_TABLE", port)['STATUS'] == 'up':
-                   sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"SKIP_FEC_ERR_ON_LNKUP_CNT": "2"}, polling_config=max_poll)
                    try:
                        # clean up the system for the testing port.
                        # set TEST_CRC_ERRORS to 0
@@ -39,7 +39,6 @@ class TestVirtualChassis(object):
                        # set TEST to "TEST"
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS":"0"})
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "0"})
-                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST": "TEST"})
                        # inject testing errors and wait for link get isolated.
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "2"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
