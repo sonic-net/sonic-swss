@@ -35,6 +35,7 @@
 #define RECOVERY_POLLS_CFG 8
 #define ERROR_RATE_CRC_CELLS_CFG 1
 #define ERROR_RATE_RX_CELLS_CFG 61035156
+#define FABRIC_LINK_RATE 44316
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
@@ -925,11 +926,11 @@ void FabricPortsOrch::updateFabricCapacity()
 
         if (lnkStatus == "down" || linkIssue == true)
         {
-            downCapacity += 44316;
+            downCapacity += FABRIC_LINK_RATE;
         }
         else
         {
-            capacity += 44316;
+            capacity += FABRIC_LINK_RATE;
             operating_links += 1;
         }
         total_links += 1;
