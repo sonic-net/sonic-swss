@@ -16,6 +16,12 @@
 #define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE             "PORT_EGRESS_SAMPLE_CAPABLE"
 
+#define ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL 3600
+#define SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE          "ASIC_SDK_HEALTH_EVENT"
+#define SWITCH_CAPABILITY_TABLE_REG_FATAL_ASIC_SDK_HEALTH_CATEGORY     "REG_FATAL_ASIC_SDK_HEALTH_CATEGORY"
+#define SWITCH_CAPABILITY_TABLE_REG_WARNING_ASIC_SDK_HEALTH_CATEGORY   "REG_WARNING_ASIC_SDK_HEALTH_CATEGORY"
+#define SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY    "REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY"
+
 struct WarmRestartCheck
 {
     bool    checkRestartReadyState;
@@ -46,11 +52,24 @@ public:
 
     bool checkOrderedEcmpEnable() { return m_orderedEcmpEnable; }
 
+    void onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
+                                    sai_switch_asic_sdk_health_severity_t severity,
+                                    sai_timespec_t timestamp,
+                                    sai_switch_asic_sdk_health_category_t category,
+                                    sai_switch_health_data_t data,
+                                    const sai_u8_list_t &description);
+
+    inline bool isFatalEventReceived() const
+        {
+            return (m_fatalEventCount != 0);
+        }
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doCfgSwitchHashTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
+    void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
     void initSensorsTable();
     void querySwitchTpidCapability();
@@ -79,6 +98,8 @@ private:
 
     swss::NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(swss::NotificationConsumer& consumer);
+    void doAsicSdkHealthEventNotificationConsumerTask(swss::NotificationConsumer& consumer);
+    void doRestartCheckNotificationConsumerTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
     std::map<sai_acl_stage_t, referenced_object> m_aclGroups;
@@ -98,6 +119,17 @@ private:
     bool m_vxlanSportUserModeEnabled = false;
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
+
+    // ASIC SDK health event
+    std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
+    std::shared_ptr<swss::Table> m_asicSdkHealthEventTable = nullptr;
+    std::set<sai_switch_attr_t> m_supportedAsicSdkHealthEventAttributes;
+    std::string m_eliminateEventsSha;
+    swss::SelectableTimer* m_eliminateEventsTimer = nullptr;
+    uint32_t m_fatalEventCount = 0;
+
+    void initAsicSdkHealthEventNotification();
+    void registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const std::string &severityString, const std::string &suppressed_category_list="", bool isInitializing=false);
 
     // Switch hash SAI defaults
     struct {
