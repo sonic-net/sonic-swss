@@ -224,7 +224,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
 
     const std::string & tunnelName = kfvKey(t);
     const std::string & op = kfvOp(t);
-    std::unique_ptr<std::string> src_ip;
+    std::string src_ip;
     TunnelInfo tunInfo;
 
     for (auto fieldValue : kfvFieldsValues(t))
@@ -241,7 +241,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         }
         else if (field == "src_ip")
         {
-            src_ip = std::make_unique<std::string>(value);
+            src_ip = value;
         }
     }
 
@@ -277,9 +277,9 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
 
                 /* Create the decap term */
                 fvs.clear();
-                if (src_ip)
+                if (!src_ip.empty())
                 {
-                    fvs.emplace_back("src_ip", *src_ip);
+                    fvs.emplace_back("src_ip", src_ip);
                     fvs.emplace_back("term_type", "P2P");
                 }
                 else
