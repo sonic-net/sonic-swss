@@ -12,4 +12,12 @@ void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification
 // The function prototype information can be found here:
 //      https://github.com/sonic-net/sonic-sairedis/blob/master/meta/NotificationSwitchShutdownRequest.cpp#L49
 void on_switch_shutdown_request(sai_object_id_t switch_id);
+
 void on_port_host_tx_ready(sai_object_id_t switch_id, sai_object_id_t port_id, sai_port_host_tx_ready_status_t m_portHostTxReadyStatus);
+
+void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
+                                     sai_switch_asic_sdk_health_severity_t severity,
+                                     sai_timespec_t timestamp,
+                                     sai_switch_asic_sdk_health_category_t category,
+                                     sai_switch_health_data_t data,
+                                     const sai_u8_list_t description);
