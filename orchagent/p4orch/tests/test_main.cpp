@@ -35,6 +35,8 @@ sai_object_id_t kMirrorSessionOid1 = 9001;
 char *gMirrorSession2 = "mirror-session-2";
 sai_object_id_t kMirrorSessionOid2 = 9002;
 sai_object_id_t gUnderlayIfId;
+string gMyAsicName = "";
+event_handle_t g_events_handle;
 
 #define DEFAULT_BATCH_SIZE 128
 #define DEFAULT_MAX_BULK_SIZE 1000
