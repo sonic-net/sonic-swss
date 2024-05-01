@@ -152,7 +152,7 @@ private:
     void setDecapTunnelTermStatus(const std::string &tunnel_name, const std::string &dst_ip_str,
                                   const std::string &src_ip_str, TunnelTermType term_type, const std::string &subnet_type);
     void removeDecapTunnelTermStatus(const std::string &tunnel_name, const std::string &dst_ip_str);
-    void removeUnreferencedTunnels();
+    void RemoveTunnelIfNotReferenced(const std::string &tunnel_name);
     int getTunnelRefCount(const std::string &tunnel_name)
     {
         return tunnelTable[tunnel_name].ref_count;

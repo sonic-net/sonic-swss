@@ -75,7 +75,6 @@ void TunnelDecapOrch::doTask(Consumer &consumer)
         SWSS_LOG_ERROR("Invalid table %s", table_name.c_str());
     }
 
-    removeUnreferencedTunnels();
     return;
 }
 
@@ -305,17 +304,21 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                 }
             }
         }
-
-        if (op == DEL_COMMAND)
+        else if (op == DEL_COMMAND)
         {
             if (exists)
             {
                 decreaseTunnelRefCount(key);
+                RemoveTunnelIfNotReferenced(key);
             }
             else
             {
                 SWSS_LOG_ERROR("Tunnel %s cannot be removed since it doesn't exist.", key.c_str());
             }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s.", op.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
@@ -518,7 +521,11 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
         {
             if (tunnel_exists)
             {
-                if (!removeDecapTunnelTermEntry(tunnel_name, dst_ip_str))
+                if (removeDecapTunnelTermEntry(tunnel_name, dst_ip_str))
+                {
+                    RemoveTunnelIfNotReferenced(tunnel_name);
+                }
+                else
                 {
                     SWSS_LOG_ERROR("Failed to remove tunnel decap term %s from ASIC_DB.", key.c_str());
                 }
@@ -528,6 +535,10 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
                 SWSS_LOG_INFO("Tunnel for decap term %s doesn't exist, removed from unhandled list.", key.c_str());
                 removeUnhandledDecapTunnelTerm(tunnel_name, dst_ip_str);
             }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s.", op.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
@@ -674,10 +685,13 @@ void TunnelDecapOrch::doSubnetDecapTask(const KeyOpFieldsValuesTuple &tuple)
             SWSS_LOG_NOTICE("%s", oss.str().c_str());
         }
     }
-
-    if (op == DEL_COMMAND)
+    else if (op == DEL_COMMAND)
     {
         subnetDecapConfig.enable = false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s.", op.c_str());
     }
 }
 
@@ -1546,17 +1560,9 @@ inline void TunnelDecapOrch::removeDecapTunnelTermStatus(const std::string &tunn
     stateTunnelDecapTermTable->del(tunnel_term_key);
 }
 
-inline void TunnelDecapOrch::removeUnreferencedTunnels()
+inline void TunnelDecapOrch::RemoveTunnelIfNotReferenced(const string &tunnel_name)
 {
-    vector<string> tunnels_to_remove{};
-    for (auto it = tunnelTable.begin(); it != tunnelTable.end(); ++it)
-    {
-        if (getTunnelRefCount(it->first) == 0)
-        {
-            tunnels_to_remove.push_back(it->first);
-        }
-    }
-    for (const auto &tunnel_name : tunnels_to_remove)
+    if (getTunnelRefCount(tunnel_name) == 0)
     {
         removeDecapTunnel(APP_TUNNEL_DECAP_TABLE_NAME, tunnel_name);
         SWSS_LOG_NOTICE("Tunnel %s removed from ASIC_DB.", tunnel_name.c_str());
