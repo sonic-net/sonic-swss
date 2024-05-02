@@ -37,7 +37,7 @@ private:
     bool writeConfigToAppDb(const std::string &alias, std::vector<FieldValueTuple> &field_values);
     bool setPortMtu(const std::string &alias, const std::string &mtu);
     bool setPortAdminStatus(const std::string &alias, const bool up);
-    bool setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate)
+    bool setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate_limit)
     bool isPortStateOk(const std::string &alias);
 };
 
