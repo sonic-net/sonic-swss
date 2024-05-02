@@ -1134,17 +1134,17 @@ void FabricPortsOrch::updateFabricRate()
         //cacluate rate
         auto now_s = std::chrono::time_point_cast<std::chrono::seconds>(now);
         auto nse = now_s.time_since_epoch();
-        long newTime = nse.count();
+        long long newTime = nse.count();
 
-        long deltaTime = 1;
-        if (stol(oldTime) > 0)
+        long long deltaTime = 1;
+        if (stoll(oldTime) > 0)
         {
-            deltaTime = newTime - stol(oldTime);
+            deltaTime = newTime - stoll(oldTime);
         }
         SWSS_LOG_NOTICE("port %s %ld %ld ", sai_serialize_object_id(port).c_str(),
                         newTime, stol(oldTime));
         double percent;
-        long loadInterval = FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT;
+        long long loadInterval = FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT;
         percent = exp( - deltaTime / loadInterval );
         double newRate =
            (oldRxRate * percent) + (static_cast<double>(deltaMegabits) / static_cast<double>(deltaTime)) * (1.0 - percent);
