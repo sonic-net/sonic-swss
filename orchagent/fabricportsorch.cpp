@@ -1141,7 +1141,7 @@ void FabricPortsOrch::updateFabricRate()
         {
             deltaTime = newTime - stoll(oldTime);
         }
-        SWSS_LOG_NOTICE("port %s %ld %ld ", sai_serialize_object_id(port).c_str(),
+        SWSS_LOG_NOTICE("port %s %lld %ld ", sai_serialize_object_id(port).c_str(),
                         newTime, stol(oldTime));
         double percent;
         long long loadInterval = FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT;
@@ -1163,7 +1163,7 @@ void FabricPortsOrch::updateFabricRate()
         SWSS_LOG_NOTICE( "old rx %lld rxData %lld tx %lld txData %lld time %ld",
                          (long long)oldRxRate, (long long)oldRxData,
                          (long long)oldTxRate, (long long)oldTxData, stol(oldTime) );
-        SWSS_LOG_NOTICE( "new rx %lld rxData %lld tx %lld txData %lld time %ld",
+        SWSS_LOG_NOTICE( "new rx %lld rxData %lld tx %lld txData %lld time %lld",
                          (long long)newRxRate, (long long)rxBytes,
                          (long long)newTxRate, (long long)txBytes, newTime );
 
