@@ -4115,8 +4115,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         /* Reapply port speed after AN disabled */
                         if (p.m_autoneg < 1)
                         {
-                            pCfg.speed.is_set = true;
-                            pCfg.speed.value = p.m_speed;
+                            if (pCfg.speed.is_set != true)
+                            {
+                                pCfg.speed.is_set = true;
+                                pCfg.speed.value = p.m_speed;
+                            }
+                            /* Force update speed even if p.m_speed == pCfg.speed.value */
                             apply_port_speed_on_an_change_to_disabled = true;
                         }
                     }
