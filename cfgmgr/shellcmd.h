@@ -14,6 +14,7 @@
 #define TEAMDCTL_CMD         "/usr/bin/teamdctl"
 #define IPTABLES_CMD         "/sbin/iptables"
 #define CONNTRACK_CMD        "/usr/sbin/conntrack"
+#define TC_CMD               "/sbin/tc"
 
 #define EXEC_WITH_ERROR_THROW(cmd, res)   ({    \
     int ret = swss::exec(cmd, res);             \
