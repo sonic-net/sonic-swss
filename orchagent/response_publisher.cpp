@@ -70,12 +70,12 @@ ResponsePublisher::ResponsePublisher(const std::string &dbName, bool buffered, b
     if (m_buffered)
     {
         m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
-        m_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
+        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
     }
     else
     {
         m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
-        m_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
+        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
     }
     if (db_write_thread)
     {
@@ -89,15 +89,8 @@ ResponsePublisher::~ResponsePublisher()
     {
         {
             std::lock_guard<std::mutex> lock(m_lock);
-            m_queue.push(entry{
-                .table = "",
-                .key = "",
-                .values = std::vector<swss::FieldValueTuple>{},
-                .op = "",
-                .replace = false,
-                .flush = false,
-                .shutdown = true,
-            });
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/false, /*shutdown=*/true);
         }
         m_signal.notify_one();
         m_update_thread->join();
@@ -151,15 +144,7 @@ void ResponsePublisher::writeToDB(const std::string &table, const std::string &k
     {
         {
             std::lock_guard<std::mutex> lock(m_lock);
-            m_queue.push(entry{
-                .table = table,
-                .key = key,
-                .values = values,
-                .op = op,
-                .replace = replace,
-                .flush = false,
-                .shutdown = false,
-            });
+            m_queue.emplace(table, key, values, op, replace, /*flush=*/false, /*shutdown=*/false);
         }
         m_signal.notify_one();
     }
@@ -174,7 +159,7 @@ void ResponsePublisher::writeToDBInternal(const std::string &table, const std::s
                                           const std::vector<swss::FieldValueTuple> &values, const std::string &op,
                                           bool replace)
 {
-    swss::Table applStateTable{m_pipe.get(), table, m_buffered};
+    swss::Table applStateTable{m_db_pipe.get(), table, m_buffered};
 
     auto attrs = values;
     if (op == SET_COMMAND)
@@ -225,21 +210,14 @@ void ResponsePublisher::flush()
     {
         {
             std::lock_guard<std::mutex> lock(m_lock);
-            m_queue.push(entry{
-                .table = "",
-                .key = "",
-                .values = std::vector<swss::FieldValueTuple>{},
-                .op = "",
-                .replace = false,
-                .flush = true,
-                .shutdown = false,
-            });
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/true, /*shutdown=*/false);
         }
         m_signal.notify_one();
     }
     else
     {
-        m_pipe->flush();
+        m_db_pipe->flush();
     }
 }
 
@@ -269,7 +247,7 @@ void ResponsePublisher::dbUpdateThread()
         }
         if (e.flush)
         {
-            m_pipe->flush();
+            m_db_pipe->flush();
         }
         else
         {

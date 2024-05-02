@@ -70,6 +70,16 @@ class ResponsePublisher : public ResponsePublisherInterface
         bool replace;
         bool flush;
         bool shutdown;
+
+        entry()
+        {
+        }
+
+        entry(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
+              const std::string &op, bool replace, bool flush, bool shutdown)
+            : table(table), key(key), values(values), op(op), replace(replace), flush(flush), shutdown(shutdown)
+        {
+        }
     };
 
     void dbUpdateThread();
@@ -78,7 +88,7 @@ class ResponsePublisher : public ResponsePublisherInterface
 
     std::unique_ptr<swss::DBConnector> m_db;
     std::unique_ptr<swss::RedisPipeline> m_ntf_pipe;
-    std::unique_ptr<swss::RedisPipeline> m_pipe;
+    std::unique_ptr<swss::RedisPipeline> m_db_pipe;
 
     bool m_buffered{false};
     // Thread to write to DB.
