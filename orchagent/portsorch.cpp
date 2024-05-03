@@ -3805,6 +3805,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             "Set port %s autoneg to %s",
                             p.m_alias.c_str(), m_portHlpr.getAutonegStr(pCfg).c_str()
                         );
+
+                        /* If no explicit pre-emphasis settings exist when AN is changed from
+                         * ON to OFF, apply the pre-emphasis settings cached in p.m_preemphasis,
+                         * which contains the settings from the upper layer at the last time.
+                         */
+                        if (p.m_autoneg == false && serdes_attr.size() == 0)
+                        {
+                            serdes_attr = p.m_preemphasis;
+                        }
                     }
                 }
 
@@ -4264,7 +4273,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!serdes_attr.empty())
                 {
-                    if (p.m_link_training)
+                    if (p.m_link_training || p.m_autoneg)
                     {
                         SWSS_LOG_NOTICE("Save port %s preemphasis for LT", p.m_alias.c_str());
                         p.m_preemphasis = serdes_attr;
