@@ -102,9 +102,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     }
     if (!ret)
     {
-        // Set the port MTU in application database to update both
-        // the port MTU and possibly the port based router interface MTU
-        return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+        
     }
     else if (!isPortStateOk(alias))
     {
@@ -251,12 +249,10 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
-                field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
                 continue;
