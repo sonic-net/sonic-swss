@@ -84,6 +84,8 @@ class TestNextHopGroupBase(object):
 
         # Create a NHG
         fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+        nhg_ps.set('_testnhg', fvs)
+        fvs = swsscommon.FieldValuePairs([('nexthop_group', '_testnhg')])
         nhg_ps.set('testnhg', fvs)
 
         # Add a CBF NHG pointing to the given map
@@ -98,6 +100,7 @@ class TestNextHopGroupBase(object):
             # Remove the added NHGs
             cbf_nhg_ps._del('testcbfnhg')
             nhg_ps._del('testnhg')
+            nhg_ps._del('_testnhg')
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
             return None
 
@@ -111,6 +114,7 @@ class TestNextHopGroupBase(object):
         # Remove the added NHGs
         cbf_nhg_ps._del('testcbfnhg')
         nhg_ps._del('testnhg')
+        nhg_ps._del('_testnhg')
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
 
         return nhg_map_id
@@ -1705,8 +1709,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
             # Update the group to one NH only
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
             self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
-            assert len(self.get_nhgm_ids('group1')) == 1
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+            assert len(self.get_nhgm_ids('group1')) == 0
 
             # Update the group to 2 NHs
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])
@@ -1838,9 +1842,11 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         # - update the CBF NHG reordering the members and assert the new details match
         def update_cbf_nhg_members_test():
             # Create a NHG with a single next hop
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
-                                            ("ifname", "Ethernet0")])
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("_group3", fvs)
+            fvs = swsscommon.FieldValuePairs([('nexthop_group','_group3')])
             self.nhg_ps.set("group3", fvs)
+
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 3)
 
             # Create a CBF NHG
@@ -2035,6 +2041,8 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         self.cbf_nhg_ps._del('cbfgroup1')
         self.nhg_ps._del('group2')
         self.nhg_ps._del('group3')
+        self.nhg_ps._del('_group3')
+
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
         self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
 

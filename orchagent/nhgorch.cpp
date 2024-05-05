@@ -637,8 +637,8 @@ bool NextHopGroup::sync()
         return true;
     }
 
-    /* If the group is non-recursive, the group ID will be the only member's NH ID */
-    if (!isRecursive())
+    /* If the group is non-recursive with single member, the group ID will be the only member's NH ID */
+    if (!isRecursive() && (m_members.size() == 1))
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         sai_object_id_t nhid = nhgm.getNhId();
@@ -771,8 +771,13 @@ bool NextHopGroup::remove()
 {
     SWSS_LOG_ENTER();
 
+    if (!isSynced())
+    {
+        return true;
+    }
     //  If the group is temporary or non-recursive, update the neigh or rif ref-count and reset the ID.
-    if (m_is_temp || !isRecursive())
+    if (m_is_temp ||
+        (!isRecursive() && m_members.size() == 1))
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         auto nh_key = nhgm.getKey();
@@ -802,8 +807,8 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 {
     SWSS_LOG_ENTER();
 
-    /* This method should not be called for non-recursive nexthop groups */
-    assert(isRecursive());
+    /* This method should not be called for single-membered non-recursive nexthop groups */
+    assert(isRecursive() || (m_members.size() > 1));
 
     ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
@@ -894,7 +899,8 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
-    if (!(isRecursive() && isSynced()))
+    if (!isSynced() ||
+        (!isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1)))
     {
         bool was_synced = isSynced();
         bool was_temp = isTemp();
@@ -1025,7 +1031,7 @@ bool NextHopGroup::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    if (isRecursive())
+    if (isRecursive() || (m_members.size() > 1))
     {
         return syncMembers({nh_key});
     }
@@ -1044,7 +1050,7 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    if (isRecursive())
+    if (isRecursive() || (m_members.size() > 1))
     {
         return removeMembers({nh_key});
     }
