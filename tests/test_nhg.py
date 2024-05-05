@@ -1551,22 +1551,6 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
     def test_nhgorch_nh_group(self, dvs, testlog):
         # Test scenario:
-        # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
-        def create_nhg_test():
-            # create next hop group in APPL DB
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
-                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
-            self.nhg_ps.set("group1", fvs)
-
-            # check if group was propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            assert self.nhg_exists('group1')
-
-            # check if members were propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
-            assert len(self.get_nhgm_ids('group1')) == 3
-
-        # Test scenario:
         # - create recursive nhg - rec_grp1 with two members - grp1 and grp2 only one of which exists
         # - create singleton nhg grp2 and check if the rec_grp1 is updated with both the members
         # - create a recursive nhg - rec_grp2 with another recursive nhg - rec_grp1 as member. Assert that the nhg is not created.
@@ -1617,7 +1601,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
             # check that the group was not propagated to ASIC DB
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            assert self.nhg_exists('rec_grp2')
+            assert not self.nhg_exists('rec_grp2')
 
             self.nhg_ps._del("rec_grp2")
             self.nhg_ps._del("rec_grp1")
@@ -1626,6 +1610,22 @@ class TestNextHopGroup(TestNextHopGroupBase):
             self.nhg_ps._del("grp3")
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
             self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+        # Test scenario:
+        # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
+        def create_nhg_test():
+            # create next hop group in APPL DB
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
+                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+            self.nhg_ps.set("group1", fvs)
+
+            # check if group was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('group1')
+
+            # check if members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('group1')) == 3
 
         # Test scenario:
         # - create a route pointing to `group1` and assert it is being added to ASIC DB and pointing to its SAI ID
@@ -1781,6 +1781,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         self.init_test(dvs, 4)
 
+        create_recursive_nhg_test()
         create_nhg_test()
         create_route_nhg_test()
         link_flap_test()
