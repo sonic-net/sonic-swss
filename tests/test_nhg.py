@@ -1567,6 +1567,67 @@ class TestNextHopGroup(TestNextHopGroupBase):
             assert len(self.get_nhgm_ids('group1')) == 3
 
         # Test scenario:
+        # - create recursive nhg - rec_grp1 with two members - grp1 and grp2 only one of which exists
+        # - create singleton nhg grp2 and check if the rec_grp1 is updated with both the members
+        # - create a recursive nhg - rec_grp2 with another recursive nhg - rec_grp1 as member. Assert that the nhg is not created.
+        def create_recursive_nhg_test():
+            # create next hop group in APPL DB
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("grp1", fvs)
+
+            # create a recursive nexthop group with two members
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if group was propagated to ASIC DB with the existing member
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('rec_grp1')
+
+            # check if the existing member was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 1
+
+            # add another singleton nexthop group - grp2
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3'), ('ifname', 'Ethernet4')])
+            self.nhg_ps.set("grp2", fvs)
+
+            # check if both the members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # update the recursive nexthop group with another member not yet existing
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2,grp3')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if only two members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # add another singleton nexthop group - grp3
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.5'), ('ifname', 'Ethernet8')])
+            self.nhg_ps.set("grp3", fvs)
+
+            # check if all members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 3
+
+            # create a recursive nhg with another recursive nhg as member
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'rec_grp1')])
+            self.nhg_ps.set("rec_grp2", fvs)
+
+            # check that the group was not propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('rec_grp2')
+
+            self.nhg_ps._del("rec_grp2")
+            self.nhg_ps._del("rec_grp1")
+            self.nhg_ps._del("grp1")
+            self.nhg_ps._del("grp2")
+            self.nhg_ps._del("grp3")
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+        # Test scenario:
         # - create a route pointing to `group1` and assert it is being added to ASIC DB and pointing to its SAI ID
         # - delete the route and assert it is being removed
         def create_route_nhg_test():
