@@ -35,6 +35,7 @@
 #define RECOVERY_POLLS_CFG 8
 #define ERROR_RATE_CRC_CELLS_CFG 1
 #define ERROR_RATE_RX_CELLS_CFG 61035156
+#define FABRIC_LINK_RATE 44316
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
@@ -76,6 +77,7 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
 
     m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateTable = unique_ptr<Table>(new Table(m_state_db.get(), APP_FABRIC_PORT_TABLE_NAME));
+    m_fabricCapacityTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_FABRIC_CAPACITY_TABLE_NAME));
 
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_portNameQueueCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_FABRIC_QUEUE_NAME_MAP));
@@ -836,6 +838,185 @@ void FabricPortsOrch::updateFabricDebugCounters()
     }
 }
 
+void FabricPortsOrch::updateFabricCapacity()
+{
+    // Init value for fabric capacity monitoring
+    int capacity = 0;
+    int downCapacity = 0;
+    string lnkStatus = "down";
+    string configIsolated = "0";
+    string isolated = "0";
+    string autoIsolated = "0";
+    int operating_links = 0;
+    int total_links = 0;
+    int threshold = 100;
+    std::vector<FieldValueTuple> constValues;
+    string applKey = FABRIC_MONITOR_DATA;
+
+    // Get capacity warning threshold from APPL_DB table FABRIC_MONITOR_DATA
+    // By default, this threshold is 100 (percentage).
+    bool cfgVal = m_applMonitorConstTable->get("FABRIC_MONITOR_DATA", constValues);
+    if(!cfgVal)
+    {
+        SWSS_LOG_INFO("%s default values not set", applKey.c_str());
+    }
+    else
+    {
+        SWSS_LOG_INFO("%s has default values", applKey.c_str());
+    }
+    string configVal = "1";
+    for (auto cv : constValues)
+    {
+        configVal = fvValue(cv);
+        if (fvField(cv) == "monCapacityThreshWarn")
+        {
+            threshold = stoi(configVal);
+            SWSS_LOG_INFO("monCapacityThreshWarn: %s %s", configVal.c_str(), fvField(cv).c_str());
+            continue;
+        }
+    }
+
+    // Check fabric capacity.
+    SWSS_LOG_INFO("FabricPortsOrch::updateFabricCapacity start");
+    for (auto p : m_fabricLanePortMap)
+    {
+        int lane = p.first;
+        string key = FABRIC_PORT_PREFIX + to_string(lane);
+        std::vector<FieldValueTuple> values;
+        string valuePt;
+
+        // Get fabric serdes link status from STATE_DB
+        bool exist = m_stateTable->get(key, values);
+        if (!exist)
+        {
+            SWSS_LOG_INFO("No state infor for port %s", key.c_str());
+            return;
+        }
+        for (auto val : values)
+        {
+            valuePt = fvValue(val);
+            if (fvField(val) == "STATUS")
+            {
+                lnkStatus = valuePt;
+                continue;
+            }
+            if (fvField(val) == "CONFIG_ISOLATED")
+            {
+                configIsolated = valuePt;
+                continue;
+            }
+            if (fvField(val) == "ISOLATED")
+            {
+                isolated = valuePt;
+                continue;
+            }
+            if (fvField(val) == "AUTO_ISOLATED")
+            {
+                autoIsolated = valuePt;
+                continue;
+            }
+        }
+       // Calculate total number of serdes link, number of operational links,
+       // total fabric capacity.
+        bool linkIssue = false;
+        if (configIsolated == "1" || isolated == "1" || autoIsolated == "1")
+        {
+            linkIssue = true;
+        }
+
+        if (lnkStatus == "down" || linkIssue == true)
+        {
+            downCapacity += FABRIC_LINK_RATE;
+        }
+        else
+        {
+            capacity += FABRIC_LINK_RATE;
+            operating_links += 1;
+        }
+        total_links += 1;
+    }
+
+    SWSS_LOG_INFO("Capacity: %d Missing %d", capacity, downCapacity);
+
+    // Get LAST_EVENT from STATE_DB
+
+    // Calculate the current capacity to see if
+    // it is lower or higher than the threshold
+    string cur_event = "None";
+    string event = "None";
+    int expect_links = total_links * threshold / 100;
+    if (expect_links > operating_links)
+    {
+        cur_event = "Lower";
+    }
+    else
+    {
+        cur_event = "Higher";
+    }
+
+    SWSS_LOG_NOTICE(" total link %d  expected link %d oper link %d event %s", total_links, expect_links, operating_links, cur_event.c_str());
+
+    // Update the capacity data in this poll to STATE_DB
+    SWSS_LOG_INFO("Capacity: %d Missing %d", capacity, downCapacity);
+
+    string lastEvent = "None";
+    string lastTime = "Never";
+    // Get the last event and time that event happend from STATE_DB
+    bool capacity_data = m_fabricCapacityTable->get("FABRIC_CAPACITY_DATA", constValues);
+    if (capacity_data)
+    {
+        for (auto cv : constValues)
+        {
+            if(fvField(cv) == "last_event")
+            {
+                lastEvent = fvValue(cv);
+                continue;
+            }
+            if(fvField(cv) == "last_event_time")
+            {
+                lastTime = fvValue(cv);
+                continue;
+            }
+        }
+    }
+
+    auto now = std::chrono::system_clock::now();
+    auto now_s = std::chrono::time_point_cast<std::chrono::seconds>(now);
+    auto nse = now_s.time_since_epoch();
+
+    // If last event is None or higher, but the capacity is lower in this poll,
+    // update the STATE_DB with the event (lower) and the time.
+    // If the last event is lower, and the capacity is back to higher than the threshold,
+    // update the STATE_DB with the event (higher) and the time.
+    event = lastEvent;
+    if (cur_event == "Lower")
+    {
+        if (lastEvent == "None" || lastEvent == "Higher")
+        {
+            event = "Lower";
+            lastTime = to_string(nse.count());
+        }
+    }
+    else if (cur_event == "Higher")
+    {
+        if (lastEvent == "Lower")
+        {
+            event = "Higher";
+            lastTime = to_string(nse.count());
+        }
+    }
+
+    // Update STATE_DB
+    SWSS_LOG_INFO("FabricPortsOrch::updateFabricCapacity now update STATE_DB");
+    m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "fabric_capacity", to_string(capacity));
+    m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "missing_capacity", to_string(downCapacity));
+    m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "operating_links", to_string(operating_links));
+    m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "number_of_links", to_string(total_links));
+    m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "warning_threshold", to_string(threshold));
+    m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "last_event", event);
+    m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "last_event_time", lastTime);
+}
+
 void FabricPortsOrch::doTask()
 {
 }
@@ -1039,6 +1220,7 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
         if (m_getFabricPortListDone)
         {
             updateFabricDebugCounters();
+            updateFabricCapacity();
         }
     }
 }

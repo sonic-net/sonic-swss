@@ -4,6 +4,9 @@ extern "C" {
 
 #include "logger.h"
 #include "notifications.h"
+#include "switchorch.h"
+
+extern SwitchOrch *gSwitchOrch;
 
 #ifdef ASAN_ENABLED
 #include <sanitizer/lsan_interface.h>
@@ -40,6 +43,12 @@ void on_switch_shutdown_request(sai_object_id_t switch_id)
     /* TODO: Later a better restart story will be told here */
     SWSS_LOG_ERROR("Syncd stopped");
 
+    if (gSwitchOrch->isFatalEventReceived())
+    {
+        SWSS_LOG_ERROR("Orchagent aborted due to fatal SAI error received");
+        abort();
+    }
+
     /*
         The quick_exit() is used instead of the exit() to avoid a following data race:
             * the exit() calls the destructors for global static variables (e.g.BufferOrch::m_buffer_type_maps)
@@ -58,4 +67,19 @@ void on_port_host_tx_ready(sai_object_id_t switch_id, sai_object_id_t port_id, s
 {
     // don't use this event handler, because it runs by libsairedis in a separate thread
     // which causes concurrency access to the DB
+}
+
+void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
+                                     sai_switch_asic_sdk_health_severity_t severity,
+                                     sai_timespec_t timestamp,
+                                     sai_switch_asic_sdk_health_category_t category,
+                                     sai_switch_health_data_t data,
+                                     const sai_u8_list_t description)
+{
+    gSwitchOrch->onSwitchAsicSdkHealthEvent(switch_id,
+                                            severity,
+                                            timestamp,
+                                            category,
+                                            data,
+                                            description);
 }

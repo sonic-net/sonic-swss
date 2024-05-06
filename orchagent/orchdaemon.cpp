@@ -117,10 +117,12 @@ bool OrchDaemon::init()
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
+    TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
         conf_asic_sensors,
+        conf_suppress_asic_sdk_health_categories,
         app_switch_table
     };
 

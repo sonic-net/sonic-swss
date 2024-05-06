@@ -9,6 +9,9 @@
 #include "producertable.h"
 #include "flex_counter_manager.h"
 
+#define STATE_FABRIC_CAPACITY_TABLE_NAME "FABRIC_CAPACITY_TABLE"
+#define STATE_PORT_CAPACITY_TABLE_NAME "PORT_CAPACITY_TABLE"
+
 class FabricPortsOrch : public Orch, public Subject
 {
 public:
@@ -31,6 +34,7 @@ private:
     unique_ptr<Table> m_portNamePortCounterTable;
     unique_ptr<Table> m_fabricCounterTable;
     unique_ptr<Table> m_applTable;
+    unique_ptr<Table> m_fabricCapacityTable;
     unique_ptr<Table> m_applMonitorConstTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
 
@@ -61,6 +65,7 @@ private:
     void generatePortStats();
     void updateFabricPortState();
     void updateFabricDebugCounters();
+    void updateFabricCapacity();
 
     void doTask() override;
     void doTask(Consumer &consumer);
