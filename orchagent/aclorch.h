@@ -23,6 +23,7 @@
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
+#define MATCH_OUT_PORT          "OUT_PORT"
 #define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
@@ -530,7 +531,7 @@ private:
     void doAclRuleTask(Consumer &consumer);
     void doAclTableTypeTask(Consumer &consumer);
     void init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
-    void initDefaultTableTypes();
+    void initDefaultTableTypes(const string& platform, const string& sub_platform);
 
     void queryMirrorTableCapability();
     void queryAclActionCapability();
