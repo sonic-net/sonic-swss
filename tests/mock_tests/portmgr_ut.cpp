@@ -66,6 +66,10 @@ namespace portmgr_ut
         value_opt = swss::fvsGetValue(values, "index", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("1", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR, value_opt.get());
+
 
         // Set port state to ok, verify that doTask handle port configuration
         state_port_table.set("Ethernet0", {
@@ -75,6 +79,9 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
+        ASSERT_EQ("/usr/sbin/tc qdisc add dev \"Ethernet0\" dhcp_rate_limit \"300\"", mockCallArgs[2]);
+
+
         
         // Set port admin_status, verify that it could override the default value
         cfg_port_table.set("Ethernet0", {
@@ -108,7 +115,9 @@ namespace portmgr_ut
             {"speed", "50000"},
             {"index", "1"},
             {"mtu", "1518"},
-            {"admin_status", "up"}
+            {"admin_status", "up"},
+            {"dhcp_rate_limit", "300"}
+
         });
 
         m_portMgr->addExistingData(&cfg_port_table);

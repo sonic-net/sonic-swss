@@ -87,3 +87,4 @@
 #define PORT_ROLE                "role"
 #define PORT_ADMIN_STATUS        "admin_status"
 #define PORT_DESCRIPTION         "description"
+#define PORT_DHCP_RATE_LIMIT     "300"
