@@ -642,6 +642,31 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
+bool PortHelper::parsePortDhcpRateLimit(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    try
+    {
+        port.tpid.value = toUInt32(value);
+        port.tpid.is_set = true;
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
+        return false;
+    }
+
+    return true;
+}
+
+
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -992,6 +1017,14 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_DESCRIPTION)
         {
             if (!this->parsePortDescription(port, field, value))
+            {
+                return false;
+            }
+        }
+
+        else if (field == PORT_DHCP_RATE_LIMIT)
+        {
+            if (!this->parsePortDhcpRateLimit(port, field, value))
             {
                 return false;
             }
