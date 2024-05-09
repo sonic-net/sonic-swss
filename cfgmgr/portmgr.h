@@ -34,7 +34,6 @@ private:
     void doTask(Consumer &consumer);
     void doSendToIngressPortTask(Consumer &consumer);
     bool writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value);
-    bool writeConfigToAppDb(const std::string &alias, std::vector<FieldValueTuple> &field_values);
     bool setPortMtu(const std::string &alias, const std::string &mtu);
     bool setPortAdminStatus(const std::string &alias, const bool up);
     bool setPortDHCPMitigationRate(const std::string &alias, const std::string &dhcp_rate_limit);
