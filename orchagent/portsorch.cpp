@@ -3120,12 +3120,18 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
     std::time_t now_c = std::chrono::system_clock::to_time_t(now);
     if (pstatus == SAI_PORT_OPER_STATUS_DOWN)
     {
-        FieldValueTuple tuple("last_down_time", std::ctime(&now_c));
+        char buffer[32];
+        // Format: Www Mmm dd hh:mm:ss yyyy
+        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
+        FieldValueTuple tuple("last_down_time", buffer);
         tuples.push_back(tuple);
     } 
     else if (pstatus == SAI_PORT_OPER_STATUS_UP) 
     {
-        FieldValueTuple tuple("last_up_time", std::ctime(&now_c));
+        char buffer[32];
+        // Format: Www Mmm dd hh:mm:ss yyyy
+        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
+        FieldValueTuple tuple("last_up_time", buffer);
         tuples.push_back(tuple);
     }
     m_portTable->set(port.m_alias, tuples);
