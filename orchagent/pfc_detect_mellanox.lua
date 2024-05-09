@@ -18,9 +18,11 @@ local timestamp_struct = redis.call('TIME')
 local timestamp_current = timestamp_struct[1] + timestamp_struct[2] / 1000000
 local timestamp_string = tostring(timestamp_current)
 redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last', timestamp_string)
-local real_poll_time = poll_time
+local effective_poll_time = poll_time
+local effective_poll_time_lasttime = redis.call('HGET', 'TIMESTAMP', 'effective_pfcwd_poll_time_last')
 if timestamp_last ~= false then
-    real_poll_time = (timestamp_current - tonumber(timestamp_last)) * 1000000
+    effective_poll_time = (timestamp_current - tonumber(timestamp_last)) * 1000000
+    redis.call('HSET', 'TIMESTAMP', 'effective_pfcwd_poll_time_last', effective_poll_time)
 end
 
 -- Iterate through each queue
@@ -78,27 +80,30 @@ for i = n, 1, -1 do
                         packets_last = tonumber(packets_last)
                         pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
                         pfc_duration_last = tonumber(pfc_duration_last)
-                        local storm_condition = (pfc_duration - pfc_duration_last) > (poll_time * 0.8)
+                        local storm_condition = (pfc_duration - pfc_duration_last) > (effective_poll_time * 0.99)
 
                         -- Check actual condition of queue being in PFC storm
-                        if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
+                        if (occupancy_bytes > 0 and packets - packets_last == 0 and storm_condition) or
                             -- DEBUG CODE START. Uncomment to enable
-                            (debug_storm == "enabled") or
+                            (debug_storm == "enabled")
                             -- DEBUG CODE END.
-                            (occupancy_bytes == 0 and packets - packets_last == 0 and storm_condition) then
-                            if time_left <= poll_time then
+                            then
+                            if time_left <= effective_poll_time then
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
                                 local occupancy_string = '"occupancy","' .. tostring(occupancy_bytes) .. '",'
                                 local packets_string = '"packets","' .. tostring(packets) .. '","packets_last","' .. tostring(packets_last) .. '",'
                                 local pfc_rx_packets_string = '"pfc_rx_packets","' .. tostring(pfc_rx_packets) .. '","pfc_rx_packets_last","' .. tostring(pfc_rx_packets_last) .. '",'
                                 local storm_condition_string = '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '",'
-                                local timestamps = '"timestamp","' .. timestamp_string .. '","timestamp_last","' .. timestamp_last .. '","real_poll_time","' .. real_poll_time .. '"'
+                                local timestamps = '"timestamp","' .. timestamp_string .. '","timestamp_last","' .. timestamp_last .. '","effective_poll_time","' .. effective_poll_time .. '"'
+                                if effective_poll_time_lasttime ~= false then
+                                    timestamps = timestamps .. ',"effective_pfcwd_poll_time_last","' .. effective_poll_time_lasttime .. '"'
+                                end
                                 redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm",' .. occupancy_string .. packets_string .. pfc_rx_packets_string .. storm_condition_string .. timestamps .. ']')
                                 is_deadlock = true
                                 time_left = detection_time
                             else
-                                time_left = time_left - poll_time
+                                time_left = time_left - effective_poll_time
                             end
                         else
                             if pfc_wd_action == 'alert' and pfc_wd_status ~= 'operational' then
