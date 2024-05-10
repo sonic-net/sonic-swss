@@ -460,7 +460,6 @@ class TestDecapTunnel(TestTunnelBase):
         self.cleanup_left_over(db, statedb, asicdb)
 
         decap_terms = [
-            {"dst_ip": "2.2.2.2", "src_ip": "5.5.5.5", "term_type": "P2MP"},
             {"dst_ip": "3.3.3.3", "term_type": "P2P"},
             {"dst_ip": "4.4.4.4", "term_type": "MP2MP"}
         ]

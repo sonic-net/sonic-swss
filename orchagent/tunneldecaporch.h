@@ -47,11 +47,11 @@ struct TunnelEntry
 
 struct SubnetDecapConfig
 {
-    bool                                enable;
-    std::unique_ptr<swss::IpPrefix>     src_ip;
-    std::unique_ptr<swss::IpPrefix>     src_ip_v6;
-    std::string                         tunnel;
-    std::string                         tunnel_v6;
+    bool        enable;
+    std::string src_ip;
+    std::string src_ip_v6;
+    std::string tunnel;
+    std::string tunnel_v6;
 };
 
 struct NexthopTunnel
@@ -99,8 +99,8 @@ private:
     std::unique_ptr<swss::Table> stateTunnelDecapTermTable = nullptr;
     SubnetDecapConfig subnetDecapConfig = {
         false,
-        nullptr,
-        nullptr,
+        "",
+        "",
         "IPINIP_SUBNET",
         "IPINIP_SUBNET_V6"
     };
