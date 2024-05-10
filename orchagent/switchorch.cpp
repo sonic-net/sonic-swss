@@ -584,20 +584,24 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                     case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET:
                         ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET);
-                        if(ret == false) {
-                          SWSS_LOG_INFO("ECMP_HASH_OFFSET attribute is not supported");
-                          unsupported_attr = true;
-                        } else {
-                          attr.value.u8 = to_uint<uint8_t>(value);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
                         }
                         break;
                     case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET:
                         ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET);
-                        if(ret == false) {
-                          SWSS_LOG_INFO("LAG_HASH_OFFSET attribute is not supported");
-                          unsupported_attr = true;
-                        } else {
-                          attr.value.u8 = to_uint<uint8_t>(value);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
                         }
                         break;
 
