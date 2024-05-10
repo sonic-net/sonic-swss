@@ -110,8 +110,7 @@ namespace portmgr_ut
             {"speed", "50000"},
             {"index", "1"},
             {"mtu", "1518"},
-            {"admin_status", "up"},
-            {"dhcp_rate_limit", "300"}
+            {"admin_status", "up"}
 
         });
 
