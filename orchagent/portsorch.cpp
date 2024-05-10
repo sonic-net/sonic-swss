@@ -553,8 +553,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     sai_attr_capability_t capability;
 
-    bool saiHwTxSignalSupported = false;
-    bool saiTxReadyNotifySupported = false;
 
     if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
                                             SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE,
