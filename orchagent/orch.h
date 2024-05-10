@@ -221,6 +221,8 @@ class Orch
 public:
     Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri);
     Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
+    Orch(swss::DBConnector *db1, swss::DBConnector *db2,
+        const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2);
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
