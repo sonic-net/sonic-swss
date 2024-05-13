@@ -261,9 +261,7 @@ void PortMgr::doTask(Consumer &consumer)
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
                 field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
-
-
-
+                
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
                 continue;
