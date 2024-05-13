@@ -10,6 +10,7 @@
 #include "tunneldecaporch.h"
 #include "aclorch.h"
 #include "neighorch.h"
+#include "bulker.h"
 
 enum MuxState
 {
@@ -34,6 +35,27 @@ enum MuxCableType
     ACTIVE_STANDBY,
     ACTIVE_ACTIVE
 };
+
+struct MuxRouteBulkContext
+{
+    std::deque<sai_status_t>            object_statuses;            // Bulk statuses
+    IpPrefix                            pfx;                        // Route prefix
+    sai_object_id_t                     nh;                         // nexthop id
+    bool                                add;                        // add route bool
+
+    MuxRouteBulkContext(IpPrefix pfx, bool add)
+        : pfx(pfx), add(add)
+    {
+    }
+
+    MuxRouteBulkContext(IpPrefix pfx, sai_object_id_t nh, bool add)
+        : pfx(pfx), nh(nh), add(add)
+    {
+    }
+};
+
+extern size_t gMaxBulkSize;
+extern sai_route_api_t* sai_route_api;
 
 // Forward Declarations
 class MuxOrch;
@@ -64,7 +86,7 @@ typedef std::map<IpAddress, sai_object_id_t> MuxNeighbor;
 class MuxNbrHandler
 {
 public:
-    MuxNbrHandler() = default;
+    MuxNbrHandler() : gRouteBulker(sai_route_api, gMaxBulkSize) {};
 
     bool enable(bool update_rt);
     bool disable(sai_object_id_t);
@@ -75,11 +97,15 @@ public:
     string getAlias() const { return alias_; };
 
 private:
+    bool createBulkRouteEntries(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+    bool processBulkRouteEntries(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+
     inline void updateTunnelRoute(NextHopKey, bool = true);
 
 private:
     MuxNeighbor neighbors_;
     string alias_;
+    EntityBulker<sai_route_api_t> gRouteBulker;
 };
 
 // Mux Cable object

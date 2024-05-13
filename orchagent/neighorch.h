@@ -12,6 +12,7 @@
 #include "producerstatetable.h"
 #include "schema.h"
 #include "bfdorch.h"
+#include "bulker.h"
 
 #define NHFLAGS_IFDOWN                  0x1 // nexthop's outbound i/f is down
 
@@ -43,6 +44,20 @@ struct NeighborUpdate
     bool add;
 };
 
+struct NeighborBulkContext
+{
+    std::deque<sai_status_t>            object_statuses;            // Bulk statuses
+    NeighborEntry                       neighborEntry;              // Neighbor entry to process
+    MacAddress                          mac;                        // neighbor mac
+    bool                                enable;                     // enable/disable
+    int                                 set_neigh_attr_count = 0;   // Keeps track of number of attr set
+
+    NeighborBulkContext(NeighborEntry neighborEntry, bool enable)
+        : neighborEntry(neighborEntry), enable(enable)
+    {
+    }
+};
+
 class NeighOrch : public Orch, public Subject, public Observer
 {
 public:
@@ -66,6 +81,8 @@ public:
 
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
+    bool createBulkNeighborEntries(std::list<NeighborBulkContext>&);
+    bool flushBulkNeighborEntries(std::list<NeighborBulkContext>&);
     bool isHwConfigured(const NeighborEntry&);
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
@@ -93,10 +110,16 @@ private:
 
     std::set<NextHopKey> m_neighborToResolve;
 
+    EntityBulker<sai_neighbor_api_t> gNeighBulker;
+
     bool removeNextHop(const IpAddress&, const string&);
 
     bool addNeighbor(const NeighborEntry&, const MacAddress&);
     bool removeNeighbor(const NeighborEntry&, bool disable = false);
+    bool addBulkNeighbor(NeighborBulkContext& ctx);
+    bool addBulkNeighborPost(NeighborBulkContext& ctx);
+    bool removeBulkNeighbor(NeighborBulkContext& ctx);
+    bool removeBulkNeighborPost(NeighborBulkContext& ctx, bool disable = false);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
