@@ -51,6 +51,7 @@
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
 #define MATCH_BTH_OPCODE        "BTH_OPCODE"
 #define MATCH_AETH_SYNDROME     "AETH_SYNDROME"
+#define MATCH_METADATA          "META_DATA"
 
 #define BIND_POINT_TYPE_PORT "PORT"
 #define BIND_POINT_TYPE_PORTCHANNEL "PORTCHANNEL"
@@ -68,6 +69,8 @@
 #define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
 #define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
 #define ACTION_COUNTER                      "COUNTER"
+#define ACTION_META_DATA                    "META_DATA_ACTION"
+#define ACTION_DSCP                         "DSCP_ACTION"
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
@@ -165,6 +168,20 @@ public:
 private:
     vector<int32_t> m_rangeList;
 };
+
+class MetaDataMgr
+{
+public:
+    MetaDataMgr();
+    uint8_t getFreeMetaData(uint8_t dscp);
+    void recycleMetaData(uint8_t metadata);
+
+private:
+    list<uint8_t> m_freeMetadata;
+    map<uint8_t, uint8_t> m_dscpMetadata;
+    map<uint8_t, uint8_t> m_MetadataRef;
+};
+
 class AclTableType
 {
 public:
@@ -377,6 +394,16 @@ protected:
     bool INT_session_valid;
 };
 
+class AclRuleUnderlaySetDhcp: public AclRule
+{
+public:
+    AclRuleUnderlaySetDhcp(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = true);
+
+    bool validateAddAction(string attr_name, string attr_value);
+    bool validate();
+    void onUpdate(SubjectType, void *) override;
+};
+
 class AclTable
 {
 public:
@@ -491,6 +518,7 @@ public:
     bool removeAclTableType(const string& tableTypeName);
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
     bool updateAclTable(string table_id, AclTable &table);
+    bool removeEgrSetDscpTable(string table_id);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
     bool updateAclRule(shared_ptr<AclRule> updatedAclRule);
@@ -506,6 +534,7 @@ public:
     bool isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const;
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
     bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
+    bool isUsingEgrSetDscp(const string& table) const;
 
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
@@ -586,9 +615,12 @@ private:
     Table m_aclTableStateTable;
     Table m_aclRuleStateTable;
 
+    MetaDataMgr m_metaDataMgr;
     map<acl_stage_type_t, string> m_mirrorTableId;
     map<acl_stage_type_t, string> m_mirrorV6TableId;
-
+    set<string> m_egrSetDscpRef;
+    map<uint8_t, set<string>> m_metadataEgrDscpRule;
+    map<string, uint8_t> m_egrDscpRuleMetadata;
     acl_capabilities_t m_aclCapabilities;
     acl_action_enum_values_capabilities_t m_aclEnumActionCapabilities;
     FlexCounterManager m_flex_counter_manager;
