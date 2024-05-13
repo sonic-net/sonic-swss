@@ -343,11 +343,13 @@ class TestAclMarkMeta:
 
         dvs_acl.verify_no_acl_rules()
 
-    def test_OverlayEntryMultiTableRules(self, dvs_acl, overlay_acl_table):
+    def test_OverlayEntryMultiTableRules(self, dvs_acl):
         config_qualifiers = {"DST_IP": "20.0.0.1/32",
                              "SRC_IP": "10.0.0.0/32",
                              "DSCP": "1"}
-
+        dvs_acl.create_acl_table(OVERLAY_TABLE_NAME,
+                                    OVERLAY_TABLE_TYPE,
+                                    OVERLAY_BIND_PORTS)
         dvs_acl.create_acl_table(OVERLAY_TABLE_NAME6,
                                      OVERLAY_TABLE_TYPE6,
                                      OVERLAY_BIND_PORTS6)
@@ -380,8 +382,9 @@ class TestAclMarkMeta:
         dvs_acl.remove_acl_rule(OVERLAY_TABLE_NAME, "1")
         dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", None)
         dvs_acl.verify_no_acl_rules()
-
+        dvs_acl.remove_acl_table(OVERLAY_TABLE_NAME)
         dvs_acl.remove_acl_table(OVERLAY_TABLE_NAME6)
+        dvs_acl.verify_acl_table_count(0)
 
     def test_OverlayEntryExhaustMeta(self, dvs_acl, overlay_acl_table):
         config_qualifiers = {"DST_IP": "20.0.0.1/32",
