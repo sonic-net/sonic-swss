@@ -419,21 +419,30 @@ class TestMuxTunnelBase():
 
         ip_1 = "fc02:1000::10"
         ip_2 = "fc02:1000::11"
+        route1 = "2026::/64"
+        route2 = "2027::/64"
 
         self.add_neighbor(dvs, ip_1, "00:00:00:00:00:11")
         self.add_neighbor(dvs, ip_2, "00:00:00:00:00:12")
 
+        # Create a route to test route nexthop update during mac move
+        self.add_route(dvs, route1, ip_1)
+        self.add_route(dvs, route2, ip_2)
+
         # ip_1 is on Active Mux, hence added to Host table
         self.check_neigh_in_asic_db(asicdb, ip_1)
+        self.check_route_nexthop(dvs_route, asicdb, route1, ip_1)
 
         # ip_2 is on Standby Mux, hence added to Route table
         dvs_route.check_asicdb_route_entries([ip_2+self.IPV6_MASK])
+        self.check_route_nexthop(dvs_route, asicdb, route2, tunnel_nh_id, True)
 
         # Check ip_1 move to standby mux, should be pointing to tunnel
         self.add_neighbor(dvs, ip_1, "00:00:00:00:00:12")
 
         # ip_1 moved to standby Mux, hence added to Route table
         dvs_route.check_asicdb_route_entries([ip_1+self.IPV6_MASK])
+        self.check_route_nexthop(dvs_route, asicdb, route1, tunnel_nh_id, True)
 
         # Check ip_2 move to active mux, should be host entry
         self.add_neighbor(dvs, ip_2, "00:00:00:00:00:11")
@@ -441,6 +450,7 @@ class TestMuxTunnelBase():
         # ip_2 moved to active Mux, hence remove from Route table
         dvs_route.check_asicdb_deleted_route_entries([ip_2+self.IPV6_MASK])
         self.check_neigh_in_asic_db(asicdb, ip_2)
+        self.check_route_nexthop(dvs_route, asicdb, route2, ip_2)
 
         # Simulate FDB aging out test case
         ip_3 = "192.168.0.200"
@@ -461,6 +471,7 @@ class TestMuxTunnelBase():
         dvs_route.check_asicdb_deleted_route_entries([ip_3+self.IPV4_MASK])
 
         self.del_fdb(dvs, "00-00-00-00-00-11")
+        self.del_route(dvs, route)
 
     def create_and_test_route(self, appdb, asicdb, dvs, dvs_route):
 
