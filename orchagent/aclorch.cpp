@@ -4005,6 +4005,19 @@ bool AclOrch::addAclTable(AclTable &newTable)
             m_mirrorV6TableId[table_stage] = table_id;
         }
 
+        // We use SAI_ACL_BIND_POINT_TYPE_SWITCH for PFCWD table in DNX platform.
+        // This bind type requires to bind the table to switch.
+        string platform = getenv("platform") ? getenv("platform") : "";
+        string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
+        if (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING &&
+            newTable.type.getName() == TABLE_TYPE_PFCWD)
+        {
+            if(!bindEgrAclTableToSwitch(newTable))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
     else
@@ -4028,6 +4041,18 @@ bool AclOrch::removeAclTable(string table_id)
     /* If ACL rules associate with this table, remove the rules first.*/
     bool suc = m_AclTables[table_oid].clear();
     if (!suc) return false;
+
+    // Unbind table from switch if needed.
+    AclTable &table = m_AclTables.at(table_oid);
+    if (table.bindToSwitch)
+    {
+        // Only bind egress table to switch for now.
+        assert(table->stage == ACL_STAGE_EGRESS);
+        if(!unbindEgrAclTableFromSwitch(table))
+        {
+            return false;
+        }
+    }
 
     if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
     {
@@ -5143,3 +5168,48 @@ void AclOrch::removeAllAclRuleStatus()
     }
 }
 
+// Bind egress ACL table (with bind type switch) to switch
+bool AclOrch::bindEgrAclTableToSwitch(AclTable &table)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    attr.value.oid = table.getOid();
+
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        table.bindToSwitch = true;
+        SWSS_LOG_NOTICE("Bind egress acl table %s to switch", table.id.c_str());
+        return true;
+    }
+    else
+    {
+       SWSS_LOG_ERROR("Failed to bind egress acl table %s to switch", table.id.c_str());
+       return false;
+    }
+}
+
+// Unbind egress ACL table from swtich
+bool AclOrch::unbindEgrAclTableFromSwitch(AclTable &table)
+{
+    if (!table.bindToSwitch)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    attr.value.oid = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        table.bindToSwitch = false;
+        SWSS_LOG_NOTICE("unbind egress acl table %s to switch", table.id.c_str());
+        return true;
+    }
+    else
+    {
+       SWSS_LOG_ERROR("Failed to unbind egress acl table %s to switch", table.id.c_str());
+       return false;
+    }
+}

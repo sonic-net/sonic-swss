@@ -452,6 +452,9 @@ public:
     // Set to store the not configured ACL table port alias
     set<string> pendingPortSet;
 
+    // Is the ACL table bound to switch?
+    bool bindToSwitch = false;
+
 private:
     sai_object_id_t m_oid = SAI_NULL_OBJECT_ID;
     AclOrch *m_pAclOrch = nullptr;
@@ -523,6 +526,9 @@ public:
     {
         return m_AclTables;
     }
+
+    bool bindEgrAclTableToSwitch(AclTable &table);
+    bool unbindEgrAclTableFromSwitch(AclTable &table);
 
 private:
     SwitchOrch *m_switchOrch;
