@@ -1925,7 +1925,7 @@ bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
         {
             continue;
         }
-        SWSS_LOG_INFO"Found remote Neighbor %s on %s", nbr->first.ip_address.to_string().c_str(), alias.c_str());
+        SWSS_LOG_INFO("Found remote Neighbor %s on %s", nbr->first.ip_address.to_string().c_str(), alias.c_str());
         NextHopKey nhop = { nbr->first.ip_address, inbp.m_alias };
 
         if (if_up)
