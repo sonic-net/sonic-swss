@@ -857,8 +857,7 @@ static inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_
     }
     else
     {
-        sai_s8_list.list = nullptr;
-        sai_s8_list.count = 0;
+        initSaiRedisCounterEmptyParameter(sai_s8_list);
     }
 }
 
