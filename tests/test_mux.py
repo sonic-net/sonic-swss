@@ -471,7 +471,8 @@ class TestMuxTunnelBase():
         dvs_route.check_asicdb_deleted_route_entries([ip_3+self.IPV4_MASK])
 
         self.del_fdb(dvs, "00-00-00-00-00-11")
-        self.del_route(dvs, route)
+        self.del_route(dvs, route1)
+        self.del_route(dvs, route2)
 
     def create_and_test_route(self, appdb, asicdb, dvs, dvs_route):
 
