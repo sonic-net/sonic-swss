@@ -337,6 +337,8 @@ private:
 
     bool fec_override_sup = false;
     bool oper_fec_sup = false;
+    bool saiHwTxSignalSupported = false;
+    bool saiTxReadyNotifySupported = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
