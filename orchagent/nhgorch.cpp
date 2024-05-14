@@ -84,12 +84,18 @@ void NhgOrch::doTask(Consumer& consumer)
                         is_recursive = true;
                 }
             }
-
+            /* A NHG should not have both regular(ip/alias) and recursive fields */
+            if (is_recursive && (!ips.empty() || !aliases.empty()))
+            {
+                SWSS_LOG_ERROR("Nexthop group %s has both regular(ip/alias) and recursive fields", index.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             /* Split ips and aliases strings into vectors of tokens. */
             vector<string> ipv = tokenize(ips, ',');
             vector<string> alsv = tokenize(aliases, ',');
             vector<string> mpls_nhv = tokenize(mpls_nhs, ',');
-            vector<string> nhgv = tokenize(nhgs, ',');
+            vector<string> nhgv = tokenize(nhgs, NHG_DELIMITER);
 
             /* Create the next hop group key. */
             string nhg_str;
@@ -131,7 +137,7 @@ void NhgOrch::doTask(Consumer& consumer)
                     if (nhgs.empty())
                         nhgs = nhgm;
                     else
-                        nhgs += ',' + nhgm;
+                        nhgs += NHG_DELIMITER + nhgm;
                 }
                 if (invalid_member)
                 {
@@ -146,7 +152,7 @@ void NhgOrch::doTask(Consumer& consumer)
                 }
 
                 /* Form nexthopgroup key with the nexthopgroup keys of available members */
-                nhgv = tokenize(nhgs, ',');
+                nhgv = tokenize(nhgs, NHG_DELIMITER);
 
                 for (uint32_t i = 0; i < nhgv.size(); i++)
                 {
@@ -173,6 +179,8 @@ void NhgOrch::doTask(Consumer& consumer)
             /* If the group does not exist, create one. */
             if (nhg_it == m_syncdNextHopGroups.end())
             {
+                SWSS_LOG_INFO("Create nexthop group %s with %s", index.c_str(), nhg_str.c_str());
+
                 /*
                 * If we've reached the NHG limit, we're going to create a temporary
                 * group, represented by one of it's NH only until we have
@@ -230,6 +238,8 @@ void NhgOrch::doTask(Consumer& consumer)
             /* If the group exists, update it. */
             else
             {
+                SWSS_LOG_INFO("Update nexthop group %s with %s", index.c_str(), nhg_str.c_str());
+
                 const auto& nhg_ptr = nhg_it->second.nhg;
 
                 /*
@@ -462,14 +472,6 @@ sai_object_id_t NextHopGroupMember::getNhId() const
     if (m_key.isIntfNextHop())
     {
         nh_id = gIntfsOrch->getRouterIntfsId(m_key.alias);
-
-        if ((nh_id == SAI_NULL_OBJECT_ID) &&
-            !m_key.alias.compare(0, strlen("Loopback"), "Loopback"))
-        {
-            Port cpu_port;
-            gPortsOrch->getCpuPort(cpu_port);
-            nh_id = cpu_port.m_port_id;
-        }
     }
     else if (gNeighOrch->hasNextHop(m_key))
     {
