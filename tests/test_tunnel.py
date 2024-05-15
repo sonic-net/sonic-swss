@@ -158,7 +158,7 @@ class TestTunnelBase(object):
                     assert False, "Field %s is not tested" % field
 
         tunnel_decap_term_state_table = swsscommon.Table(statedb, self.STATE_TUNNEL_DECAP_TERM_TABLE_NAME)
-    
+
         tunnel_term_state_entries = tunnel_decap_term_state_table.getKeys()
         for term_entry in tunnel_term_state_entries:
             status, fvs = tunnel_decap_term_state_table.get(term_entry)
@@ -167,7 +167,7 @@ class TestTunnelBase(object):
 
             assert (str(dst_ip.network_address), str(dst_ip.netmask)) in decap_terms
             assert status == True
-            
+
             decap_term = decap_terms[(str(dst_ip.network_address), str(dst_ip.netmask))]
             assert dst_ip_str == decap_term["dst_ip"]
             for field, value in fvs:
@@ -194,7 +194,7 @@ class TestTunnelBase(object):
         dst_ips = {decap_term_attrs["dst_ip"] for decap_term_attrs in decap_term_attr_list}
         ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TERM_TABLE_NAME)
         for dst_ip in dst_ips:
-            ps.set(tunnel_name + self.APPL_DB_SEPARATOR + dst_ip, create_fvs(), 'DEL')
+            ps._del(tunnel_name + self.APPL_DB_SEPARATOR + dst_ip)
 
         time.sleep(1)
 
@@ -258,7 +258,7 @@ class TestTunnelBase(object):
             expected_len += 1
         if decap_tc_to_pg_map_oid:
             expected_len += 1
-        
+
         assert len(fvs) == expected_len
 
         for field, value in fvs:
@@ -284,7 +284,7 @@ class TestTunnelBase(object):
                 assert False, "Field %s is not tested" % field
 
         tunnel_state_table = swsscommon.Table(statedb, self.STATE_TUNNEL_DECAP_TABLE_NAME)
-    
+
         tunnels = tunnel_state_table.getKeys()
         for tunnel in tunnels:
             status, fvs = tunnel_state_table.get(tunnel)
@@ -296,7 +296,7 @@ class TestTunnelBase(object):
                 elif field == "dscp_mode":
                     assert value == kwargs["dscp_mode"]
                 elif field == "ecn_mode":
-                    assert value == kwargs["ecn_mode"]                    
+                    assert value == kwargs["ecn_mode"]
                 elif field == "ttl_mode":
                     assert value == kwargs["ttl_mode"]
                 elif field == "encap_ecn_mode":
@@ -311,7 +311,7 @@ class TestTunnelBase(object):
 
         tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
         tunnel_term_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TERM_ENTRIES)
-        tunnel_app_table = swsscommon.Table(asicdb, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        tunnel_app_table = swsscommon.Table(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
         tunnel_state_table = swsscommon.Table(statedb, self.STATE_TUNNEL_DECAP_TABLE_NAME)
         tunnel_decap_term_state_table = swsscommon.Table(statedb, self.STATE_TUNNEL_DECAP_TERM_TABLE_NAME)
 
@@ -324,7 +324,7 @@ class TestTunnelBase(object):
         overlay_infs_id = {f:v for f,v in fvs}["SAI_TUNNEL_ATTR_OVERLAY_INTERFACE"]
 
         ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        ps.set(tunnel_name, create_fvs(), 'DEL')
+        ps._del(tunnel_name)
 
         if skip_validation:
             return
@@ -337,7 +337,7 @@ class TestTunnelBase(object):
         assert len(tunnel_app_table.getKeys()) == 0
         assert len(tunnel_state_table.getKeys()) == 0
         assert len(tunnel_decap_term_state_table.getKeys()) == 0
-        assert not self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)        
+        assert not self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
 
     def add_qos_map(self, configdb, asicdb, qos_map_type_name, qos_map_name, qos_map):
         """ Add qos map for testing"""
@@ -349,12 +349,12 @@ class TestTunnelBase(object):
         fvs = swsscommon.FieldValuePairs(list(qos_map.items()))
         table.set(qos_map_name, fvs)
         time.sleep(1)
-        
+
         diff = set(qos_table.getKeys()) - set(current_oids)
         assert len(diff) == 1
         oid = diff.pop()
         return oid
-        
+
     def remove_qos_map(self, configdb, qos_map_type_name, qos_map_name):
         """ Remove the testing qos map"""
         table = swsscommon.Table(configdb, qos_map_type_name)
@@ -444,7 +444,7 @@ class TestDecapTunnel(TestTunnelBase):
             db, asicdb, statedb, "IPINIPv6Decap",
             tunnel_sai_oid, decap_terms
         )
-    
+
         self.remove_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIPv6Decap", decap_terms
         )
@@ -566,7 +566,7 @@ class TestDecapTunnel(TestTunnelBase):
         statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
         self.cleanup_left_over(db, statedb, asicdb)
-        
+
         dscp_to_tc_map_oid = self.add_qos_map(configdb, asicdb, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.DSCP_TO_TC_MAP)
         tc_to_pg_map_oid = self.add_qos_map(configdb, asicdb, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.TC_TO_PRIORITY_GROUP_MAP)
 
