@@ -89,6 +89,10 @@ public:
     swss::IpAddresses getDstIpAddresses(std::string tunnelKey);
     std::string getDscpMode(const std::string &tunnelKey) const;
     bool getQosMapId(const std::string &tunnelKey, const std::string &qos_table_type, sai_object_id_t &oid) const;
+    const SubnetDecapConfig &getSubnetDecapConfig() const
+    {
+        return subnetDecapConfig;
+    }
 
 private:
     TunnelTable tunnelTable;
