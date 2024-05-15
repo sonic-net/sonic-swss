@@ -2232,11 +2232,14 @@ bool AclRuleUnderlaySetDhcp::validateAddAction(string attr_name, string _attr_va
 
     string attr_value = to_upper(_attr_value);
     sai_acl_action_data_t actionData;
+    actionData.parameter.u32 = 0;
+
+    SWSS_LOG_NOTICE("attr_name: %s, attr_value: %s int val %d", attr_name.c_str(), attr_value.c_str(), to_uint<uint32_t>(_attr_value));
 
     if (attr_name == ACTION_DSCP || attr_name == ACTION_META_DATA)
     {
-        actionData.parameter.u8 = to_uint<uint8_t>(_attr_value);
-        if (attr_name == ACTION_META_DATA && (actionData.parameter.u8 < METADATA_VALUE_START || actionData.parameter.u8 > METADATA_VALUE_END))
+        actionData.parameter.u32 = to_uint<uint32_t>(_attr_value);
+        if (attr_name == ACTION_META_DATA && (actionData.parameter.u32 < METADATA_VALUE_START || actionData.parameter.u32 > METADATA_VALUE_END))
         {
             return false;
         }
