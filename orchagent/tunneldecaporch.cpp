@@ -454,7 +454,7 @@ void TunnelDecapOrch::doDecapTunnelTermTask(Consumer &consumer)
                 else if (term_type == TUNNEL_TERM_TYPE_MP2MP && !is_subnet_decap_term && src_ip_str.empty())
                 {
                     SWSS_LOG_ERROR("%s: no source IP is provided.", key.c_str());
-                    valid = false;  
+                    valid = false;
                 }
             }
 
@@ -1537,7 +1537,7 @@ inline void TunnelDecapOrch::setDecapTunnelTermStatus(
     string tunnel_term_key = tunnel_name + state_db_key_delimiter + dst_ip_str;
     string term_type_str = DecapTermTypeStrLookupTable.at(term_type);
     vector<FieldValueTuple> fv = {{ "term_type", term_type_str }};
-    if (term_type == TUNNEL_TERM_TYPE_P2P || term_type == TUNNEL_TERM_TYPE_MP2MP)
+    if (!src_ip_str.empty())
     {
         fv.emplace_back("src_ip", src_ip_str);
     }

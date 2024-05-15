@@ -63,12 +63,6 @@ struct NexthopTunnel
 /* TunnelTable: key string, tunnel object id */
 typedef std::map<std::string, TunnelEntry> TunnelTable;
 
-/* 
-    ExistingIps: ips that currently have term entries,
-    Key in ExistingIps is src_ip-dst_ip
-*/
-typedef std::unordered_set<std::string> ExistingIps;
-
 /* Nexthop IP to refcount map */
 typedef std::map<swss::IpAddress, NexthopTunnel> Nexthop;
 
@@ -96,7 +90,6 @@ public:
 
 private:
     TunnelTable tunnelTable;
-    ExistingIps existingIps;
     TunnelNhs   tunnelNhs;
     UnhandledDecapTermTable unhandledDecapTerms;
     std::unique_ptr<swss::Table> stateTunnelDecapTable = nullptr;
