@@ -23,6 +23,8 @@
 #define FABRIC_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define FABRIC_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP        "FABRIC_QUEUE_STAT_COUNTER"
 #define FABRIC_QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS  100000
+#define SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP             "SWITCH_DEBUG_COUNTER"
+#define SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS            100000
 #define FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT   (60)
 #define FABRIC_MONITOR_DATA "FABRIC_MONITOR_DATA"
 #define APPL_FABRIC_PORT_PREFIX "Fabric"
@@ -38,6 +40,11 @@
 #define ERROR_RATE_CRC_CELLS_CFG 1
 #define ERROR_RATE_RX_CELLS_CFG 61035156
 #define FABRIC_LINK_RATE 44316
+
+const vector<sai_switch_stat_t> switch_voq_counter_ids =
+{
+    SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP
+};
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
@@ -70,6 +77,8 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
                           FABRIC_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
         queue_stat_manager(FABRIC_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                            FABRIC_QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+        switch_drop_counter_manager(SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
+                                    SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS, true),
         m_timer(new SelectableTimer(timespec { .tv_sec = FABRIC_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 })),
         m_debugTimer(new SelectableTimer(timespec { .tv_sec = FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 }))
 {
@@ -85,6 +94,7 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
     m_portNameQueueCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_FABRIC_QUEUE_NAME_MAP));
     m_portNamePortCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_FABRIC_PORT_NAME_MAP));
     m_fabricCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TABLE));
+    m_counterNameToSwitchStatMap =  unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP));
 
     m_appl_db = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
     m_applTable = unique_ptr<Table>(new Table(m_appl_db.get(), APP_FABRIC_MONITOR_PORT_TABLE_NAME));
@@ -1494,5 +1504,24 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
             updateFabricCapacity();
             updateFabricRate();
         }
+        if (!m_isSwitchStatsGenerated)
+        {
+            createSwitchVoqCounters();
+        }
     }
+}
+
+void FabricPortsOrch::createSwitchVoqCounters(void)
+{
+    std::unordered_set<std::string> counter_stats;
+    for (const auto& it: switch_voq_counter_ids)
+    {
+         counter_stats.emplace(sai_serialize_switch_stat(it));
+    }
+    switch_drop_counter_manager.setCounterIdList(gSwitchId, CounterType::SWITCH_DEBUG, counter_stats);
+
+    vector<FieldValueTuple> switchNameSwitchCounterMap;
+    switchNameSwitchCounterMap.emplace_back("SWITCH_ID", sai_serialize_object_id(gSwitchId));
+    m_counterNameToSwitchStatMap->set("", switchNameSwitchCounterMap);
+    m_isSwitchStatsGenerated = true;
 }
