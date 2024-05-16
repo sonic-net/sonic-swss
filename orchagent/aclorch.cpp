@@ -2234,7 +2234,7 @@ bool AclRuleUnderlaySetDhcp::validateAddAction(string attr_name, string _attr_va
     sai_acl_action_data_t actionData;
     actionData.parameter.u32 = 0;
 
-    SWSS_LOG_NOTICE("attr_name: %s, attr_value: %s int val %d", attr_name.c_str(), attr_value.c_str(), to_uint<uint32_t>(_attr_value));
+    SWSS_LOG_INFO("attr_name: %s, attr_value: %s int val %d", attr_name.c_str(), attr_value.c_str(), to_uint<uint32_t>(_attr_value));
 
     if (attr_name == ACTION_DSCP || attr_name == ACTION_META_DATA)
     {
@@ -3915,12 +3915,10 @@ void AclOrch::getAddDeletePorts(AclTable    &newT,
             auto existingtable = m_AclTables.at(tableOid);
             for (auto p : existingtable.pendingPortSet)
             {
-                SWSS_LOG_INFO("Adding table:%s port:%s from pendingPortSet",iter.c_str(), p.c_str());
                 newPortSet.insert(p);
             }
             for (auto p : existingtable.portSet)
             {
-                SWSS_LOG_INFO("Adding table:%s port:%s from activePortSet",iter.c_str(), p.c_str());
                 newPortSet.insert(p);
             }
         }
@@ -4057,6 +4055,23 @@ bool AclOrch::removeEgrSetDscpTable(string table_id)
             return false;
         }
     }
+    return true;
+}
+
+bool AclOrch::removeEgrSetDscpRule(string key)
+{
+    auto metadata = m_egrDscpRuleMetadata[key];
+    if (m_metadataEgrDscpRule[metadata].size() == 1)
+    {
+        if(!removeAclRule(EGR_SET_DSCP_TABLE_ID, std::to_string(metadata)))
+        {
+            SWSS_LOG_ERROR("Failed to remove ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
+            return false;
+        }
+    }
+    m_metadataEgrDscpRule[metadata].erase(key);
+    m_egrDscpRuleMetadata.erase(key);
+    m_metaDataMgr.recycleMetaData(metadata);
     return true;
 }
 
@@ -5005,7 +5020,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Failed to add attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
                 }
             }
-
             if (bHasIPV4 && bHasIPV6)
 	        {
 		        if (type == TABLE_TYPE_L3V4V6)
@@ -5054,21 +5068,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     if (needsEgrSetDscpRule)
                     {
-                        auto metadata = m_egrDscpRuleMetadata[key];
-                        if (m_metadataEgrDscpRule[metadata].size() == 1)
-                        {
-                            if (!removeAclRule(EGR_SET_DSCP_TABLE_ID, std::to_string(metadata)))
-                            {
-                                egrDscpRuleStatus = false;
-                                SWSS_LOG_ERROR("Failed to remove ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
-                            }
-                        }
-                        if (egrDscpRuleStatus)
-                        {
-                            m_metadataEgrDscpRule[metadata].erase(key);
-                            m_egrDscpRuleMetadata.erase(key);
-                            m_metaDataMgr.recycleMetaData(metadata);
-                        }
+                        removeEgrSetDscpRule(key);
                     }
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
                     it++;
@@ -5078,22 +5078,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             {
                 if (egrDscpRuleStatus && needsEgrSetDscpRule)
                 {
-                    auto metadata = m_egrDscpRuleMetadata[key];
-                    if (m_metadataEgrDscpRule[metadata].size() == 1)
-                    {
-                        if (!removeAclRule(EGR_SET_DSCP_TABLE_ID, std::to_string(metadata)))
-                        {
-                            egrDscpRuleStatus = false;
-                            SWSS_LOG_ERROR("Failed to remove ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
-                        }
-                    }
-                    if (egrDscpRuleStatus)
-                    {
-                        m_metadataEgrDscpRule[metadata].erase(key);
-                        m_egrDscpRuleMetadata.erase(key);
-                        m_metaDataMgr.recycleMetaData(metadata);
-
-                    }
+                    removeEgrSetDscpRule(key);
                 }
 
                 it = consumer.m_toSync.erase(it);
@@ -5107,20 +5092,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             bool egrDscpRuleStatus = true;
             if (m_egrDscpRuleMetadata.find(key) != m_egrDscpRuleMetadata.end())
             {
-                auto metadata = m_egrDscpRuleMetadata[key];
-                if (m_metadataEgrDscpRule[metadata].size() == 1)
-                {
-                    if(!removeAclRule(EGR_SET_DSCP_TABLE_ID, std::to_string(metadata)))
-                    {
-                        egrDscpRuleStatus = false;
-                        SWSS_LOG_ERROR("Failed to remove ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
-                    }
-                }
-                if (egrDscpRuleStatus)
-                {
-                    m_metadataEgrDscpRule[metadata].erase(key);
-                    m_egrDscpRuleMetadata.erase(key);
-                }
+                    egrDscpRuleStatus = removeEgrSetDscpRule(key);
             }
             if (egrDscpRuleStatus && removeAclRule(table_id, rule_id))
             {
@@ -5582,7 +5554,7 @@ void MetaDataMgr::recycleMetaData(uint8_t metadata)
             if ( iter->second == metadata)
             {
                 m_dscpMetadata.erase(iter->first);
-                m_freeMetadata.push_back(metadata);
+                m_freeMetadata.push_front(metadata);
             }
         }
     }

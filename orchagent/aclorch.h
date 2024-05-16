@@ -519,6 +519,7 @@ public:
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
     bool updateAclTable(string table_id, AclTable &table);
     bool removeEgrSetDscpTable(string table_id);
+    bool removeEgrSetDscpRule(string key);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
     bool updateAclRule(shared_ptr<AclRule> updatedAclRule);

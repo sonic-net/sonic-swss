@@ -298,6 +298,49 @@ class TestAclMarkMeta:
 
         dvs_acl.verify_no_acl_rules()
 
+    def test_OverlayEntryMultiTableRules(self, dvs_acl):
+        config_qualifiers = {"DST_IP": "20.0.0.1/32",
+                             "SRC_IP": "10.0.0.0/32",
+                             "DSCP": "1"}
+        dvs_acl.create_acl_table(OVERLAY_TABLE_NAME,
+                                    OVERLAY_TABLE_TYPE,
+                                    OVERLAY_BIND_PORTS)
+        dvs_acl.create_acl_table(OVERLAY_TABLE_NAME6,
+                                     OVERLAY_TABLE_TYPE6,
+                                     OVERLAY_BIND_PORTS6)
+        acl_table_id = dvs_acl.get_acl_table_ids(3)
+        _, names, _ = self.get_table_stage(dvs_acl, acl_table_id, [], OVERLAY_BIND_PORTS)
+        #create 1st Rule
+        dvs_acl.create_dscp_acl_rule(OVERLAY_TABLE_NAME, "1", config_qualifiers, action="12")
+        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", "Active")
+
+        #create 2nd Rule ipv6
+        config_qualifiers6 = {"SRC_IPV6": "2777::0/64",
+                             "DST_IPV6": "2788::0/64",
+                             "DSCP" : "1"};
+        dvs_acl.create_dscp_acl_rule(OVERLAY_TABLE_NAME6, "1", config_qualifiers6, action="12")
+
+        # Verify status of both rules.
+        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", "Active")
+        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME6, "1", "Active")
+        table_rules = self.get_acl_rules_with_action(dvs_acl, 3)
+        self.verify_acl_rules_with_action(names, acl_table_id, table_rules, ["1"], ["12"])
+
+        # remove first rule. We should still have 1 rule, 1 for MARK_META
+        dvs_acl.remove_acl_rule(OVERLAY_TABLE_NAME6, "1")
+        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME6, "1", None)
+        table_rules = self.get_acl_rules_with_action(dvs_acl, 2)
+        self.verify_acl_rules_with_action(names, acl_table_id, table_rules, ["1"], ["12"])
+        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", "Active")
+
+        # remove 2nd rule. We should still have 2 rules, 1 for MARK_META and 1 for EGR_SET_DSCP
+        dvs_acl.remove_acl_rule(OVERLAY_TABLE_NAME, "1")
+        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", None)
+        dvs_acl.verify_no_acl_rules()
+        dvs_acl.remove_acl_table(OVERLAY_TABLE_NAME)
+        dvs_acl.remove_acl_table(OVERLAY_TABLE_NAME6)
+        dvs_acl.verify_acl_table_count(0)
+
     def test_OverlayEntryMultiMetaRule(self, dvs_acl, overlay_acl_table):
         config_qualifiers = {"DST_IP": "20.0.0.1/32",
                              "SRC_IP": "10.0.0.0/32",
@@ -342,49 +385,6 @@ class TestAclMarkMeta:
         dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "3", None)
 
         dvs_acl.verify_no_acl_rules()
-
-    def test_OverlayEntryMultiTableRules(self, dvs_acl):
-        config_qualifiers = {"DST_IP": "20.0.0.1/32",
-                             "SRC_IP": "10.0.0.0/32",
-                             "DSCP": "1"}
-        dvs_acl.create_acl_table(OVERLAY_TABLE_NAME,
-                                    OVERLAY_TABLE_TYPE,
-                                    OVERLAY_BIND_PORTS)
-        dvs_acl.create_acl_table(OVERLAY_TABLE_NAME6,
-                                     OVERLAY_TABLE_TYPE6,
-                                     OVERLAY_BIND_PORTS6)
-        acl_table_id = dvs_acl.get_acl_table_ids(3)
-        _, names, _ = self.get_table_stage(dvs_acl, acl_table_id, [], OVERLAY_BIND_PORTS)
-        #create 1st Rule
-        dvs_acl.create_dscp_acl_rule(OVERLAY_TABLE_NAME, "1", config_qualifiers, action="12")
-        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", "Active")
-
-        #create 2nd Rule ipv6
-        config_qualifiers6 = {"SRC_IPV6": "2777::0/64",
-                             "DST_IPV6": "2788::0/64",
-                             "DSCP" : "1"};
-        dvs_acl.create_dscp_acl_rule(OVERLAY_TABLE_NAME6, "1", config_qualifiers6, action="12")
-
-        # Verify status of both rules.
-        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", "Active")
-        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME6, "1", "Active")
-        table_rules = self.get_acl_rules_with_action(dvs_acl, 3)
-        self.verify_acl_rules_with_action(names, acl_table_id, table_rules, ["1"], ["12"])
-
-        # remove first rule. We should still have 1 rule, 1 for MARK_META
-        dvs_acl.remove_acl_rule(OVERLAY_TABLE_NAME6, "1")
-        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME6, "1", None)
-        table_rules = self.get_acl_rules_with_action(dvs_acl, 2)
-        self.verify_acl_rules_with_action(names, acl_table_id, table_rules, ["1"], ["12"])
-        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", "Active")
-
-        # remove 2nd rule. We should still have 2 rules, 1 for MARK_META and 1 for EGR_SET_DSCP
-        dvs_acl.remove_acl_rule(OVERLAY_TABLE_NAME, "1")
-        dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, "1", None)
-        dvs_acl.verify_no_acl_rules()
-        dvs_acl.remove_acl_table(OVERLAY_TABLE_NAME)
-        dvs_acl.remove_acl_table(OVERLAY_TABLE_NAME6)
-        dvs_acl.verify_acl_table_count(0)
 
     def test_OverlayEntryExhaustMeta(self, dvs_acl, overlay_acl_table):
         config_qualifiers = {"DST_IP": "20.0.0.1/32",
