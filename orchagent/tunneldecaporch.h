@@ -47,11 +47,11 @@ struct TunnelEntry
 
 struct SubnetDecapConfig
 {
-    bool        enable;
-    std::string src_ip;
-    std::string src_ip_v6;
-    std::string tunnel;
-    std::string tunnel_v6;
+    bool            enable;
+    std::string     src_ip;
+    std::string     src_ip_v6;
+    std::string     tunnel;
+    std::string     tunnel_v6;
 };
 
 struct NexthopTunnel
