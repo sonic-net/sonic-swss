@@ -114,7 +114,7 @@ bool FabricPortsOrch::checkFabricPortMonState()
     bool enabled = false;
     std::vector<FieldValueTuple> constValues;
     bool setCfgVal = m_applMonitorConstTable->get("FABRIC_MONITOR_DATA", constValues);
-    if(!setCfgVal)
+    if (!setCfgVal)
     {
         return enabled;
     }
