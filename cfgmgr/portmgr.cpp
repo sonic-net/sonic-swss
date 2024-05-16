@@ -93,16 +93,11 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
     }
-    else
-    {
-        // tc qdisc del dev <port_name> handle ffff: ingress
-        cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
-        cmd_str = cmd.str();
-        ret = swss::exec(cmd_str, res);
-    }
+    
     if (!ret)
     {
-        
+        return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+
     }
     else if (!isPortStateOk(alias))
     {
@@ -202,7 +197,7 @@ void PortMgr::doTask(Consumer &consumer)
             bool configured = (m_portList.find(alias) != m_portList.end());
 
             /* If this is the first time we set port settings
-             * assign default admin status and mtu
+             * assign default admin status and mtu and dhcp_rate_limit
              */
             if (!configured)
             {
@@ -249,11 +244,14 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
+                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
+                field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+
 
 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
