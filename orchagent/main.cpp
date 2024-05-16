@@ -68,10 +68,11 @@ int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
+bool gTraditionalFlexCounter = false;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -90,6 +91,7 @@ void usage()
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
+    cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
 }
 
 void sighup_handler(int signo)
@@ -344,7 +346,7 @@ int main(int argc, char **argv)
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:")) != -1)
     {
         switch (opt)
         {
@@ -394,6 +396,12 @@ int main(int argc, char **argv)
             break;
         case 'z':
             sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
+            break;
+        case 'c':
+            if (optarg == string("traditional"))
+            {
+                gTraditionalFlexCounter = true;
+            }
             break;
         case 'f':
 
@@ -446,6 +454,7 @@ int main(int argc, char **argv)
     /* Initialize sairedis */
     initSaiApi();
     initSaiRedis();
+    initFlexCounterTables();
 
     /* Initialize remaining recorder parameters  */
     Recorder::Instance().swss.setRecord(

@@ -15,6 +15,8 @@ extern "C" {
 
 #define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
 
+const string pfc_wd_flex_counter_group = PFC_WD_FLEX_COUNTER_GROUP;
+
 enum class PfcWdAction
 {
     PFC_WD_ACTION_UNKNOWN,
@@ -136,10 +138,6 @@ private:
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-
-    shared_ptr<DBConnector> m_flexCounterDb = nullptr;
-    shared_ptr<ProducerTable> m_flexCounterTable = nullptr;
-    shared_ptr<ProducerTable> m_flexCounterGroupTable = nullptr;
 
     bool m_bigRedSwitchFlag = false;
     int m_pollInterval;

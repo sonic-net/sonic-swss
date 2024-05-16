@@ -49,7 +49,8 @@ def prepend_param_field(param_field):
 
 def verify_response(consumer, key, attr_list, status, err_message = "SWSS_RC_SUCCESS"):
   """ Verifies a response."""
-  consumer.readData()
+  if consumer.peek() <= 0:
+    consumer.readData()
   (op, data, values) = consumer.pop()
   assert data == key
   assert op == status
