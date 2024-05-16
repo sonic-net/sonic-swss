@@ -605,6 +605,9 @@ namespace qosorch_test
             delete gQosOrch;
             gQosOrch = nullptr;
 
+            delete gBufferOrch;
+            gBufferOrch = nullptr;
+
             delete tunnel_decap_orch;
             tunnel_decap_orch = nullptr;
 

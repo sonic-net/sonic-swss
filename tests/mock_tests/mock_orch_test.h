@@ -193,6 +193,7 @@ namespace mock_orch_test
                 APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
             };
             gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
+            ut_orch_list.push_back((Orch **)&gBufferOrch);
 
             TableConnector stateDbSwitchTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
             TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);

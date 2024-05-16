@@ -30,6 +30,7 @@ extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gUnderlayIfId;
 extern FlexManagerDirectory g_FlexManagerDirectory;
+extern bool gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
@@ -1219,7 +1220,10 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
     m_tunnelNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_NAME_MAP));
     m_tunnelTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_TYPE_MAP));
 
-    m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+    if (gTraditionalFlexCounter)
+    {
+        m_vidToRidTable = make_unique<Table>(m_asic_db.get(), "VIDTORID");
+    }
 
     auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
     m_FlexCounterUpdTimer = new SelectableTimer(intervT);
@@ -1237,7 +1241,7 @@ void VxlanTunnelOrch::doTask(SelectableTimer &timer)
         string value;
         const auto id = sai_serialize_object_id(it->first);
 
-        if (m_vidToRidTable->hget("", id, value))
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
             vector<FieldValueTuple> tunnelNameFvs;
