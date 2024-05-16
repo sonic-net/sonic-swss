@@ -442,6 +442,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     /* Initialize queue tables */
     m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
     m_voqTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_VOQ_NAME_MAP));
+    m_voqToPortNamTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_VOQ_MAP));
     m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
     m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
     m_queueTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_TYPE_MAP));
@@ -6817,6 +6818,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
     vector<FieldValueTuple> queuePortVector;
     vector<FieldValueTuple> queueIndexVector;
     vector<FieldValueTuple> queueTypeVector;
+    vector<FieldValueTuple> voqToPortNameVector;
     std::vector<sai_object_id_t> queue_ids;
 
     if (voq)
@@ -6865,6 +6867,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
             // flexcounter orch logic. Always enabled voq counters.
             addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, true);
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_system_port_oid));
+            voqToPortNameVector.emplace_back(id, port.m_system_port_info.alias);
         }
         else
         {
@@ -6885,6 +6888,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
     if (voq)
     {
         m_voqTable->set("", queueVector);
+        m_voqToPortNamTable->set("", voqToPortNameVector); 
     }
     else
     {

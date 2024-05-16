@@ -248,6 +248,7 @@ private:
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_voqTable;
+    unique_ptr<Table> m_voqToPortNamTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<Table> m_queueTypeTable;
