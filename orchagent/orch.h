@@ -271,7 +271,7 @@ protected:
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
 
-    ResponsePublisher m_publisher;
+    ResponsePublisher m_publisher{"APPL_STATE_DB"};
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };

@@ -81,12 +81,6 @@ class TestP4RTAcl(object):
             + ":"
             + self._p4rt_acl_table_definition_obj.TBL_NAME,
         )
-        original_appl_state_acl_tables = util.get_keys(
-            self._p4rt_acl_table_definition_obj.appl_state_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_acl_table_definition_obj.TBL_NAME,
-        )
         original_asic_acl_tables = util.get_keys(
             self._p4rt_acl_table_definition_obj.asic_db,
             self._p4rt_acl_table_definition_obj.ASIC_DB_TBL_NAME,
@@ -233,26 +227,6 @@ class TestP4RTAcl(object):
         # query application database for newly created ACL table
         (status, fvs) = util.get_key(
             self._p4rt_acl_table_definition_obj.appl_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_acl_table_definition_obj.TBL_NAME,
-            table_name,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # query application state database for ACL tables
-        state_acl_tables = util.get_keys(
-            self._p4rt_acl_table_definition_obj.appl_state_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_acl_table_definition_obj.TBL_NAME,
-        )
-        assert len(state_acl_tables) == len(original_appl_state_acl_tables) + 1
-
-        # query application state database for newly created ACL table
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_table_definition_obj.appl_state_db,
             self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME
             + ":"
             + self._p4rt_acl_table_definition_obj.TBL_NAME,
@@ -422,10 +396,6 @@ class TestP4RTAcl(object):
             self._p4rt_acl_rule_obj.appl_db,
             self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
         )
-        original_appl_state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
         original_asic_acl_rules = util.get_keys(
             self._p4rt_acl_rule_obj.asic_db, self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME
         )
@@ -474,22 +444,6 @@ class TestP4RTAcl(object):
         # query application database for newly created ACL rule
         (status, fvs) = util.get_key(
             self._p4rt_acl_rule_obj.appl_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
-            table_name_with_rule_key1,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 1
-
-        # query application state database for newly created ACL rule
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_rule_obj.appl_state_db,
             self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
             table_name_with_rule_key1,
         )
@@ -653,22 +607,6 @@ class TestP4RTAcl(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 1
-
-        # query application state database for updated ACL rule
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
-            table_name_with_rule_key1,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # query ASIC database for ACL counters
         acl_asic_counters = util.get_keys(
             self._p4rt_acl_counter_obj.asic_db,
@@ -821,22 +759,6 @@ class TestP4RTAcl(object):
         # query application database for newly created ACL rule
         (status, fvs) = util.get_key(
             self._p4rt_acl_rule_obj.appl_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
-            table_name_with_rule_key2,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 2
-
-        # query application state database for newly created ACL rule
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_rule_obj.appl_state_db,
             self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
             table_name_with_rule_key2,
         )
@@ -1025,22 +947,6 @@ class TestP4RTAcl(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 3
-
-        # query application state database for newly created ACL rule
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
-            table_name_with_rule_key3,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # query ASIC database for ACL counters
         acl_asic_counters = util.get_keys(
             self._p4rt_acl_counter_obj.asic_db,
@@ -1136,21 +1042,6 @@ class TestP4RTAcl(object):
         )
         assert status == False
 
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 2
-
-        # verify that the ACL rule no longer exists in application state database
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
-            table_name_with_rule_key3,
-        )
-        assert status == False
-
         # query ASIC database for ACL rules
         acl_rules = util.get_keys(
             self._p4rt_acl_rule_obj.asic_db, self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME
@@ -1189,21 +1080,6 @@ class TestP4RTAcl(object):
         # verify that the ACL rule no longer exists in application database
         (status, fvs) = util.get_key(
             self._p4rt_acl_rule_obj.appl_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
-            table_name_with_rule_key1,
-        )
-        assert status == False
-
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 1
-
-        # verify that the ACL rule no longer exists in application state database
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_rule_obj.appl_state_db,
             self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
             table_name_with_rule_key1,
         )
@@ -1255,21 +1131,6 @@ class TestP4RTAcl(object):
         # verify that the ACL rule no longer exists in application database
         (status, fvs) = util.get_key(
             self._p4rt_acl_rule_obj.appl_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
-            table_name_with_rule_key2,
-        )
-        assert status == False
-
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules)
-
-        # verify that the ACL rule no longer exists in application state database
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_rule_obj.appl_state_db,
             self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
             table_name_with_rule_key2,
         )
@@ -1333,23 +1194,6 @@ class TestP4RTAcl(object):
         )
         assert status == False
 
-        # query application state database for ACL tables
-        state_acl_tables = util.get_keys(
-            self._p4rt_acl_table_definition_obj.appl_state_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_acl_table_definition_obj.TBL_NAME,
-        )
-        assert len(state_acl_tables) == len(original_appl_state_acl_tables)
-
-        # verify that the ACL table no longer exists in application state database
-        (status, fvs) = util.get_key(
-            self._p4rt_acl_table_definition_obj.appl_state_db,
-            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
-            self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name,
-        )
-        assert status == False
-
         # query ASIC database for ACL tables
         acl_tables = util.get_keys(
             self._p4rt_acl_table_definition_obj.asic_db,
@@ -1374,10 +1218,6 @@ class TestP4RTAcl(object):
         table_name = "ACL_PUNT_TABLE_RULE_TEST"
         original_appl_acl_rules = util.get_keys(
             self._p4rt_acl_rule_obj.appl_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        original_appl_state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
             self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
         )
         original_asic_acl_rules = util.get_keys(
@@ -1427,13 +1267,6 @@ class TestP4RTAcl(object):
         )
         assert status == True
         util.verify_attr(fvs, attr_list)
-
-        # query application state database for ACL rules
-        state_acl_rules = util.get_keys(
-            self._p4rt_acl_rule_obj.appl_state_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
-        )
-        assert len(state_acl_rules) == len(original_appl_state_acl_rules)
 
         # query ASIC database for ACL rules
         acl_asic_rules = util.get_keys(
