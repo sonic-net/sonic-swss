@@ -339,7 +339,6 @@ private:
     bool oper_fec_sup = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
-    swss::SelectableTimer *m_agg_voq_poller = nullptr;
 
     bool m_cmisModuleAsicSyncSupported = false;
 
@@ -475,7 +474,6 @@ private:
     void updatePortStatePoll(const Port &port, port_state_poll_t type, bool active);
     void refreshPortStateAutoNeg(const Port &port);
     void refreshPortStateLinkTraining(const Port &port);
-    void updatePortState();
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values, int base = 16);
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
@@ -512,10 +510,6 @@ private:
 
     std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
     map<sai_object_id_t, struct queueInfo> m_queueInfo;
-
-    void updateVoqStatsChassisDb();
-    void updateVoqStatsPerPortChassisDb(const Port& port);
-    unique_ptr<Table> m_tableVoqQueueCounter;
 
 private:
     void initializeCpuPort();
