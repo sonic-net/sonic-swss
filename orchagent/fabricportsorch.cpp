@@ -820,7 +820,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
             }
             else
             {
-                SWSS_LOG_NOTICE( "JFJF same isolation status for %d", lane);
+                SWSS_LOG_INFO( "Same isolation status for %d", lane);
             }
         }
         else
