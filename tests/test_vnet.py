@@ -541,6 +541,65 @@ def check_syslog(dvs, marker, err_log):
     assert num.strip() == "0"
 
 
+def create_fvs(**kwargs):
+    return swsscommon.FieldValuePairs(list(kwargs.items()))
+
+
+def create_and_test_tunnel(appdb, asicdb, statedb, tunnel_name, **kwargs):
+    """ Create tunnel and verify all needed entries in ASIC DB exists """
+    fvs = create_fvs(**kwargs)
+    # create tunnel entry in DB
+    ps = swsscommon.ProducerStateTable(appdb, "TUNNEL_DECAP_TABLE")
+    ps.set(tunnel_name, fvs)
+
+    # wait till config will be applied
+    time.sleep(1)
+
+    # check asic db table
+    tunnel_table = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+
+    tunnels = tunnel_table.getKeys()
+    assert len(tunnels) == 1
+
+    tunnel_state_table = swsscommon.Table(statedb, "TUNNEL_DECAP_TABLE")
+
+    tunnels = tunnel_state_table.getKeys()
+    for tunnel in tunnels:
+        status, fvs = tunnel_state_table.get(tunnel)
+        assert status == True
+
+        for field, value in fvs:
+            if field == "tunnel_type":
+                assert value == "IPINIP"
+            elif field == "dscp_mode":
+                assert value == kwargs["dscp_mode"]
+            elif field == "ecn_mode":
+                assert value == kwargs["ecn_mode"]
+            elif field == "ttl_mode":
+                assert value == kwargs["ttl_mode"]
+            elif field == "encap_ecn_mode":
+                assert value == kwargs["encap_ecn_mode"]
+            else:
+                assert False, "Field %s is not tested" % field
+
+
+def remove_and_test_tunnel(appdb, asicdb, statedb, tunnel_name):
+    """ Removes tunnel and checks that ASIC db is clear"""
+    tunnel_table = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+    tunnel_app_table = swsscommon.Table(appdb, "TUNNEL_DECAP_TABLE")
+    tunnel_state_table = swsscommon.Table(statedb, "TUNNEL_DECAP_TABLE")
+
+    ps = swsscommon.ProducerStateTable(appdb, "TUNNEL_DECAP_TABLE")
+    ps._del(tunnel_name)
+
+    # wait till config will be applied
+    time.sleep(1)
+
+    assert len(tunnel_table.getKeys()) == 0
+    assert len(tunnel_app_table.getKeys()) == 0
+    assert len(tunnel_state_table.getKeys()) == 0
+
+
 loopback_id = 0
 def_vr_id = 0
 switch_mac = None
@@ -1098,6 +1157,30 @@ class VnetVxlanVrfTunnel(object):
         check_deleted_object(app_db, self.APP_VNET_MONITOR, key)
 
 class TestVnetOrch(object):
+
+    CFG_SUBNET_DECAP_TABLE_NAME = "SUBNET_DECAP"
+
+    @pytest.fixture
+    def setup_subnet_decap(self, dvs):
+
+        def _apply_subnet_decap_config(subnet_decap_config):
+            """Apply subnet decap config to CONFIG_DB."""
+            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
+            fvs = create_fvs(**subnet_decap_config)
+            subnet_decap_tbl.set("AZURE", fvs)
+
+        def _cleanup_subnet_decap_config():
+            """Cleanup subnet decap config in CONFIG_DB."""
+            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
+            for key in subnet_decap_tbl.getKeys():
+                subnet_decap_tbl._del(key)
+
+        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        _cleanup_subnet_decap_config()
+
+        yield _apply_subnet_decap_config
+
+        _cleanup_subnet_decap_config()
 
     def get_vnet_obj(self):
         return VnetVxlanVrfTunnel()
@@ -3523,6 +3606,162 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet25')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet25')
         delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 26 - Test for vnet tunnel routes with ECMP nexthop group with subnet decap enable
+    '''
+    def test_vnet_orch_26(self, dvs, setup_subnet_decap):
+        # apply subnet decap config
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        setup_subnet_decap(subnet_decap_config)
+
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        vnet_obj = self.get_vnet_obj()
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Add the subnet decap tunnel
+        create_and_test_tunnel(
+            appdb, asicdb, statedb, "IPINIP_SUBNET", tunnel_type="IPINIP",
+            dscp_mode="uniform", ecn_mode="standard", ttl_mode="pipe"
+        )
+
+        vnet_obj.fetch_exist_entries(dvs)
+        tunnel_name = 'tunnel_26'
+        create_vxlan_tunnel(dvs, tunnel_name, '26.26.26.26')
+        create_vnet_entry(dvs, 'Vnet26', tunnel_name, '10026', "", advertise_prefix=True)
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet26')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet26', '10026')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '26.26.26.26')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet26', '26.0.0.1,26.0.0.2,26.0.0.3', ep_monitor='26.1.0.1,26.1.0.2,26.1.0.3', profile="test_profile")
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet26', ["100.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up
+        update_bfd_session_state(dvs, '26.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '26.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '26.1.0.3', 'Up')
+        time.sleep(2)
+        vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet26', ['26.0.0.1', '26.0.0.2', '26.0.0.3'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32", ['26.0.0.1', '26.0.0.2', '26.0.0.3'])
+        check_routes_advertisement(dvs, "100.100.1.1/32", "test_profile")
+
+        # Set all endpoint to down state
+        update_bfd_session_state(dvs, '26.1.0.1', 'Down')
+        update_bfd_session_state(dvs, '26.1.0.2', 'Down')
+        update_bfd_session_state(dvs, '26.1.0.3', 'Down')
+        time.sleep(2)
+
+        # Confirm the tunnel route is updated in ASIC
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet26', ["100.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Remove tunnel route
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet26')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet26', ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Confirm the BFD sessions are removed
+        check_del_bfd_session(dvs, ['12.1.0.1', '12.1.0.2', '12.1.0.3'])
+
+        delete_vnet_entry(dvs, 'Vnet26')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet26')
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        # Remove the subnet decap tunnel
+        remove_and_test_tunnel(appdb, asicdb, statedb, "IPINIP_SUBNET")
+
+    '''
+    Test 27 - Test for IPv6 vnet tunnel routes with ECMP nexthop group with subnet decap enable
+    '''
+    def test_vnet_orch_27(self, dvs, setup_subnet_decap):
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        setup_subnet_decap(subnet_decap_config)
+
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        vnet_obj = self.get_vnet_obj()
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Add the subnet decap tunnel
+        create_and_test_tunnel(
+            appdb, asicdb, statedb, "IPINIP_SUBNET_V6", tunnel_type="IPINIP",
+            dscp_mode="uniform", ecn_mode="standard", ttl_mode="pipe"
+        )
+
+        vnet_obj.fetch_exist_entries(dvs)
+        tunnel_name = 'tunnel_27'
+        vnet_name = 'Vnet26'
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:10::32')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10010', "", advertise_prefix=True)
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10010')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:10::32')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::1,fd:10:1::2,fd:10:1::3', ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3', profile="test_profile")
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", [])
+        check_remove_routes_advertisement(dvs, "fd:10:10::1/128")
+
+        # Route should be properly configured when all bfd session states go up
+        update_bfd_session_state(dvs, 'fd:10:2::2', 'Up')
+        update_bfd_session_state(dvs, 'fd:10:2::3', 'Up')
+        update_bfd_session_state(dvs, 'fd:10:2::1', 'Up')
+        time.sleep(2)
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3'])
+        check_routes_advertisement(dvs, "fd:10:10::1/128", "test_profile")
+
+        # Set all endpoint to down state
+        update_bfd_session_state(dvs, 'fd:10:2::1', 'Down')
+        update_bfd_session_state(dvs, 'fd:10:2::2', 'Down')
+        update_bfd_session_state(dvs, 'fd:10:2::3', 'Down')
+        time.sleep(2)
+
+        # Confirm the tunnel route is updated in ASIC
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", [])
+        check_remove_routes_advertisement(dvs, "fd:10:10::1/128")
+
+        # Remove tunnel route
+        delete_vnet_routes(dvs, "fd:10:10::1/128", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_remove_state_db_routes(dvs, vnet_name, "fd:10:10::1/128")
+        check_remove_routes_advertisement(dvs, "fd:10:10::1/128")
+
+        # Confirm the BFD sessions are removed
+        check_del_bfd_session(dvs, ['fd:10:2::1', 'fd:10:2::2', 'fd:10:2::3'])
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        # Remove the subnet decap tunnel
+        remove_and_test_tunnel(appdb, asicdb, statedb, "IPINIP_SUBNET_V6")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
