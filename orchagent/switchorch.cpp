@@ -26,6 +26,7 @@ extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
+extern string gMySwitchType;
 
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
@@ -92,6 +93,10 @@ const std::set<sai_switch_asic_sdk_health_category_t> switch_asic_sdk_health_eve
     SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_CPU_HW,
     SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW
 };
+const vector<sai_switch_stat_t> switch_drop_counter_ids =
+{
+    SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP
+};
 
 const std::set<std::string> switch_non_sai_attribute_set = {"ordered_ecmp"};
 
@@ -124,7 +129,11 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
         m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
         m_stateDbForNotification(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
-        m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME))
+        m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME)),
+        switch_drop_counter_manager(SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
+                                    SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS, true),
+        m_switchDropCntrPollEnableTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_SWITCH_DROP_COUNTER_POLL_ENABLE_TIMER_INTERVAL,
+                                        .tv_nsec = 0 })))
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
@@ -139,6 +148,16 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+
+    // Add Switch level drop counters to FLEX_COUNTER_DB only for VOQ switch type since it is supported by only VOQ/fabric switches now.
+    if(gMySwitchType == "voq")
+    {
+        m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+        m_counterNameToSwitchStatMap =  unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP));
+        auto executorSwitchT = new ExecutableTimer(m_switchDropCntrPollEnableTimer, this, "SWITCH_DROP_COUNTER_TIMER");
+        Orch::addExecutor(executorSwitchT);
+        m_switchDropCntrPollEnableTimer->start();
+    }
 }
 
 void SwitchOrch::initAsicSdkHealthEventNotification()
@@ -1297,7 +1316,12 @@ void SwitchOrch::doTask(SelectableTimer &timer)
             SWSS_LOG_INFO("Eliminate ASIC/SDK health %s", str.c_str());
         }
     }
-}
+    else if (&timer == m_switchDropCntrPollEnableTimer)
+    {
+       createSwitchDropCounters();
+       m_switchDropCntrPollEnableTimer->stop();
+    }
+ }
 
 void SwitchOrch::initSensorsTable()
 {
@@ -1514,4 +1538,18 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
             return false;
         }
     }
+}
+
+void SwitchOrch::createSwitchDropCounters(void)
+{
+    std::unordered_set<std::string> counter_stats;
+    for (const auto& it: switch_drop_counter_ids)
+    {
+         std::string drop_stats = sai_serialize_switch_stat(it);
+         counter_stats.emplace(drop_stats);
+         vector<FieldValueTuple> switchNameSwitchCounterMap;
+         switchNameSwitchCounterMap.emplace_back((SWITCH_STANDARD_DROP_COUNTERS + drop_stats), drop_stats);
+         m_counterNameToSwitchStatMap->set("", switchNameSwitchCounterMap);
+    }
+    switch_drop_counter_manager.setCounterIdList(gSwitchId, CounterType::SWITCH_DEBUG, counter_stats);
 }

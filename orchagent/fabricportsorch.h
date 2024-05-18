@@ -19,7 +19,6 @@ public:
                     bool fabricPortStatEnabled=true, bool fabricQueueStatEnabled=true);
     bool allPortsReady();
     void generateQueueStats();
-    void createSwitchVoqCounters(void);
 
 private:
     bool m_fabricPortStatEnabled;
@@ -44,7 +43,7 @@ private:
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager queue_stat_manager;
-    FlexCounterManager switch_drop_counter_manager;
+    FlexCounterManager *switch_drop_counter_manager = nullptr;
 
     sai_uint32_t m_fabricPortCount;
     map<int, sai_object_id_t> m_fabricLanePortMap;
@@ -72,6 +71,7 @@ private:
     void updateFabricCapacity();
     bool checkFabricPortMonState();
     void updateFabricRate();
+    void createSwitchDropCounters();
 
     void doTask() override;
     void doTask(Consumer &consumer);
