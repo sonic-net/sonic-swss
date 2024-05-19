@@ -1674,7 +1674,7 @@ bool AclRule::getCreateCounter() const
     return m_createCounter;
 }
 
-shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
+shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data, MetaDataMgr * m_metadataMgr)
 {
     shared_ptr<AclRule> aclRule;
 
@@ -1692,7 +1692,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
-            return make_shared<AclRuleUnderlaySetDhcp>(acl, rule, table);
+            return make_shared<AclRuleUnderlaySetDhcp>(acl, rule, table, m_metadataMgr);
         }
         else if (aclDTelActionLookup.find(action) != aclDTelActionLookup.cend())
         {
@@ -2221,9 +2221,21 @@ void AclRuleMirror::onUpdate(SubjectType type, void *cntx)
     }
 }
 
-AclRuleUnderlaySetDhcp::AclRuleUnderlaySetDhcp(AclOrch *aclOrch, string rule, string table, bool createCounter) :
-        AclRule(aclOrch, rule, table, createCounter)
+AclRuleUnderlaySetDhcp::AclRuleUnderlaySetDhcp(AclOrch *aclOrch, string rule, string table, MetaDataMgr* m_metaDataMgr, bool createCounter):
+    AclRule(aclOrch, rule, table, createCounter),
+    table_id(table),
+    m_metaDataMgr(m_metaDataMgr)
 {
+}
+
+uint32_t AclRuleUnderlaySetDhcp::getDscpValue() const
+{
+    return cachedDscpValue;
+}
+
+uint32_t AclRuleUnderlaySetDhcp::getMetadata() const
+{
+    return cachedMetadata;
 }
 
 bool AclRuleUnderlaySetDhcp::validateAddAction(string attr_name, string _attr_value)
@@ -2231,14 +2243,48 @@ bool AclRuleUnderlaySetDhcp::validateAddAction(string attr_name, string _attr_va
     SWSS_LOG_ENTER();
 
     string attr_value = to_upper(_attr_value);
+
+    sai_object_id_t table_oid = m_pAclOrch->getTableById(table_id);
+    auto aclTable = m_pAclOrch->getTableByOid(table_oid);
+    string type = aclTable->type.getName();
+    string key = table_id + ":" + m_id;
+    // we handle the allocation of metadata for here. based on SET_DSCP action, we check if a metadata is already allocated then we reuse it
+    // otherwise we allocate a new metadata. This metadata is then set an the action for the Rule of this table. We also cache the SET_DSCP
+    // value and the allocated metadata in a the rule structure itself so that when we go to addRule we can use these to add the
+    // egr_set_dscp rule
+    if (attr_name == ACTION_DSCP && (type == TABLE_TYPE_MARK_META || type == TABLE_TYPE_MARK_META_V6))
+    {
+        if (!m_pAclOrch->isUsingEgrSetDscp(table_id))
+        {
+
+            SWSS_LOG_ERROR("Unexpected Error. Table %s not asssociated with EGR_SET_DSCP table", table_id.c_str());
+            return false;
+        }
+
+        u_int8_t actionDscpValue = uint8_t(std::stoi(attr_value));
+        cachedDscpValue = actionDscpValue;
+        auto metadata = m_metaDataMgr->getFreeMetaData(actionDscpValue);
+
+        if (metadata == METADATA_VALUE_INVALID)
+        {
+            SWSS_LOG_ERROR("Failed to get free metadata for DSCP value %d", actionDscpValue);
+            return false;
+        }
+        cachedMetadata = metadata;
+        attr_name = ACTION_META_DATA;
+        attr_value = std::to_string(metadata);
+        m_pAclOrch->addMetaDataRef(key, metadata);
+    }
+
+
     sai_acl_action_data_t actionData;
     actionData.parameter.u32 = 0;
 
-    SWSS_LOG_INFO("attr_name: %s, attr_value: %s int val %d", attr_name.c_str(), attr_value.c_str(), to_uint<uint32_t>(_attr_value));
-
+    SWSS_LOG_INFO("attr_name: %s, attr_value: %s int val %d", attr_name.c_str(), attr_value.c_str(), to_uint<uint32_t>(attr_value));
+    // we only handle DSCP and META_DATA actions for now.
     if (attr_name == ACTION_DSCP || attr_name == ACTION_META_DATA)
     {
-        actionData.parameter.u32 = to_uint<uint32_t>(_attr_value);
+        actionData.parameter.u32 = to_uint<uint32_t>(attr_value);
         if (attr_name == ACTION_META_DATA && (actionData.parameter.u32 < METADATA_VALUE_START || actionData.parameter.u32 > METADATA_VALUE_END))
         {
             return false;
@@ -3904,7 +3950,7 @@ void AclOrch::getAddDeletePorts(AclTable    &newT,
     }
 
     // if the table type is TABLE_TYPE_EGR_SET_DSCP we use a single instance of this
-    //table with all the tables of type TABLE_TYPE_MARK_META/v6 therefoere we need to
+    // table with all the tables of type TABLE_TYPE_MARK_META/v6 therefoere we need to
     // to collect all the ports from the tables of type TABLE_TYPE_MARK_META/v6 and
     // put them in the newPortSet.
     if (curT.id == EGR_SET_DSCP_TABLE_ID)
@@ -4029,6 +4075,93 @@ bool AclOrch::updateAclTable(AclTable &currentTable, AclTable &newTable)
     return true;
 }
 
+EgressSetDscpTableStatus AclOrch::addEgrSetDscpTable(string table_id, AclTable &table, string orignalTableTypeName)
+{
+    SWSS_LOG_ENTER();
+    EgressSetDscpTableStatus status = EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_REQUIRED;
+    AclTable egrSetDscpTable(this);
+    // we only add the EGR_SET_DSCP table if the table type is TABLE_TYPE_UNDERLAY_SET_DSCP or TABLE_TYPE_UNDERLAY_SET_DSCPV6
+    // otherwise we return EGRESS_SET_DSCP_TABLE_NOT_REQUIRED.
+    if (orignalTableTypeName == TABLE_TYPE_UNDERLAY_SET_DSCP || orignalTableTypeName == TABLE_TYPE_UNDERLAY_SET_DSCPV6)
+    {
+
+        AclTable egrSetDscpTable(this);
+
+        // copy ports from the TABLE_TYPE_UNDERLAY_SET_DSCP/v6 to the egrSetDscpTable.
+        std::set<string> ports;
+        ports.insert(table.portSet.begin(), table.portSet.end());
+        ports.insert(table.pendingPortSet.begin(), table.pendingPortSet.end());
+        for (auto alias : ports)
+        {
+            Port port;
+            if (!gPortsOrch->getPort(alias, port))
+            {
+                SWSS_LOG_INFO("Add unready port %s to pending list for ACL table %s",
+                        alias.c_str(), EGR_SET_DSCP_TABLE_ID);
+                egrSetDscpTable.pendingPortSet.emplace(alias);
+                continue;
+            }
+
+            sai_object_id_t bind_port_id;
+            if (!getAclBindPortId(port, bind_port_id))
+            {
+                SWSS_LOG_ERROR("Failed to get port %s bind port ID for ACL table %s",
+                        alias.c_str(), EGR_SET_DSCP_TABLE_ID);
+                return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_FAILED;
+            }
+            egrSetDscpTable.link(bind_port_id);
+            egrSetDscpTable.portSet.emplace(alias);
+        }
+
+        egrSetDscpTable.id = EGR_SET_DSCP_TABLE_ID;
+        egrSetDscpTable.stage = ACL_STAGE_EGRESS;
+        auto egrSetDscpTableType = getAclTableType(TABLE_TYPE_EGR_SET_DSCP);
+        sai_object_id_t egrSetDscp_oid = getTableById(EGR_SET_DSCP_TABLE_ID);
+        // create the EGR_SET_DSCP fisrt time if not present. Otherwise update the existing table.
+        if (m_egrSetDscpRef.empty())
+        {
+            // Create EGR_SET_DSCP table
+            egrSetDscpTable.validateAddType(*egrSetDscpTableType);
+            egrSetDscpTable.addMandatoryActions();
+            if (!egrSetDscpTable.validate())
+            {
+                SWSS_LOG_ERROR("Failed to validate ACL table %s",
+                    EGR_SET_DSCP_TABLE_ID);
+                // since we failed to create the table, there is no need for rollback.
+                return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_FAILED;;
+            }
+            if (!addAclTable(egrSetDscpTable))
+            {
+                SWSS_LOG_ERROR("Failed to create ACL table EgressSetDSCP");
+                // since we failed to create the table, there is no need for rollback.
+                return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_FAILED;
+            }
+        }
+        else
+        {
+            if (updateAclTable(m_AclTables[egrSetDscp_oid], egrSetDscpTable))
+                {
+                SWSS_LOG_INFO("Successfully updated existing ACL table EgressSetDSCP");
+                // We do not set the status here as we still have to update
+                // TABLE_TYPE_MARK_META/V6 table.
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to update existing ACL table EgressSetDSCP");
+                //  there is no need for roollback as we have not made any changes to the MARK_META/V6 tables.
+                // We can simply return false.
+                return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_FAILED;
+            }
+        }
+        // keep track of the fact that this table is now associated with the EGR_SET_DSCP table.
+        m_egrSetDscpRef.insert(table_id);
+        SWSS_LOG_INFO("Added ACL table %s to EgrSetDscpRef", table_id.c_str());
+        status = EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_SUCCESS;
+
+    }
+    return status;
+}
+
 bool AclOrch::removeEgrSetDscpTable(string table_id)
 {
     m_egrSetDscpRef.erase(table_id);
@@ -4048,10 +4181,37 @@ bool AclOrch::removeEgrSetDscpTable(string table_id)
         AclTable dummyTable(this);
         dummyTable.id = EGR_SET_DSCP_TABLE_ID;
         dummyTable.stage = ACL_STAGE_EGRESS;
-        sai_object_id_t egrSetDscpTable_oid = getTableById(EGR_SET_DSCP_TABLE_ID);
-        if (updateAclTable(m_AclTables[egrSetDscpTable_oid], dummyTable))
+        if (updateAclTable(EGR_SET_DSCP_TABLE_ID, dummyTable, ""))
         {
             SWSS_LOG_ERROR("Failed to remove ACL table %s", EGR_SET_DSCP_TABLE_ID);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool AclOrch::addEgrSetDscpRule(string key, string dscpAction)
+{
+    auto metadata = m_egrDscpRuleMetadata[key];
+
+    if (m_metadataEgrDscpRule[metadata].size() == 1)
+    {
+        // Create EGR_SET_DSCP rule. set the match criteria to metadata value and action to dscpAction.
+        auto egrSetDscpRule = make_shared<AclRuleUnderlaySetDhcp>(this, std::to_string(metadata), EGR_SET_DSCP_TABLE_ID, &m_metaDataMgr);
+        egrSetDscpRule->validateAddMatch(MATCH_METADATA, std::to_string(metadata));
+        egrSetDscpRule->validateAddAction(ACTION_DSCP, dscpAction);
+
+        if (egrSetDscpRule->validate())
+        {
+            if (!addAclRule(egrSetDscpRule, EGR_SET_DSCP_TABLE_ID))
+            {
+                SWSS_LOG_ERROR("Failed to create ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
+                return false;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to validate ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
             return false;
         }
     }
@@ -4061,7 +4221,7 @@ bool AclOrch::removeEgrSetDscpTable(string table_id)
 bool AclOrch::removeEgrSetDscpRule(string key)
 {
     auto metadata = m_egrDscpRuleMetadata[key];
-    if (m_metadataEgrDscpRule[metadata].size() == 1)
+    if (getMetaDataRefCount(metadata) == 1)
     {
         if(!removeAclRule(EGR_SET_DSCP_TABLE_ID, std::to_string(metadata)))
         {
@@ -4069,8 +4229,7 @@ bool AclOrch::removeEgrSetDscpRule(string key)
             return false;
         }
     }
-    m_metadataEgrDscpRule[metadata].erase(key);
-    m_egrDscpRuleMetadata.erase(key);
+    removeMetaDataRef(key, metadata);
     m_metaDataMgr.recycleMetaData(metadata);
     return true;
 }
@@ -4093,6 +4252,29 @@ bool AclOrch::updateAclTable(string table_id, AclTable &table)
     }
 
     return true;
+}
+bool AclOrch::updateAclTable(string table_id, AclTable &table, string orignalTableTypeName)
+{
+    SWSS_LOG_ENTER();
+    // we call the addEgrSetDscpTable to add the EGR_SET_DSCP table if the table type is TABLE_TYPE_UNDERLAY_SET_DSCP or TABLE_TYPE_UNDERLAY_SET_DSCPV6
+    // for other tables it simply retuns EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_REQUIRED
+    EgressSetDscpTableStatus egrSetDscpStatus = addEgrSetDscpTable(table_id, table, orignalTableTypeName);
+    bool status = false;
+    if (egrSetDscpStatus == EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_FAILED)
+    {
+        return false;
+    }
+    status = updateAclTable(table_id,table);
+    // if we have not updated the EGR_SET_DSCP, we simply need to return the status.
+    // otherewise we need to undo the changes we made to the EGR_SET_DSCP if the update
+    // of the MARK_META table failed.
+    if (egrSetDscpStatus == EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_SUCCESS && !status)
+    {
+        // This is the scenario where we have successfully updated the EGR_SET_DSCP but failed to update the MARK_META table.
+        SWSS_LOG_ERROR("Reverting changes to EGR_SET_DSCP because update of %s failed", table_id.c_str());
+        removeEgrSetDscpTable(table_id);
+    }
+    return status;
 }
 
 bool AclOrch::addAclTable(AclTable &newTable)
@@ -4210,6 +4392,30 @@ bool AclOrch::addAclTable(AclTable &newTable)
     }
 }
 
+bool AclOrch::addAclTable(string table_id, AclTable &newTable, string orignalTableTypeName)
+{
+    SWSS_LOG_ENTER();
+    // we call the addEgrSetDscpTable to add the EGR_SET_DSCP table if the table type is TABLE_TYPE_UNDERLAY_SET_DSCP
+    // or TABLE_TYPE_UNDERLAY_SET_DSCPV6. For other tables it simply retuns EGRESS_SET_DSCP_TABLE_NOT_REQUIRED.
+    EgressSetDscpTableStatus egrSetDscpStatus = addEgrSetDscpTable(table_id, newTable, orignalTableTypeName);
+    bool status = false;
+    if (egrSetDscpStatus == EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_FAILED)
+    {
+        return false;
+    }
+    status = addAclTable(newTable);
+    // if we have not updated the EGR_SET_DSCP, we simply need to return the status.
+    // otherewise we need to undo the changes we made to the EGR_SET_DSCP if the update
+    // of the MARK_META table failed.
+    if (egrSetDscpStatus == EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_SUCCESS && !status)
+    {
+        // This is the scenario where we have successfully updated the EGR_SET_DSCP but failed to update the MARK_META table.
+        SWSS_LOG_ERROR("Reverting changes to EGR_SET_DSCP because update of %s failed", table_id.c_str());
+        removeEgrSetDscpTable(table_id);
+    }
+    return status;
+}
+
 bool AclOrch::removeAclTable(string table_id)
 {
     SWSS_LOG_ENTER();
@@ -4268,6 +4474,20 @@ bool AclOrch::removeAclTable(string table_id)
     }
 }
 
+bool AclOrch::removeAclTableWithEgrDscp(string table_id)
+{
+    SWSS_LOG_ENTER();
+    bool egrSetDscpStatus = true;
+    if(m_egrSetDscpRef.find(table_id) != m_egrSetDscpRef.end())
+    {
+        egrSetDscpStatus = removeEgrSetDscpTable(table_id);
+    }
+    if (!egrSetDscpStatus)
+    {
+        return false;
+    }
+    return removeAclTable(table_id);
+}
 bool AclOrch::addAclTableType(const AclTableType& tableType)
 {
     SWSS_LOG_ENTER();
@@ -4328,6 +4548,34 @@ bool AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id)
     return true;
 }
 
+bool AclOrch::addAclRuleWithEgrSetDscp(shared_ptr<AclRule> newRule, string table_id)
+{
+    SWSS_LOG_ENTER();
+    bool needsEgrSetDscp = false;
+    string key = table_id + ":" + newRule->getId();
+    // if the table is using EGR_SET_DSCP, we need to add the EGR_SET_DSCP rule.
+    if (isUsingEgrSetDscp(table_id))
+    {
+        needsEgrSetDscp = true;
+        string dscpAction = std::to_string(std::static_pointer_cast<AclRuleUnderlaySetDhcp>(newRule)->getDscpValue());
+        if (!addEgrSetDscpRule(key, dscpAction))
+        {
+            SWSS_LOG_ERROR("Failed to add Egress Set Dscp rule for Rule %s in table %s.",
+                newRule->getId().c_str(), table_id.c_str());
+            return false;
+        }
+    }
+    // add the regular rule.
+    bool status = addAclRule(newRule, table_id);
+    if(!status && needsEgrSetDscp)
+    {
+        removeEgrSetDscpRule(key);
+        return false;
+    }
+
+    return status;
+}
+
 bool AclOrch::removeAclRule(string table_id, string rule_id)
 {
     sai_object_id_t table_oid = getTableById(table_id);
@@ -4351,6 +4599,19 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     }
 
     return m_AclTables[table_oid].remove(rule_id);
+}
+
+bool AclOrch::removeAclRuleWithEgrSetDscp(string table_id, string rule_id)
+{
+    string key = table_id + ":" + rule_id;
+    if (m_egrDscpRuleMetadata.find(key) != m_egrDscpRuleMetadata.end())
+    {
+        if (!removeEgrSetDscpRule(key))
+        {
+            return false;
+        }
+    }
+    return removeAclRule(table_id, rule_id);
 }
 
 AclRule* AclOrch::getAclRule(string table_id, string rule_id)
@@ -4595,6 +4856,47 @@ bool AclOrch::isUsingEgrSetDscp(const string& table) const
     return false;
 }
 
+string AclOrch::translateUnderlaySetDscpTableTypeName(const string& tableTypeName) const
+{
+    // The TABLE_TYPE_UNDERLAY_SET_DSCP/V6 is translated to table translates into TABLE_TYPE_MARK_META/V6
+    if (tableTypeName == TABLE_TYPE_UNDERLAY_SET_DSCP)
+    {
+        return TABLE_TYPE_MARK_META;
+    }
+    else if(tableTypeName == TABLE_TYPE_UNDERLAY_SET_DSCPV6)
+    {
+        return TABLE_TYPE_MARK_META_V6;
+    }
+    return tableTypeName;
+}
+
+void AclOrch::addMetaDataRef(string key, uint8_t metadata)
+{
+    m_egrDscpRuleMetadata[key] = metadata;
+    if (m_metadataEgrDscpRule.find(metadata) == m_metadataEgrDscpRule.end())
+    {
+        m_metadataEgrDscpRule[metadata] = set<string>();
+    }
+    m_metadataEgrDscpRule[metadata].insert(key);
+
+}
+
+void AclOrch::removeMetaDataRef(string key, uint8_t metadata)
+{
+    m_metadataEgrDscpRule[metadata].erase(key);
+    m_egrDscpRuleMetadata.erase(key);
+}
+
+uint32_t AclOrch::getMetaDataRefCount(uint8_t metadata)
+{
+    if (m_metadataEgrDscpRule.find(metadata) != m_metadataEgrDscpRule.end())
+    {
+        return uint32_t(m_metadataEgrDscpRule[metadata].size());
+    }
+    return 0;
+}
+
+
 void AclOrch::doAclTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -4613,11 +4915,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             AclTable newTable(this);
-            AclTable egrSetDscpTable(this);
             string tableTypeName;
             bool bAllAttributesOk = true;
-            bool needsEgrSetDscp = false;
-            bool egrSetDscpStatus = true;
 
             newTable.id = table_id;
             // Scan all attributes
@@ -4651,13 +4950,6 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                         bAllAttributesOk = false;
                         break;
                     }
-                    // preparing ports for egrSetDscpTable in case it is created.
-                    if (!processAclTablePorts(attr_value, egrSetDscpTable))
-                    {
-                        SWSS_LOG_ERROR("Failed to process ACL table (EGR_SET_DSCP) ports");
-                        bAllAttributesOk = false;
-                        break;
-                    }
                 }
                 else if (attr_name == ACL_TABLE_STAGE)
                 {
@@ -4681,71 +4973,14 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     break;
                 }
             }
-
-            if (tableTypeName == TABLE_TYPE_UNDERLAY_SET_DSCP || tableTypeName == TABLE_TYPE_UNDERLAY_SET_DSCPV6)
-            {
-                // This table translates into 2 tables.
-                //TABLE_TYPE_MARK_META/V6 on ingress side and TABLE_TYPE_EGR_SET_DSCP on Egress side.
-                // We need to create TABLE_TYPE_EGR_SET_DSCP table first. This table is created once and is reused
-                // by all TABLE_TYPE_UNDERLAY_SET_DSCP/V6 tables subsequently created.
-                if (newTable.stage != ACL_STAGE_INGRESS)
-                {
-                    SWSS_LOG_ERROR("'%s' is not supported in Egress stage.", tableTypeName.c_str());
-                    bAllAttributesOk = false;
-                    break;
-                }
-                if (tableTypeName == TABLE_TYPE_UNDERLAY_SET_DSCP)
-                {
-                    tableTypeName = TABLE_TYPE_MARK_META;
-                }
-                else
-                {
-                    tableTypeName = TABLE_TYPE_MARK_META_V6;
-                }
-
-                egrSetDscpTable.id = EGR_SET_DSCP_TABLE_ID;
-                egrSetDscpTable.stage = ACL_STAGE_EGRESS;
-                auto egrSetDscpTableType = getAclTableType(TABLE_TYPE_EGR_SET_DSCP);
-
-                if (m_egrSetDscpRef.empty())
-                {
-                    // Create EGR_SET_DSCP table
-                    egrSetDscpTable.validateAddType(*egrSetDscpTableType);
-                    egrSetDscpTable.addMandatoryActions();
-                    if (!egrSetDscpTable.validate())
-                    {
-                        SWSS_LOG_ERROR("Failed to validate ACL table %s",
-                            EGR_SET_DSCP_TABLE_ID);
-                        bAllAttributesOk = false;
-                        break;
-                    }
-                    if (!addAclTable(egrSetDscpTable))
-                    {
-                        egrSetDscpStatus = false;
-                        SWSS_LOG_ERROR("Failed to create ACL table EgressSetDSCP");
-                    }
-                }
-                else
-                {
-                    sai_object_id_t egrSetDscp_oid = getTableById(EGR_SET_DSCP_TABLE_ID);
-                    // Update the existing table using the info in egrSetDscpTable
-                    if (updateAclTable(m_AclTables[egrSetDscp_oid], egrSetDscpTable))
-                        {
-                        SWSS_LOG_NOTICE("Successfully updated existing ACL table EgressSetDSCP");
-                        // We do not set the status here as we still have to update
-                        // TABLE_TYPE_MARK_META/V6 table.
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to update existing ACL table EgressSetDSCP");
-                        egrSetDscpStatus = false;
-                    }
-                }
-
-                m_egrSetDscpRef.insert(table_id);
-                SWSS_LOG_INFO("Added ACL table %s to EgrSetDscpRef", table_id.c_str());
-                needsEgrSetDscp = true;
-            }
+            // For the case of Table type TABLE_TYPE_UNDERLAY_SET_DSCP/V6 we need to translate
+            // it to TABLE_TYPE_MARK_META/V6. We retain the original table type name in orignalTableTypeName
+            // and pass it ot the updateAclTable/ addAclTable functions. There based on the orignalTableTypeName
+            // we create/update the EgrSetDscp table.
+            string firstTableTypeName;
+            string unused;
+            string orignalTableTypeName = tableTypeName;
+            tableTypeName = translateUnderlaySetDscpTableTypeName(tableTypeName);
 
             auto tableType = getAclTableType(tableTypeName);
             if (!tableType)
@@ -4758,7 +4993,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             // Add mandatory ACL action if not present
             newTable.addMandatoryActions();
             // validate and create/update ACL Table
-            if (egrSetDscpStatus && bAllAttributesOk && newTable.validate())
+            if (bAllAttributesOk && newTable.validate())
             {
                 // If the the table already exists and meets the below condition(s)
                 // update the table. Otherwise delete and re-create
@@ -4772,7 +5007,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                                             m_AclTables[table_oid]))
                 {
                     // Update the existing table using the info in newTable
-                    if (updateAclTable(m_AclTables[table_oid], newTable))
+                    if (updateAclTable(table_id, newTable, orignalTableTypeName))
                     {
                         SWSS_LOG_NOTICE("Successfully updated existing ACL table %s",
                                         table_id.c_str());
@@ -4782,19 +5017,14 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     }
                     else
                     {
-
                         SWSS_LOG_ERROR("Failed to update existing ACL table %s",
                                         table_id.c_str());
-                        if (egrSetDscpStatus && needsEgrSetDscp)
-                        {
-                            removeEgrSetDscpTable(table_id);
-                        }
                         it++;
                     }
                 }
                 else
                 {
-                    if (addAclTable(newTable))
+                    if (addAclTable(table_id, newTable, orignalTableTypeName))
                     {
                         // Mark ACL table as ACTIVE
                         setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
@@ -4803,10 +5033,6 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     else
                     {
                         //we have failed to create  the MarkMeta table, we need to remove the EgrSetDscp table
-                        if (egrSetDscpStatus && needsEgrSetDscp)
-                        {
-                            removeEgrSetDscpTable(table_id);
-                        }
                         setAclTableStatus(table_id, AclObjectStatus::PENDING_CREATION);
                         it++;
                     }
@@ -4814,10 +5040,6 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             }
             else
             {
-                if (egrSetDscpStatus && needsEgrSetDscp)
-                {
-                    removeEgrSetDscpTable(table_id);
-                }
                 it = consumer.m_toSync.erase(it);
                 // Mark the ACL table as inactive if the configuration is invalid
                 setAclTableStatus(table_id, AclObjectStatus::INACTIVE);
@@ -4827,12 +5049,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            bool egrSetDscpStatus = true;
-            if (m_egrSetDscpRef.find(table_id) != m_egrSetDscpRef.end())
-            {
-                egrSetDscpStatus = removeEgrSetDscpTable(table_id);
-            }
-            if (egrSetDscpStatus && removeAclTable(table_id))
+            if (removeAclTableWithEgrDscp(table_id))
             {
                 // Remove ACL table status from STATE_DB
                 removeAclTableStatus(table_id);
@@ -4911,7 +5128,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
             try
             {
-                newRule = AclRule::makeShared(this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
+                newRule = AclRule::makeShared(this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t, &m_metaDataMgr);
             }
             catch (exception &e)
             {
@@ -4923,8 +5140,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             bool bHasIPProtocol = false;
             bool bHasIPV4 = false;
             bool bHasIPV6 = false;
-            bool needsEgrSetDscpRule = false;
-            uint8_t actionDscpValue = 0;
             for (const auto& itr : kfvFieldsValues(t))
             {
                 string attr_name = to_upper(fvField(itr));
@@ -4946,36 +5161,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
                 {
                     bHasIPProtocol = true;
-                }
-                if (attr_name == ACTION_DSCP && (type == TABLE_TYPE_MARK_META || type == TABLE_TYPE_MARK_META_V6))
-                {
-                    if (!isUsingEgrSetDscp(table_id))
-                    {
-
-                        SWSS_LOG_ERROR("Unexpected Error. Table %s not asssociated with EGR_SET_DSCP table", table_id.c_str());
-                        bAllAttributesOk = false;
-                        break;
-                    }
-                    attr_name = ACTION_META_DATA;
-                    actionDscpValue = uint8_t(std::stoi(attr_value));
-                    auto metadata = m_metaDataMgr.getFreeMetaData(actionDscpValue);
-
-                    if (metadata == METADATA_VALUE_INVALID)
-                    {
-                        SWSS_LOG_ERROR("Failed to get free metadata for DSCP value %d", actionDscpValue);
-                        bAllAttributesOk = false;
-                        break;
-                    }
-
-                    attr_value = std::to_string(metadata);
-                    needsEgrSetDscpRule = true;
-                    m_egrDscpRuleMetadata[key] = metadata;
-                    if (m_metadataEgrDscpRule.find(metadata) == m_metadataEgrDscpRule.end())
-                    {
-                        m_metadataEgrDscpRule[metadata] = set<string>();
-                    }
-
-                    m_metadataEgrDscpRule[metadata].insert(key);
                 }
                 if (newRule->validateAddPriority(attr_name, attr_value))
                 {
@@ -5028,59 +5213,23 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 			        bAllAttributesOk = false;
 		        }
 	        }
-            bool egrDscpRuleStatus = true;
-            if (needsEgrSetDscpRule)
-            {
-                auto metadata = m_egrDscpRuleMetadata[key];
-
-                if (m_metadataEgrDscpRule[metadata].size() == 1)
-                {
-                    // Create EGR_SET_DSCP rule
-                    auto egrSetDscpRule = make_shared<AclRuleUnderlaySetDhcp>(this, std::to_string(metadata), EGR_SET_DSCP_TABLE_ID);
-                    egrSetDscpRule->validateAddMatch(MATCH_METADATA, std::to_string(metadata));
-                    egrSetDscpRule->validateAddAction(ACTION_DSCP, std::to_string(actionDscpValue));
-
-                    if (egrSetDscpRule->validate())
-                    {
-                        if (!addAclRule(egrSetDscpRule, EGR_SET_DSCP_TABLE_ID))
-                        {
-                            SWSS_LOG_ERROR("Failed to create ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
-                            egrDscpRuleStatus = false;
-                        }
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to validate ACL rule %d in table %s", metadata, EGR_SET_DSCP_TABLE_ID);
-                        egrDscpRuleStatus = false;
-                    }
-                }
-            }
 
             // validate and create ACL rule
-            if (egrDscpRuleStatus && bAllAttributesOk && newRule->validate())
+            if (bAllAttributesOk && newRule->validate())
             {
-                if (addAclRule(newRule, table_id))
+                if (addAclRuleWithEgrSetDscp(newRule, table_id))
                 {
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    if (needsEgrSetDscpRule)
-                    {
-                        removeEgrSetDscpRule(key);
-                    }
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
                     it++;
                 }
             }
             else
             {
-                if (egrDscpRuleStatus && needsEgrSetDscpRule)
-                {
-                    removeEgrSetDscpRule(key);
-                }
-
                 it = consumer.m_toSync.erase(it);
                 // Mark the rule inactive if the configuration is invalid
                 setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
@@ -5089,12 +5238,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            bool egrDscpRuleStatus = true;
-            if (m_egrDscpRuleMetadata.find(key) != m_egrDscpRuleMetadata.end())
-            {
-                    egrDscpRuleStatus = removeEgrSetDscpRule(key);
-            }
-            if (egrDscpRuleStatus && removeAclRule(table_id, rule_id))
+            if (removeAclRuleWithEgrSetDscp(table_id, rule_id))
             {
                 removeAclRuleStatus(table_id, rule_id);
                 it = consumer.m_toSync.erase(it);

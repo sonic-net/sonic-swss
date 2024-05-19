@@ -112,6 +112,13 @@ enum AclObjectStatus
     PENDING_REMOVAL
 };
 
+enum EgressSetDscpTableStatus
+{
+    EGRESS_SET_DSCP_TABLE_FAILED = 0,
+    EGRESS_SET_DSCP_TABLE_SUCCESS,
+    EGRESS_SET_DSCP_TABLE_NOT_REQUIRED,
+};
+
 struct AclActionCapabilities
 {
     set<sai_acl_action_type_t> actionList;
@@ -295,7 +302,7 @@ public:
     bool getCreateCounter() const;
 
     const vector<AclRangeConfig>& getRangeConfig() const;
-    static shared_ptr<AclRule> makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
+    static shared_ptr<AclRule> makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&, MetaDataMgr * m_metadataMgr);
     virtual ~AclRule() {}
 
 protected:
@@ -397,11 +404,18 @@ protected:
 class AclRuleUnderlaySetDhcp: public AclRule
 {
 public:
-    AclRuleUnderlaySetDhcp(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = true);
+    AclRuleUnderlaySetDhcp(AclOrch *m_pAclOrch, string rule, string table,  MetaDataMgr* m_metaDataMgr, bool createCounter = true);
 
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     void onUpdate(SubjectType, void *) override;
+    uint32_t getDscpValue() const;
+    uint32_t getMetadata() const;
+protected:
+    uint32_t cachedDscpValue;
+    uint32_t cachedMetadata;
+    string table_id;
+    MetaDataMgr* m_metaDataMgr;
 };
 
 class AclTable
@@ -514,12 +528,21 @@ public:
 
     bool addAclTable(AclTable &aclTable);
     bool removeAclTable(string table_id);
+    bool addAclTable(string table_id, AclTable &aclTable, string orignalTableTypeName);
+    bool removeAclTableWithEgrDscp(string table_id);
+    bool updateAclTable(string table_id, AclTable &table, string orignalTableTypeName);
+    EgressSetDscpTableStatus addEgrSetDscpTable(string table_id, AclTable &table, string orignalTableTypeName);
+
+    bool removeEgrSetDscpTable(string table_id);
+    bool addEgrSetDscpRule(string key, string dscpAction);
+    bool removeEgrSetDscpRule(string key);
+    bool addAclRuleWithEgrSetDscp(shared_ptr<AclRule> aclRule, string table_id);
+    bool removeAclRuleWithEgrSetDscp(string table_id, string rule_id);
+
     bool addAclTableType(const AclTableType& tableType);
     bool removeAclTableType(const string& tableTypeName);
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
     bool updateAclTable(string table_id, AclTable &table);
-    bool removeEgrSetDscpTable(string table_id);
-    bool removeEgrSetDscpRule(string key);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
     bool updateAclRule(shared_ptr<AclRule> updatedAclRule);
@@ -536,6 +559,11 @@ public:
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
     bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
     bool isUsingEgrSetDscp(const string& table) const;
+    string translateUnderlaySetDscpTableTypeName(const string& tableTypeName) const;
+
+    void addMetaDataRef(string key, uint8_t metadata);
+    void removeMetaDataRef(string key, uint8_t metadata);
+    uint32_t getMetaDataRefCount(uint8_t metadata);
 
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
