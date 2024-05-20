@@ -226,7 +226,7 @@ void PortMgr::doTask(Consumer &consumer)
                 }
                 else if (fvField(i) == "dhcp_rate_limit")
                 {
-                    dhcp_rate_limit = to_string(fvValue(i));
+                    dhcp_rate_limit = fvValue(i);
                 }
                 else
                 {
@@ -234,7 +234,7 @@ void PortMgr::doTask(Consumer &consumer)
                 }
             }
 
-            if (field_values.size())
+            if (field_values.size() && fvField(i) != "dhcp_rate_limit")
             {
                 writeConfigToAppDb(alias, field_values);
             }
