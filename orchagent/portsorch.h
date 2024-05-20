@@ -410,7 +410,7 @@ private:
 
     bool setSaiHostTxSignal(const Port &port, bool enable);
 
-    void setHostTxReady(sai_object_id_t portId, const std::string &status);
+    void setHostTxReady(Port port, const std::string &status);
     // Get supported speeds on system side
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
