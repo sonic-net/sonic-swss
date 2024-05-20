@@ -3,6 +3,7 @@ extern "C" {
 #include "sai.h"
 #include "saistatus.h"
 #include "saiextensions.h"
+#include "sairedis.h"
 }
 
 #include <inttypes.h>
@@ -85,6 +86,16 @@ sai_dash_direction_lookup_api_t*    sai_dash_direction_lookup_api;
 sai_twamp_api_t*                    sai_twamp_api;
 
 extern sai_object_id_t gSwitchId;
+extern bool gTraditionalFlexCounter;
+
+vector<sai_object_id_t> gGearboxOids;
+
+unique_ptr<DBConnector> gFlexCounterDb;
+unique_ptr<ProducerTable> gFlexCounterGroupTable;
+unique_ptr<ProducerTable> gFlexCounterTable;
+unique_ptr<DBConnector> gGearBoxFlexCounterDb;
+unique_ptr<ProducerTable> gGearBoxFlexCounterGroupTable;
+unique_ptr<ProducerTable> gGearBoxFlexCounterTable;
 
 static map<string, sai_switch_hardware_access_bus_t> hardware_access_map =
 {
@@ -259,6 +270,20 @@ void initSaiApi()
     sai_log_set(SAI_API_MY_MAC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_GENERIC_PROGRAMMABLE,   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TWAMP,                  SAI_LOG_LEVEL_NOTICE);
+}
+
+void initFlexCounterTables()
+{
+    if (gTraditionalFlexCounter)
+    {
+        gFlexCounterDb = std::make_unique<DBConnector>("FLEX_COUNTER_DB", 0);
+        gFlexCounterTable = std::make_unique<ProducerTable>(gFlexCounterDb.get(), FLEX_COUNTER_TABLE);
+        gFlexCounterGroupTable = std::make_unique<ProducerTable>(gFlexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE);
+
+        gGearBoxFlexCounterDb = std::make_unique<DBConnector>("GB_FLEX_COUNTER_DB", 0);
+        gGearBoxFlexCounterTable = std::make_unique<ProducerTable>(gGearBoxFlexCounterDb.get(), FLEX_COUNTER_TABLE);
+        gGearBoxFlexCounterGroupTable = std::make_unique<ProducerTable>(gGearBoxFlexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE);
+    }
 }
 
 void initSaiRedis()
@@ -480,6 +505,9 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
             phy->firmware_major_version = string(attr.value.chardata);
         }
     }
+
+    gGearboxOids.push_back(phyOid);
+
     return status;
 }
 
@@ -802,4 +830,270 @@ void handleSaiFailure(bool abort_on_failure)
     {
         abort();
     }
+}
+
+
+static inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
+{
+    sai_s8_list.list = nullptr;
+    sai_s8_list.count = 0;
+}
+
+static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_parameter_t &flex_counter_group_param)
+{
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.poll_interval);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.operation);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugin_name);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugins);
+}
+
+static inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, const std::string &str)
+{
+    if (str.length() > 0)
+    {
+        sai_s8_list.list = (int8_t*)const_cast<char *>(str.c_str());
+        sai_s8_list.count = (uint32_t)str.length();
+    }
+    else
+    {
+        initSaiRedisCounterEmptyParameter(sai_s8_list);
+    }
+}
+
+static inline void notifySyncdCounterOperation(bool is_gearbox, const sai_attribute_t &attr)
+{
+    if (sai_switch_api == nullptr)
+    {
+        // This can happen during destruction of the orchagent daemon.
+        SWSS_LOG_ERROR("sai_switch_api is NULL");
+        return;
+    }
+
+    if (!is_gearbox)
+    {
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
+    else
+    {
+        for (auto gearbox_oid : gGearboxOids)
+        {
+            sai_switch_api->set_switch_attribute(gearbox_oid, &attr);
+        }
+    }
+}
+
+static inline void operateFlexCounterDbSingleField(std::vector<FieldValueTuple> &fvTuples,
+                                            const string &field, const string &value)
+{
+    if (!field.empty() && !value.empty())
+    {
+        fvTuples.emplace_back(field, value);
+    }
+}
+
+static inline void operateFlexCounterGroupDatabase(const string &group,
+                                            const string &poll_interval,
+                                            const string &stats_mode,
+                                            const string &plugin_name,
+                                            const string &plugins,
+                                            const string &operation,
+                                            bool is_gearbox)
+{
+    std::vector<FieldValueTuple> fvTuples;
+    auto &flexCounterGroupTable = is_gearbox ? gGearBoxFlexCounterGroupTable : gFlexCounterGroupTable;
+
+    operateFlexCounterDbSingleField(fvTuples, POLL_INTERVAL_FIELD, poll_interval);
+    operateFlexCounterDbSingleField(fvTuples, STATS_MODE_FIELD, stats_mode);
+    operateFlexCounterDbSingleField(fvTuples, plugin_name, plugins);
+    operateFlexCounterDbSingleField(fvTuples, FLEX_COUNTER_STATUS_FIELD, operation);
+
+    flexCounterGroupTable->set(group, fvTuples);
+}
+void setFlexCounterGroupParameter(const string &group,
+                                  const string &poll_interval,
+                                  const string &stats_mode,
+                                  const string &plugin_name,
+                                  const string &plugins,
+                                  const string &operation,
+                                  bool is_gearbox)
+{
+    if (gTraditionalFlexCounter)
+    {
+        operateFlexCounterGroupDatabase(group, poll_interval, stats_mode, plugin_name, plugins, operation, is_gearbox);
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &flex_counter_group_param;
+
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.poll_interval, poll_interval);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.operation, operation);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.stats_mode, stats_mode);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.plugin_name, plugin_name);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.plugins, plugins);
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
+void setFlexCounterGroupOperation(const string &group,
+                                  const string &operation,
+                                  bool is_gearbox)
+{
+    if (gTraditionalFlexCounter)
+    {
+        operateFlexCounterGroupDatabase(group, "", "", "", "", operation, is_gearbox);
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &flex_counter_group_param;
+
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.operation, operation);
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
+void setFlexCounterGroupPollInterval(const string &group,
+                                     const string &poll_interval,
+                                     bool is_gearbox)
+{
+    if (gTraditionalFlexCounter)
+    {
+        operateFlexCounterGroupDatabase(group, poll_interval, "", "", "", "", is_gearbox);
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &flex_counter_group_param;
+
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.poll_interval, poll_interval);
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
+void setFlexCounterGroupStatsMode(const std::string &group,
+                                  const std::string &stats_mode,
+                                  bool is_gearbox)
+{
+    if (gTraditionalFlexCounter)
+    {
+        operateFlexCounterGroupDatabase(group, "", stats_mode, "", "", "", is_gearbox);
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &flex_counter_group_param;
+
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.stats_mode, stats_mode);
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
+void delFlexCounterGroup(const std::string &group,
+                         bool is_gearbox)
+{
+    if (gTraditionalFlexCounter)
+    {
+        auto &flexCounterGroupTable = is_gearbox ? gGearBoxFlexCounterGroupTable : gFlexCounterGroupTable;
+
+        if (flexCounterGroupTable != nullptr)
+        {
+            flexCounterGroupTable->del(group);
+        }
+
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &flex_counter_group_param;
+
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
+void startFlexCounterPolling(sai_object_id_t switch_oid,
+                             const std::string &key,
+                             const std::string &counter_ids,
+                             const std::string &counter_field_name,
+                             const std::string &stats_mode)
+{
+    if (gTraditionalFlexCounter)
+    {
+        std::vector<FieldValueTuple> fvTuples;
+        auto &flexCounterTable = switch_oid == gSwitchId ? gFlexCounterTable : gGearBoxFlexCounterTable;
+
+        operateFlexCounterDbSingleField(fvTuples, counter_field_name, counter_ids);
+        operateFlexCounterDbSingleField(fvTuples, STATS_MODE_FIELD, stats_mode);
+
+        flexCounterTable->set(key, fvTuples);
+
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_parameter_t flex_counter_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+    attr.value.ptr = &flex_counter_param;
+
+    initSaiRedisCounterParameterFromString(flex_counter_param.counter_key, key);
+    initSaiRedisCounterParameterFromString(flex_counter_param.counter_ids, counter_ids);
+    initSaiRedisCounterParameterFromString(flex_counter_param.counter_field_name, counter_field_name);
+    initSaiRedisCounterParameterFromString(flex_counter_param.stats_mode, stats_mode);
+
+    sai_switch_api->set_switch_attribute(switch_oid, &attr);
+}
+
+void stopFlexCounterPolling(sai_object_id_t switch_oid,
+                            const std::string &key)
+{
+    if (gTraditionalFlexCounter)
+    {
+        auto &flexCounterTable = switch_oid == gSwitchId ? gFlexCounterTable : gGearBoxFlexCounterTable;
+
+        if (flexCounterTable != nullptr)
+        {
+            flexCounterTable->del(key);
+        }
+
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_parameter_t flex_counter_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+    attr.value.ptr = &flex_counter_param;
+
+    initSaiRedisCounterParameterFromString(flex_counter_param.counter_key, key);
+    initSaiRedisCounterEmptyParameter(flex_counter_param.counter_ids);
+    initSaiRedisCounterEmptyParameter(flex_counter_param.counter_field_name);
+    initSaiRedisCounterEmptyParameter(flex_counter_param.stats_mode);
+
+    sai_switch_api->set_switch_attribute(switch_oid, &attr);
 }

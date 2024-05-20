@@ -240,7 +240,7 @@ std::string BuildMatchFieldJsonStrKindComposite(std::vector<nlohmann::json> elem
 {
     nlohmann::json match_json;
     match_json[kAclMatchFieldKind] = kAclMatchFieldKindComposite;
-    for (const auto element : elements)
+    for (const auto &element : elements)
     {
         match_json[kAclMatchFieldElements].push_back(element);
     }
