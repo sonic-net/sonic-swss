@@ -226,7 +226,7 @@ void PortMgr::doTask(Consumer &consumer)
                 }
                 else if (fvField(i) == "dhcp_rate_limit")
                 {
-                    dhcp_rate_limit = str(fvValue(i));
+                    dhcp_rate_limit = std::str(fvValue(i));
                 }
                 else
                 {
