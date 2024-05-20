@@ -88,9 +88,16 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         // tc qdisc add dev <port_name> handle ffff: ingress
         // &&
         // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
-        cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
+        std::string cmd = "sudo " + TC_CMD; // Prepend sudo for root privileges
+        cmd += " qdisc add dev " + shellquote(alias) + " handle ffff: ingress";
+        cmd += " && ";
+        cmd += "sudo " + TC_CMD; // Use sudo again for the filter command
+        cmd += " filter add dev " + shellquote(alias) + " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " + std::to_string(byte_rate) + "bps burst " + std::to_string(byte_rate) + "b conform-exceed drop";
+
+       
+        //cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
             << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << byte_rate << "bps burst " << byte_rate << "b conform-exceed drop";
-        cmd_str = cmd.str();
+        //cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
     }
     
