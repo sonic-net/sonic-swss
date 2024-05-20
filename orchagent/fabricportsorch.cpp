@@ -84,8 +84,6 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
     m_portNamePortCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_FABRIC_PORT_NAME_MAP));
     m_fabricCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TABLE));
 
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
-    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), APP_FABRIC_PORT_TABLE_NAME));
     m_appl_db = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
     m_applTable = unique_ptr<Table>(new Table(m_appl_db.get(), APP_FABRIC_MONITOR_PORT_TABLE_NAME));
     m_applMonitorConstTable = unique_ptr<Table>(new Table(m_appl_db.get(), APP_FABRIC_MONITOR_DATA_TABLE_NAME));
