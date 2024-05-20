@@ -44,6 +44,7 @@ extern int gBatchSize;
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 bool gSyncMode = false;
 bool gIsNatSupported = false;
+bool gTraditionalFlexCounter = false;
 
 PortsOrch *gPortsOrch;
 CrmOrch *gCrmOrch;
@@ -240,4 +241,57 @@ int main(int argc, char *argv[])
     AddVrf();
 
     return RUN_ALL_TESTS();
+}
+
+void setFlexCounterGroupParameter(const std::string &group,
+                                  const std::string &poll_interval,
+                                  const std::string &stats_mode,
+                                  const std::string &plugin_name,
+                                  const std::string &plugins,
+                                  const std::string &operation,
+                                  bool is_gearbox)
+{
+    return;
+}
+
+void setFlexCounterGroupPollInterval(const std::string &group,
+                                     const std::string &poll_interval,
+                                     bool is_gearbox)
+{
+    return;
+}
+
+void setFlexCounterGroupOperation(const std::string &group,
+                                  const std::string &operation,
+                                  bool is_gearbox)
+{
+    return;
+}
+
+void setFlexCounterGroupStatsMode(const std::string &group,
+                                  const std::string &stats_mode,
+                                  bool is_gearbox)
+{
+    return;
+}
+
+void delFlexCounterGroup(const std::string &group,
+                         bool is_gearbox)
+{
+    return;
+}
+
+void startFlexCounterPolling(sai_object_id_t switch_oid,
+                             const std::string &key,
+                             const std::string &counter_ids,
+                             const std::string &counter_field_name,
+                             const std::string &stats_mode)
+{
+    return;
+}
+
+void stopFlexCounterPolling(sai_object_id_t switch_oid,
+                            const std::string &key)
+{
+    return;
 }

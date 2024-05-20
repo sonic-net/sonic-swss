@@ -356,6 +356,9 @@ namespace routeorch_test
             delete gPortsOrch;
             gPortsOrch = nullptr;
 
+            delete gBufferOrch;
+            gBufferOrch = nullptr;
+
             sai_route_api = pold_sai_route_api;
             ut_helper::uninitSaiApi();
         }
