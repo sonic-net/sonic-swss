@@ -107,7 +107,7 @@ jobs:
       # install packages for vs test
       sudo apt-get install -y net-tools bridge-utils vlan
       sudo apt-get install -y python3-pip
-      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0
+      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0 requests==2.31.0
       sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
 
