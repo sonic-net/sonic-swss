@@ -94,9 +94,14 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
             <<" u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " <<to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
         int ret = swss::exec(cmd_str, res);
+        if (ret)
+        {
+        //return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+        }
     }
     
-    if (!isPortStateOk(alias))
+    
+    else if (!isPortStateOk(alias))
     {
         // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
         SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
