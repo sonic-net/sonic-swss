@@ -80,7 +80,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 {
     stringstream cmd;
     string res, cmd_str;
-    
+    int ret = 1;
     int byte_rate = stoi(dhcp_rate_limit) * 406;
     
     if (dhcp_rate_limit != "0")
@@ -94,13 +94,12 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
             <<" u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " <<to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
         int ret = swss::exec(cmd_str, res);
-        if (ret)
-        {
-        //return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-        }
     }
     
-    
+    if (!ret)
+    {
+        //return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+    }
     else if (!isPortStateOk(alias))
     {
         // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
