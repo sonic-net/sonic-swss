@@ -82,7 +82,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     string res, cmd_str;
     
     int byte_rate = stoi(dhcp_rate_limit) * 406;
-    int ret;
+    
     if (dhcp_rate_limit != "0")
     {
         // tc qdisc add dev <port_name> handle ffff: ingress
@@ -93,14 +93,10 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
             <<" sudo "<< TC_CMD << " filter add dev " << alias << " protocol ip parent ffff: prio 1 "\
             <<" u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " <<to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
-        ret = swss::exec(cmd_str, res);
+        int ret = swss::exec(cmd_str, res);
     }
     
-    if (!ret)
-    {
-        //return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-    }
-    else if (!isPortStateOk(alias))
+    if (!isPortStateOk(alias))
     {
         // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
         SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
