@@ -93,7 +93,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
             <<" sudo "<< TC_CMD << " filter add dev " << alias << " protocol ip parent ffff: prio 1 "\
             <<" u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " <<to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
-        int ret = swss::exec(cmd_str, res);
+        ret = swss::exec(cmd_str, res);
     }
     
     if (ret)
