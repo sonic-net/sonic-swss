@@ -75,7 +75,7 @@ namespace portmgr_ut
     ASSERT_EQ(size_t(4), mockCallArgs.size());
     ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
     ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
-    ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 300bps burst 300b conform-exceed drop", mockCallArgs[2]);
+    ASSERT_EQ("sudo tc qdisc add dev Ethernet0 handle ffff: ingress && sudo tc filter add dev Ethernet0 protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 406000bps burst 406000b conform-exceed drop", mockCallArgs[2]);
 
     // Set port admin_status, verify that it could override the default value
     cfg_port_table.set("Ethernet0", {
@@ -95,7 +95,7 @@ namespace portmgr_ut
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
     ASSERT_EQ(size_t(6), mockCallArgs.size());
-    ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 406bps burst 406b conform-exceed drop", mockCallArgs[5]);
+    ASSERT_EQ("sudo tc qdisc add dev Ethernet0 handle ffff: ingress && sudo tc filter add dev Ethernet0 protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 406000bps burst 406000b conform-exceed drop", mockCallArgs[2]);
 }
 
 
