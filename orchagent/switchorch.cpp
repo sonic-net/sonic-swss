@@ -37,7 +37,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME},
     {"debug_shell_enable",                  SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE},
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
-    {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC}
+    {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC},
+    {"ecmp_hash_offset",                    SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
+    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET}
 };
 
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
@@ -541,6 +543,8 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                 MacAddress mac_addr;
                 bool invalid_attr = false;
+                bool ret = false;
+                bool unsupported_attr = false;
                 switch (attr.id)
                 {
                     case SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION:
@@ -578,11 +582,34 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
                         break;
 
+                    case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET:
+                        ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+                    case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET:
+                        ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+
                     default:
                         invalid_attr = true;
                         break;
                 }
-                if (invalid_attr)
+                if (invalid_attr || unsupported_attr)
                 {
                     /* break from kfvFieldsValues for loop */
                     break;

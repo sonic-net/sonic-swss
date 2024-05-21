@@ -80,26 +80,22 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 {
     stringstream cmd;
     string res, cmd_str;
-    int ret;
+    
     int byte_rate = stoi(dhcp_rate_limit) * 406;
-
+    int ret;
     if (dhcp_rate_limit != "0")
     {
         // tc qdisc add dev <port_name> handle ffff: ingress
         // &&
         // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
-        cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
-            << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
+          
+        cmd << "sudo "<< TC_CMD << " qdisc add dev " << alias << " handle ffff: ingress" << " && " \
+            <<" sudo "<< TC_CMD << " filter add dev " << alias << " protocol ip parent ffff: prio 1 "\
+            <<" u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " <<to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
     }
-    else
-    {
-        // tc qdisc del dev <port_name> handle ffff: ingress
-        cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
-        cmd_str = cmd.str();
-        ret = swss::exec(cmd_str, res);
-    }
+    
     if (!ret)
     {
         return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
@@ -202,7 +198,7 @@ void PortMgr::doTask(Consumer &consumer)
             bool configured = (m_portList.find(alias) != m_portList.end());
 
             /* If this is the first time we set port settings
-             * assign default admin status and mtu
+             * assign default admin status and mtu and dhcp_rate_limit
              */
             if (!configured)
             {
@@ -256,6 +252,9 @@ void PortMgr::doTask(Consumer &consumer)
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
                 field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+
+
+
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
                 continue;

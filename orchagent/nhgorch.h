@@ -54,7 +54,7 @@ public:
     explicit NextHopGroup(const NextHopGroupKey& key, bool is_temp);
 
     NextHopGroup(NextHopGroup&& nhg) :
-        NhgCommon(move(nhg)), m_is_temp(nhg.m_is_temp)
+        NhgCommon(move(nhg)), m_is_temp(nhg.m_is_temp), m_is_recursive(nhg.m_is_recursive)
     { SWSS_LOG_ENTER(); }
 
     NextHopGroup& operator=(NextHopGroup&& nhg);
@@ -83,6 +83,10 @@ public:
     /* Getters / Setters. */
     inline bool isTemp() const override { return m_is_temp; }
 
+    inline bool isRecursive() const { return m_is_recursive; }
+
+    inline void setRecursive(bool is_recursive) { m_is_recursive = is_recursive; }
+
     NextHopGroupKey getNhgKey() const override { return m_key; }
 
     /* Convert NHG's details to a string. */
@@ -94,6 +98,9 @@ public:
 private:
     /* Whether the group is temporary or not. */
     bool m_is_temp;
+
+    /* Whether the group is recursive i.e. having other nexthop group(s) as members */
+    bool m_is_recursive;
 
     /* Add group's members over the SAI API for the given keys. */
     bool syncMembers(const set<NextHopKey>& nh_keys) override;
