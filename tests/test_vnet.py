@@ -3688,10 +3688,6 @@ class TestVnetOrch(object):
         }
         setup_subnet_decap(subnet_decap_config)
 
-        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-
         vnet_obj = self.get_vnet_obj()
         vnet_obj.fetch_exist_entries(dvs)
 
@@ -3776,10 +3772,6 @@ class TestVnetOrch(object):
             "src_ip_v6": "20c1:ba8::/64"
         }
         setup_subnet_decap(subnet_decap_config)
-
-        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
         vnet_obj = self.get_vnet_obj()
         vnet_obj.fetch_exist_entries(dvs)

@@ -1456,7 +1456,8 @@ inline void VNetRouteOrch::createSubnetDecapTerm(const IpPrefix &ipPrefix)
 inline void VNetRouteOrch::removeSubnetDecapTerm(const IpPrefix &ipPrefix)
 {
     const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
-    if (!config.enable || subnet_decap_terms_created_.find(ipPrefix) == subnet_decap_terms_created_.end())
+    auto it = subnet_decap_terms_created_.find(ipPrefix);
+    if (it == subnet_decap_terms_created_.end())
     {
         return;
     }
@@ -1464,7 +1465,7 @@ inline void VNetRouteOrch::removeSubnetDecapTerm(const IpPrefix &ipPrefix)
     string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
     string key = tunnel_name + ":" + ipPrefix.to_string();
     app_tunnel_decap_term_producer_.del(key);
-    subnet_decap_terms_created_.erase(ipPrefix);
+    subnet_decap_terms_created_.erase(it);
 }
 
 template<>
