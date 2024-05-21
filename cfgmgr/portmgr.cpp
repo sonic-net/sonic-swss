@@ -98,7 +98,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     
     if (!ret)
     {
-        return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+        //return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
     }
     else if (!isPortStateOk(alias))
     {
@@ -245,7 +245,6 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
