@@ -753,8 +753,27 @@ bool PortHelper::parsePortSubport(PortConfig &port, const std::string &field, co
 {
     SWSS_LOG_ENTER();
 
-    port.subport.value = value;
-    port.subport.is_set = true;
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited", field.c_str());
+        return false;
+    }
+
+    try
+    {
+        port.subport.value = toUInt16(value);
+        if (port.subport.value < 0)
+        {
+            SWSS_LOG_ERROR("Failed to parse field(%s): negative number is prohibited", field.c_str(), value.c_str());
+            return false;
+        }
+        port.subport.is_set = true;
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
+        return false;
+    }
 
     return true;
 }
