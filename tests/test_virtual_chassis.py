@@ -976,7 +976,20 @@ class TestVirtualChassis(object):
 
                 # Total number of logs = (No of system ports * No of lossless priorities) - No of lossless priorities for CPU ports
                 assert logSeen.strip() == str(len(system_ports)*2 - 2)
-
+    
+    def test_chassis_system_intf_status(self, vct):
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            if name.startswith("supervisor"):
+                chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
+                keys = chassis_app_db.get_keys("SYSTEM_INTERFACE")
+                assert len(keys) > 0, "No system interface entries in chassis app db"
+                # Get the first system interface
+                intf = chassis_app_db.get_entry("SYSTEM_INTERFACE", keys[0])
+                # Get the oper_status
+                oper_status = intf.get("oper_status", "unknown")
+                assert oper_status != "unknown", "System interface oper status is unknown"
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

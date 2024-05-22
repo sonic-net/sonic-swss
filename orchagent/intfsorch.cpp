@@ -1740,13 +1740,8 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
             }
             port_alias = port.m_system_port_info.alias;
         }
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Port does not exist for %s!", port_alias.c_str());
-        return;
+        SWSS_LOG_NOTICE("Syncing system interface state %s for port %s", isUp ? "up" : "down", port_alias.c_str());
+        m_tableVoqSystemInterfaceTable->hset(port_alias, "oper_status", isUp ? "up" : "down");
     }
 
-    SWSS_LOG_NOTICE("Syncing system interface state %s for port %s", isUp ? "up" : "down", port_alias.c_str());
-    m_tableVoqSystemInterfaceTable->hset(port_alias, "oper_status", isUp ? "up" : "down");
 }
