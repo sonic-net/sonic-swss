@@ -105,7 +105,6 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("300", value_opt.get());
 
-
     }
 
      
@@ -130,9 +129,7 @@ namespace portmgr_ut
             {"index", "1"},
             {"mtu", "1518"},
             {"admin_status", "up"},
-            {"dhcp_rate_limit", "300"},
-
-
+            {"dhcp_rate_limit", "300"}
 
         });
 

@@ -107,7 +107,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     if (!ret)
     {
 
-        return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
     }
     else if (!isPortStateOk(alias))
@@ -262,7 +261,6 @@ void PortMgr::doTask(Consumer &consumer)
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
-                field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
                 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
