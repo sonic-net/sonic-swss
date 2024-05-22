@@ -107,6 +107,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     if (!ret)
     {
 
+        return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
     }
     else if (!isPortStateOk(alias))

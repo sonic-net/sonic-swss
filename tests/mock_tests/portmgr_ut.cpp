@@ -144,7 +144,6 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
-        ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 406000bps burst 406000b conform-exceed drop", mockCallArgs[2]) << "Unexpected command: " << mockCallArgs[2];
 
 
     }
