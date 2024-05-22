@@ -749,6 +749,16 @@ bool PortHelper::parsePortDescription(PortConfig &port, const std::string &field
     return true;
 }
 
+bool PortHelper::parsePortSubport(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    port.subport.value = value;
+    port.subport.is_set = true;
+
+    return true;
+}
+
 bool PortHelper::parsePortConfig(PortConfig &port) const
 {
     SWSS_LOG_ENTER();
@@ -992,6 +1002,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_DESCRIPTION)
         {
             if (!this->parsePortDescription(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SUBPORT)
+        {
+            if (!this->parsePortSubport(port, field, value))
             {
                 return false;
             }
