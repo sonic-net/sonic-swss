@@ -1,10 +1,10 @@
 #include "p4orch/mirror_session_manager.h"
 
 #include <map>
+#include <nlohmann/json.hpp>
 
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
-#include <nlohmann/json.hpp>
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
@@ -21,13 +21,14 @@ extern sai_object_id_t gSwitchId;
 namespace p4orch
 {
 
-ReturnCode MirrorSessionManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+ReturnCode MirrorSessionManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                              std::string &object_key)
 {
-    std::string     value;
+    std::string value;
 
     try
     {
-        nlohmann::json  j = nlohmann::json::parse(json_key);
+        nlohmann::json j = nlohmann::json::parse(json_key);
         if (j.find(prependMatchField(p4orch::kMirrorSessionId)) != j.end())
         {
             value = j.at(prependMatchField(p4orch::kMirrorSessionId)).get<std::string>();

@@ -621,17 +621,17 @@ MACsecOrch::MACsecOrch(
                                 StatsMode::READ,
                                 MACSEC_STAT_POLLING_INTERVAL_MS, true),
                             m_gb_macsec_sa_attr_manager(
-                                "GB_FLEX_COUNTER_DB",
+                                true,
                                 COUNTERS_MACSEC_SA_ATTR_GROUP,
                                 StatsMode::READ,
                                 MACSEC_STAT_XPN_POLLING_INTERVAL_MS, true),
                             m_gb_macsec_sa_stat_manager(
-                                "GB_FLEX_COUNTER_DB",
+                                true,
                                 COUNTERS_MACSEC_SA_GROUP,
                                 StatsMode::READ,
                                 MACSEC_STAT_POLLING_INTERVAL_MS, true),
                             m_gb_macsec_flow_stat_manager(
-                                "GB_FLEX_COUNTER_DB",
+                                true,
                                 COUNTERS_MACSEC_FLOW_GROUP,
                                 StatsMode::READ,
                                 MACSEC_STAT_POLLING_INTERVAL_MS, true)
@@ -2352,16 +2352,16 @@ void MACsecOrch::installCounter(
     switch(counter_type)
     {
         case CounterType::MACSEC_SA_ATTR:
-            MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats, *ctx.get_switch_id());
             break;
 
         case CounterType::MACSEC_SA:
-            MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats, *ctx.get_switch_id());
             MACsecCountersMap(ctx).hset("", obj_name, sai_serialize_object_id(obj_id));
             break;
 
         case CounterType::MACSEC_FLOW:
-            MACsecFlowStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecFlowStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats, *ctx.get_switch_id());
             break;
 
         default:

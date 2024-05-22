@@ -61,7 +61,7 @@ void PortCapabilities::queryPortAttrCapabilities(T &obj, sai_port_attr_t attrId)
     );
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR(
+        SWSS_LOG_WARN(
             "Failed to get attribute(%s) capabilities",
             toStr(SAI_OBJECT_TYPE_PORT, attrId).c_str()
         );

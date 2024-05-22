@@ -1,5 +1,6 @@
 import pytest
 from requests import request
+import time
 
 L3_TABLE_TYPE = "L3"
 L3_TABLE_NAME = "L3_TEST"
@@ -131,6 +132,38 @@ class TestAcl:
         dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "INVALID_RULE", None)
         dvs_acl.verify_no_acl_rules()
 
+    def test_AclRuleUpdate(self, dvs_acl, l3_acl_table):
+        """The test is to verify there is no duplicated flex counter when updating an ACL rule
+        """
+        config_qualifiers = {"SRC_IP": "10.10.10.10/32"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.10.10.10&mask:255.255.255.255")
+        }
+
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        
+        acl_rule_id = dvs_acl.get_acl_rule_id()
+        counter_id = dvs_acl.get_acl_counter_oid()
+        
+        new_config_qualifiers = {"SRC_IP": "10.10.10.11/32"}
+        new_expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.10.10.11&mask:255.255.255.255")
+        }
+        dvs_acl.update_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, new_config_qualifiers)
+        # Verify the rule has been updated
+        retry = 5
+        while dvs_acl.get_acl_rule_id() == acl_rule_id and retry >= 0:
+            retry -= 1
+            time.sleep(1)
+        assert retry > 0
+        dvs_acl.verify_acl_rule(new_expected_sai_qualifiers)
+        # Verify the previous counter is removed
+        if counter_id:
+            dvs_acl.check_acl_counter_not_in_counters_map(counter_id)
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
     def test_AclRuleL4SrcPort(self, dvs_acl, l3_acl_table):
         config_qualifiers = {"L4_SRC_PORT": "65000"}
         expected_sai_qualifiers = {
@@ -241,29 +274,6 @@ class TestAcl:
         dvs_acl.remove_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME)
         # Verify the STATE_DB entry is removed
         dvs_acl.verify_acl_rule_status(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, None)
-        dvs_acl.verify_no_acl_rules()
-
-    def test_AclRuleInPortsL3(self, dvs_acl, l3_acl_table):
-        """
-        Verify IN_PORTS matches on ACL rule.
-        Using L3 table type for IN_PORTS matches.
-        """
-        config_qualifiers = {
-            "IN_PORTS": "Ethernet8,Ethernet12",
-        }
-
-        expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS": dvs_acl.get_port_list_comparator(["Ethernet8", "Ethernet12"])
-        }
-
-        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
-        # Verify status is written into STATE_DB
-        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
-        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
-
-        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
-        # Verify the STATE_DB entry is removed
-        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleOutPorts(self, dvs_acl, mclag_acl_table):
@@ -557,25 +567,6 @@ class TestAcl:
         config_qualifiers = {"VLAN_ID": "100"}
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID": dvs_acl.get_simple_qualifier_comparator("100&mask:0xfff")
-        }
-
-        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
-        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
-        # Verify status is written into STATE_DB
-        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
-
-        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
-        # Verify the STATE_DB entry is removed
-        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
-        dvs_acl.verify_no_acl_rules()
-
-    def test_v6AclRuleInPorts(self, dvs_acl, l3v6_acl_table):
-        config_qualifiers = {
-            "IN_PORTS": "Ethernet8,Ethernet12",
-        }
-
-        expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS": dvs_acl.get_port_list_comparator(["Ethernet8", "Ethernet12"])
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
