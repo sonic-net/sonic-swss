@@ -1888,8 +1888,6 @@ bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
     bool rc = true;
     Port inbp;
     gPortsOrch->getInbandPort(inbp);
-    SWSS_LOG_INFO("Inband port %s", inbp.m_alias.c_str());
-
     for (auto nbr = m_syncdNeighbors.begin(); nbr != m_syncdNeighbors.end(); ++nbr)
     {
         if (nbr->first.alias != alias)
@@ -1906,15 +1904,6 @@ bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
         else
         {
             rc = setNextHopFlag(nhop, NHFLAGS_IFDOWN);
-        }
-
-        if (rc == true)
-        {
-            continue;
-        }
-        else
-        {
-            break;
         }
     }
     return rc;
