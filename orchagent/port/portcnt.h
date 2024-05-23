@@ -202,6 +202,11 @@ public:
         bool is_set = false;
     } description; // Port description
 
+    struct {
+        std::string value;
+        bool is_set = false;
+    } subport; // Port subport
+
     std::string key;
     std::string op;
 
