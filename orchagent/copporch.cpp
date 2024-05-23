@@ -632,7 +632,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         if (!trap_id_attribs.empty())
         {
             vector<sai_hostif_trap_type_t> group_trap_ids;
-            TrapIdAttribs trap_attr;
+            TrapIdAttribs trap_attr = m_trap_group_trap_id_attrs[trap_group_name];
             getTrapIdsFromTrapGroup(m_trap_group_map[trap_group_name],
                                     group_trap_ids);
             for (auto trap_id : group_trap_ids)
