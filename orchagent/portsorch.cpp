@@ -1459,7 +1459,7 @@ void PortsOrch::initHostTxReadyState(Port &port)
 
     if (hostTxReady.empty())
     {
-        setHostTxReady(port.m_port_id, "false");
+        setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("initialize host_tx_ready as false for port %s",
                         port.m_alias.c_str());
     }
@@ -1479,7 +1479,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     /* Update the host_tx_ready to false before setting admin_state, when admin state is false */
     if (!state && !m_cmisModuleAsicSyncSupported)
     {
-        setHostTxReady(port.m_port_id, "false");
+        setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("Set admin status DOWN host_tx_ready to false for port %s",
                 port.m_alias.c_str());
     }
@@ -1493,7 +1493,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
 
         if (!m_cmisModuleAsicSyncSupported)
         {
-            setHostTxReady(port.m_port_id, "false");
+            setHostTxReady(port, "false");
         }
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
@@ -1505,7 +1505,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
     if (gbstatus != true && !m_cmisModuleAsicSyncSupported)
     {
-        setHostTxReady(port.m_port_id, "false");
+        setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("Set host_tx_ready to false as gbstatus is false "
                         "for port %s", port.m_alias.c_str());
     }
@@ -1513,7 +1513,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     /* Update the state table for host_tx_ready*/
     if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) && !m_cmisModuleAsicSyncSupported)
     {
-        setHostTxReady(port.m_port_id, "true");
+        setHostTxReady(port, "true");
         SWSS_LOG_NOTICE("Set admin status UP host_tx_ready to true for port %s",
                 port.m_alias.c_str());
     }
@@ -1521,18 +1521,10 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     return true;
 }
 
-void PortsOrch::setHostTxReady(sai_object_id_t portId, const std::string &status)
+void PortsOrch::setHostTxReady(Port port, const std::string &status)
 {
-    Port p;
-
-    if (!getPort(portId, p))
-    {
-        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
-        return;
-    }
-
-    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), p.m_alias.c_str(), portId);
-    m_portStateTable.hset(p.m_alias, "host_tx_ready", status);
+    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
+    m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
 }
 
 bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
@@ -3105,7 +3097,7 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("flap_count", std::to_string(port.m_flap_count));
     tuples.push_back(tuple);
-    
+
     auto now = std::chrono::system_clock::now();
     std::time_t now_c = std::chrono::system_clock::to_time_t(now);
     if (pstatus == SAI_PORT_OPER_STATUS_DOWN)
@@ -3115,8 +3107,8 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
         std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
         FieldValueTuple tuple("last_down_time", buffer);
         tuples.push_back(tuple);
-    } 
-    else if (pstatus == SAI_PORT_OPER_STATUS_UP) 
+    }
+    else if (pstatus == SAI_PORT_OPER_STATUS_UP)
     {
         char buffer[32];
         // Format: Www Mmm dd hh:mm:ss yyyy
@@ -5467,7 +5459,7 @@ bool PortsOrch::initializePort(Port &port)
         string hostTxReadyStr = hostTxReadyVal ? "true" : "false";
 
         SWSS_LOG_DEBUG("Received host_tx_ready current status: port_id: 0x%" PRIx64 " status: %s", port.m_port_id, hostTxReadyStr.c_str());
-        setHostTxReady(port.m_port_id, hostTxReadyStr);
+        setHostTxReady(port, hostTxReadyStr);
     }
 
     /*
@@ -7646,7 +7638,13 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
         sai_deserialize_port_host_tx_ready_ntf(data, switch_id, port_id, host_tx_ready_status);
         SWSS_LOG_DEBUG("Recieved host_tx_ready notification for port 0x%" PRIx64, port_id);
 
-        setHostTxReady(port_id, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
+        Port p;
+        if (!getPort(port_id, p))
+        {
+            SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+            return;
+        }
+        setHostTxReady(p, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
     }
 
 }
