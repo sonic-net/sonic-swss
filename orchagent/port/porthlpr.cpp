@@ -998,7 +998,8 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         }
         else
         {
-            SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
+            // XXX disable subport
+           // SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
         }
     }
 
