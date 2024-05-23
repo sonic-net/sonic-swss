@@ -65,6 +65,7 @@ private:
     void updateFabricPortState();
     void updateFabricDebugCounters();
     void updateFabricCapacity();
+    void updateFabricRate();
 
     void doTask() override;
     void doTask(Consumer &consumer);
