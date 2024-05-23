@@ -1078,6 +1078,8 @@ void CrmOrch::checkCrmThresholds()
             continue;
         }
 
+        SWSS_LOG_WARN("XXX counter size: %zu", i.second.countersMap.size());
+
         for (auto &j : i.second.countersMap)
         {
             auto &cnt = j.second;
