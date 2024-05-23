@@ -1074,6 +1074,7 @@ void CrmOrch::checkCrmThresholds()
 
         if (res.resStatus == CrmResourceStatus::CRM_RES_NOT_SUPPORTED)
         {
+            SWSS_LOG_WARN("XXX CrmResourceStatus::CRM_RES_NOT_SUPPORTED");
             continue;
         }
 
@@ -1115,6 +1116,8 @@ void CrmOrch::checkCrmThresholds()
                 default:
                     throw runtime_error("Unknown threshold type for CRM resource");
             }
+
+            SWSS_LOG_WARN("XXX res.thresholdType: %s", threshType.c_str());
 
             if ((utilization >= res.highThreshold) && (cnt.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
             {
