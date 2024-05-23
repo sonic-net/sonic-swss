@@ -401,10 +401,10 @@ protected:
     bool INT_session_valid;
 };
 
-class AclRuleUnderlaySetDhcp: public AclRule
+class AclRuleUnderlaySetDscp: public AclRule
 {
 public:
-    AclRuleUnderlaySetDhcp(AclOrch *m_pAclOrch, string rule, string table,  MetaDataMgr* m_metaDataMgr, bool createCounter = true);
+    AclRuleUnderlaySetDscp(AclOrch *m_pAclOrch, string rule, string table,  MetaDataMgr* m_metaDataMgr, bool createCounter = true);
 
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();

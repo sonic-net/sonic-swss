@@ -369,7 +369,7 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                    SAI_ACL_ACTION_TYPE_SET_ACL_META_DATA
                 }
             }
         }
@@ -381,7 +381,7 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                    SAI_ACL_ACTION_TYPE_SET_ACL_META_DATA
                 }
             }
         }
@@ -393,7 +393,7 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_EGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                    SAI_ACL_ACTION_TYPE_SET_DSCP
                 }
             }
         }
@@ -1103,7 +1103,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             // value must be between METADATA_VALUE_START and METADATA_VALUE_END inclusive.
             if (matchData.data.u8  < METADATA_VALUE_START || matchData.data.u8 > METADATA_VALUE_END)
             {
-                SWSS_LOG_ERROR("Invalid MATCH_METADATA configuration: %s, expected value between 1-127", attr_value.c_str());
+                SWSS_LOG_ERROR("Invalid MATCH_METADATA configuration: %s, expected value between 1-7.", attr_value.c_str());
                 return false;
             }
         }
@@ -1692,7 +1692,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
-            return make_shared<AclRuleUnderlaySetDhcp>(acl, rule, table, m_metadataMgr);
+            return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
         }
         else if (aclDTelActionLookup.find(action) != aclDTelActionLookup.cend())
         {
@@ -2221,24 +2221,24 @@ void AclRuleMirror::onUpdate(SubjectType type, void *cntx)
     }
 }
 
-AclRuleUnderlaySetDhcp::AclRuleUnderlaySetDhcp(AclOrch *aclOrch, string rule, string table, MetaDataMgr* m_metaDataMgr, bool createCounter):
+AclRuleUnderlaySetDscp::AclRuleUnderlaySetDscp(AclOrch *aclOrch, string rule, string table, MetaDataMgr* m_metaDataMgr, bool createCounter):
     AclRule(aclOrch, rule, table, createCounter),
     table_id(table),
     m_metaDataMgr(m_metaDataMgr)
 {
 }
 
-uint32_t AclRuleUnderlaySetDhcp::getDscpValue() const
+uint32_t AclRuleUnderlaySetDscp::getDscpValue() const
 {
     return cachedDscpValue;
 }
 
-uint32_t AclRuleUnderlaySetDhcp::getMetadata() const
+uint32_t AclRuleUnderlaySetDscp::getMetadata() const
 {
     return cachedMetadata;
 }
 
-bool AclRuleUnderlaySetDhcp::validateAddAction(string attr_name, string _attr_value)
+bool AclRuleUnderlaySetDscp::validateAddAction(string attr_name, string _attr_value)
 {
     SWSS_LOG_ENTER();
 
@@ -2299,7 +2299,7 @@ bool AclRuleUnderlaySetDhcp::validateAddAction(string attr_name, string _attr_va
     return setAction(aclMetadataDscpActionLookup[attr_name], actionData);
 }
 
-bool AclRuleUnderlaySetDhcp::validate()
+bool AclRuleUnderlaySetDscp::validate()
 {
     SWSS_LOG_ENTER();
     if ( m_actions.size() != 1)
@@ -2310,7 +2310,7 @@ bool AclRuleUnderlaySetDhcp::validate()
     return true;
 }
 
-void AclRuleUnderlaySetDhcp::onUpdate(SubjectType, void *)
+void AclRuleUnderlaySetDscp::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
@@ -4197,7 +4197,7 @@ bool AclOrch::addEgrSetDscpRule(string key, string dscpAction)
     if (m_metadataEgrDscpRule[metadata].size() == 1)
     {
         // Create EGR_SET_DSCP rule. set the match criteria to metadata value and action to dscpAction.
-        auto egrSetDscpRule = make_shared<AclRuleUnderlaySetDhcp>(this, std::to_string(metadata), EGR_SET_DSCP_TABLE_ID, &m_metaDataMgr);
+        auto egrSetDscpRule = make_shared<AclRuleUnderlaySetDscp>(this, std::to_string(metadata), EGR_SET_DSCP_TABLE_ID, &m_metaDataMgr);
         egrSetDscpRule->validateAddMatch(MATCH_METADATA, std::to_string(metadata));
         egrSetDscpRule->validateAddAction(ACTION_DSCP, dscpAction);
 
@@ -4557,7 +4557,7 @@ bool AclOrch::addAclRuleWithEgrSetDscp(shared_ptr<AclRule> newRule, string table
     if (isUsingEgrSetDscp(table_id))
     {
         needsEgrSetDscp = true;
-        string dscpAction = std::to_string(std::static_pointer_cast<AclRuleUnderlaySetDhcp>(newRule)->getDscpValue());
+        string dscpAction = std::to_string(std::static_pointer_cast<AclRuleUnderlaySetDscp>(newRule)->getDscpValue());
         if (!addEgrSetDscpRule(key, dscpAction))
         {
             SWSS_LOG_ERROR("Failed to add Egress Set Dscp rule for Rule %s in table %s.",
@@ -5693,13 +5693,25 @@ void MetaDataMgr::recycleMetaData(uint8_t metadata)
     m_MetadataRef[metadata] -= 1;
     if (m_MetadataRef[metadata] == 0)
     {
+        bool foundDscpToErase = false;
+        uint8_t dscpToErase = 0;
         for (auto iter = m_dscpMetadata.begin(); iter != m_dscpMetadata.end(); ++iter)
         {
             if ( iter->second == metadata)
             {
-                m_dscpMetadata.erase(iter->first);
+                foundDscpToErase = true;
+                dscpToErase = iter->first;
                 m_freeMetadata.push_front(metadata);
+                break;
             }
+        }
+        if (foundDscpToErase)
+        {
+            m_dscpMetadata.erase(dscpToErase);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unexpected. Failed to find DSCP value for metadata %d", metadata);
         }
     }
 }

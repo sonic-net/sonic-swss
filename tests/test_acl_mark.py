@@ -412,6 +412,35 @@ class TestAclMarkMeta:
             dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, str(i), None)
         dvs_acl.verify_no_acl_rules()
 
+    def test_OverlayEntryTestMetaDataMgr(self, dvs_acl, overlay_acl_table):
+        # allocate all 7 metadata values and free them multiple times.
+        # At the end there should be no rules allocated.
+        for i in range(1, 4):
+            config_qualifiers = {"DST_IP": "20.0.0.1/32",
+                                "SRC_IP": "10.0.0.0/32",
+                                "DSCP": "1"
+                                }
+            acl_table_id = dvs_acl.get_acl_table_ids(2)
+            _, names, _ = self.get_table_stage(dvs_acl, acl_table_id, [], OVERLAY_BIND_PORTS)
+            #create 8 rules. 8th one should fail.
+            for i in range(1, 9):
+                config_qualifiers["DSCP"] = str(i)
+                dvs_acl.create_dscp_acl_rule(OVERLAY_TABLE_NAME, str(i), config_qualifiers, action=str(i+10))
+                if i < 8:
+                    dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, str(i), "Active")
+                else:
+                    dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, str(i), None)
+
+            table_rules = self.get_acl_rules_with_action(dvs_acl, 14)
+            meta = [str(i) for i in range(1, 8)]
+            dscps = [str(i) for i in range(11, 18)]
+            self.verify_acl_rules_with_action(names, acl_table_id, table_rules, meta, dscps)
+
+            for i in range(1, 9):
+                dvs_acl.remove_acl_rule(OVERLAY_TABLE_NAME, str(i))
+                dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, str(i), None)
+        dvs_acl.verify_no_acl_rules()
+
  # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
