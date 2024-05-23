@@ -14,7 +14,7 @@ class TestFabricSwitchId(object):
         dvs = None
         config_db = None
         for name in vst.dvss.keys():
-            dvs = dvss[name]
+            dvs = vst.dvss[name]
             config_db = dvs.get_config_db()
             metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
             cfg_switch_type = metatbl.get("switch_type")
