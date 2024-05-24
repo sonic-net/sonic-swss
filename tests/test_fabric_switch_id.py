@@ -7,6 +7,7 @@ class TestFabricSwitchId(object):
             (ec, out) = dvs.runcmd(['sh', '-c', 'grep -i "Fabric switch id" /var/log/syslog'])
             print(out)
             (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" %(marker, log)])
+            print(f"syslog match count {out}")
             return (out.strip() == str(expected_cnt), None)
         max_poll = PollingConfig(polling_interval=5, timeout=1800, strict=True)
         wait_for_result(do_check_syslog, polling_config=max_poll)
@@ -39,6 +40,7 @@ class TestFabricSwitchId(object):
             # Restart orchagent and verify orchagent behavior by checking syslog.
             dvs.stop_swss()
             marker = dvs.add_log_marker()
+            print(f"log marker: {marker}")
             dvs.start_swss()
             self.check_syslog(dvs, marker, expected_log)
             dvs.start_swss()
