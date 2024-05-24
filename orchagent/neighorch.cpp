@@ -959,9 +959,12 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
             }
             if (existing_vlan.m_vr_id == new_vlan.m_vr_id)
             {
-                if (existing_vlan.m_vr_id != 0)
+                std::string vrf_name = gDirectory.get<VRFOrch*>()->getVRFname(existing_vlan.m_vr_id);
+                if (vrf_name.empty())
                 {
-                    std::string vrf_name = gDirectory.get<VRFOrch*>()->getVRFname(existing_vlan.m_vr_id);
+                    SWSS_LOG_NOTICE("Neighbor %s already learned on %s, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str());
+                }
+                {
                     SWSS_LOG_NOTICE("Neighbor %s already learned on %s in VRF %s, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str(), vrf_name.c_str());
                 }
                 if (!removeNeighbor(temp_entry))

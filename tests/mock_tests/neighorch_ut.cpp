@@ -189,7 +189,7 @@ namespace neighorch_test
         }
     };
 
-    TEST_F(NeighOrchTest, MultiVlanIpLearning)
+    TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
     {
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
         LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
@@ -247,5 +247,25 @@ namespace neighorch_test
         LearnNeighbor(VLAN_4000, TEST_IP, MAC5);
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN3000_NEIGH), 0);
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN4000_NEIGH), 1);
+    }
+
+    TEST_F(NeighOrchTest, MultiVlanDuplicateNeighborMissingExistingVlanPort)
+    {
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        gPortsOrch->m_portList.erase(VLAN_1000);
+        LearnNeighbor(VLAN_2000, TEST_IP, MAC2);
+    }
+
+    TEST_F(NeighOrchTest, MultiVlanDuplicateNeighborMissingNewVlanPort)
+    {
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        gPortsOrch->m_portList.erase(VLAN_2000);
+        LearnNeighbor(VLAN_2000, TEST_IP, MAC2);
     }
 }
