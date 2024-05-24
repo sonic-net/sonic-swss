@@ -7,6 +7,7 @@
 #include "crmorch.h"
 #include <array>
 #include <algorithm>
+#include "zmqserver.h"
 
 #define LINK_DOWN    0
 #define LINK_UP      1
@@ -21,10 +22,8 @@ extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 
-FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
+FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, swss::ZmqServer *zmqServer) :
         Orch(db, tableNames),
-        m_zmqClient("tcp://localhost:8100"),
-        m_routeTable(appDb, APP_ROUTE_TABLE_NAME, m_zmqClient),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
@@ -33,6 +32,18 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, 
     SWSS_LOG_ENTER();
     isFineGrainedConfigured = false;
     gPortsOrch->attach(this);
+
+    ProducerStateTable *producerStateTablePtr = nullptr;
+    if (zmqServer) {
+        ZmqClient *zmqClientPtr = new ZmqClient("tcp://localhost:" + to_string(ORCH_ZMQ_PORT));
+        m_zmqClient = std::shared_ptr<ZmqClient>(zmqClientPtr);
+        producerStateTablePtr = new ZmqProducerStateTable(appDb, APP_ROUTE_TABLE_NAME, *zmqClientPtr);
+    }
+    else {
+        producerStateTablePtr = new ProducerStateTable(appDb, APP_ROUTE_TABLE_NAME);
+    }
+
+    m_routeTable = std::shared_ptr<ProducerStateTable>(producerStateTablePtr);
 }
 
 
@@ -1664,7 +1675,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             {
                 SWSS_LOG_INFO("Route exists in routeorch, deleting from APP_DB to begin migration");
                 m_fgPrefixAddCache[ip_prefix] = nhg;
-                m_routeTable.del(ip_prefix.to_string());
+                m_routeTable->del(ip_prefix.to_string());
                 return false;
             }
         }
@@ -1676,7 +1687,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
                 SWSS_LOG_INFO("Route removed in routeorch, now do an APP_DB addition");
                 fgNhg_entry->second.prefixes.push_back(ip_prefix);
                 m_fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
-                m_routeTable.set(ip_prefix.to_string(), generateRouteTableFromNhgKey(addCache->second));
+                m_routeTable->set(ip_prefix.to_string(), generateRouteTableFromNhgKey(addCache->second));
                 m_fgPrefixAddCache.erase(addCache);
                 SWSS_LOG_INFO("Performed APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
             }
@@ -1727,7 +1738,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             {
                 SWSS_LOG_INFO("Route exists in fgNhgOrch, deleting from APP_DB");
                 m_fgPrefixDelCache[ip_prefix] = nhg;
-                m_routeTable.del(ip_prefix.to_string());
+                m_routeTable->del(ip_prefix.to_string());
                 return false;
             }
         }
@@ -1747,7 +1758,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
                 }
                 m_fgNhgPrefixes.erase(ip_prefix); 
 
-                m_routeTable.set(ip_prefix.to_string(), generateRouteTableFromNhgKey(delCache->second));
+                m_routeTable->set(ip_prefix.to_string(), generateRouteTableFromNhgKey(delCache->second));
                 SWSS_LOG_INFO("Perform APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
             }
             else

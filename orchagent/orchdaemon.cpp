@@ -204,7 +204,7 @@ bool OrchDaemon::init()
         { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
     };
 
-    gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
+    gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch, m_zmqServer);
     gDirectory.set(gFgNhgOrch);
 
     vector<string> srv6_tables = {
