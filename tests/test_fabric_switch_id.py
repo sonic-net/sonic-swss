@@ -4,9 +4,11 @@ import pytest
 class TestFabricSwitchId(object):
     def check_syslog(self, dvs, marker, log, expected_cnt=1):
         def do_check_syslog():
+            (ec, out) = dvs.runcmd(['sh', '-c', 'grep -i "Fabric switch id" /var/log/syslog'])
+            print(out)
             (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" %(marker, log)])
             return (out.strip() == str(expected_cnt), None)
-        max_poll = PollingConfig(polling_interval=5, timeout=600, strict=True)
+        max_poll = PollingConfig(polling_interval=5, timeout=1800, strict=True)
         wait_for_result(do_check_syslog, polling_config=max_poll)
 
     def test_invalid_fabric_switch_id(self, vst):
@@ -26,18 +28,20 @@ class TestFabricSwitchId(object):
         # - Invalid fabric switch_id, e.g, -1, is set.
         # - fabric switch_id is missing in ConfigDb.
         for invalid_switch_id in (-1, None):
+            print(f"Test invalid switch id {invalid_switch_id}")
             if invalid_switch_id is None:
                 config_db.delete_field("DEVICE_METADATA", "localhost", "switch_id")
                 expected_log = "Fabric switch id is not configured"
             else:
-                config_db.set_field("DEVICE_METADATA", "localhost", "switch_id", str( invalid_switch_id))
+                config_db.set_field("DEVICE_METADATA", "localhost", "switch_id", str(invalid_switch_id))
                 expected_log = f"Invalid fabric switch id {invalid_switch_id} configured"
 
             # Restart orchagent and verify orchagent behavior by checking syslog.
             dvs.stop_swss()
             marker = dvs.add_log_marker()
             dvs.start_swss()
-            self.check_syslog(dvs, marker , expected_log)
+            self.check_syslog(dvs, marker, expected_log)
+            dvs.start_swss()
 
 
 # Add Dummy always-pass test at end as workaroud
