@@ -305,6 +305,133 @@ class TestPort(object):
         expected_fields = {"SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE":"false"}
         adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
+    def test_PortPathTracing(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        ctbl = swsscommon.Table(cdb, "PORT")
+        ptbl = swsscommon.Table(pdb, "PORT_TABLE")
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+
+        # get the number of ports before removal
+        num_of_ports = len(atbl.getKeys())
+
+        initial_entries = set(atbl.getKeys())
+
+        # read port info and save it
+        (status, ports_info) = ctbl.get("Ethernet124")
+        assert status
+
+        # remove buffer pg cfg for the port (record the buffer pgs before removing them)
+        pgs = dvs.get_config_db().get_keys('BUFFER_PG')
+        buffer_pgs = {}
+        for key in pgs:
+            if "Ethernet124" in key:
+                buffer_pgs[key] = dvs.get_config_db().get_entry('BUFFER_PG', key)
+                dvs.get_config_db().delete_entry('BUFFER_PG', key)
+                dvs.get_app_db().wait_for_deleted_entry("BUFFER_PG_TABLE", key)
+
+        # remove buffer queue cfg for the port
+        queues = dvs.get_config_db().get_keys('BUFFER_QUEUE')
+        buffer_queues = {}
+        for key in queues:
+            if "Ethernet124" in key:
+                buffer_queues[key] = dvs.get_config_db().get_entry('BUFFER_QUEUE', key)
+                dvs.get_config_db().delete_entry('BUFFER_QUEUE', key)
+                dvs.get_app_db().wait_for_deleted_entry('BUFFER_QUEUE_TABLE', key)
+
+        # shutdown port
+        dvs.port_admin_set("Ethernet124", 'down')
+
+        # remove this port
+        ctbl.delete("Ethernet124")
+
+        # verify that the port has been removed
+        num = dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_ports - 1)
+        assert len(num) == num_of_ports - 1
+
+        # re-add the port with Path Tracing enabled
+        fvs = swsscommon.FieldValuePairs(ports_info + (("pt_interface_id", "129"), ("pt_timestamp_template", "template2")))
+        ctbl.set("Ethernet124", fvs)
+
+        # check application database
+        dvs.get_app_db().wait_for_entry('PORT_TABLE', "Ethernet124")
+        (status, fvs) = ptbl.get("Ethernet124")
+        assert status
+        for fv in fvs:
+            if fv[0] == "pt_interface_id":
+                assert fv[1] == "129"
+            if fv[0] == "pt_timestamp_template":
+                assert fv[1] == "template2"
+
+        # verify that the port has been re-added
+        num = dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_ports)
+        assert len(num) == num_of_ports
+
+        # check ASIC DB
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        # get PT Interface ID and validate it to be 129
+        entries = set(atbl.getKeys())
+        new_entries = list(entries - initial_entries)
+        assert len(new_entries) == 1, "Wrong number of created entries."
+
+        (status, fvs) = atbl.get(new_entries[0])
+        assert status
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_INTF":
+                assert fv[1] == "129"
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE":
+                assert fv[1] == "SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19"
+
+        # change Path Tracing Interface ID and Timestamp Template on the port
+        fvs = swsscommon.FieldValuePairs([("pt_interface_id", "130"), ("pt_timestamp_template", "template3")])
+        ctbl.set("Ethernet124", fvs)
+        time.sleep(5)
+
+        # check application database
+        (status, fvs) = ptbl.get("Ethernet124")
+        assert status
+        for fv in fvs:
+            if fv[0] == "pt_interface_id":
+                assert fv[1] == "130"
+            if fv[0] == "pt_timestamp_template":
+                assert fv[1] == "template3"
+
+        time.sleep(5)
+
+        # check ASIC DB
+        # get PT Interface ID and validate it to be 130
+        (status, fvs) = atbl.get(new_entries[0])
+        assert status
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_INTF":
+                assert fv[1] == "130"
+            if fv[0] == "SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE":
+                assert fv[1] == "SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23"
+
+        # shutdown port
+        dvs.port_admin_set("Ethernet124", 'down')
+
+        # remove the port
+        ctbl.delete("Ethernet124")
+
+        # re-add the port with the original configuration
+        ctbl.set("Ethernet124", ports_info)
+
+        # verify that the port has been re-added
+        num = dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_ports)
+        assert len(num) == num_of_ports
+
+        # re-add buffer pg and queue cfg to the port
+        for key, pg in buffer_pgs.items():
+            dvs.get_config_db().update_entry("BUFFER_PG", key, pg)
+
+        for key, queue in buffer_queues.items():
+            dvs.get_config_db().update_entry("BUFFER_QUEUE", key, queue)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
