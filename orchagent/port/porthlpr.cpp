@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <string>
 #include <exception>
+#include <set>
 
 #include <boost/algorithm/string.hpp>
 
@@ -777,6 +778,8 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
 {
     SWSS_LOG_ENTER();
 
+    std::set<std::string> unknown;
+
     for (const auto &cit : port.fieldValueMap)
     {
         const auto &field = cit.first;
@@ -1029,6 +1032,11 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         }
         else
         {
+            if (unknown.find(field) != unknown.end())
+                continue; // do not pollute logs with the same unknown field
+
+            unknown.insert(field);
+
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
         }
     }
