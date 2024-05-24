@@ -444,27 +444,37 @@ static bool isPathTracingSupported()
     }
 
     /* Then verify if the four conditions are met */
-    if (!is_tam_supported)
-    {
-        return false;
-    }
-
-    if (!gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_INTF))
-    {
-        return false;
-    }
-
-    if (!gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE))
-    {
-        return false;
-    }
-
-    if (!gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TAM_OBJECT))
+    if (!is_tam_supported ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_INTF) ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE) ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TAM_OBJECT))
     {
         return false;
     }
 
     return true;
+}
+
+bool PortsOrch::checkPathTracingCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    if (isPathTracingSupported())
+    {
+        SWSS_LOG_INFO("Path Tracing is supported");
+        /* Set PATH_TRACING_CAPABLE = true in STATE DB */
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "true");
+        m_isPathTracingSupported = true;
+    }
+    else
+    {
+        SWSS_LOG_INFO("Path Tracing is not supported");
+        /* Set PATH_TRACING_CAPABLE = false in STATE DB */
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "false");
+        m_isPathTracingSupported = false;
+    }
+    gSwitchOrch->set_switch_capability(fvVector);
+
+    return m_isPathTracingSupported;
 }
 
 // Port OA ------------------------------------------------------------------------------------------------------------
@@ -754,22 +764,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     }
 
     /* Query Path Tracing capability */
-    vector<FieldValueTuple> fvVector;
-    if (isPathTracingSupported())
-    {
-        SWSS_LOG_INFO("Path Tracing is supported");
-        /* Set PATH_TRACING_CAPABLE = true in STATE DB */
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "true");
-        m_isPathTracingSupported = true;
-    }
-    else
-    {
-        SWSS_LOG_INFO("Path Tracing is not supported");
-        /* Set PATH_TRACING_CAPABLE = false in STATE DB */
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "false");
-        m_isPathTracingSupported = false;
-    }
-    gSwitchOrch->set_switch_capability(fvVector);
+    checkPathTracingCapability();
 
     auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
     Orch::addExecutor(executor);

@@ -531,6 +531,7 @@ private:
     bool removePortBulk(const std::vector<sai_object_id_t> &portList);
 
     /* Prototypes for Path Tracing */
+    bool checkPathTracingCapability();
     bool createPtTam();
     bool removePtTam(sai_object_id_t tam_id);
     bool createAndSetPortPtTam(const Port &p);

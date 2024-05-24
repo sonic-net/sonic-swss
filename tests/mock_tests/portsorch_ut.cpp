@@ -83,8 +83,15 @@ namespace portsorch_test
     uint32_t _sai_set_pfc_mode_count;
     uint32_t _sai_set_admin_state_up_count;
     uint32_t _sai_set_admin_state_down_count;
-    bool set_pt_interface_id_failure = false;
-    bool set_pt_timestamp_template_failure = false;
+    bool set_pt_interface_id_fail = false;
+    bool set_pt_timestamp_template_fail = false;
+    bool set_port_tam_fail = false;
+    uint32_t set_pt_interface_id_count = false;
+    uint32_t set_pt_timestamp_template_count = false;
+    uint32_t set_port_tam_count = false;
+    uint32_t set_pt_interface_id_failures;
+    uint32_t set_pt_timestamp_template_failures;
+    uint32_t set_port_tam_failures;
     sai_status_t _ut_stub_sai_set_port_attribute(
         _In_ sai_object_id_t port_id,
         _In_ const sai_attribute_t *attr)
@@ -113,18 +120,32 @@ namespace portsorch_test
         }
         else if (attr[0].id == SAI_PORT_ATTR_PATH_TRACING_INTF)
         {
+            set_pt_interface_id_count++;
             /* Simulating failure case */
-            if (set_pt_interface_id_failure)
+            if (set_pt_interface_id_fail)
             {
-                return SAI_STATUS_FAILURE;
+                set_pt_interface_id_failures++;
+                return SAI_STATUS_INVALID_ATTR_VALUE_0;
             }
         }
         else if (attr[0].id == SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE)
         {
+            set_pt_timestamp_template_count++;
             /* Simulating failure case */
-            if (set_pt_timestamp_template_failure)
+            if (set_pt_timestamp_template_fail)
             {
-                return SAI_STATUS_FAILURE;
+                set_pt_timestamp_template_failures++;
+                return SAI_STATUS_INVALID_ATTR_VALUE_0;
+            }
+        }
+        else if (attr[0].id == SAI_PORT_ATTR_TAM_OBJECT)
+        {
+            set_port_tam_count++;
+            /* Simulating failure case */
+            if (set_port_tam_fail)
+            {
+                set_port_tam_failures++;
+                return SAI_STATUS_INVALID_ATTR_VALUE_0;
             }
         }
         return pold_sai_port_api->set_port_attribute(port_id, attr);
@@ -382,9 +403,7 @@ namespace portsorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
 
-            _hook_sai_switch_api();
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
-            _unhook_sai_switch_api();
 
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
@@ -1474,14 +1493,8 @@ namespace portsorch_test
         // Verify PT Timestamp Template
         ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
 
-        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
-                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
-                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        *_sai_syncd_notifications_count = 0;
-
-        set_pt_interface_id_failure = true;
-        set_pt_timestamp_template_failure = true;
+        // Simulate failure when PortsOrch attempts to set the Path Tracing Interface ID
+        set_pt_interface_id_fail = true;
 
         // Enable Path Tracing on Ethernet9 with Interface ID 129 and Timestamp Template template2
         kfvList = {{
@@ -1495,11 +1508,122 @@ namespace portsorch_test
         // Refill consumer
         consumer->addToSync(kfvList);
 
-        // Apply configuration
-        ASSERT_DEATH({static_cast<Orch *>(gPortsOrch)->doTask();}, "");
+        static_cast<Orch*>(gPortsOrch)->doTask();
 
-        ASSERT_EQ(*_sai_syncd_notifications_count, 1);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_EQ(set_pt_interface_id_fail, 1);
+
+        set_pt_interface_id_fail = false;
+
+
+        // Simulate failure when PortsOrch attempts to set the Path Tracing Timestamp Template
+        set_pt_timestamp_template_fail = true;
+
+        // Enable Path Tracing on Ethernet10 with Interface ID 129 and Timestamp Template template2
+        kfvList = {{
+            "Ethernet10",
+            SET_COMMAND, {
+                { "pt_interface_id",       "129"       },
+                { "pt_timestamp_template", "template2" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        ASSERT_EQ(set_pt_timestamp_template_failures, 1);
+
+        set_pt_timestamp_template_fail = false;
+
+
+        // Simulate failure when PortsOrch attempts to set the port TAM object
+        set_port_tam_fail = true;
+
+        // Enable Path Tracing on Ethernet11 with Interface ID 129 and Timestamp Template template2
+        kfvList = {{
+            "Ethernet11",
+            SET_COMMAND, {
+                { "pt_interface_id",       "129"       },
+                { "pt_timestamp_template", "template2" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        ASSERT_EQ(set_port_tam_fail, 1);
+
+        set_port_tam_fail = false;
+
+        _unhook_sai_switch_api();
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, PortPTCapabilityUnsupported)
+    {
+        _hook_sai_port_api();
+        _hook_sai_switch_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Port p;
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Scenario 1: Path Tracing supported
+        ASSERT_TRUE(gPortsOrch->checkPathTracingCapability());
+
+        // Scenario 2: Path Tracing is not supported
+        supported_sai_objects.erase(std::remove(supported_sai_objects.begin(), supported_sai_objects.end(), SAI_OBJECT_TYPE_TAM), supported_sai_objects.end());
+        ASSERT_FALSE(gPortsOrch->checkPathTracingCapability());
+
+        kfvList = {{
+            "Ethernet10",
+            SET_COMMAND, {
+                { "pt_interface_id", "129"}
+            }
+        }};
+        consumer->addToSync(kfvList);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet10", p));
+        // Expect Path Tracing Interface ID is ignored because Path Tracing is not supported on the switch
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        kfvList = {{
+            "Ethernet10",
+            SET_COMMAND, {
+                { "pt_timestamp_template", "template2"}
+            }
+        }};
+        consumer->addToSync(kfvList);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet10", p));
+        // Expect Path Tracing template is ignored because Path Tracing is not supported on the switch
+        ASSERT_NE(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19);
 
         _unhook_sai_switch_api();
         _unhook_sai_port_api();
