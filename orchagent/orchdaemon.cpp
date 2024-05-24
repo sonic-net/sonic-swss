@@ -581,6 +581,7 @@ bool OrchDaemon::init()
     }
     else if ((platform == INVM_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
+             || (platform == MRVL_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
 
@@ -612,7 +613,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING))
+        if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING) || (platform == MRVL_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
