@@ -17,10 +17,12 @@ CFLAGS_SAI = -I /usr/include/sai
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 eliminate_events.lua \
 		 rif_rates.lua \
 		 pfc_detect_innovium.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
+		 pfc_detect_marvell.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
@@ -113,7 +115,8 @@ orchagent_SOURCES = \
             dash/dashaclorch.cpp \
             dash/dashaclgroupmgr.cpp \
             dash/dashtagmgr.cpp \
-            dash/pbutils.cpp
+            dash/pbutils.cpp \
+            twamporch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp

@@ -114,7 +114,8 @@ static const std::unordered_map<std::string, Port::Role> portRoleMap =
     { PORT_ROLE_EXT, Port::Role::Ext },
     { PORT_ROLE_INT, Port::Role::Int },
     { PORT_ROLE_INB, Port::Role::Inb },
-    { PORT_ROLE_REC, Port::Role::Rec }
+    { PORT_ROLE_REC, Port::Role::Rec },
+    { PORT_ROLE_DPC, Port::Role::Dpc }
 };
 
 // functions ----------------------------------------------------------------------------------------------------------
@@ -748,6 +749,30 @@ bool PortHelper::parsePortDescription(PortConfig &port, const std::string &field
     return true;
 }
 
+bool PortHelper::parsePortSubport(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited", field.c_str());
+        return false;
+    }
+
+    try
+    {
+        port.subport.value = value;
+        port.subport.is_set = true;
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
+        return false;
+    }
+
+    return true;
+}
+
 bool PortHelper::parsePortConfig(PortConfig &port) const
 {
     SWSS_LOG_ENTER();
@@ -995,13 +1020,20 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (field == PORT_SUBPORT)
+        {
+            if (!this->parsePortSubport(port, field, value))
+            {
+                return false;
+            }
+        }
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
         }
     }
 
-    return this->validatePortConfig(port);
+    return true;
 }
 
 bool PortHelper::validatePortConfig(PortConfig &port) const

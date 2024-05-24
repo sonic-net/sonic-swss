@@ -223,6 +223,17 @@ class TestDash(object):
         for fv in fvs.items():
             if fv[0] == "SAI_ENI_ETHER_ADDRESS_MAP_ENTRY_ATTR_ENI_ID":
                 assert fv[1] == str(self.eni_oid)
+
+        # test admin state update
+        pb.admin_state = State.STATE_DISABLED
+        dashobj.create_eni(self.mac_string, {"pb": pb.SerializeToString()})
+        time.sleep(3)
+        enis = dashobj.asic_eni_table.get_keys()
+        assert len(enis) == 1
+        assert enis[0] == self.eni_oid
+        eni_attrs = dashobj.asic_eni_table[self.eni_oid]
+        assert eni_attrs["SAI_ENI_ATTR_ADMIN_STATE"] == "false"
+
         return dashobj
 
     def test_vnet_map(self, dvs):

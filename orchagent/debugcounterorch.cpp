@@ -336,7 +336,6 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
     string counter_type = counter->getCounterType();
     string counter_stat = counter->getDebugCounterSAIStat();
 
-    debug_counters.erase(it);
     uninstallDebugFlexCounters(counter_type, counter_stat);
 
     if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
@@ -347,6 +346,7 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
     {
         m_counterNameToSwitchStatMap->hdel("", counter_name);
     }
+    debug_counters.erase(it);
 
     SWSS_LOG_NOTICE("Successfully deleted drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
