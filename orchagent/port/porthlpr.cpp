@@ -573,6 +573,33 @@ bool PortHelper::parsePortTpid(PortConfig &port, const std::string &field, const
     return true;
 }
 
+
+
+bool PortHelper::parsePortDhcpRateLimit(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    try
+    {
+        port.dhcp_rate_limit.value = toUInt32(value);
+        port.dhcp_rate_limit.is_set = true;
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
+        return false;
+    }
+
+    return true;
+}
+
+
 bool PortHelper::parsePortPfcAsym(PortConfig &port, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
@@ -825,6 +852,14 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_MTU)
         {
             if (!this->parsePortMtu(port, field, value))
+            {
+                return false;
+            }
+        }
+
+        else if (field == PORT_DHCP_RATE_LIMIT)
+        {
+            if (!this->parsePortDhcpRateLimit(port, field, value))
             {
                 return false;
             }
