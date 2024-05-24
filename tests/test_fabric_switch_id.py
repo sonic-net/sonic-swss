@@ -43,7 +43,6 @@ class TestFabricSwitchId(object):
             print(f"log marker: {marker}")
             dvs.start_swss()
             self.check_syslog(dvs, marker, expected_log)
-            dvs.start_swss()
 
 
 # Add Dummy always-pass test at end as workaroud
