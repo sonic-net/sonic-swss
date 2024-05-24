@@ -18,6 +18,10 @@ using swss::DBConnector;
 using swss::FieldValueTuple;
 using swss::ProducerTable;
 
+extern sai_switch_api_t *sai_switch_api;
+
+extern sai_object_id_t gSwitchId;
+
 const string FLEX_COUNTER_ENABLE("enable");
 const string FLEX_COUNTER_DISABLE("disable");
 
@@ -89,13 +93,13 @@ FlexCounterManager::FlexCounterManager(
         const uint polling_interval,
         const bool enabled,
         FieldValueTuple fv_plugin) :
-    FlexCounterManager("FLEX_COUNTER_DB", group_name, stats_mode,
+    FlexCounterManager(false, group_name, stats_mode,
             polling_interval, enabled, fv_plugin)
 {
 }
 
 FlexCounterManager::FlexCounterManager(
-        const string& db_name,
+        const bool is_gearbox,
         const string& group_name,
         const StatsMode stats_mode,
         const uint polling_interval,
@@ -106,11 +110,7 @@ FlexCounterManager::FlexCounterManager(
     polling_interval(polling_interval),
     enabled(enabled),
     fv_plugin(fv_plugin),
-    flex_counter_db(new DBConnector(db_name, 0)),
-    flex_counter_group_table(new ProducerTable(flex_counter_db.get(),
-                FLEX_COUNTER_GROUP_TABLE)),
-    flex_counter_table(new ProducerTable(flex_counter_db.get(),
-                FLEX_COUNTER_TABLE))
+    is_gearbox(is_gearbox)
 {
     SWSS_LOG_ENTER();
 
@@ -125,13 +125,10 @@ FlexCounterManager::~FlexCounterManager()
 
     for (const auto& counter: installed_counters)
     {
-        flex_counter_table->del(getFlexCounterTableKey(group_name, counter));
+        stopFlexCounterPolling(counter.second, getFlexCounterTableKey(group_name, counter.first));
     }
 
-    if (flex_counter_group_table != nullptr)
-    {
-        flex_counter_group_table->del(group_name);
-    }
+    delFlexCounterGroup(group_name, is_gearbox);
 
     SWSS_LOG_DEBUG("Deleted flex counter group '%s'.", group_name.c_str());
 }
@@ -140,19 +137,13 @@ void FlexCounterManager::applyGroupConfiguration()
 {
     SWSS_LOG_ENTER();
 
-    vector<FieldValueTuple> field_values =
-    {
-        FieldValueTuple(STATS_MODE_FIELD, stats_mode_lookup.at(stats_mode)),
-        FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval)),
-        FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, status_lookup.at(enabled))
-    };
-
-    if (!fvField(fv_plugin).empty())
-    {
-        field_values.emplace_back(fv_plugin);
-    }
-
-    flex_counter_group_table->set(group_name, field_values);
+    setFlexCounterGroupParameter(group_name,
+                                 std::to_string(polling_interval),
+                                 stats_mode_lookup.at(stats_mode),
+                                 fvField(fv_plugin),
+                                 fvValue(fv_plugin),
+                                 status_lookup.at(enabled),
+                                 is_gearbox);
 }
 
 void FlexCounterManager::updateGroupPollingInterval(
@@ -160,11 +151,7 @@ void FlexCounterManager::updateGroupPollingInterval(
 {
     SWSS_LOG_ENTER();
 
-    vector<FieldValueTuple> field_values =
-    {
-        FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval))
-    };
-    flex_counter_group_table->set(group_name, field_values);
+    setFlexCounterGroupPollInterval(group_name, std::to_string(polling_interval), is_gearbox);
 
     SWSS_LOG_DEBUG("Set polling interval for flex counter group '%s' to %d ms.",
             group_name.c_str(), polling_interval);
@@ -181,11 +168,7 @@ void FlexCounterManager::enableFlexCounterGroup()
         return;
     }
 
-    vector<FieldValueTuple> field_values =
-    {
-        FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, FLEX_COUNTER_ENABLE)
-    };
-    flex_counter_group_table->set(group_name, field_values);
+    setFlexCounterGroupOperation(group_name, FLEX_COUNTER_ENABLE, is_gearbox);
     enabled = true;
 
     SWSS_LOG_DEBUG("Enabling flex counters for group '%s'.",
@@ -203,11 +186,7 @@ void FlexCounterManager::disableFlexCounterGroup()
         return;
     }
 
-    vector<FieldValueTuple> field_values =
-    {
-        FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, FLEX_COUNTER_DISABLE)
-    };
-    flex_counter_group_table->set(group_name, field_values);
+    setFlexCounterGroupOperation(group_name, FLEX_COUNTER_DISABLE, is_gearbox);
     enabled = false;
 
     SWSS_LOG_DEBUG("Disabling flex counters for group '%s'.",
@@ -219,7 +198,8 @@ void FlexCounterManager::disableFlexCounterGroup()
 void FlexCounterManager::setCounterIdList(
         const sai_object_id_t object_id,
         const CounterType counter_type,
-        const unordered_set<string>& counter_stats)
+        const unordered_set<string>& counter_stats,
+        const sai_object_id_t switch_id)
 {
     SWSS_LOG_ENTER();
 
@@ -231,12 +211,12 @@ void FlexCounterManager::setCounterIdList(
         return;
     }
 
-    std::vector<swss::FieldValueTuple> field_values =
-    {
-        FieldValueTuple(counter_type_it->second, serializeCounterStats(counter_stats))
-    };
-    flex_counter_table->set(getFlexCounterTableKey(group_name, object_id), field_values);
-    installed_counters.insert(object_id);
+    auto key = getFlexCounterTableKey(group_name, object_id);
+    auto counter_ids = serializeCounterStats(counter_stats);
+    auto effective_switch_id = switch_id == SAI_NULL_OBJECT_ID ? gSwitchId : switch_id;
+
+    startFlexCounterPolling(effective_switch_id, key, counter_ids, counter_type_it->second);
+    installed_counters[object_id] = effective_switch_id;
 
     SWSS_LOG_DEBUG("Updated flex counter id list for object '%" PRIu64 "' in group '%s'.",
             object_id,
@@ -258,7 +238,8 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
         return;
     }
 
-    flex_counter_table->del(getFlexCounterTableKey(group_name, object_id));
+    auto key = getFlexCounterTableKey(group_name, object_id);
+    stopFlexCounterPolling(installed_counters[object_id], key);
     installed_counters.erase(counter_it);
 
     SWSS_LOG_DEBUG("Cleared flex counter id list for object '%" PRIu64 "' in group '%s'.",
@@ -272,7 +253,7 @@ string FlexCounterManager::getFlexCounterTableKey(
 {
     SWSS_LOG_ENTER();
 
-    return group_name + flex_counter_table->getTableNameSeparator() + sai_serialize_object_id(object_id);
+    return group_name + ":" + sai_serialize_object_id(object_id);
 }
 
 // serializeCounterStats turns a set of stats into a format suitable for FLEX_COUNTER_DB.

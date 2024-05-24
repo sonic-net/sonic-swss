@@ -26,7 +26,6 @@ private:
 
     shared_ptr<DBConnector> m_state_db;
     shared_ptr<DBConnector> m_counter_db;
-    shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_appl_db;
 
     unique_ptr<Table> m_stateTable;
@@ -66,6 +65,7 @@ private:
     void updateFabricPortState();
     void updateFabricDebugCounters();
     void updateFabricCapacity();
+    void updateFabricRate();
 
     void doTask() override;
     void doTask(Consumer &consumer);
