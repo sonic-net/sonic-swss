@@ -718,17 +718,16 @@ class TestSubnetDecap(TestTunnelBase):
 
         def _apply_subnet_decap_config(subnet_decap_config):
             """Apply subnet decap config to CONFIG_DB."""
-            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
             fvs = create_fvs(**subnet_decap_config)
             subnet_decap_tbl.set("AZURE", fvs)
 
         def _cleanup_subnet_decap_config():
             """Cleanup subnet decap config in CONFIG_DB."""
-            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
             for key in subnet_decap_tbl.getKeys():
                 subnet_decap_tbl._del(key)
 
         configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
         _cleanup_subnet_decap_config()
 
         yield _apply_subnet_decap_config
@@ -831,7 +830,7 @@ class TestSubnetDecap(TestTunnelBase):
         )
         self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET_V6")
 
-    def test_SubnetDecap_Enable_Source_IP_Update_Add_Decap_Term_First(self, dvs, testlog, setup_subnet_decap):
+    def test_SubnetDecap_Enable_Source_IP_Update_Add_Decap_Term_First_1(self, dvs, testlog, setup_subnet_decap):
         """Test subnet decap source IP update."""
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -876,6 +875,59 @@ class TestSubnetDecap(TestTunnelBase):
             "src_ip_v6": "20c1:ba8::/64"
         }
         setup_subnet_decap(subnet_decap_config)
+        self.create_and_test_tunnel_decap_terms(
+            db, asicdb, statedb, "IPINIP_SUBNET",
+            tunnel_sai_oid, decap_terms,
+            skip_decap_term_creation=True,
+            subnet_decap_config=subnet_decap_config
+        )
+
+        self.remove_and_test_tunnel_decap_terms(
+            db, asicdb, statedb, "IPINIP_SUBNET", decap_terms
+        )
+        self.remove_and_test_tunnel(db, asicdb, statedb, "IPINIP_SUBNET")
+
+    def test_SubnetDecap_Enable_Source_IP_Update_Add_Decap_Term_First_2(self, dvs, testlog, setup_subnet_decap):
+        """Test subnet decap source IP update."""
+        db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+        self.cleanup_left_over(db, statedb, asicdb)
+
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        decap_terms = [
+            {"dst_ip": "192.168.0.0/24", "term_type": "MP2MP", "subnet_type": "vlan"},
+            {"dst_ip": "192.168.1.0/24", "term_type": "MP2MP", "subnet_type": "vlan"},
+            {"dst_ip": "192.168.2.0/24", "term_type": "MP2MP", "subnet_type": "vlan"}
+        ]
+        setup_subnet_decap(subnet_decap_config)
+        # create decap terms of not-existed tunnel
+        self.create_and_test_tunnel_decap_terms(
+            db, asicdb, statedb, "IPINIP_SUBNET",
+            self.SAI_NULL_OBJECT_ID, decap_terms,
+            is_decap_terms_existed=False
+        )
+
+        # update subnet decap source IP
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.20.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        setup_subnet_decap(subnet_decap_config)
+
+        # create tunnel
+        tunnel_sai_oid = self.create_and_test_tunnel(
+            db, asicdb, statedb, "IPINIP_SUBNET", tunnel_type="IPINIP",
+            dscp_mode="uniform", ecn_mode="standard", ttl_mode="pipe"
+        )
+        # verify the decap terms are created with updated source IP
         self.create_and_test_tunnel_decap_terms(
             db, asicdb, statedb, "IPINIP_SUBNET",
             tunnel_sai_oid, decap_terms,
