@@ -978,7 +978,7 @@ bool MuxNbrHandler::createBulkRouteEntries(std::list<MuxRouteBulkContext>& bulk_
         count++;
     }
 
-    SWSS_LOG_INFO("Successfully created %d bulk neighbor entries", count);
+    SWSS_LOG_INFO("Successfully created %d bulk route entries", count);
     return true;
 }
 
@@ -1043,7 +1043,6 @@ bool MuxNbrHandler::processBulkRouteEntries(std::list<MuxRouteBulkContext>& bulk
             }
 
             SWSS_LOG_NOTICE("Removed tunnel route to %s ", ctx->pfx.to_string().c_str());
-            return status;
         }
     }
     return true;
