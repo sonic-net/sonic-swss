@@ -98,7 +98,7 @@ namespace neighorch_test
                                                                                     });
             decap_term_table.set(
                 MUX_TUNNEL + neigh_table.getTableNameSeparator() + "2.2.2.2", { { "src_ip", "1.1.1.1" },
-                                                                                { "term_type", "MP2MP" } });
+                                                                                { "term_type", "P2P" } });
 
             decap_tunnel_table.set(MUX_TUNNEL, { { "dscp_mode", "uniform" },
                                                  { "src_ip", "1.1.1.1" },
