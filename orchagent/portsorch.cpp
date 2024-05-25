@@ -34,6 +34,8 @@
 #include "stringutility.h"
 #include "subscriberstatetable.h"
 
+#include "saitam.h"
+
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_port_api_t *sai_port_api;
@@ -44,6 +46,7 @@ extern sai_acl_api_t* sai_acl_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern sai_fdb_api_t *sai_fdb_api;
+extern sai_tam_api_t *sai_tam_api;
 extern sai_l2mc_group_api_t *sai_l2mc_group_api;
 extern sai_buffer_api_t *sai_buffer_api;
 extern IntfsOrch *gIntfsOrch;
@@ -145,6 +148,15 @@ static map<string, sai_port_interface_type_t> interface_type_map =
  { "kr", SAI_PORT_INTERFACE_TYPE_KR },
  { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 },
  { "kr8", SAI_PORT_INTERFACE_TYPE_KR8 }
+};
+
+// Timestamp Template map used for Path Tracing
+static map<string, sai_port_path_tracing_timestamp_type_t> pt_timestamp_template_map =
+{
+ { "template1", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_8_15 },
+ { "template2", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19 },
+ { "template3", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23 },
+ { "template4", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_20_27 }
 };
 
 const vector<sai_port_stat_t> port_stat_ids =
@@ -386,6 +398,83 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
     }
 
 
+}
+
+static bool isPathTracingSupported()
+{
+    /*
+     * Path Tracing is supported when four conditions are met:
+     *
+     *   1. The switch supports SAI_OBJECT_TYPE_TAM
+     *   2. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_PATH_TRACING_INTF attribute
+     *   3. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE attribute
+     *   4. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_TAM_OBJECT attribute
+     */
+
+    /* First, query switch capabilities */
+    sai_attribute_t attr;
+    std::vector<sai_int32_t> switchCapabilities(SAI_OBJECT_TYPE_MAX);
+    attr.id = SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST;
+    attr.value.s32list.count = static_cast<uint32_t>(switchCapabilities.size());
+    attr.value.s32list.list = switchCapabilities.data();
+
+    bool is_tam_supported = false;
+    auto status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        for (std::uint32_t i = 0; i < attr.value.s32list.count; i++)
+        {
+            switch(static_cast<sai_object_type_t>(attr.value.s32list.list[i]))
+            {
+                case SAI_OBJECT_TYPE_TAM:
+                    is_tam_supported = true;
+                    break;
+                default:
+                    /* Received an attribute in which we are not interested, ignoring it */
+                    break;
+            }
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get a list of supported switch capabilities. Error=%d", status
+        );
+        return false;
+    }
+
+    /* Then verify if the four conditions are met */
+    if (!is_tam_supported ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_INTF) ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE) ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TAM_OBJECT))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool PortsOrch::checkPathTracingCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    if (isPathTracingSupported())
+    {
+        SWSS_LOG_INFO("Path Tracing is supported");
+        /* Set PATH_TRACING_CAPABLE = true in STATE DB */
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "true");
+        m_isPathTracingSupported = true;
+    }
+    else
+    {
+        SWSS_LOG_INFO("Path Tracing is not supported");
+        /* Set PATH_TRACING_CAPABLE = false in STATE DB */
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "false");
+        m_isPathTracingSupported = false;
+    }
+    gSwitchOrch->set_switch_capability(fvVector);
+
+    return m_isPathTracingSupported;
 }
 
 // Port OA ------------------------------------------------------------------------------------------------------------
@@ -674,6 +763,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));
     }
 
+    /* Query Path Tracing capability */
+    checkPathTracingCapability();
+
     auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
     Orch::addExecutor(executor);
 }
@@ -861,6 +953,75 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
             attr.value.booldata = false;
             attrList.push_back(attr);
         }
+        
+        if (cit.pt_intf_id.is_set)
+        {
+            if (!m_isPathTracingSupported)
+            {
+                SWSS_LOG_WARN(
+                    "Failed to set Path Tracing Interface ID: Path Tracing is not supported by the switch"
+                );
+                continue;
+            }
+
+            /*
+             * First, let's check the Path Tracing Interface ID configured for the port.
+             *
+             * Path Tracing Interface ID > 0 -> Path Tracing ENABLED on the port
+             * Path Tracing Interface ID == 0 -> Path Tracing DISABLED on the port
+             */
+            if (cit.pt_intf_id.value != 0)
+            {
+                /* Path Tracing ENABLED case */
+
+                /*
+                 * The port does not have a TAM object assigned to it.
+                 *
+                 * Let's create a new TAM object (if we don't already have one)
+                 * and assign it to the port.
+                 */
+                if (m_ptTam == SAI_NULL_OBJECT_ID)
+                {
+                    if (!createPtTam())
+                    {
+                        SWSS_LOG_ERROR(
+                            "Failed to create TAM object for Path Tracing"
+                        );
+                    }
+                }
+
+                if (m_ptTam != SAI_NULL_OBJECT_ID)
+                {
+                    vector<sai_object_id_t> tam_objects_list;
+                    tam_objects_list.push_back(m_ptTam);
+                    attr.id = SAI_PORT_ATTR_TAM_OBJECT;
+                    attr.value.objlist.count = (uint32_t)tam_objects_list.size();
+                    attr.value.objlist.list = tam_objects_list.data();
+
+                    m_ptTamRefCount++;
+                    m_portPtTam[cit.key] = m_ptTam;
+                }
+            }
+
+            attr.id = SAI_PORT_ATTR_PATH_TRACING_INTF;
+            attr.value.u16 = cit.pt_intf_id.value;
+            attrList.push_back(attr);
+        }
+
+        if (cit.pt_timestamp_template.is_set)
+        {
+            if (!m_isPathTracingSupported)
+            {
+                SWSS_LOG_WARN(
+                    "Failed to set Path Tracing Timestamp Template: Path Tracing is not supported by the switch"
+                );
+                continue;
+            }
+
+            attr.id = SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE;
+            attr.value.u16 = cit.pt_timestamp_template.value;
+            attrList.push_back(attr);
+        }
 
         attrDataList.push_back(attrList);
         attrCountList.push_back(static_cast<std::uint32_t>(attrDataList.back().size()));
@@ -941,6 +1102,22 @@ bool PortsOrch::removePortBulk(const std::vector<sai_object_id_t> &portList)
 
         // Remove port serdes (if exists) before removing port since this reference is dependency
         removePortSerdesAttribute(cit);
+
+        /*
+         * Decrease TAM object ref count before removing the port, if the port
+         * has a TAM object assigned
+         */
+        if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+        {
+            m_ptTamRefCount--;
+            if (m_ptTamRefCount == 0)
+            {
+                if (!removePtTam(m_ptTam))
+                {
+                    throw runtime_error("Remove port TAM object for Path Tracing failed");
+                }
+            }
+        }
     }
 
     auto portCount = static_cast<std::uint32_t>(portList.size());
@@ -4329,6 +4506,110 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         );
                     }
                 }
+
+                if (pCfg.pt_intf_id.is_set)
+                {
+                    if (!m_isPathTracingSupported)
+                    {
+                        SWSS_LOG_WARN(
+                            "Failed to set Path Tracing Interface ID: Path Tracing is not supported by the switch"
+                        );
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+
+                    if (p.m_pt_intf_id != pCfg.pt_intf_id.value)
+                    {
+                        /*
+                         * First, let's check the Path Tracing Interface ID configured for the port.
+                         *
+                         * Path Tracing Interface ID > 0 -> Path Tracing ENABLED on the port
+                         * Path Tracing Interface ID == 0 -> Path Tracing DISABLED on the port
+                         */
+                        if (pCfg.pt_intf_id.value != 0)
+                        {
+                            /* Path Tracing ENABLED case */
+
+                            /* Create and set port TAM object */
+                            if (!createAndSetPortPtTam(p))
+                            {
+                                SWSS_LOG_ERROR(
+                                    "Failed to create and set port %s TAM object for Path Tracing",
+                                    p.m_alias.c_str()
+                                );
+                                it++;
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            /* Path Tracing DISABLED case */
+
+                            /* Unset port TAM object */
+                            if (!unsetPortPtTam(p))
+                            {
+                                SWSS_LOG_ERROR(
+                                    "Failed to unset port %s TAM object for Path Tracing",
+                                    p.m_alias.c_str()
+                                );
+                                it++;
+                                continue;
+                            }
+                        }
+
+                        /* Set Path Tracing Interface ID */
+                        if (!setPortPtIntfId(p, pCfg.pt_intf_id.value))
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s Intf ID to %u",
+                                p.m_alias.c_str(), pCfg.pt_intf_id.value
+                            );
+                            it++;
+                            continue;
+                        }
+
+                        p.m_pt_intf_id = pCfg.pt_intf_id.value;
+                        m_portList[p.m_alias] = p;
+
+                        SWSS_LOG_NOTICE(
+                            "Set port %s Intf ID to %u",
+                            p.m_alias.c_str(), pCfg.pt_intf_id.value
+                        );
+                    }
+                }
+
+                if (pCfg.pt_timestamp_template.is_set)
+                {
+                    if (!m_isPathTracingSupported)
+                    {
+                        SWSS_LOG_WARN(
+                            "Failed to set Path Tracing Timestamp Template: Path Tracing is not supported by the switch"
+                        );
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+
+                    if (p.m_pt_timestamp_template != pCfg.pt_timestamp_template.value)
+                    {
+                        if (!setPortPtTimestampTemplate(p, pCfg.pt_timestamp_template.value))
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s Timestamp Template to %s",
+                                p.m_alias.c_str(), m_portHlpr.getPtTimestampTemplateStr(pCfg).c_str()
+                            );
+                            it++;
+                            continue;
+                        }
+
+                        p.m_pt_timestamp_template = pCfg.pt_timestamp_template.value;
+                        m_portList[p.m_alias] = p;
+
+                        SWSS_LOG_NOTICE(
+                            "Set port %s Timestamp Template to %s",
+                            p.m_alias.c_str(), m_portHlpr.getPtTimestampTemplateStr(pCfg).c_str()
+                        );
+                    }
+                }
             }
         }
         else if (op == DEL_COMMAND)
@@ -4383,6 +4664,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     PortUpdate update = {p, false};
                     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
                 }
+            }
+
+            /*
+             * Unset port Path Tracing TAM object and decrease TAM object refcount before
+             * removing the port (if the port has a TAM object associated)
+             */
+            if (!unsetPortPtTam(p))
+            {
+                SWSS_LOG_ERROR(
+                    "Failed to unset port %s TAM object for Path Tracing",
+                    p.m_alias.c_str()
+                );
             }
 
             sai_status_t status = removePort(port_id);
@@ -9104,6 +9397,311 @@ void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bo
     {
         m_port_state_poll[port.m_alias] &= ~type;
     }
+}
+
+bool PortsOrch::createAndSetPortPtTam(const Port &p)
+{
+    /*
+     * First, let's check if a TAM object is already assigned to the port.
+     */
+
+    /* If the port has already a TAM object, nothing to do */
+    if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+    {
+        SWSS_LOG_DEBUG(
+            "Port %s has already a TAM object", p.m_alias.c_str()
+        );
+        return true;
+    }
+
+    /*
+     * The port does not have a TAM object assigned to it.
+     *
+     * Let's create a new TAM object (if we don't already have one)
+     * and assign it to the port.
+     */
+    if (m_ptTam == SAI_NULL_OBJECT_ID)
+    {
+        if (!createPtTam())
+        {
+            SWSS_LOG_ERROR(
+                "Failed to create TAM object for Path Tracing"
+            );
+            return false;
+        }
+    }
+
+    if (!setPortPtTam(p, m_ptTam))
+    {
+        SWSS_LOG_ERROR(
+            "Failed to set port %s TAM object for Path Tracing",
+            p.m_alias.c_str()
+        );
+        return false;
+    }
+
+    m_ptTamRefCount++;
+    m_portPtTam[p.m_alias] = m_ptTam;
+
+    return true;
+}
+
+bool PortsOrch::unsetPortPtTam(const Port &p)
+{
+    /*
+     * Let's unassign the TAM object from the port and decrease ref counter
+     */
+    if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+    {
+        if (!setPortPtTam(p, SAI_NULL_OBJECT_ID))
+        {
+            SWSS_LOG_ERROR(
+                "Failed to unset port %s TAM object for Path Tracing",
+                p.m_alias.c_str()
+            );
+            return false;
+        }
+        m_ptTamRefCount--;
+        m_portPtTam.erase(p.m_alias);
+
+        /*
+         * If the TAM object is no longer used, we can safely remove it.
+         */
+        if (m_ptTamRefCount == 0)
+        {
+            if (!removePtTam(m_ptTam))
+            {
+                SWSS_LOG_ERROR(
+                    "Failed to remove TAM object for Path Tracing"
+                );
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortPtIntfId(const Port& port, sai_uint16_t intf_id)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PATH_TRACING_INTF;
+    attr.value.u16 = intf_id;
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE;
+    attr.value.s32 = ts_type;
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortPtTam(const Port& port, sai_object_id_t tam_id)
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_TAM_OBJECT;
+
+    if (tam_id != SAI_NULL_OBJECT_ID)
+    {
+        attr.value.objlist.count = 1;
+        attr.value.objlist.list = &tam_id;
+    }
+    else
+    {
+        attr.value.objlist.count = 0;
+    }
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::createPtTam()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    sai_status_t status;
+
+    /* First, create a TAM report */
+    if (m_ptTamReport == SAI_NULL_OBJECT_ID)
+    {
+        sai_object_id_t tam_report_id;
+
+        attr.id = SAI_TAM_REPORT_ATTR_TYPE;
+        attr.value.s32 = SAI_TAM_REPORT_TYPE_VENDOR_EXTN;
+        attrs.push_back(attr);
+
+        status = sai_tam_api->create_tam_report(&tam_report_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create TAM Report object for Path Tracing, rv:%d", status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        m_ptTamReport = tam_report_id;
+        SWSS_LOG_NOTICE("Created TAM Report object %" PRIx64 " for Path Tracing", tam_report_id);
+    }
+
+    /* Second, create a TAM INT object */
+    if (m_ptTamInt == SAI_NULL_OBJECT_ID)
+    {
+        sai_object_id_t tam_int_id;
+
+        attrs.clear();
+
+        attr.id = SAI_TAM_INT_ATTR_TYPE;
+        attr.value.s32 = SAI_TAM_INT_TYPE_PATH_TRACING;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_DEVICE_ID;
+        attr.value.u32 = 0;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_TYPE;
+        attr.value.u32 = SAI_TAM_INT_PRESENCE_TYPE_UNDEFINED;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_INLINE;
+        attr.value.u32 = false;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_REPORT_ID;
+        attr.value.oid = m_ptTamReport;
+        attrs.push_back(attr);
+
+        status = sai_tam_api->create_tam_int(&tam_int_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create TAM INT object for Path Tracing, rv:%d", status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        m_ptTamInt = tam_int_id;
+        SWSS_LOG_NOTICE("Created TAM INT object %" PRIx64 " for Path Tracing", tam_int_id);
+    }
+
+    /* Finally, create a TAM object */
+    if (m_ptTam == SAI_NULL_OBJECT_ID)
+    {
+        sai_object_id_t tam_id;
+
+        attrs.clear();
+
+        attr.id = SAI_TAM_ATTR_INT_OBJECTS_LIST;
+        attr.value.objlist.count = 1;
+        attr.value.objlist.list = &m_ptTamInt;
+        attrs.push_back(attr);
+
+        status = sai_tam_api->create_tam(&tam_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create TAM object for Path Tracing, rv:%d", status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        m_ptTam = tam_id;
+        SWSS_LOG_NOTICE("Created TAM object %" PRIx64 " for Path Tracing", tam_id);
+    }
+
+    return true;
+}
+
+bool PortsOrch::removePtTam(sai_object_id_t tam_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+
+    if (m_ptTam != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_tam_api->remove_tam(m_ptTam);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove TAM object for Path Tracing, rv:%d", status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Removed TAM %" PRIx64, m_ptTam);
+        m_ptTam = SAI_NULL_OBJECT_ID;
+    }
+
+    if (m_ptTamInt != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_tam_api->remove_tam_int(m_ptTamInt);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove TAM INT object for Path Tracing, rv:%d", status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Removed TAM INT %" PRIx64, m_ptTamInt);
+        m_ptTamInt = SAI_NULL_OBJECT_ID;
+    }
+
+    if (m_ptTamReport != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_tam_api->remove_tam_report(m_ptTamReport);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove TAM Report for Path Tracing, rv:%d", status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Removed TAM Report %" PRIx64, m_ptTamReport);
+        m_ptTamReport = SAI_NULL_OBJECT_ID;
+    }
+
+    return true;
 }
 
 void PortsOrch::doTask(swss::SelectableTimer &timer)

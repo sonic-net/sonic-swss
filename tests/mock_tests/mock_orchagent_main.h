@@ -88,3 +88,4 @@ extern sai_counter_api_t* sai_counter_api;
 extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_fdb_api_t* sai_fdb_api;
 extern sai_twamp_api_t* sai_twamp_api;
+extern sai_tam_api_t* sai_tam_api;
