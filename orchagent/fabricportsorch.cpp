@@ -12,6 +12,8 @@
 #include "saihelper.h"
 #include "converter.h"
 #include "stringutility.h"
+#include <chrono>
+#include <math.h>
 
 #define FABRIC_POLLING_INTERVAL_DEFAULT   (30)
 #define FABRIC_PORT_PREFIX    "PORT"
@@ -1015,6 +1017,171 @@ void FabricPortsOrch::updateFabricCapacity()
     m_fabricCapacityTable->hset("FABRIC_CAPACITY_DATA", "last_event_time", lastTime);
 }
 
+void FabricPortsOrch::updateFabricRate()
+{
+    for (auto p : m_fabricLanePortMap)
+    {
+        int lane = p.first;
+        string key = FABRIC_PORT_PREFIX + to_string(lane);
+
+        // get oldRateAverage, oldData, oldTime(time.time) from state db
+        std::vector<FieldValueTuple> values;
+        string valuePt;
+        bool exist = m_stateTable->get(key, values);
+        double oldRxRate = 0;
+        uint64_t oldRxData = 0;
+        double oldTxRate = 0;
+        uint64_t oldTxData = 0;
+        auto now = std::chrono::system_clock::now();
+
+        string oldTime = "0";
+        string testState = "product";
+
+        if(!exist)
+        {
+            SWSS_LOG_INFO("No state infor for port %s", key.c_str());
+            return;
+        }
+        for (auto val : values)
+        {
+            valuePt = fvValue(val);
+            if (fvField(val) == "OLD_RX_RATE_AVG")
+            {
+                oldRxRate = stod(valuePt);
+                continue;
+            }
+            if (fvField(val) == "OLD_RX_DATA")
+            {
+                oldRxData = stoull(valuePt);
+                continue;
+            }
+            if (fvField(val) == "OLD_TX_RATE_AVG")
+            {
+                oldTxRate = stod(valuePt);
+                continue;
+            }
+            if (fvField(val) == "OLD_TX_DATA")
+            {
+                oldTxData = stoull(valuePt);
+                continue;
+            }
+            if (fvField(val) == "LAST_TIME")
+            {
+                oldTime = valuePt;
+                continue;
+            }
+            if (fvField(val) == "TEST")
+            {
+                testState = valuePt;
+                continue;
+            }
+        }
+
+
+        // get the newData and newTime for this poll
+        vector<FieldValueTuple> fieldValues;
+        sai_object_id_t port = p.second;
+        static const array<string, 2> cntNames =
+        {
+            "SAI_PORT_STAT_IF_OUT_OCTETS", // snmpBcmTxDataBytes
+            "SAI_PORT_STAT_IF_IN_OCTETS", // snmpBcmRxDataBytes
+        };
+        if (!m_fabricCounterTable->get(sai_serialize_object_id(port), fieldValues))
+        {
+            SWSS_LOG_INFO("no port %s", sai_serialize_object_id(port).c_str());
+        }
+        uint64_t rxBytes = 0;
+        uint64_t txBytes = 0;
+        for (const auto& fv : fieldValues)
+        {
+            const auto field = fvField(fv);
+            const auto value = fvValue(fv);
+            for (size_t cnt = 0; cnt != cntNames.size(); cnt++)
+            {
+                if (field == "SAI_PORT_STAT_IF_OUT_OCTETS")
+                {
+                    txBytes = stoull(value);
+                }
+                else if (field == "SAI_PORT_STAT_IF_IN_OCTETS")
+                {
+                    rxBytes = stoull(value);
+                }
+            }
+        }
+        // This is for testing purpose
+        if (testState == "TEST")
+        {
+            txBytes = oldTxData + 295000000;
+        }
+        // calcuate the newRateAverage
+        //txBytes
+        //rxBytes
+
+        //oldRxRate;
+        //oldRxData;
+        //oldTxRate;
+        //oldTxData;
+
+        //now
+        //oldTime
+
+        //RX first
+        uint64_t deltaBytes = rxBytes - oldRxData; // bytes
+        uint64_t deltaMegabits = deltaBytes / 1000000 * 8; // Mega bits
+
+        //cacluate rate
+        auto now_s = std::chrono::time_point_cast<std::chrono::seconds>(now);
+        auto nse = now_s.time_since_epoch();
+        long long newTime = nse.count();
+
+        long long deltaTime = 1;
+        if (stoll(oldTime) > 0)
+        {
+            deltaTime = newTime - stoll(oldTime);
+        }
+        SWSS_LOG_NOTICE("port %s %lld %ld ", sai_serialize_object_id(port).c_str(),
+                        newTime, stol(oldTime));
+        double percent;
+        long long loadInterval = FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT;
+        percent = exp( - deltaTime / loadInterval );
+        double newRate =
+           (oldRxRate * percent) + (static_cast<double>(deltaMegabits) / static_cast<double>(deltaTime)) * (1.0 - percent);
+        double newRxRate = newRate;
+
+
+        // TX
+        deltaBytes = txBytes - oldTxData; // bytes
+        deltaMegabits = deltaBytes / 1000000 * 8; // mb
+        newRate =
+           (oldTxRate * percent) + (static_cast<double>(deltaMegabits) / static_cast<double>(deltaTime)) * (1.0 - percent);
+        double newTxRate = newRate;
+
+        // store the newRateAverage, newData, newTime
+
+        SWSS_LOG_NOTICE( "old rx %lld rxData %lld tx %lld txData %lld time %ld",
+                         (long long)oldRxRate, (long long)oldRxData,
+                         (long long)oldTxRate, (long long)oldTxData, stol(oldTime) );
+        SWSS_LOG_NOTICE( "new rx %lld rxData %lld tx %lld txData %lld time %lld",
+                         (long long)newRxRate, (long long)rxBytes,
+                         (long long)newTxRate, (long long)txBytes, newTime );
+
+        valuePt = to_string(newRxRate);
+        m_stateTable->hset(key, "OLD_RX_RATE_AVG", valuePt.c_str());
+
+        valuePt = to_string(rxBytes);
+        m_stateTable->hset(key, "OLD_RX_DATA", valuePt.c_str());
+
+        valuePt = to_string(newTxRate);
+        m_stateTable->hset(key, "OLD_TX_RATE_AVG", valuePt.c_str());
+
+        valuePt = to_string(txBytes);
+        m_stateTable->hset(key, "OLD_TX_DATA", valuePt.c_str());
+
+        valuePt = to_string(newTime);
+        m_stateTable->hset(key, "LAST_TIME", valuePt.c_str());
+    }
+}
+
 void FabricPortsOrch::doTask()
 {
 }
@@ -1219,6 +1386,7 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
         {
             updateFabricDebugCounters();
             updateFabricCapacity();
+            updateFabricRate();
         }
     }
 }
