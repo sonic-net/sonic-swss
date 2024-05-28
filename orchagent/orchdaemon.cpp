@@ -685,7 +685,7 @@ bool OrchDaemon::init()
             }
         }
 
-        if(gSwitchOrch->checkPfcDlrInitEnable())
+        if(pfcDlrInit)
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
