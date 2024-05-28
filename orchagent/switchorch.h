@@ -5,16 +5,10 @@
 #include "timer.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
-#include "flex_counter_manager.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
 #define ASIC_SENSORS_POLLER_INTERVAL "ASIC_SENSORS_POLLER_INTERVAL"
-
-#define DEFAULT_SWITCH_DROP_COUNTER_POLL_ENABLE_TIMER_INTERVAL 180
-#define SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP  "SWITCH_DEBUG_COUNTER"
-#define SWITCH_STANDARD_DROP_COUNTERS  "SWITCH_STD_DROP_COUNTER-"
-#define SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS 60000
 
 #define SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE                      "PORT_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
@@ -81,7 +75,6 @@ private:
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
-    void createSwitchDropCounters(void);
 
     // Switch hash
     bool setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const;
@@ -117,11 +110,6 @@ private:
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
     std::shared_ptr<swss::Table> m_asicSensorsTable= nullptr;
     swss::SelectableTimer* m_sensorsPollerTimer = nullptr;
-    std::shared_ptr<swss::DBConnector> m_counter_db;
-    FlexCounterManager switch_drop_counter_manager;
-    std::shared_ptr<swss::Table> m_counterNameToSwitchStatMap;
-    swss::SelectableTimer* m_switchDropCntrPollEnableTimer = nullptr;
-
     bool m_sensorsPollerEnabled = false;
     time_t m_sensorsPollerInterval = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL;
     bool m_sensorsPollerIntervalChanged = false;

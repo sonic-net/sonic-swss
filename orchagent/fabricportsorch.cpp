@@ -27,7 +27,8 @@
 #define FABRIC_MONITOR_DATA "FABRIC_MONITOR_DATA"
 #define APPL_FABRIC_PORT_PREFIX "Fabric"
 #define SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP  "SWITCH_DEBUG_COUNTER"
-#define SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS 60000
+#define SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS 500  
+#define FABRIC_SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS 60000
 #define SWITCH_STANDARD_DROP_COUNTERS  "SWITCH_STD_DROP_COUNTER-"
 
 // constants for link monitoring
@@ -95,11 +96,12 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
     m_portNamePortCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_FABRIC_PORT_NAME_MAP));
     m_fabricCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TABLE));
 
-    // Create Switch level drop counters for fabric switch. switchorch adds for other switch types
-    if (gMySwitchType == "fabric")
+    // Create Switch level drop counters for voq & fabric switch.
+    if ((gMySwitchType == "voq") || (gMySwitchType == "fabric"))
     {
+        auto timer = ((gMySwitchType == "voq") ? SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS : FABRIC_SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS);
         switch_drop_counter_manager = new FlexCounterManager(SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
-                                                             SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS, true);
+                                                             timer, true);
         m_counterNameToSwitchStatMap =  unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP));
     }
 
@@ -1511,7 +1513,7 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
             updateFabricCapacity();
             updateFabricRate();
         }
-        if ((gMySwitchType == "fabric") && (!m_isSwitchStatsGenerated))
+        if (((gMySwitchType == "voq") || (gMySwitchType == "fabric")) && (!m_isSwitchStatsGenerated))
         {
             createSwitchDropCounters();
             m_isSwitchStatsGenerated = true;
