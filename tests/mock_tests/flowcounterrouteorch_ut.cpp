@@ -176,7 +176,11 @@ namespace flowcounterrouteorch_test
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
-            auto* tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            vector<string> tunnel_tables = {
+                APP_TUNNEL_DECAP_TABLE_NAME,
+                APP_TUNNEL_DECAP_TERM_TABLE_NAME
+            };
+            auto* tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
             vector<string> mux_tables = {
                 CFG_MUX_CABLE_TABLE_NAME,
                 CFG_PEER_SWITCH_TABLE_NAME

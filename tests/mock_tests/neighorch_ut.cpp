@@ -47,7 +47,8 @@ namespace neighorch_test
         void ApplyInitialConfigs()
         {
             Table peer_switch_table = Table(m_config_db.get(), CFG_PEER_SWITCH_TABLE_NAME);
-            Table tunnel_table = Table(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            Table decap_tunnel_table = Table(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            Table decap_term_table = Table(m_app_db.get(), APP_TUNNEL_DECAP_TERM_TABLE_NAME);
             Table mux_cable_table = Table(m_config_db.get(), CFG_MUX_CABLE_TABLE_NAME);
             Table port_table = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
             Table vlan_table = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
@@ -95,12 +96,16 @@ namespace neighorch_test
                                                                                         { "scope", "global" },
                                                                                         { "family", "IPv4" },
                                                                                     });
-            tunnel_table.set(MUX_TUNNEL, { { "dscp_mode", "uniform" },
-                                           { "dst_ip", "2.2.2.2" },
-                                           { "ecn_mode", "copy_from_outer" },
-                                           { "encap_ecn_mode", "standard" },
-                                           { "ttl_mode", "pipe" },
-                                           { "tunnel_type", "IPINIP" } });
+            decap_term_table.set(
+                MUX_TUNNEL + neigh_table.getTableNameSeparator() + "2.2.2.2", { { "src_ip", "1.1.1.1" },
+                                                                                { "term_type", "P2P" } });
+
+            decap_tunnel_table.set(MUX_TUNNEL, { { "dscp_mode", "uniform" },
+                                                 { "src_ip", "1.1.1.1" },
+                                                 { "ecn_mode", "copy_from_outer" },
+                                                 { "encap_ecn_mode", "standard" },
+                                                 { "ttl_mode", "pipe" },
+                                                 { "tunnel_type", "IPINIP" } });
 
             peer_switch_table.set(PEER_SWITCH_HOSTNAME, { { "address_ipv4", PEER_IPV4_ADDRESS } });
 
@@ -120,7 +125,8 @@ namespace neighorch_test
             gIntfsOrch->addExistingData(&intf_table);
             static_cast<Orch *>(gIntfsOrch)->doTask();
 
-            m_TunnelDecapOrch->addExistingData(&tunnel_table);
+            m_TunnelDecapOrch->addExistingData(&decap_tunnel_table);
+            m_TunnelDecapOrch->addExistingData(&decap_term_table);
             static_cast<Orch *>(m_TunnelDecapOrch)->doTask();
 
             m_MuxOrch->addExistingData(&peer_switch_table);
