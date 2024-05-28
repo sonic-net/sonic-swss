@@ -189,7 +189,11 @@ namespace mock_orch_test
             gDirectory.set(gNeighOrch);
             ut_orch_list.push_back((Orch **)&gNeighOrch);
 
-            m_TunnelDecapOrch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            vector<string> tunnel_tables = {
+                APP_TUNNEL_DECAP_TABLE_NAME,
+                APP_TUNNEL_DECAP_TERM_TABLE_NAME
+            };
+            m_TunnelDecapOrch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
             gDirectory.set(m_TunnelDecapOrch);
             ut_orch_list.push_back((Orch **)&m_TunnelDecapOrch);
             vector<string> mux_tables = {
