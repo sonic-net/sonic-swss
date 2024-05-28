@@ -48,9 +48,6 @@ namespace neighorch_test
 
         void ApplyInitialConfigs()
         {
-            Table peer_switch_table = Table(m_config_db.get(), CFG_PEER_SWITCH_TABLE_NAME);
-            Table tunnel_table = Table(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
-            Table mux_cable_table = Table(m_config_db.get(), CFG_MUX_CABLE_TABLE_NAME);
             Table port_table = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
             Table vlan_table = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
             Table vlan_member_table = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
