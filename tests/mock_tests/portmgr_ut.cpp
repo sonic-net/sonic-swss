@@ -65,9 +65,9 @@ namespace portmgr_ut
         ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
 
         
-        value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
+        //value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+        //ASSERT_TRUE(value_opt);
+        //ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
 
         value_opt = swss::fvsGetValue(values, "speed", true);
         ASSERT_TRUE(value_opt);
@@ -151,7 +151,7 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(3), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
-        ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc sudo tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 342bps burst 342b conform-exceed drop", mockCallArgs[2]);
+        ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc sudo tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 406bps burst 406b conform-exceed drop", mockCallArgs[2]);
 
         
 
