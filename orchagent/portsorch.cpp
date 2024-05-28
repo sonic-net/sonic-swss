@@ -7986,7 +7986,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
                     isUp ? "up" : "down");
         }
     }
-    SWSS_LOG_INFO("Updating the nexthop for port %s and operational status %s", port.m_alias.c_str(), isUp ? "up" : "down");
+    SWSS_LOG_NOTICE("Updating the nexthop for port %s and operational status %s", port.m_alias.c_str(), isUp ? "up" : "down");
     
     if (!gNeighOrch->ifChangeInformNextHop(port.m_alias, isUp))
     {
