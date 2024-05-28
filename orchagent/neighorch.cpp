@@ -963,10 +963,10 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
                 if (vrf_name.empty())
                 {
                     SWSS_LOG_NOTICE("Neighbor %s already learned on %s, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str());
-                }
-                {
+                } else {
                     SWSS_LOG_NOTICE("Neighbor %s already learned on %s in VRF %s, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str(), vrf_name.c_str());
                 }
+
                 if (!removeNeighbor(temp_entry))
                 {
                     SWSS_LOG_ERROR("Failed to remove neighbor %s on %s", ip_address.to_string().c_str(), vlan_port.c_str());
