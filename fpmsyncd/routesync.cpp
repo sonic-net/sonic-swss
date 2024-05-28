@@ -465,6 +465,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
     }
 
+    auto proto_str = getProtocolString(rtm->rtm_protocol);
     SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s", 
                     destipprefix,
                     nlmsg_type == RTM_NEWROUTE ? "add":"del");
@@ -550,17 +551,20 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     FieldValueTuple intf("ifname", intf_list);
     FieldValueTuple vni("vni_label", vni_list);
     FieldValueTuple mac("router_mac", mac_list);
+    FieldValueTuple proto("protocol", proto_str);
 
     fvVector.push_back(nh);
     fvVector.push_back(intf);
     fvVector.push_back(vni);
     fvVector.push_back(mac);
+    fvVector.push_back(proto);
 
     if (!warmRestartInProgress)
     {
         m_routeTable.set(destipprefix, fvVector);
-        SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s",
-                       destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str());
+        SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
+                       destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
+                       proto_str.c_str());
     }
 
     /*

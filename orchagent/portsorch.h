@@ -31,6 +31,10 @@
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
 #define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
+#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "60000"
+#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
+#define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
+#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 typedef std::set<sai_port_fec_mode_t> PortSupportedFecModes;
@@ -239,6 +243,9 @@ public:
     bool isMACsecPort(sai_object_id_t port_id) const;
     vector<sai_object_id_t> getPortVoQIds(Port& port);
 
+    bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
+    bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterSysPortTable;
@@ -256,8 +263,6 @@ private:
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
-    unique_ptr<ProducerTable> m_flexCounterTable;
-    unique_ptr<ProducerTable> m_flexCounterGroupTable;
     Table m_portStateTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
@@ -266,7 +271,6 @@ private:
     std::string getPortRateFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
-    shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_state_db;
     shared_ptr<DBConnector> m_notificationsDb;
 
@@ -338,6 +342,8 @@ private:
 
     bool fec_override_sup = false;
     bool oper_fec_sup = false;
+    bool saiHwTxSignalSupported = false;
+    bool saiTxReadyNotifySupported = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
@@ -408,7 +414,7 @@ private:
 
     bool setSaiHostTxSignal(const Port &port, bool enable);
 
-    void setHostTxReady(sai_object_id_t portId, const std::string &status);
+    void setHostTxReady(Port port, const std::string &status);
     // Get supported speeds on system side
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
@@ -512,6 +518,9 @@ private:
     std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
     map<sai_object_id_t, struct queueInfo> m_queueInfo;
 
+    /* Protoypes for Path tracing */
+    bool setPortPtTam(const Port& port, sai_object_id_t tam_id);
+
 private:
     void initializeCpuPort();
     void initializePorts();
@@ -521,6 +530,20 @@ private:
 
     bool addPortBulk(const std::vector<PortConfig> &portList);
     bool removePortBulk(const std::vector<sai_object_id_t> &portList);
+
+    /* Prototypes for Path Tracing */
+    bool checkPathTracingCapability();
+    bool createPtTam();
+    bool removePtTam(sai_object_id_t tam_id);
+    bool createAndSetPortPtTam(const Port &p);
+    bool unsetPortPtTam(const Port &p);
+    sai_object_id_t m_ptTamReport = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_ptTamInt = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_ptTam = SAI_NULL_OBJECT_ID;
+    uint32_t m_ptTamRefCount = 0;
+    map<string, sai_object_id_t> m_portPtTam;
+    // Define whether the switch supports or not Path Tracing
+    bool m_isPathTracingSupported = false;
 
 private:
     // Port config aggregator

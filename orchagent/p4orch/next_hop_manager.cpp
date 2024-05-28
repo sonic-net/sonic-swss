@@ -1,5 +1,6 @@
 #include "p4orch/next_hop_manager.h"
 
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -8,7 +9,6 @@
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "ipaddress.h"
-#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
@@ -147,13 +147,14 @@ ReturnCodeOr<std::vector<sai_attribute_t>> NextHopManager::getSaiAttrs(const P4N
     return next_hop_attrs;
 }
 
-ReturnCode NextHopManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+ReturnCode NextHopManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                                        std::string &object_key)
 {
-    std::string     value;
+    std::string value;
 
     try
     {
-        nlohmann::json  j = nlohmann::json::parse(json_key);
+        nlohmann::json j = nlohmann::json::parse(json_key);
         if (j.find(prependMatchField(p4orch::kNexthopId)) != j.end())
         {
             value = j.at(prependMatchField(p4orch::kNexthopId)).get<std::string>();

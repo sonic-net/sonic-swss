@@ -34,6 +34,8 @@
 #include "stringutility.h"
 #include "subscriberstatetable.h"
 
+#include "saitam.h"
+
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_port_api_t *sai_port_api;
@@ -44,7 +46,9 @@ extern sai_acl_api_t* sai_acl_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern sai_fdb_api_t *sai_fdb_api;
+extern sai_tam_api_t *sai_tam_api;
 extern sai_l2mc_group_api_t *sai_l2mc_group_api;
+extern sai_buffer_api_t *sai_buffer_api;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
@@ -72,10 +76,6 @@ extern event_handle_t g_events_handle;
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
-#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "60000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
-#define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
-#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
 
 // types --------------------------------------------------------------------------------------------------------------
 
@@ -148,6 +148,15 @@ static map<string, sai_port_interface_type_t> interface_type_map =
  { "kr", SAI_PORT_INTERFACE_TYPE_KR },
  { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 },
  { "kr8", SAI_PORT_INTERFACE_TYPE_KR8 }
+};
+
+// Timestamp Template map used for Path Tracing
+static map<string, sai_port_path_tracing_timestamp_type_t> pt_timestamp_template_map =
+{
+ { "template1", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_8_15 },
+ { "template2", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19 },
+ { "template3", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23 },
+ { "template4", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_20_27 }
 };
 
 const vector<sai_port_stat_t> port_stat_ids =
@@ -391,6 +400,83 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
 
 }
 
+static bool isPathTracingSupported()
+{
+    /*
+     * Path Tracing is supported when four conditions are met:
+     *
+     *   1. The switch supports SAI_OBJECT_TYPE_TAM
+     *   2. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_PATH_TRACING_INTF attribute
+     *   3. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE attribute
+     *   4. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_TAM_OBJECT attribute
+     */
+
+    /* First, query switch capabilities */
+    sai_attribute_t attr;
+    std::vector<sai_int32_t> switchCapabilities(SAI_OBJECT_TYPE_MAX);
+    attr.id = SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST;
+    attr.value.s32list.count = static_cast<uint32_t>(switchCapabilities.size());
+    attr.value.s32list.list = switchCapabilities.data();
+
+    bool is_tam_supported = false;
+    auto status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        for (std::uint32_t i = 0; i < attr.value.s32list.count; i++)
+        {
+            switch(static_cast<sai_object_type_t>(attr.value.s32list.list[i]))
+            {
+                case SAI_OBJECT_TYPE_TAM:
+                    is_tam_supported = true;
+                    break;
+                default:
+                    /* Received an attribute in which we are not interested, ignoring it */
+                    break;
+            }
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get a list of supported switch capabilities. Error=%d", status
+        );
+        return false;
+    }
+
+    /* Then verify if the four conditions are met */
+    if (!is_tam_supported ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_INTF) ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE) ||
+            !gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TAM_OBJECT))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool PortsOrch::checkPathTracingCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    if (isPathTracingSupported())
+    {
+        SWSS_LOG_INFO("Path Tracing is supported");
+        /* Set PATH_TRACING_CAPABLE = true in STATE DB */
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "true");
+        m_isPathTracingSupported = true;
+    }
+    else
+    {
+        SWSS_LOG_INFO("Path Tracing is not supported");
+        /* Set PATH_TRACING_CAPABLE = false in STATE DB */
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "false");
+        m_isPathTracingSupported = false;
+    }
+    gSwitchOrch->set_switch_capability(fvVector);
+
+    return m_isPathTracingSupported;
+}
+
 // Port OA ------------------------------------------------------------------------------------------------------------
 
 /*
@@ -412,7 +498,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        gb_port_stat_manager("GB_FLEX_COUNTER_DB",
+        gb_port_stat_manager(true,
                 PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
@@ -452,16 +538,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     m_pgPortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_PORT_MAP));
     m_pgIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_INDEX_MAP));
 
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
-    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
-    m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
-
     m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateBufferMaximumValueTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE));
 
     initGearbox();
 
-    string queueWmSha, pgWmSha;
+    string queueWmSha, pgWmSha, portRateSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
@@ -475,35 +557,34 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         pgWmSha = swss::loadRedisScript(m_counter_db.get(), pgLuaScript);
 
         string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
-        string portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, queueWmSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-
-        fieldValues.clear();
-        fieldValues.emplace_back(PG_PLUGIN_FIELD, pgWmSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-
-        fieldValues.clear();
-        fieldValues.emplace_back(PORT_PLUGIN_FIELD, portRateSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-
-        fieldValues.clear();
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ_AND_CLEAR,
+                                 QUEUE_PLUGIN_FIELD,
+                                 queueWmSha);
+
+    setFlexCounterGroupParameter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ_AND_CLEAR,
+                                 PG_PLUGIN_FIELD,
+                                 pgWmSha);
+
+    setFlexCounterGroupParameter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
+                                 STATS_MODE_READ,
+                                 PORT_PLUGIN_FIELD,
+                                 portRateSha);
+
+    setFlexCounterGroupParameter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ);
 
     /* Get CPU port */
     this->initializeCpuPort();
@@ -554,8 +635,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     sai_attr_capability_t capability;
 
-    bool saiHwTxSignalSupported = false;
-    bool saiTxReadyNotifySupported = false;
 
     if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
                                             SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE,
@@ -684,6 +763,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));
     }
+
+    /* Query Path Tracing capability */
+    checkPathTracingCapability();
 
     auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
     Orch::addExecutor(executor);
@@ -872,6 +954,75 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
             attr.value.booldata = false;
             attrList.push_back(attr);
         }
+        
+        if (cit.pt_intf_id.is_set)
+        {
+            if (!m_isPathTracingSupported)
+            {
+                SWSS_LOG_WARN(
+                    "Failed to set Path Tracing Interface ID: Path Tracing is not supported by the switch"
+                );
+                continue;
+            }
+
+            /*
+             * First, let's check the Path Tracing Interface ID configured for the port.
+             *
+             * Path Tracing Interface ID > 0 -> Path Tracing ENABLED on the port
+             * Path Tracing Interface ID == 0 -> Path Tracing DISABLED on the port
+             */
+            if (cit.pt_intf_id.value != 0)
+            {
+                /* Path Tracing ENABLED case */
+
+                /*
+                 * The port does not have a TAM object assigned to it.
+                 *
+                 * Let's create a new TAM object (if we don't already have one)
+                 * and assign it to the port.
+                 */
+                if (m_ptTam == SAI_NULL_OBJECT_ID)
+                {
+                    if (!createPtTam())
+                    {
+                        SWSS_LOG_ERROR(
+                            "Failed to create TAM object for Path Tracing"
+                        );
+                    }
+                }
+
+                if (m_ptTam != SAI_NULL_OBJECT_ID)
+                {
+                    vector<sai_object_id_t> tam_objects_list;
+                    tam_objects_list.push_back(m_ptTam);
+                    attr.id = SAI_PORT_ATTR_TAM_OBJECT;
+                    attr.value.objlist.count = (uint32_t)tam_objects_list.size();
+                    attr.value.objlist.list = tam_objects_list.data();
+
+                    m_ptTamRefCount++;
+                    m_portPtTam[cit.key] = m_ptTam;
+                }
+            }
+
+            attr.id = SAI_PORT_ATTR_PATH_TRACING_INTF;
+            attr.value.u16 = cit.pt_intf_id.value;
+            attrList.push_back(attr);
+        }
+
+        if (cit.pt_timestamp_template.is_set)
+        {
+            if (!m_isPathTracingSupported)
+            {
+                SWSS_LOG_WARN(
+                    "Failed to set Path Tracing Timestamp Template: Path Tracing is not supported by the switch"
+                );
+                continue;
+            }
+
+            attr.id = SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE;
+            attr.value.u16 = cit.pt_timestamp_template.value;
+            attrList.push_back(attr);
+        }
 
         attrDataList.push_back(attrList);
         attrCountList.push_back(static_cast<std::uint32_t>(attrDataList.back().size()));
@@ -952,6 +1103,22 @@ bool PortsOrch::removePortBulk(const std::vector<sai_object_id_t> &portList)
 
         // Remove port serdes (if exists) before removing port since this reference is dependency
         removePortSerdesAttribute(cit);
+
+        /*
+         * Decrease TAM object ref count before removing the port, if the port
+         * has a TAM object assigned
+         */
+        if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+        {
+            m_ptTamRefCount--;
+            if (m_ptTamRefCount == 0)
+            {
+                if (!removePtTam(m_ptTam))
+                {
+                    throw runtime_error("Remove port TAM object for Path Tracing failed");
+                }
+            }
+        }
     }
 
     auto portCount = static_cast<std::uint32_t>(portList.size());
@@ -1470,7 +1637,7 @@ void PortsOrch::initHostTxReadyState(Port &port)
 
     if (hostTxReady.empty())
     {
-        setHostTxReady(port.m_port_id, "false");
+        setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("initialize host_tx_ready as false for port %s",
                         port.m_alias.c_str());
     }
@@ -1490,7 +1657,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     /* Update the host_tx_ready to false before setting admin_state, when admin state is false */
     if (!state && !m_cmisModuleAsicSyncSupported)
     {
-        setHostTxReady(port.m_port_id, "false");
+        setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("Set admin status DOWN host_tx_ready to false for port %s",
                 port.m_alias.c_str());
     }
@@ -1504,7 +1671,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
 
         if (!m_cmisModuleAsicSyncSupported)
         {
-            setHostTxReady(port.m_port_id, "false");
+            setHostTxReady(port, "false");
         }
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
@@ -1516,7 +1683,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
     if (gbstatus != true && !m_cmisModuleAsicSyncSupported)
     {
-        setHostTxReady(port.m_port_id, "false");
+        setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("Set host_tx_ready to false as gbstatus is false "
                         "for port %s", port.m_alias.c_str());
     }
@@ -1524,7 +1691,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     /* Update the state table for host_tx_ready*/
     if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) && !m_cmisModuleAsicSyncSupported)
     {
-        setHostTxReady(port.m_port_id, "true");
+        setHostTxReady(port, "true");
         SWSS_LOG_NOTICE("Set admin status UP host_tx_ready to true for port %s",
                 port.m_alias.c_str());
     }
@@ -1532,18 +1699,10 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     return true;
 }
 
-void PortsOrch::setHostTxReady(sai_object_id_t portId, const std::string &status)
+void PortsOrch::setHostTxReady(Port port, const std::string &status)
 {
-    Port p;
-
-    if (!getPort(portId, p))
-    {
-        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
-        return;
-    }
-
-    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), p.m_alias.c_str(), portId);
-    m_portStateTable.hset(p.m_alias, "host_tx_ready", status);
+    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
+    m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
 }
 
 bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
@@ -3116,17 +3275,23 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("flap_count", std::to_string(port.m_flap_count));
     tuples.push_back(tuple);
-    
+
     auto now = std::chrono::system_clock::now();
     std::time_t now_c = std::chrono::system_clock::to_time_t(now);
     if (pstatus == SAI_PORT_OPER_STATUS_DOWN)
     {
-        FieldValueTuple tuple("last_down_time", std::ctime(&now_c));
+        char buffer[32];
+        // Format: Www Mmm dd hh:mm:ss yyyy
+        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
+        FieldValueTuple tuple("last_down_time", buffer);
         tuples.push_back(tuple);
-    } 
-    else if (pstatus == SAI_PORT_OPER_STATUS_UP) 
+    }
+    else if (pstatus == SAI_PORT_OPER_STATUS_UP)
     {
-        FieldValueTuple tuple("last_up_time", std::ctime(&now_c));
+        char buffer[32];
+        // Format: Www Mmm dd hh:mm:ss yyyy
+        std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
+        FieldValueTuple tuple("last_up_time", buffer);
         tuples.push_back(tuple);
     }
     m_portTable->set(port.m_alias, tuples);
@@ -3168,6 +3333,10 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
         }
     }
     /* else : port is in default state or not yet created */
+
+    /* Remove port counters */
+    port_stat_manager.clearCounterIdList(port.m_port_id);
+    port_buffer_drop_stat_manager.clearCounterIdList(port.m_port_id);
 
     /*
      * Remove port serdes (if exists) before removing port since this
@@ -3266,10 +3435,10 @@ bool PortsOrch::initPort(const PortConfig &port)
                     auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
                     if (p.m_system_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
-                                CounterType::PORT, gbport_counter_stats);
+                                CounterType::PORT, gbport_counter_stats, p.m_switch_id);
                     if (p.m_line_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
-                                CounterType::PORT, gbport_counter_stats);
+                                CounterType::PORT, gbport_counter_stats, p.m_switch_id);
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
@@ -3392,7 +3561,10 @@ bool PortsOrch::bake()
     addExistingData(APP_LAG_MEMBER_TABLE_NAME);
     addExistingData(APP_VLAN_TABLE_NAME);
     addExistingData(APP_VLAN_MEMBER_TABLE_NAME);
-
+    if (saiHwTxSignalSupported && saiTxReadyNotifySupported)
+    {
+        addExistingData(STATE_TRANSCEIVER_INFO_TABLE_NAME);
+    }
     return true;
 }
 
@@ -3573,28 +3745,59 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            auto &fvMap = m_portConfigMap[key];
-
-            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            auto parsePortFvs = [&](auto& fvMap) -> bool
             {
-                auto fieldName = fvField(cit);
-                auto fieldValue = fvValue(cit);
+                for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+                {
+                    auto fieldName = fvField(cit);
+                    auto fieldValue = fvValue(cit);
 
-                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+                    SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
 
-                fvMap[fieldName] = fieldValue;
-            }
+                    fvMap[fieldName] = fieldValue;
+                }
 
-            pCfg.fieldValueMap = fvMap;
+                pCfg.fieldValueMap = fvMap;
 
-            if (!m_portHlpr.parsePortConfig(pCfg))
+                if (!m_portHlpr.parsePortConfig(pCfg))
+                {
+                    return false;
+                }
+
+                return true;
+            };
+
+            if (m_portList.find(key) == m_portList.end())
             {
-                it = taskMap.erase(it);
-                continue;
-            }
+                // Aggregate configuration while the port is not created.
+                auto &fvMap = m_portConfigMap[key];
 
-            /* Collect information about all received ports */
-            m_lanesAliasSpeedMap[pCfg.lanes.value] = pCfg;
+                if (!parsePortFvs(fvMap))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+
+                if (!m_portHlpr.validatePortConfig(pCfg))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+
+                /* Collect information about all received ports */
+                m_lanesAliasSpeedMap[pCfg.lanes.value] = pCfg;
+            }
+            else
+            {
+                // Port is already created, gather updated field-values.
+                std::unordered_map<std::string, std::string> fvMap;
+
+                if (!parsePortFvs(fvMap))
+                {
+                    it = taskMap.erase(it);
+                    continue;
+                }
+            }
 
             // TODO:
             // Fix the issue below
@@ -3709,6 +3912,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
             {
                 PortSerdesAttrMap_t serdes_attr;
                 getPortSerdesAttr(serdes_attr, pCfg);
+
+                // Saved configured admin status
+                bool admin_status = p.m_admin_state_up;
 
                 if (pCfg.autoneg.is_set)
                 {
@@ -4270,6 +4476,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* create host_tx_ready field in state-db */
                 initHostTxReadyState(p);
 
+                // Restore admin status if the port was brought down
+                if (admin_status != p.m_admin_state_up)
+                {
+                    pCfg.admin_status.is_set = true;
+                    pCfg.admin_status.value = admin_status;
+                }
+
                 /* Last step set port admin status */
                 if (pCfg.admin_status.is_set)
                 {
@@ -4291,6 +4504,110 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         SWSS_LOG_NOTICE(
                             "Set port %s admin status to %s",
                             p.m_alias.c_str(), m_portHlpr.getAdminStatusStr(pCfg).c_str()
+                        );
+                    }
+                }
+
+                if (pCfg.pt_intf_id.is_set)
+                {
+                    if (!m_isPathTracingSupported)
+                    {
+                        SWSS_LOG_WARN(
+                            "Failed to set Path Tracing Interface ID: Path Tracing is not supported by the switch"
+                        );
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+
+                    if (p.m_pt_intf_id != pCfg.pt_intf_id.value)
+                    {
+                        /*
+                         * First, let's check the Path Tracing Interface ID configured for the port.
+                         *
+                         * Path Tracing Interface ID > 0 -> Path Tracing ENABLED on the port
+                         * Path Tracing Interface ID == 0 -> Path Tracing DISABLED on the port
+                         */
+                        if (pCfg.pt_intf_id.value != 0)
+                        {
+                            /* Path Tracing ENABLED case */
+
+                            /* Create and set port TAM object */
+                            if (!createAndSetPortPtTam(p))
+                            {
+                                SWSS_LOG_ERROR(
+                                    "Failed to create and set port %s TAM object for Path Tracing",
+                                    p.m_alias.c_str()
+                                );
+                                it++;
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            /* Path Tracing DISABLED case */
+
+                            /* Unset port TAM object */
+                            if (!unsetPortPtTam(p))
+                            {
+                                SWSS_LOG_ERROR(
+                                    "Failed to unset port %s TAM object for Path Tracing",
+                                    p.m_alias.c_str()
+                                );
+                                it++;
+                                continue;
+                            }
+                        }
+
+                        /* Set Path Tracing Interface ID */
+                        if (!setPortPtIntfId(p, pCfg.pt_intf_id.value))
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s Intf ID to %u",
+                                p.m_alias.c_str(), pCfg.pt_intf_id.value
+                            );
+                            it++;
+                            continue;
+                        }
+
+                        p.m_pt_intf_id = pCfg.pt_intf_id.value;
+                        m_portList[p.m_alias] = p;
+
+                        SWSS_LOG_NOTICE(
+                            "Set port %s Intf ID to %u",
+                            p.m_alias.c_str(), pCfg.pt_intf_id.value
+                        );
+                    }
+                }
+
+                if (pCfg.pt_timestamp_template.is_set)
+                {
+                    if (!m_isPathTracingSupported)
+                    {
+                        SWSS_LOG_WARN(
+                            "Failed to set Path Tracing Timestamp Template: Path Tracing is not supported by the switch"
+                        );
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+
+                    if (p.m_pt_timestamp_template != pCfg.pt_timestamp_template.value)
+                    {
+                        if (!setPortPtTimestampTemplate(p, pCfg.pt_timestamp_template.value))
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s Timestamp Template to %s",
+                                p.m_alias.c_str(), m_portHlpr.getPtTimestampTemplateStr(pCfg).c_str()
+                            );
+                            it++;
+                            continue;
+                        }
+
+                        p.m_pt_timestamp_template = pCfg.pt_timestamp_template.value;
+                        m_portList[p.m_alias] = p;
+
+                        SWSS_LOG_NOTICE(
+                            "Set port %s Timestamp Template to %s",
+                            p.m_alias.c_str(), m_portHlpr.getPtTimestampTemplateStr(pCfg).c_str()
                         );
                     }
                 }
@@ -4348,6 +4665,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     PortUpdate update = {p, false};
                     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
                 }
+            }
+
+            /*
+             * Unset port Path Tracing TAM object and decrease TAM object refcount before
+             * removing the port (if the port has a TAM object associated)
+             */
+            if (!unsetPortPtTam(p))
+            {
+                SWSS_LOG_ERROR(
+                    "Failed to unset port %s TAM object for Path Tracing",
+                    p.m_alias.c_str()
+                );
             }
 
             sai_status_t status = removePort(port_id);
@@ -5424,7 +5753,7 @@ bool PortsOrch::initializePort(Port &port)
         string hostTxReadyStr = hostTxReadyVal ? "true" : "false";
 
         SWSS_LOG_DEBUG("Received host_tx_ready current status: port_id: 0x%" PRIx64 " status: %s", port.m_port_id, hostTxReadyStr.c_str());
-        setHostTxReady(port.m_port_id, hostTxReadyStr);
+        setHostTxReady(port, hostTxReadyStr);
     }
 
     /*
@@ -7047,11 +7376,9 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& po
         counters_stream << delimiter << sai_serialize_queue_stat(it);
         delimiter = comma;
     }
+    auto &&counters_str = counters_stream.str();
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
-
-    m_flexCounterTable->set(key, fieldValues);
+    startFlexCounterPolling(gSwitchId, key, counters_str, QUEUE_COUNTER_ID_LIST);
 }
 
 void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
@@ -7154,7 +7481,7 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
         {
             // Remove watermark queue counters
             string key = getQueueWatermarkFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            stopFlexCounterPolling(gSwitchId, key);
         }
     }
 
@@ -7341,9 +7668,8 @@ void PortsOrch::addPriorityGroupFlexCountersPerPortPerPgIndex(const Port& port, 
             delimiter = comma;
         }
     }
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(PG_COUNTER_ID_LIST, ingress_pg_drop_packets_counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    auto &&counters_str = ingress_pg_drop_packets_counters_stream.str();
+    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
 }
 
 void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector)
@@ -7411,9 +7737,9 @@ void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPortPerPgIndex(const Por
         delimiter = comma;
     }
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    auto &&counters_str = counters_stream.str();
+
+    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
 }
 
 void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
@@ -7446,14 +7772,14 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
         {
             // Remove dropped packets counters from flex_counter
             string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            stopFlexCounterPolling(gSwitchId, key);
         }
 
         if (flexCounterOrch->getPgWatermarkCountersState())
         {
             // Remove watermark counters from flex_counter
             string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            stopFlexCounterPolling(gSwitchId, key);
         }
     }
 
@@ -7480,10 +7806,10 @@ void PortsOrch::generatePortCounterMap()
                 CounterType::PORT, port_counter_stats);
         if (it.second.m_system_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
         if (it.second.m_line_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_line_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
     }
 
     m_isPortCounterMapGenerated = true;
@@ -7609,7 +7935,13 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
         sai_deserialize_port_host_tx_ready_ntf(data, switch_id, port_id, host_tx_ready_status);
         SWSS_LOG_DEBUG("Recieved host_tx_ready notification for port 0x%" PRIx64, port_id);
 
-        setHostTxReady(port_id, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
+        Port p;
+        if (!getPort(port_id, p))
+        {
+            SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+            return;
+        }
+        setHostTxReady(p, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
     }
 
 }
@@ -7742,6 +8074,18 @@ void PortsOrch::refreshPortStatus()
             {
                 updateDbPortOperSpeed(port, 0);
             }
+            sai_port_fec_mode_t fec_mode;
+            string fec_str = "N/A";
+            if (oper_fec_sup && getPortOperFec(port, fec_mode))
+            {
+                if (!m_portHlpr.fecToStr(fec_str, fec_mode))
+                {
+                    SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
+                                   static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
+                    fec_str = "N/A";
+                }
+            }
+            updateDbPortOperFec(port,fec_str);
         }
     }
 }
@@ -9057,6 +9401,311 @@ void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bo
     {
         m_port_state_poll[port.m_alias] &= ~type;
     }
+}
+
+bool PortsOrch::createAndSetPortPtTam(const Port &p)
+{
+    /*
+     * First, let's check if a TAM object is already assigned to the port.
+     */
+
+    /* If the port has already a TAM object, nothing to do */
+    if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+    {
+        SWSS_LOG_DEBUG(
+            "Port %s has already a TAM object", p.m_alias.c_str()
+        );
+        return true;
+    }
+
+    /*
+     * The port does not have a TAM object assigned to it.
+     *
+     * Let's create a new TAM object (if we don't already have one)
+     * and assign it to the port.
+     */
+    if (m_ptTam == SAI_NULL_OBJECT_ID)
+    {
+        if (!createPtTam())
+        {
+            SWSS_LOG_ERROR(
+                "Failed to create TAM object for Path Tracing"
+            );
+            return false;
+        }
+    }
+
+    if (!setPortPtTam(p, m_ptTam))
+    {
+        SWSS_LOG_ERROR(
+            "Failed to set port %s TAM object for Path Tracing",
+            p.m_alias.c_str()
+        );
+        return false;
+    }
+
+    m_ptTamRefCount++;
+    m_portPtTam[p.m_alias] = m_ptTam;
+
+    return true;
+}
+
+bool PortsOrch::unsetPortPtTam(const Port &p)
+{
+    /*
+     * Let's unassign the TAM object from the port and decrease ref counter
+     */
+    if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+    {
+        if (!setPortPtTam(p, SAI_NULL_OBJECT_ID))
+        {
+            SWSS_LOG_ERROR(
+                "Failed to unset port %s TAM object for Path Tracing",
+                p.m_alias.c_str()
+            );
+            return false;
+        }
+        m_ptTamRefCount--;
+        m_portPtTam.erase(p.m_alias);
+
+        /*
+         * If the TAM object is no longer used, we can safely remove it.
+         */
+        if (m_ptTamRefCount == 0)
+        {
+            if (!removePtTam(m_ptTam))
+            {
+                SWSS_LOG_ERROR(
+                    "Failed to remove TAM object for Path Tracing"
+                );
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortPtIntfId(const Port& port, sai_uint16_t intf_id)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PATH_TRACING_INTF;
+    attr.value.u16 = intf_id;
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE;
+    attr.value.s32 = ts_type;
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortPtTam(const Port& port, sai_object_id_t tam_id)
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_TAM_OBJECT;
+
+    if (tam_id != SAI_NULL_OBJECT_ID)
+    {
+        attr.value.objlist.count = 1;
+        attr.value.objlist.list = &tam_id;
+    }
+    else
+    {
+        attr.value.objlist.count = 0;
+    }
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::createPtTam()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    sai_status_t status;
+
+    /* First, create a TAM report */
+    if (m_ptTamReport == SAI_NULL_OBJECT_ID)
+    {
+        sai_object_id_t tam_report_id;
+
+        attr.id = SAI_TAM_REPORT_ATTR_TYPE;
+        attr.value.s32 = SAI_TAM_REPORT_TYPE_VENDOR_EXTN;
+        attrs.push_back(attr);
+
+        status = sai_tam_api->create_tam_report(&tam_report_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create TAM Report object for Path Tracing, rv:%d", status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        m_ptTamReport = tam_report_id;
+        SWSS_LOG_NOTICE("Created TAM Report object %" PRIx64 " for Path Tracing", tam_report_id);
+    }
+
+    /* Second, create a TAM INT object */
+    if (m_ptTamInt == SAI_NULL_OBJECT_ID)
+    {
+        sai_object_id_t tam_int_id;
+
+        attrs.clear();
+
+        attr.id = SAI_TAM_INT_ATTR_TYPE;
+        attr.value.s32 = SAI_TAM_INT_TYPE_PATH_TRACING;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_DEVICE_ID;
+        attr.value.u32 = 0;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_TYPE;
+        attr.value.u32 = SAI_TAM_INT_PRESENCE_TYPE_UNDEFINED;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_INLINE;
+        attr.value.u32 = false;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_INT_ATTR_REPORT_ID;
+        attr.value.oid = m_ptTamReport;
+        attrs.push_back(attr);
+
+        status = sai_tam_api->create_tam_int(&tam_int_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create TAM INT object for Path Tracing, rv:%d", status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        m_ptTamInt = tam_int_id;
+        SWSS_LOG_NOTICE("Created TAM INT object %" PRIx64 " for Path Tracing", tam_int_id);
+    }
+
+    /* Finally, create a TAM object */
+    if (m_ptTam == SAI_NULL_OBJECT_ID)
+    {
+        sai_object_id_t tam_id;
+
+        attrs.clear();
+
+        attr.id = SAI_TAM_ATTR_INT_OBJECTS_LIST;
+        attr.value.objlist.count = 1;
+        attr.value.objlist.list = &m_ptTamInt;
+        attrs.push_back(attr);
+
+        status = sai_tam_api->create_tam(&tam_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create TAM object for Path Tracing, rv:%d", status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        m_ptTam = tam_id;
+        SWSS_LOG_NOTICE("Created TAM object %" PRIx64 " for Path Tracing", tam_id);
+    }
+
+    return true;
+}
+
+bool PortsOrch::removePtTam(sai_object_id_t tam_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+
+    if (m_ptTam != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_tam_api->remove_tam(m_ptTam);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove TAM object for Path Tracing, rv:%d", status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Removed TAM %" PRIx64, m_ptTam);
+        m_ptTam = SAI_NULL_OBJECT_ID;
+    }
+
+    if (m_ptTamInt != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_tam_api->remove_tam_int(m_ptTamInt);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove TAM INT object for Path Tracing, rv:%d", status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Removed TAM INT %" PRIx64, m_ptTamInt);
+        m_ptTamInt = SAI_NULL_OBJECT_ID;
+    }
+
+    if (m_ptTamReport != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_tam_api->remove_tam_report(m_ptTamReport);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove TAM Report for Path Tracing, rv:%d", status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Removed TAM Report %" PRIx64, m_ptTamReport);
+        m_ptTamReport = SAI_NULL_OBJECT_ID;
+    }
+
+    return true;
 }
 
 void PortsOrch::doTask(swss::SelectableTimer &timer)
