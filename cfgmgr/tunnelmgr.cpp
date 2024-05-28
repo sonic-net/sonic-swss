@@ -108,6 +108,7 @@ static int cmdIpTunnelRouteDel(const std::string& pfx, std::string & res)
 TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_appIpInIpTunnelTable(appDb, APP_TUNNEL_DECAP_TABLE_NAME),
+        m_appIpInIpTunnelDecapTermTable(appDb, APP_TUNNEL_DECAP_TERM_TABLE_NAME),
         m_cfgPeerTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
         m_cfgTunnelTable(cfgDb, CFG_TUNNEL_TABLE_NAME)
 {
@@ -223,6 +224,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
 
     const std::string & tunnelName = kfvKey(t);
     const std::string & op = kfvOp(t);
+    std::string src_ip;
     TunnelInfo tunInfo;
 
     for (auto fieldValue : kfvFieldsValues(t))
@@ -236,6 +238,10 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         else if (field == "tunnel_type")
         {
             tunInfo.type = value;
+        }
+        else if (field == "src_ip")
+        {
+            src_ip = value;
         }
     }
 
@@ -260,7 +266,27 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
              */
             if (m_tunnelReplay.find(tunnelName) == m_tunnelReplay.end())
             {
-                m_appIpInIpTunnelTable.set(tunnelName, kfvFieldsValues(t));
+                /* Create the tunnel */
+                std::vector<FieldValueTuple> fvs;
+                std::copy_if(kfvFieldsValues(t).cbegin(), kfvFieldsValues(t).cend(),
+                             std::back_inserter(fvs),
+                             [](const FieldValueTuple & fv) {
+                                 return fvField(fv) != "dst_ip";
+                             });
+                m_appIpInIpTunnelTable.set(tunnelName, fvs);
+
+                /* Create the decap term */
+                fvs.clear();
+                if (!src_ip.empty())
+                {
+                    fvs.emplace_back("src_ip", src_ip);
+                    fvs.emplace_back("term_type", "P2P");
+                }
+                else
+                {
+                    fvs.emplace_back("term_type", "P2MP");
+                }
+                m_appIpInIpTunnelDecapTermTable.set(tunnelName + DEFAULT_KEY_SEPARATOR + tunInfo.dst_ip, fvs);
             }
         }
         m_tunnelReplay.erase(tunnelName);
@@ -279,6 +305,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         tunInfo = it->second;
         if (tunInfo.type == IPINIP)
         {
+            m_appIpInIpTunnelDecapTermTable.del(tunnelName + DEFAULT_KEY_SEPARATOR + tunInfo.dst_ip);
             m_appIpInIpTunnelTable.del(tunnelName);
         }
         else
