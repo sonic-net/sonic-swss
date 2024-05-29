@@ -5705,7 +5705,7 @@ void MetaDataMgr::recycleMetaData(uint8_t metadata)
     if (m_MetadataRef[metadata] == 0)
     {
 
-        for (auto iter = m_dscpMetadata.begin(); iter != m_dscpMetadata.end())
+        for (auto iter = m_dscpMetadata.begin(); iter != m_dscpMetadata.end();)
         {
             if ( iter->second == metadata)
             {
