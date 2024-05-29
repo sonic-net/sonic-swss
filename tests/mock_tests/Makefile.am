@@ -233,7 +233,7 @@ tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/test_routesync.cpp \
                          fpmsyncd/receive_srv6_steer_routes_ut.cpp \
-                         fpmsyncd/receive_srv6_localsids_ut.cpp \
+                         fpmsyncd/receive_srv6_mysids_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
                          fake_netlink.cpp \
                          fake_warmstarthelper.cpp \

@@ -20,6 +20,9 @@ char *__wrap_rtnl_link_i2name(struct nl_cache *cache, int ifindex, char *dst, si
         case 10:
             strncpy(dst, "Vrf10", 6);
             return dst;
+        case 30:
+            strncpy(dst, "invalidVrf", 11);
+            return dst;
         default:
             return NULL;
     }
@@ -100,7 +103,10 @@ namespace ut_fpmsyncd
         IpPrefix *dst,
         IpAddress *encap_src_addr,
         IpAddress *vpn_sid,
-        uint16_t table_id)
+        uint16_t table_id,
+        uint8_t prefixlen,
+        uint8_t address_family,
+        uint8_t rtm_type)
     {
         struct rtattr *nest;
 
@@ -113,34 +119,45 @@ namespace ut_fpmsyncd
         nl_obj->n.nlmsg_flags = NLM_F_CREATE | NLM_F_REQUEST;
 
         if (cmd == RTM_NEWROUTE &&
-            dst->isV4())
+            dst && dst->isV4())
             nl_obj->n.nlmsg_flags |= NLM_F_REPLACE;
 
         nl_obj->n.nlmsg_type = cmd;
 
         nl_obj->n.nlmsg_pid = 100;
 
-        nl_obj->r.rtm_family = dst->getIp().getIp().family;
-        nl_obj->r.rtm_dst_len = (unsigned char)(dst->getMaskLength());
+        if (address_family > 0)
+            nl_obj->r.rtm_family = address_family;
+        else
+            nl_obj->r.rtm_family = dst ? dst->getIp().getIp().family : AF_INET6;
+        if (prefixlen > 0)
+            nl_obj->r.rtm_dst_len = prefixlen;
+        else
+            nl_obj->r.rtm_dst_len = dst ? (unsigned char)(dst->getMaskLength()): IPV6_MAX_BITLEN;
         nl_obj->r.rtm_scope = RT_SCOPE_UNIVERSE;
 
         nl_obj->r.rtm_protocol = 11; // ZEBRA protocol
 
-        if (cmd != RTM_DELROUTE)
+        if (rtm_type > 0)
+            nl_obj->r.rtm_type = rtm_type;
+        else
             nl_obj->r.rtm_type = RTN_UNICAST;
 
         /* Add the destination address */
-        if (dst->isV4())
+        if (dst)
         {
-            if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
-                               RTA_DST, dst->getIp().getV4Addr()))
-                return NULL;
-        }
-        else
-        {
-            if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                             RTA_DST, dst->getIp().getV6Addr(), IPV6_MAX_BYTE))
-                return NULL;
+            if (dst->isV4())
+            {
+                if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                RTA_DST, dst->getIp().getV4Addr()))
+                    return NULL;
+            }
+            else
+            {
+                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                RTA_DST, dst->getIp().getV6Addr(), IPV6_MAX_BYTE))
+                    return NULL;
+            }
         }
 
         /* Add the table ID */
@@ -151,13 +168,6 @@ namespace ut_fpmsyncd
             nl_obj->r.rtm_table = RT_TABLE_UNSPEC;
             if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj), RTA_TABLE, table_id))
                 return NULL;
-        }
-
-        /* If the Netlink message is a Delete Route message, we have done */
-        if (cmd == RTM_DELROUTE)
-        {
-            NLMSG_ALIGN(nl_obj->n.nlmsg_len);
-            return nl_obj;
         }
 
         /* Add encapsulation type NH_ENCAP_SRV6_ROUTE (SRv6 Route) */
@@ -186,17 +196,21 @@ namespace ut_fpmsyncd
         return nl_obj;
     }
 
-    /* Build a Netlink object containing an SRv6 Local SID */
-    struct nlmsg *create_srv6_localsid_nlmsg(
+    /* Build a Netlink object containing an SRv6 My SID */
+    struct nlmsg *create_srv6_mysid_nlmsg(
         uint16_t cmd,
-        IpAddress *localsid,
-        uint8_t block_len,
-        uint8_t node_len,
-        uint8_t func_len,
-        uint8_t arg_len,
+        IpAddress *mysid,
+        int8_t block_len,
+        int8_t node_len,
+        int8_t func_len,
+        int8_t arg_len,
         uint32_t action,
         char *vrf,
-        uint16_t table_id)
+        IpAddress *adj,
+        uint16_t table_id,
+        uint8_t prefixlen,
+        uint8_t address_family    
+        )
     {
         struct rtattr *nest;
 
@@ -214,8 +228,14 @@ namespace ut_fpmsyncd
 
         nl_obj->n.nlmsg_pid = 100;
 
-        nl_obj->r.rtm_family = AF_INET6;
-        nl_obj->r.rtm_dst_len = IPV6_MAX_BITLEN;
+        if (address_family > 0)
+            nl_obj->r.rtm_family = address_family;
+        else
+            nl_obj->r.rtm_family = mysid ? mysid->getIp().family : AF_INET6;
+        if (prefixlen > 0)
+            nl_obj->r.rtm_dst_len = prefixlen;
+        else
+            nl_obj->r.rtm_dst_len = IPV6_MAX_BITLEN;
         nl_obj->r.rtm_scope = RT_SCOPE_UNIVERSE;
 
         nl_obj->r.rtm_protocol = 11; // Protocol ZEBRA
@@ -223,16 +243,21 @@ namespace ut_fpmsyncd
         if (cmd != RTM_DELROUTE)
             nl_obj->r.rtm_type = RTN_UNICAST;
 
-        /* Add local SID address */
-        if (localsid->isV4())
+        /* Add my SID address */
+        if (mysid)
         {
-            throw std::runtime_error("SRv6 local SID cannot be an IPv4 address");
-        }
-        else
-        {
-            if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                             RTA_DST, localsid->getV6Addr(), 16))
-                return NULL;
+            if (mysid->isV4())
+            {
+                if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                RTA_DST, mysid->getV4Addr()))
+                    return NULL;
+            }
+            else
+            {
+                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                RTA_DST, mysid->getV6Addr(), 16))
+                    return NULL;
+            }
         }
 
         /* Add table ID */
@@ -246,39 +271,49 @@ namespace ut_fpmsyncd
         }
 
         /* Add SID format information */
-        nest =
-            nl_attr_nest(&nl_obj->n, sizeof(*nl_obj),
-                         SRV6_LOCALSID_FORMAT);
+        if (block_len > 0 ||
+            node_len > 0 ||
+            func_len > 0 ||
+            arg_len > 0)
+        {
+            nest =
+                nl_attr_nest(&nl_obj->n, sizeof(*nl_obj),
+                            SRV6_LOCALSID_FORMAT);
 
-        /* Add block bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_BLOCK_LEN,
-                block_len))
-            return NULL;
+            /* Add block bits length */
+            if (block_len >= 0)
+                if (!nl_attr_put8(
+                        &nl_obj->n, sizeof(*nl_obj),
+                        SRV6_LOCALSID_FORMAT_BLOCK_LEN,
+                        block_len))
+                    return NULL;
 
-        /* Add node bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_NODE_LEN,
-                node_len))
-            return NULL;
+            /* Add node bits length */
+            if (node_len >= 0)
+                if (!nl_attr_put8(
+                        &nl_obj->n, sizeof(*nl_obj),
+                        SRV6_LOCALSID_FORMAT_NODE_LEN,
+                        node_len))
+                    return NULL;
 
-        /* Add function bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_FUNC_LEN,
-                func_len))
-            return NULL;
+            /* Add function bits length */
+            if (func_len >= 0)
+                if (!nl_attr_put8(
+                        &nl_obj->n, sizeof(*nl_obj),
+                        SRV6_LOCALSID_FORMAT_FUNC_LEN,
+                        func_len))
+                    return NULL;
 
-        /* Add argument bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_ARG_LEN,
-                arg_len))
-            return NULL;
+            /* Add argument bits length */
+            if (arg_len >= 0)
+                if (!nl_attr_put8(
+                        &nl_obj->n, sizeof(*nl_obj),
+                        SRV6_LOCALSID_FORMAT_ARG_LEN,
+                        arg_len))
+                    return NULL;
 
-        nl_attr_nest_end(&nl_obj->n, nest);
+            nl_attr_nest_end(&nl_obj->n, nest);
+        }
 
         /* If the Netlink message is a Delete Route message, we have done */
         if (cmd == RTM_DELROUTE)
@@ -287,71 +322,195 @@ namespace ut_fpmsyncd
             return nl_obj;
         }
 
-        /* Add local SID behavior (action and parameters) */
+        /* Add my SID behavior (action and parameters) */
         switch (action)
         {
+			case SRV6_LOCALSID_ACTION_END:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+						   SRV6_LOCALSID_ACTION,
+						   SRV6_LOCALSID_ACTION_END))
+                    return NULL;
+				break;
+			case SRV6_LOCALSID_ACTION_END_X:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                SRV6_LOCALSID_ACTION,
+                                SRV6_LOCALSID_ACTION_END_X))
+                    return NULL;
+                if (adj)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_NH6,
+                                    adj->getV6Addr(), 16))
+                        return NULL;
+                }
+				break;
+			case SRV6_LOCALSID_ACTION_END_T:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                SRV6_LOCALSID_ACTION,
+                                SRV6_LOCALSID_ACTION_END_T))
+                    return NULL;
+                if (vrf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_VRFNAME,
+                                    vrf, (uint32_t)strlen(vrf)))
+                        return NULL;
+                }
+				break;
+			case SRV6_LOCALSID_ACTION_END_DX4:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                SRV6_LOCALSID_ACTION,
+                                SRV6_LOCALSID_ACTION_END_DX4))
+                    return NULL;
+                if (adj)
+                {
+                    if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_NH4,
+                                    adj->getV4Addr()))
+                        return NULL;
+                }
+				break;
+			case SRV6_LOCALSID_ACTION_END_DX6:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                SRV6_LOCALSID_ACTION,
+                                SRV6_LOCALSID_ACTION_END_DX6))
+                    return NULL;
+                if (adj)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_NH6,
+                                    adj->getV6Addr(), 16))
+                        return NULL;
+                }
+				break;
             case SRV6_LOCALSID_ACTION_END_DT4:
                 if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
                                    SRV6_LOCALSID_ACTION,
                                    SRV6_LOCALSID_ACTION_END_DT4))
                     return NULL;
-                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                                 SRV6_LOCALSID_VRFNAME,
-                                 vrf, (uint32_t)strlen(vrf)))
-                    return NULL;
+                if (vrf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_VRFNAME,
+                                    vrf, (uint32_t)strlen(vrf)))
+                        return NULL;
+                }
                 break;
             case SRV6_LOCALSID_ACTION_END_DT6:
                 if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
                                    SRV6_LOCALSID_ACTION,
                                    SRV6_LOCALSID_ACTION_END_DT6))
                     return NULL;
-                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                                 SRV6_LOCALSID_VRFNAME,
-                                 vrf, (uint32_t)strlen(vrf)))
-                    return NULL;
+                if (vrf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_VRFNAME,
+                                    vrf, (uint32_t)strlen(vrf)))
+                        return NULL;
+                }
                 break;
             case SRV6_LOCALSID_ACTION_END_DT46:
                 if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
                                    SRV6_LOCALSID_ACTION,
                                    SRV6_LOCALSID_ACTION_END_DT46))
                     return NULL;
-                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                                 SRV6_LOCALSID_VRFNAME,
-                                 vrf, (uint32_t)strlen(vrf)))
-                    return NULL;
+                if (vrf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_VRFNAME,
+                                    vrf, (uint32_t)strlen(vrf)))
+                        return NULL;
+                }
                 break;
+			case SRV6_LOCALSID_ACTION_UN:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+						   SRV6_LOCALSID_ACTION,
+						   SRV6_LOCALSID_ACTION_UN))
+                    return NULL;
+				break;
+			case SRV6_LOCALSID_ACTION_UA:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                SRV6_LOCALSID_ACTION,
+                                SRV6_LOCALSID_ACTION_UA))
+                    return NULL;
+                if (adj)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_NH6,
+                                    adj->getV6Addr(), 16))
+                        return NULL;
+                }
+				break;
+			case SRV6_LOCALSID_ACTION_UDX4:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                SRV6_LOCALSID_ACTION,
+                                SRV6_LOCALSID_ACTION_UDX4))
+                    return NULL;
+                if (adj)
+                {
+                    if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_NH4,
+                                    adj->getV4Addr()))
+                        return NULL;
+                }
+				break;
+			case SRV6_LOCALSID_ACTION_UDX6:
+				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                SRV6_LOCALSID_ACTION,
+                                SRV6_LOCALSID_ACTION_UDX6))
+                    return NULL;
+                if (adj)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_NH6,
+                                    adj->getV6Addr(), 16))
+                        return NULL;
+                }
+				break;
             case SRV6_LOCALSID_ACTION_UDT4:
                 if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
                                    SRV6_LOCALSID_ACTION,
                                    SRV6_LOCALSID_ACTION_UDT4))
                     return NULL;
-                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                                 SRV6_LOCALSID_VRFNAME,
-                                 vrf, (uint32_t)strlen(vrf)))
-                    return NULL;
+                if (vrf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_VRFNAME,
+                                    vrf, (uint32_t)strlen(vrf)))
+                        return NULL;
+                }
                 break;
             case SRV6_LOCALSID_ACTION_UDT6:
                 if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
                                    SRV6_LOCALSID_ACTION,
                                    SRV6_LOCALSID_ACTION_UDT6))
                     return NULL;
-                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                                 SRV6_LOCALSID_VRFNAME,
-                                 vrf, (uint32_t)strlen(vrf)))
-                    return NULL;
+                if (vrf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_VRFNAME,
+                                    vrf, (uint32_t)strlen(vrf)))
+                        return NULL;
+                }
                 break;
             case SRV6_LOCALSID_ACTION_UDT46:
                 if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
                                    SRV6_LOCALSID_ACTION,
                                    SRV6_LOCALSID_ACTION_UDT46))
                     return NULL;
-                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
-                                 SRV6_LOCALSID_VRFNAME,
-                                 vrf, (uint32_t)strlen(vrf)))
-                    return NULL;
+                if (vrf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_VRFNAME,
+                                    vrf, (uint32_t)strlen(vrf)))
+                        return NULL;
+                }
                 break;
             default:
-                throw std::runtime_error("Unsupported localsid action\n");
+                if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
+                                   SRV6_LOCALSID_ACTION,
+                                   action))
+                    return NULL;
         }
 
         return nl_obj;

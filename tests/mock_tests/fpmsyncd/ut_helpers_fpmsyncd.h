@@ -96,11 +96,14 @@ namespace ut_fpmsyncd
     int nl_attr_nest_end(struct nlmsghdr *n, struct rtattr *nest);
     /* Build a Netlink object containing an SRv6 VPN Route */
     struct nlmsg *create_srv6_vpn_route_nlmsg(uint16_t cmd, IpPrefix *dst, IpAddress *encap_src_addr,
-                                              IpAddress *vpn_sid, uint16_t table_id = 10);
-    /* Build a Netlink object containing an SRv6 Local SID */
-    struct nlmsg *create_srv6_localsid_nlmsg(uint16_t cmd, IpAddress *localsid, uint8_t block_len,
-                                             uint8_t node_len, uint8_t func_len, uint8_t arg_len,
-                                             uint32_t action, char *vrf, uint16_t table_id = 10);
+                                              IpAddress *vpn_sid, uint16_t table_id = 10, uint8_t prefixlen = 0,
+											  uint8_t address_family = 0, uint8_t rtm_type = 0);
+    /* Build a Netlink object containing an SRv6 My SID */
+    struct nlmsg *create_srv6_mysid_nlmsg(uint16_t cmd, IpAddress *mysid, int8_t block_len,
+                                             int8_t node_len, int8_t func_len, int8_t arg_len,
+                                             uint32_t action, char *vrf = NULL, IpAddress *nh = NULL,
+											 uint16_t table_id = 10, uint8_t prefixlen = 0,
+											 uint8_t address_family = 0);
     /* Free the memory allocated for a Netlink object */
     inline void free_nlobj(struct nlmsg *msg)
     {
