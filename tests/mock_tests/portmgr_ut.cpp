@@ -46,7 +46,8 @@ namespace portmgr_ut
         
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
-            {"index", "1"}
+            {"index", "1"},
+            {"dhcp_rate_limit","300"},
         });
         mockCallArgs.clear();
         m_portMgr->addExistingData(&cfg_port_table);
@@ -64,13 +65,14 @@ namespace portmgr_ut
         ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
         
         value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        //ASSERT_TRUE(value_opt);
+        ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR,  "300");
         
 
         value_opt = swss::fvsGetValue(values, "speed", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("100000", value_opt.get());
+
         value_opt = swss::fvsGetValue(values, "index", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("1", value_opt.get());
