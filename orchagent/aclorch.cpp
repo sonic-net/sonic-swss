@@ -4175,9 +4175,20 @@ bool AclOrch::removeEgrSetDscpTable(string table_id)
     }
     else
     {
-        //create a dummy table with no ports. The updateAclTable will remove the ports
-        // which were associated with the egrSetDscpTable we just added because the
-        // reference of this table is removed from m_egrSetDscpRef.
+        //create a dummy table with no ports. The updateAclTable will remove the
+        // unique ports which were associated with table_id.
+        // The way this works is as follows.
+        // The getAddDeletePorts function collects all the ports of the tables which
+        // are in m_egrSetDscpRef set and adds those ports to the EGR_SET_DSCP.
+        // As a result the EGR_SET_DSCP is associated with all the ports to which the
+        // TABLE_TYPE_UNDERLAY_SET_DSCP/V6 tables are attached.
+        //
+        // when we want to remove one of the tables referencing the EGR_SET_DSCP.
+        // we remove it from m_egrSetDscpRef, then send a updateAclTable with a
+        // EGR_SET_DSCP table with no assiciated ports.
+        // The getAddDeletePorts collects all the ports except for the one assocated
+        // with the table we just removed from m_egrSetDscpRef and updated the EGR_SET_DSCP
+        // with new port set.
         AclTable dummyTable(this);
         dummyTable.id = EGR_SET_DSCP_TABLE_ID;
         dummyTable.stage = ACL_STAGE_EGRESS;
@@ -5693,25 +5704,19 @@ void MetaDataMgr::recycleMetaData(uint8_t metadata)
     m_MetadataRef[metadata] -= 1;
     if (m_MetadataRef[metadata] == 0)
     {
-        bool foundDscpToErase = false;
-        uint8_t dscpToErase = 0;
-        for (auto iter = m_dscpMetadata.begin(); iter != m_dscpMetadata.end(); ++iter)
+
+        for (auto iter = m_dscpMetadata.begin(); iter != m_dscpMetadata.end())
         {
             if ( iter->second == metadata)
             {
-                foundDscpToErase = true;
-                dscpToErase = iter->first;
+                m_dscpMetadata.erase(iter++);
                 m_freeMetadata.push_front(metadata);
                 break;
             }
-        }
-        if (foundDscpToErase)
-        {
-            m_dscpMetadata.erase(dscpToErase);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unexpected. Failed to find DSCP value for metadata %d", metadata);
+            else
+            {
+                ++iter;
+            }
         }
     }
 }
