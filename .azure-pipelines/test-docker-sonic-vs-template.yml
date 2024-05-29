@@ -50,7 +50,7 @@ jobs:
       DIFF_COVER_ENABLE: 'true'
       DIFF_COVER_COVERAGE_FILES: Cobertura.xml
 
-  pool: sonic-common-test
+  pool: sonictest
 
   steps:
   - script: |
