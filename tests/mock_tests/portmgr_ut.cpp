@@ -54,15 +54,19 @@ namespace portmgr_ut
         ASSERT_TRUE(mockCallArgs.empty());
         std::vector<FieldValueTuple> values;
         app_port_table.get("Ethernet0", values);
+
         auto value_opt = swss::fvsGetValue(values, "mtu", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
+
         value_opt = swss::fvsGetValue(values, "admin_status", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR, value_opt.get());
+
         value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
         ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
+        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, "300");
+
         value_opt = swss::fvsGetValue(values, "speed", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("100000", value_opt.get());
@@ -79,7 +83,7 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
-        ASSERT_EQ("sudo /sbin/tc qdisc add dev Ethernet0 handle ffff: ingress && sudo /sbin/tc filter add dev Ethernet0 protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop",mockCallArgs[2]);
+        ASSERT_EQ("sudo /sbin/tc qdisc add dev Ethernet0 handle ffff: ingress &&  sudo /sbin/tc filter add dev Ethernet0 protocol ip parent ffff: prio 1  u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop",mockCallArgs[2]);
         
         // Set port admin_status, verify that it could override the default value
         cfg_port_table.set("Ethernet0", {
@@ -144,7 +148,7 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(3), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
-        ASSERT_EQ("sudo /sbin/tc qdisc add dev Ethernet0 handle ffff: ingress && sudo /sbin/tc filter add dev Ethernet0 protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop", mockCallArgs[2]);
+        ASSERT_EQ("sudo /sbin/tc qdisc add dev Ethernet0 handle ffff: ingress &&  sudo /sbin/tc filter add dev Ethernet0 protocol ip parent ffff: prio 1  u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop", mockCallArgs[2]);
 
         
 
