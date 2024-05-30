@@ -20,6 +20,7 @@ using namespace swss;
 #define PFC_WD_POLL_MSECS 100
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
+#define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
 
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS 10 * 1000
@@ -527,7 +528,8 @@ bool OrchDaemon::init()
         // register APP_FABRIC_MONITOR_PORT_TABLE_NAME table
         const int fabric_portsorch_base_pri = 30;
         vector<table_name_with_pri_t> fabric_port_tables = {
-           { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri }
+           { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
+           { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
         };
         gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
         m_orchList.push_back(gFabricPortsOrch);
@@ -1088,7 +1090,8 @@ bool FabricOrchDaemon::init()
 
     const int fabric_portsorch_base_pri = 30;
     vector<table_name_with_pri_t> fabric_port_tables = {
-        { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri }
+        { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
+        { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
     };
     gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
     addOrchList(gFabricPortsOrch);

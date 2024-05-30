@@ -101,7 +101,36 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
 
     auto debug_executor = new ExecutableTimer(m_debugTimer, this, "FABRIC_DEBUG_POLL");
     Orch::addExecutor(debug_executor);
-    m_debugTimer->start();
+    bool fabricPortMonitor = checkFabricPortMonState();
+    if (fabricPortMonitor)
+    {
+        m_debugTimer->start();
+        SWSS_LOG_INFO("Fabric monitor starts at init time");
+    }
+}
+
+bool FabricPortsOrch::checkFabricPortMonState()
+{
+    bool enabled = false;
+    std::vector<FieldValueTuple> constValues;
+    bool setCfgVal = m_applMonitorConstTable->get("FABRIC_MONITOR_DATA", constValues);
+    if (!setCfgVal)
+    {
+        return enabled;
+    }
+    SWSS_LOG_INFO("FabricPortsOrch::checkFabricPortMonState starts");
+    for (auto cv : constValues)
+    {
+        if (fvField(cv) == "monState")
+        {
+            if (fvValue(cv) == "enable")
+            {
+                enabled = true;
+                return enabled;
+            }
+        }
+    }
+    return enabled;
 }
 
 int FabricPortsOrch::getFabricPortList()
@@ -1188,7 +1217,12 @@ void FabricPortsOrch::doTask()
 
 void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
 {
-    SWSS_LOG_NOTICE("FabricPortsOrch::doFabricPortTask");
+    if (!checkFabricPortMonState())
+    {
+        SWSS_LOG_INFO("doFabricPortTask returns early due to feature disabled");
+        return;
+    }
+    SWSS_LOG_INFO("FabricPortsOrch::doFabricPortTask starts");
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -1350,10 +1384,37 @@ void FabricPortsOrch::doTask(Consumer &consumer)
     SWSS_LOG_NOTICE("doTask from FabricPortsOrch");
 
     string table_name = consumer.getTableName();
+    SWSS_LOG_INFO("Table name: %s", table_name.c_str());
 
     if (table_name == APP_FABRIC_MONITOR_PORT_TABLE_NAME)
     {
         doFabricPortTask(consumer);
+    }
+    if (table_name == APP_FABRIC_MONITOR_DATA_TABLE_NAME)
+    {
+        SWSS_LOG_INFO("doTask for APP_FABRIC_MONITOR_DATA_TABLE_NAME");
+        auto it = consumer.m_toSync.begin();
+        while (it != consumer.m_toSync.end())
+        {
+            KeyOpFieldsValuesTuple t = it->second;
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "monState")
+                {
+                    if (fvValue(i) == "enable")
+                    {
+                        m_debugTimer->start();
+                        SWSS_LOG_INFO("debugTimer started");
+                    }
+                    else
+                    {
+                        m_debugTimer->stop();
+                        SWSS_LOG_INFO("debugTimer stopped");
+                    }
+                }
+            }
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
@@ -1384,6 +1445,7 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
 
         if (m_getFabricPortListDone)
         {
+            SWSS_LOG_INFO("Fabric monitor enabled");
             updateFabricDebugCounters();
             updateFabricCapacity();
             updateFabricRate();
