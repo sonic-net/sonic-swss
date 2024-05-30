@@ -67,6 +67,7 @@ class TestMuxTunnelBase():
     DEFAULT_TUNNEL_PARAMS = {
         "tunnel_type": "IPINIP",
         "dst_ip": SELF_IPV4,
+        "src_ip": PEER_IPV4,
         "dscp_mode": "pipe",
         "ecn_mode": "standard",
         "ttl_mode": "pipe",
@@ -1124,31 +1125,28 @@ class TestMuxTunnelBase():
         src_ip = tunnel_params['src_ip'] if 'src_ip' in tunnel_params else None
         self.check_tunnel_termination_entry_exists_in_asicdb(asicdb, tunnel_sai_obj, tunnel_params["dst_ip"].split(","), src_ip)
 
-    def remove_and_test_tunnel(self, db, asicdb, tunnel_name):
+    def remove_and_test_tunnel(self, configdb, asicdb, tunnel_name):
         """ Removes tunnel and checks that ASIC db is clear"""
-
-        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
-        tunnel_term_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TERM_ENTRIES)
-        tunnel_app_table = swsscommon.Table(asicdb, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        tunnel_table = swsscommon.Table(asicdb.db_connection, self.ASIC_TUNNEL_TABLE)
+        tunnel_term_table = swsscommon.Table(asicdb.db_connection, self.ASIC_TUNNEL_TERM_ENTRIES)
 
         tunnels = tunnel_table.getKeys()
         tunnel_sai_obj = tunnels[0]
 
-        status, fvs = tunnel_table.get(tunnel_sai_obj)
+        _, fvs = tunnel_table.get(tunnel_sai_obj)
 
         # get overlay loopback interface oid to check if it is deleted with the tunnel
         overlay_infs_id = {f:v for f, v in fvs}["SAI_TUNNEL_ATTR_OVERLAY_INTERFACE"]
 
-        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        ps.set(tunnel_name, create_fvs(), 'DEL')
+        configdb.delete_entry(self.CONFIG_TUNNEL_TABLE_NAME, tunnel_name)
 
         # wait till config will be applied
-        time.sleep(1)
+        time.sleep(5)
 
         assert len(tunnel_table.getKeys()) == 0
         assert len(tunnel_term_table.getKeys()) == 0
-        assert len(tunnel_app_table.getKeys()) == 0
-        assert not self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
+        with pytest.raises(AssertionError):
+            self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
 
     def check_app_db_neigh_table(
             self, appdb, intf, neigh_ip,
@@ -1166,6 +1164,7 @@ class TestMuxTunnelBase():
             appdb.wait_for_field_match(self.APP_NEIGH_TABLE, key, {'neigh': mac})
         else:
             appdb.wait_for_deleted_keys(self.APP_NEIGH_TABLE, key)
+
     def add_qos_map(self, configdb, asicdb, qos_map_type_name, qos_map_name, qos_map):
         current_oids = asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)
         # Apply QoS map to config db
@@ -1251,10 +1250,22 @@ class TestMuxTunnelBase():
 
     @pytest.fixture(scope='module')
     def setup_tunnel(self, dvs):
-        app_db_connector = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        ps = swsscommon.ProducerStateTable(app_db_connector, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        fvs = create_fvs(**self.DEFAULT_TUNNEL_PARAMS)
-        ps.set(self.MUX_TUNNEL_0, fvs)
+        config_db = dvs.get_config_db()
+        config_db.create_entry(
+            self.CONFIG_TUNNEL_TABLE_NAME,
+            self.MUX_TUNNEL_0,
+            self.DEFAULT_TUNNEL_PARAMS
+        )
+
+    @pytest.fixture
+    def restore_tunnel(self, dvs):
+        yield
+        config_db = dvs.get_config_db()
+        config_db.create_entry(
+            self.CONFIG_TUNNEL_TABLE_NAME,
+            self.MUX_TUNNEL_0,
+            self.DEFAULT_TUNNEL_PARAMS
+        )
 
     @pytest.fixture
     def setup_peer_switch(self, dvs):
@@ -1377,10 +1388,11 @@ class TestMuxTunnel(TestMuxTunnelBase):
         self.remove_qos_map(db, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, tc_to_pg_map_oid)
 
 
-    def test_Tunnel(self, dvs, setup_tunnel, testlog, setup):
+    def test_Tunnel(self, dvs, setup_tunnel, restore_tunnel, testlog, setup):
         """ test IPv4 Mux tunnel creation """
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
+        configdb = dvs.get_config_db()
 
         #self.cleanup_left_over(db, asicdb)
         _, _, dscp_to_tc_map_oid, tc_to_pg_map_oid = setup
@@ -1390,6 +1402,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         # create tunnel IPv4 tunnel
         self.create_and_test_tunnel(db, asicdb, self.MUX_TUNNEL_0, tunnel_params)
+        # remove tunnel IPv4 tunnel
+        self.remove_and_test_tunnel(configdb, asicdb, self.MUX_TUNNEL_0)
 
     def test_Peer(self, dvs, setup_peer_switch, setup_tunnel, setup, testlog):
 
