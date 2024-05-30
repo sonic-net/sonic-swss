@@ -21,15 +21,22 @@ class TestVirtualChassis(object):
             cfg_switch_type = metatbl.get("switch_type")
             if cfg_switch_type == "fabric":
 
-               # get config_db information
+               # get app_db/config_db information
                cdb = dvs.get_config_db()
+               adb = dvs.get_app_db()
+
+               # check if the fabric montior toggle working
+               cdb.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'disable'})
+               adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'disable'})
+
+               cdb.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'enable'})
+               adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'enable'})
 
                # set config_db to isolateStatus: True
                cdb.update_entry("FABRIC_PORT", "Fabric1", {"isolateStatus": "True"})
                cdb.wait_for_field_match("FABRIC_PORT", "Fabric1", {"isolateStatus": "True"})
 
                # check if appl_db value changes to isolateStatus: True
-               adb = dvs.get_app_db()
                adb.wait_for_field_match("FABRIC_PORT_TABLE", "Fabric1", {"isolateStatus": "True"})
 
                # cleanup

@@ -65,6 +65,7 @@ private:
     void updateFabricPortState();
     void updateFabricDebugCounters();
     void updateFabricCapacity();
+    bool checkFabricPortMonState();
     void updateFabricRate();
 
     void doTask() override;
