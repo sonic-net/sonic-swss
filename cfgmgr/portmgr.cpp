@@ -96,7 +96,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         ret = swss::exec(cmd_str, res);
     }
     
-    if (ret)
+    if (!ret)
     {
         return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
     }
