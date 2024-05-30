@@ -91,7 +91,8 @@ jobs:
         sudo apt-add-repository https://packages.microsoft.com/ubuntu/20.04/prod
         sudo apt-get update
         sudo apt-get install -y dotnet-sdk-7.0
-        sudo dotnet tool install dotnet-reportgenerator-globaltool  --tool-path /usr/bin
+        sudo dotnet tool install dotnet-reportgenerator-globaltool --tool-path /usr/bin 2>&1 | tee log.log || grep 'already installed' log.log
+        rm log.log
     displayName: "Install .NET CORE"
 
   - script: |
