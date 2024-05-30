@@ -97,13 +97,13 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 
 
     }
-    else
+    /*else
     {
         // tc qdisc del dev <port_name> handle ffff: ingress
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
-    }
+    }*/
     if (!ret)
     {
 
