@@ -945,11 +945,35 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
         NeighborEntry temp_entry = { ip_address, vlan_port };
         if (m_syncdNeighbors.find(temp_entry) != m_syncdNeighbors.end())
         {
-            SWSS_LOG_NOTICE("Neighbor %s on %s already exists, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str());
-            if (!removeNeighbor(temp_entry))
+            // Neighbor already exists on another VLAN. If they belong to the same VRF, delete the old neighbor
+            Port existing_vlan, new_vlan;
+            if (!gPortsOrch->getPort(vlan_port, new_vlan))
             {
-                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s", ip_address.to_string().c_str(), vlan_port.c_str());
+                SWSS_LOG_ERROR("Failed to get port for %s", vlan_port.c_str());
                 return false;
+            }
+            if (!gPortsOrch->getPort(alias, existing_vlan))
+            {
+                SWSS_LOG_ERROR("Failed to get port for %s", alias.c_str());
+                return false;
+            }
+            if (existing_vlan.m_vr_id == new_vlan.m_vr_id)
+            {
+                std::string vrf_name = gDirectory.get<VRFOrch*>()->getVRFname(existing_vlan.m_vr_id);
+                if (vrf_name.empty())
+                {
+                    SWSS_LOG_NOTICE("Neighbor %s already learned on %s, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Neighbor %s already learned on %s in VRF %s, removing before adding new neighbor", ip_address.to_string().c_str(), vlan_port.c_str(), vrf_name.c_str());
+                }
+
+                if (!removeNeighbor(temp_entry))
+                {
+                    SWSS_LOG_ERROR("Failed to remove neighbor %s on %s", ip_address.to_string().c_str(), vlan_port.c_str());
+                    return false;
+                }
             }
         }
     }
