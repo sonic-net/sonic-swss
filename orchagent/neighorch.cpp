@@ -342,6 +342,8 @@ bool NeighOrch::setNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_flag
     auto nhop = m_syncdNextHops.find(nexthop);
     bool rc = false;
 
+    SWSS_LOG_INFO("setNextHopFlag on %s seen on port %s ",
+                    nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
     assert(nhop != m_syncdNextHops.end());
 
     if (nhop->second.nh_flags & nh_flag)
@@ -381,6 +383,8 @@ bool NeighOrch::clearNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_fl
 
     nhop->second.nh_flags &= ~nh_flag;
     uint32_t count;
+    SWSS_LOG_INFO("clearnexthop on %s seen on port %s ",
+                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
     switch (nh_flag)
     {
         case NHFLAGS_IFDOWN:
@@ -2419,4 +2423,31 @@ bool NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddre
     }
 
     return false;
+}
+
+bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
+{
+    SWSS_LOG_ENTER();
+    bool rc = true;
+    Port inbp;
+    gPortsOrch->getInbandPort(inbp);
+    for (auto nbr = m_syncdNeighbors.begin(); nbr != m_syncdNeighbors.end(); ++nbr)
+    {
+        if (nbr->first.alias != alias)
+        {
+            continue;
+        }
+        SWSS_LOG_INFO("Found remote Neighbor %s on %s", nbr->first.ip_address.to_string().c_str(), alias.c_str());
+        NextHopKey nhop = { nbr->first.ip_address, inbp.m_alias };
+
+        if (if_up)
+        {
+            rc = clearNextHopFlag(nhop, NHFLAGS_IFDOWN);
+        }
+        else
+        {
+            rc = setNextHopFlag(nhop, NHFLAGS_IFDOWN);
+        }
+    }
+    return rc;
 }
