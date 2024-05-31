@@ -51,6 +51,7 @@ private:
 
     bool m_getFabricPortListDone = false;
     bool m_isQueueStatsGenerated = false;
+    bool m_debugTimerEnabled = false;
 
     string m_defaultPollWithErrors = "0";
     string m_defaultPollWithNoErrors = "8";
