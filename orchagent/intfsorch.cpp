@@ -715,7 +715,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         bool mpls = false;
         string vlan = "";
         string loopbackAction = "";
-
+        string oper_status ="";
         for (auto idx : data)
         {
             const auto &field = fvField(idx);
@@ -807,6 +807,10 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 loopbackAction = value;
             }
+            else if (field == "oper_status")
+            {
+                oper_status = value;
+            }
         }
 
         if (alias == "eth0" || alias == "docker0")
@@ -860,7 +864,19 @@ void IntfsOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-
+            if(table_name == CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME)
+            {
+                if(isRemoteSystemPortIntf(alias))
+                {
+                    SWSS_LOG_INFO("Handle remote systemport intf %s, oper status %s", alias.c_str(), oper_status.c_str());
+                    bool isUp = (oper_status == "up") ? true : false;
+                    if (!gNeighOrch->ifChangeInformRemoteNextHop(alias, isUp))
+                    {
+                        SWSS_LOG_WARN("Unable to update the nexthop for port  %s, oper status %s", alias.c_str(), oper_status.c_str());
+                    }
+                    
+                }
+            }
             //Voq Inband interface config processing
             if(inband_type.size() && !ip_prefix_in_key)
             {
@@ -1656,7 +1672,10 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
         return;
     }
 
-    FieldValueTuple nullFv ("NULL", "NULL");
+
+    string oper_status = port.m_oper_status == SAI_PORT_OPER_STATUS_UP ? "up" : "down";
+
+    FieldValueTuple nullFv ("oper_status", oper_status);
     vector<FieldValueTuple> attrs;
     attrs.push_back(nullFv);
 
@@ -1696,3 +1715,30 @@ void IntfsOrch::voqSyncDelIntf(string &alias)
     m_tableVoqSystemInterfaceTable->del(alias);
 }
 
+void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
+{
+    Port port;
+    string port_alias;
+    if(gPortsOrch->getPort(alias, port))
+    {
+        if (port.m_type == Port::LAG)
+        {
+            if (port.m_system_lag_info.switch_id != gVoqMySwitchId)
+            {
+                return;
+            }
+            port_alias = port.m_system_lag_info.alias;
+        }
+        else
+        {
+            if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+            {
+                return;
+            }
+            port_alias = port.m_system_port_info.alias;
+        }
+        SWSS_LOG_NOTICE("Syncing system interface state %s for port %s", isUp ? "up" : "down", port_alias.c_str());
+        m_tableVoqSystemInterfaceTable->hset(port_alias, "oper_status", isUp ? "up" : "down");
+    }
+
+}

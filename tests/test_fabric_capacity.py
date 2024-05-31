@@ -22,6 +22,11 @@ class TestVirtualChassis(object):
             cfg_switch_type = metatbl.get("switch_type")
             if cfg_switch_type == "fabric":
 
+               max_poll = PollingConfig(polling_interval=60, timeout=600, strict=True)
+               config_db.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'enable'})
+               adb = dvs.get_app_db()
+               adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'enable'}, polling_config=max_poll)
+
                # get state_db infor
                sdb = dvs.get_state_db()
                # There are 16 fabric ports in the test environment.
@@ -29,8 +34,6 @@ class TestVirtualChassis(object):
                portNum = random.randint(1, 16)
                cdb_port = "Fabric"+str(portNum)
                sdb_port = "PORT"+str(portNum)
-
-               max_poll = PollingConfig(polling_interval=60, timeout=600, strict=True)
 
                # setup test environment
                sdb.update_entry("FABRIC_PORT_TABLE", sdb_port, {"TEST": "TEST"})

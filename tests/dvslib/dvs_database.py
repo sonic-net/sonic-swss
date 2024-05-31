@@ -109,7 +109,19 @@ class DVSDatabase:
         """
         table = swsscommon.Table(self.db_connection, table_name)
         table.hdel(key, field)
-        
+
+    def set_field(self, table_name: str, key: str, field: str, value: str) -> None:
+        """Add/Update a field in an entry stored at `key` in the specified table.
+
+        Args:
+            table_name: The name of the table where the entry is being removed.
+            key: The key that maps to the entry being added/updated.
+            field: The field that needs to be added/updated.
+            value: The value that is set for the field.
+        """
+        table = swsscommon.Table(self.db_connection, table_name)
+        table.hset(key, field, value)
+
     def get_keys(self, table_name: str) -> List[str]:
         """Get all of the keys stored in the specified table.
 
