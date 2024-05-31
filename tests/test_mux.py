@@ -349,7 +349,6 @@ class TestMuxTunnelBase():
         apdb.wait_for_field_match(self.APP_MUX_CABLE, interface, expected_field)
 
     def bulk_neighbor_test(self, confdb, appdb, asicdb, dvs, dvs_route):
-        dvs.runcmd("swssloglevel -l INFO -c orchagent")
         dvs.runcmd("ip neigh flush all")
         self.add_fdb(dvs, "Ethernet0", "00-00-00-00-11-11")
         self.set_mux_state(appdb, "Ethernet0", "active")

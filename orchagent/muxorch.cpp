@@ -766,6 +766,7 @@ bool MuxNbrHandler::enable(bool update_rt)
     while (it != neighbors_.end())
     {
         /* Update NH to point to learned neighbor */
+        neigh = NeighborEntry(it->first, alias_);
         it->second = gNeighOrch->getLocalNextHopId(neigh);
 
         /* Reprogram route */
