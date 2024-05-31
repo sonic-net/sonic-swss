@@ -190,10 +190,10 @@ namespace ut_fpmsyncd
     struct nlmsg *create_srv6_localsid_nlmsg(
         uint16_t cmd,
         IpAddress *localsid,
-        uint8_t block_len,
-        uint8_t node_len,
-        uint8_t func_len,
-        uint8_t arg_len,
+        int8_t block_len,
+        int8_t node_len,
+        int8_t func_len,
+        int8_t arg_len,
         uint32_t action,
         char *vrf,
         IpAddress *adj,
@@ -253,32 +253,36 @@ namespace ut_fpmsyncd
                          SRV6_LOCALSID_FORMAT);
 
         /* Add block bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_BLOCK_LEN,
-                block_len))
-            return NULL;
+        if (block_len >= 0)
+            if (!nl_attr_put8(
+                    &nl_obj->n, sizeof(*nl_obj),
+                    SRV6_LOCALSID_FORMAT_BLOCK_LEN,
+                    block_len))
+                return NULL;
 
         /* Add node bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_NODE_LEN,
-                node_len))
-            return NULL;
+        if (node_len >= 0)
+            if (!nl_attr_put8(
+                    &nl_obj->n, sizeof(*nl_obj),
+                    SRV6_LOCALSID_FORMAT_NODE_LEN,
+                    node_len))
+                return NULL;
 
         /* Add function bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_FUNC_LEN,
-                func_len))
-            return NULL;
+        if (func_len >= 0)
+            if (!nl_attr_put8(
+                    &nl_obj->n, sizeof(*nl_obj),
+                    SRV6_LOCALSID_FORMAT_FUNC_LEN,
+                    func_len))
+                return NULL;
 
         /* Add argument bits length */
-        if (!nl_attr_put8(
-                &nl_obj->n, sizeof(*nl_obj),
-                SRV6_LOCALSID_FORMAT_ARG_LEN,
-                arg_len))
-            return NULL;
+        if (arg_len >= 0)
+            if (!nl_attr_put8(
+                    &nl_obj->n, sizeof(*nl_obj),
+                    SRV6_LOCALSID_FORMAT_ARG_LEN,
+                    arg_len))
+                return NULL;
 
         nl_attr_nest_end(&nl_obj->n, nest);
 

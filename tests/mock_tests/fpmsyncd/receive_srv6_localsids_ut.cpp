@@ -62,10 +62,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END;
 
         struct nlmsg *nl_obj = create_srv6_localsid_nlmsg(RTM_NEWSRV6LOCALSID, &_localsid, _block_len, _node_len, _func_len, _arg_len, _action);
@@ -105,10 +105,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END_X;
         IpAddress _adj = IpAddress("2001:db8:1::1");
 
@@ -155,10 +155,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END_T;
         char *_vrf = "Vrf10";
 
@@ -205,10 +205,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END_DX6;
         IpAddress _adj = IpAddress("2001:db8:1::1");
 
@@ -254,10 +254,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END_DX4;
         IpAddress _adj = IpAddress("10.0.0.1");
 
@@ -304,10 +304,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END_DT4;
         char *_vrf = "Vrf10";
 
@@ -354,10 +354,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END_DT6;
         char *_vrf = "Vrf10";
 
@@ -404,10 +404,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_END_DT46;
         char *_vrf = "Vrf10";
 
@@ -454,10 +454,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_UN;
 
         struct nlmsg *nl_obj = create_srv6_localsid_nlmsg(RTM_NEWSRV6LOCALSID, &_localsid, _block_len, _node_len, _func_len, _arg_len, _action);
@@ -497,10 +497,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_UA;
         IpAddress _adj = IpAddress("2001:db8:1::1");
 
@@ -547,10 +547,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_UDX6;
         IpAddress _adj = IpAddress("2001:db8:1::1");
 
@@ -597,10 +597,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_UDX4;
         IpAddress _adj = IpAddress("10.0.0.1");
 
@@ -647,10 +647,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_UDT4;
         char *_vrf = "Vrf10";
 
@@ -697,10 +697,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_UDT6;
         char *_vrf = "Vrf10";
 
@@ -747,10 +747,10 @@ namespace ut_fpmsyncd
 
         /* Create a Netlink object containing an SRv6 Local SID */
         IpAddress _localsid = IpAddress("fc00:0:1:1::");
-        uint8_t _block_len = 32;
-        uint8_t _node_len = 16;
-        uint8_t _func_len = 16;
-        uint8_t _arg_len = 0;
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
         uint32_t _action = SRV6_LOCALSID_ACTION_UDT46;
         char *_vrf = "Vrf10";
 
@@ -788,5 +788,100 @@ namespace ut_fpmsyncd
 
         /* Destroy the Netlink object and free the memory */
         free_nlobj(nl_obj);
+    }
+
+    /* Test Receiving a route containing an invalid SRv6 Local SID */
+    TEST_F(FpmSyncdSRv6LocalSIDsTest, RecevingRouteWithSRv6LocalSIDInvalid)
+    {
+        ASSERT_NE(m_routeSync, nullptr);
+
+        struct nlmsg *nl_obj;
+        IpAddress _localsid = IpAddress("fc00:0:1:1::");
+        int8_t _block_len;
+        int8_t _node_len;
+        int8_t _func_len;
+        int8_t _arg_len;
+        uint32_t _action = SRV6_LOCALSID_ACTION_UN;
+        std::string action;
+
+        /* Create a Netlink object containing an SRv6 Local SID with missing block length */
+        _block_len = -1;
+        _node_len = 16;
+        _func_len = 16;
+        _arg_len = 0;
+
+        nl_obj = create_srv6_localsid_nlmsg(RTM_NEWSRV6LOCALSID, &_localsid, _block_len, _node_len, _func_len, _arg_len, _action);
+        if (!nl_obj)
+            printf("Error\n\n");
+
+        /* Send the Netlink object to the FpmLink */
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Ensure that fpmsyncd does not create an entry in APP_DB (because local SID is invalid)*/
+        ASSERT_EQ(m_srv6LocalSidTable->hget("32:16:16:0:fc00:0:1:1::", "action", action), false);
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+
+
+        /* Create a Netlink object containing an SRv6 Local SID with missing node length */
+        _block_len = 32;
+        _node_len = -1;
+        _func_len = 16;
+        _arg_len = 0;
+
+        nl_obj = create_srv6_localsid_nlmsg(RTM_NEWSRV6LOCALSID, &_localsid, _block_len, _node_len, _func_len, _arg_len, _action);
+        if (!nl_obj)
+            printf("Error\n\n");
+
+        /* Send the Netlink object to the FpmLink */
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Ensure that fpmsyncd does not create an entry in APP_DB (because local SID is invalid)*/
+        ASSERT_EQ(m_srv6LocalSidTable->hget("32:16:16:0:fc00:0:1:1::", "action", action), false);
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+
+
+        /* Create a Netlink object containing an SRv6 Local SID with missing function length */
+        _block_len = 32;
+        _node_len = 16;
+        _func_len = -1;
+        _arg_len = 0;
+
+        nl_obj = create_srv6_localsid_nlmsg(RTM_NEWSRV6LOCALSID, &_localsid, _block_len, _node_len, _func_len, _arg_len, _action);
+        if (!nl_obj)
+            printf("Error\n\n");
+
+        /* Send the Netlink object to the FpmLink */
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Ensure that fpmsyncd does not create an entry in APP_DB (because local SID is invalid)*/
+        ASSERT_EQ(m_srv6LocalSidTable->hget("32:16:16:0:fc00:0:1:1::", "action", action), false);
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+
+
+        /* Create a Netlink object containing an SRv6 Local SID with missing argument length */
+        _block_len = 32;
+        _node_len = 16;
+        _func_len = 16;
+        _arg_len = -1;
+
+        nl_obj = create_srv6_localsid_nlmsg(RTM_NEWSRV6LOCALSID, &_localsid, _block_len, _node_len, _func_len, _arg_len, _action);
+        if (!nl_obj)
+            printf("Error\n\n");
+
+        /* Send the Netlink object to the FpmLink */
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Check that fpmsyncd created the correct entries in APP_DB (with default argument length)*/
+        ASSERT_EQ(m_srv6LocalSidTable->hget("32:16:16:0:fc00:0:1:1::", "action", action), true);
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+
     }
 }

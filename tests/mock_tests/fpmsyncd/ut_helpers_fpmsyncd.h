@@ -98,8 +98,8 @@ namespace ut_fpmsyncd
     struct nlmsg *create_srv6_vpn_route_nlmsg(uint16_t cmd, IpPrefix *dst, IpAddress *encap_src_addr,
                                               IpAddress *vpn_sid, uint16_t table_id = 10);
     /* Build a Netlink object containing an SRv6 Local SID */
-    struct nlmsg *create_srv6_localsid_nlmsg(uint16_t cmd, IpAddress *localsid, uint8_t block_len,
-                                             uint8_t node_len, uint8_t func_len, uint8_t arg_len,
+    struct nlmsg *create_srv6_localsid_nlmsg(uint16_t cmd, IpAddress *localsid, int8_t block_len,
+                                             int8_t node_len, int8_t func_len, int8_t arg_len,
                                              uint32_t action, char *vrf = NULL, IpAddress *nh = NULL,
 											 uint16_t table_id = 10);
     /* Free the memory allocated for a Netlink object */
