@@ -545,6 +545,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         int autoIsolated = 0;
         int cfgIsolated = 0;
         int isolated = 0;
+        int origIsolated = 0;
         string lnkStatus = "down";
         string testState = "product";
 
@@ -643,6 +644,12 @@ void FabricPortsOrch::updateFabricDebugCounters()
             if (fvField(val) == "AUTO_ISOLATED")
             {
                 autoIsolated = to_uint<uint8_t>(valuePt);
+                SWSS_LOG_INFO("port %s currently autoisolated: %s", key.c_str(),valuePt.c_str());
+                continue;
+            }
+            if (fvField(val) == "ISOLATED")
+            {
+                origIsolated = to_uint<uint8_t>(valuePt);
                 SWSS_LOG_INFO("port %s currently isolated: %s", key.c_str(),valuePt.c_str());
                 continue;
             }
@@ -816,6 +823,36 @@ void FabricPortsOrch::updateFabricDebugCounters()
             }
             // if "ISOLATED" is true, Call SAI api here to actually isolated the link
             // if "ISOLATED" is false, Call SAP api to actually unisolate the link
+
+            if (origIsolated != isolated)
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_PORT_ATTR_FABRIC_ISOLATE;
+                bool setVal = false;
+                if (isolated == 1)
+                {
+                    setVal = true;
+                }
+                attr.value.booldata = setVal;
+                SWSS_LOG_NOTICE("Set fabric port %d with isolate %d ", lane, isolated);
+                if (m_fabricLanePortMap.find(lane) == m_fabricLanePortMap.end())
+                {
+                    SWSS_LOG_NOTICE("NOT find fabric lane %d ", lane);
+                }
+                else
+                {
+                    sai_status_t status = sai_port_api->set_port_attribute(m_fabricLanePortMap[lane], &attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to set admin status");
+                    }
+                    SWSS_LOG_NOTICE("Set fabric port %d state done %d ", lane, isolated);
+                }
+            }
+            else
+            {
+                SWSS_LOG_INFO( "Same isolation status for %d", lane);
+            }
         }
         else
         {
@@ -1309,9 +1346,6 @@ void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
             }
             SWSS_LOG_NOTICE("key %s alias %s isolateStatus %s lanes %s",
                   key.c_str(), alias.c_str(), isolateStatus.c_str(), lanes.c_str());
-            // Call SAI api to isolate/unisolate the link here.
-            // Isolate the link if isolateStatus is True.
-            // Unisolate the link if isolateStatus is False.
 
             if (isolateStatus == "False")
             {
@@ -1372,6 +1406,26 @@ void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
                     // AUTO_ISOLATED 0
                     m_stateTable->hset(state_key, "AUTO_ISOLATED",
                                        m_defaultAutoIsolated.c_str());
+
+                    sai_attribute_t attr;
+                    attr.id = SAI_PORT_ATTR_FABRIC_ISOLATE;
+                    bool setVal = false;
+                    attr.value.booldata = setVal;
+                    SWSS_LOG_NOTICE("Set port %s to unisolate %s ", alias.c_str(), isolateStatus.c_str());
+                    int idx = stoi(lanes);
+                    if (m_fabricLanePortMap.find(idx) == m_fabricLanePortMap.end())
+                    {
+                        SWSS_LOG_NOTICE("NOT find %s alias. ", alias.c_str());
+                    }
+                    else
+                    {
+                        sai_status_t status = sai_port_api->set_port_attribute(m_fabricLanePortMap[idx], &attr);
+                        if (status != SAI_STATUS_SUCCESS)
+                        {
+                            SWSS_LOG_ERROR("Failed to set admin status");
+                        }
+                        SWSS_LOG_NOTICE( "Set Port %s unisolation state done", alias.c_str());
+                    }
                 }
             }
         }
