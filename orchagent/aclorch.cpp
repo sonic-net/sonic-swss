@@ -5725,7 +5725,6 @@ void AclOrch::removeAllAclRuleStatus()
     }
 }
 
-<<<<<<< pfcwd-shared-egress-acl
 // Bind egress ACL table (with bind type switch) to switch
 bool AclOrch::bindEgrAclTableToSwitch(AclTable &table)
 {
@@ -5771,7 +5770,7 @@ bool AclOrch::unbindEgrAclTableFromSwitch(AclTable &table)
        return false;
     }
 }
-=======
+
 MetaDataMgr::MetaDataMgr()
 {
     for (uint8_t i = METADATA_VALUE_START; i <= METADATA_VALUE_END; i++)
@@ -5824,4 +5823,3 @@ void MetaDataMgr::recycleMetaData(uint8_t metadata)
     }
 }
 
->>>>>>> master
