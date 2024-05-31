@@ -1167,6 +1167,7 @@ namespace qosorch_test
         static_cast<Orch *>(gQosOrch)->doTask();
         // Check DSCP_TO_TC_MAP|AZURE is applied to switch
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "global", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
 
         // Remove global DSCP_TO_TC_MAP
         entries.push_back({"global", "DEL", {}});
@@ -1189,7 +1190,37 @@ namespace qosorch_test
         // Check DSCP_TO_TC_MAP|AZURE is removed, and the switch_level dscp_to_tc_map is set to NULL
         ASSERT_EQ(current_sai_remove_qos_map_count + 1, sai_remove_qos_map_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE"), 0);
+
+        // Run the test in reverse order
+        entries.push_back({"global", "SET",
+                            {
+                                {"dscp_to_tc_map", "AZURE"}
+                            }});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        // Try draining PORT_QOS_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Check DSCP_TO_TC_MAP|AZURE is applied to switch
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "global", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
+
+        entries.push_back({"AZURE", "SET",
+                           {
+                               {"1", "0"},
+                               {"0", "1"}
+                           }});
+
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
         
+        // Try draining DSCP_TO_TC_MAP and PORT_QOS_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Check DSCP_TO_TC_MAP|AZURE is applied to switch
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "global", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
     }
 
     TEST_F(QosOrchTest, QosOrchTestRetryFirstItem)
