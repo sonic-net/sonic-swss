@@ -1118,10 +1118,62 @@ class TestVirtualChassis(object):
         _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} nexthop via {test_neigh_ip_2}"])
         assert res == "", "Error configuring route"
 
+<<<<<<< Updated upstream
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
 
         
+||||||| constructed merge base
+=======
+def test_voq_drop_counters(self, vct):
+        """Test VOQ switch drop counters.
+
+        This test validates VOQ Switch counters for Voq/fabric switches - packet integrity counters
+        """
+
+        if vct is None:
+            return
+
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            # Get the config info
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Test only for line cards
+            if cfg_switch_type == "voq" or cfg_switch_type == "fabric":
+                print("VOQ drop counters test for {}".format(name))
+
+                # Verify that a counter has been created FLEX_COUNTER_DB and COUNTERS_DB. We will verify the state of
+                # the counter in the next step.
+                flex_db = dvs.get_flex_db()
+                keys = flex_db.get_keys("FLEX_COUNTER_TABLE:SWITCH_DEBUG_COUNTER")
+                assert len(keys), "No Voq Switch drop counter in FLEX_COUNTER_DB"
+                for key in keys:
+                   drop_entry = flex_db.get_entry("FLEX_COUNTER_TABLE:SWITCH_DEBUG_COUNTER", key)
+                   value = drop_entry.get("SWITCH_DEBUG_COUNTER_ID_LIST")
+                   assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter from FLEX_COUNTER_DB"
+
+                cntr_db = dvs.get_counters_db()
+                keys = cntr_db.get_keys("COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP")
+                assert len(keys), "No Voq Switch drop counter name map in COUNTERS_DB"
+                for key in keys:
+                   stat_name_entry = cntr_db.get_entry("COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP", key)
+                   value = stat_name_entry.get("SWITCH_STD_DROP_COUNTER-SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
+                   assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter name map from COUNTERS_DB"
+
+                asic_db = dvs.get_asic_db()
+                keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+                switch_oid_key = keys[0]
+                keys = cntr_db.get_keys("COUNTERS")
+                stat_entry = cntr_db.get_entry("COUNTERS", switch_oid_key)
+                value = stat_entry.get("SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
+                assert value == "0", "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP is non zero in COUNTERS_DB"
+
+>>>>>>> Stashed changes
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
