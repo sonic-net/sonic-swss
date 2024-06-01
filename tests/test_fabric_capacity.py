@@ -64,6 +64,21 @@ class TestVirtualChassis(object):
                        config_db.update_entry("FABRIC_PORT", cdb_port, {"isolateStatus": "False"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "0"}, polling_config=max_poll)
                        sdb.wait_for_field_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
+
+                       # now disable fabric link monitor
+                       config_db.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'disable'})
+                       adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'disable'}, polling_config=max_poll)
+                       # isolate the link from config_db
+                       config_db.update_entry("FABRIC_PORT", cdb_port, {"isolateStatus": "True"})
+                       try:
+                          max_poll = PollingConfig(polling_interval=30, timeout=90, strict=True)
+                          sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "1"}, polling_config=max_poll)
+                          # check if capacity reduced
+                          sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
+                          assert False, "Expecting no change here"
+                       except Exception as e:
+                          # Expect field not change here
+                          pass
                    finally:
                        # cleanup
                        sdb.update_entry("FABRIC_PORT_TABLE", sdb_port, {"TEST_CRC_ERRORS": "0"})
