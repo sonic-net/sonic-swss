@@ -519,6 +519,7 @@ private:
 
     /* Protoypes for Path tracing */
     bool setPortPtTam(const Port& port, sai_object_id_t tam_id);
+    bool isSingleMemberLagPort(Port &port);
 
 private:
     void initializeCpuPort();

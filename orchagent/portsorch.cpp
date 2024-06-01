@@ -7942,15 +7942,35 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
 }
 
+bool PortsOrch::isSingleMemberLagPort(Port &port)
+{
+    bool is_lag_member_port = ((port.m_lag_id != SAI_NULL_OBJECT_ID) &&
+                        (port.m_lag_member_id != SAI_NULL_OBJECT_ID));
+    if (!is_lag_member_port || (port.m_type != Port::PHY))
+    {
+        return false;
+    }
+
+    Port lag_p;
+    if (!getPort(port.m_lag_id, lag_p))
+    {
+        SWSS_LOG_ERROR("Failed to get lag port object for port id 0x%" PRIx64, port.m_lag_id);
+        return false;
+    }
+    auto lag_member_count = lag_p.m_members.size();
+    return lag_member_count == 1;
+}
+
 void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
 {
-    SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
-            port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
-            oper_status_strings.at(status).c_str());
     if (status == port.m_oper_status)
     {
         return;
     }
+
+    SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
+            port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
+            oper_status_strings.at(status).c_str());
 
     if (port.m_type == Port::PHY)
     {
@@ -7970,14 +7990,16 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
             updatePortStatePoll(port, PORT_STATE_POLL_LT, !(status == SAI_PORT_OPER_STATUS_UP));
         }
     }
+
+    bool isUp = status == SAI_PORT_OPER_STATUS_UP;
     port.m_oper_status = status;
+    setPort(port.m_alias, port);
 
     if(port.m_type == Port::TUNNEL)
     {
         return;
     }
 
-    bool isUp = status == SAI_PORT_OPER_STATUS_UP;
     if (port.m_type == Port::PHY)
     {
         if (!setHostIntfsOperStatus(port, isUp))
@@ -7985,7 +8007,19 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
             SWSS_LOG_ERROR("Failed to set host interface %s operational status %s", port.m_alias.c_str(),
                     isUp ? "up" : "down");
         }
+
+        if (!isUp && isSingleMemberLagPort(port))
+        {
+            Port lag_p;
+            if (!getPort(port.m_lag_id, lag_p))
+            {
+                SWSS_LOG_ERROR("Failed to get lag port object for port id 0x%" PRIx64, port.m_lag_id);
+                return;
+            }
+            updatePortOperStatus(lag_p, status);
+        }
     }
+
     SWSS_LOG_INFO("Updating the nexthop for port %s and operational status %s", port.m_alias.c_str(), isUp ? "up" : "down");
     
     if (!gNeighOrch->ifChangeInformNextHop(port.m_alias, isUp))
