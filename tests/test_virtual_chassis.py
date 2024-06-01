@@ -1118,13 +1118,9 @@ class TestVirtualChassis(object):
         _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} nexthop via {test_neigh_ip_2}"])
         assert res == "", "Error configuring route"
 
-<<<<<<< Updated upstream
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
 
-        
-||||||| constructed merge base
-=======
 def test_voq_drop_counters(self, vct):
         """Test VOQ switch drop counters.
 
@@ -1173,7 +1169,6 @@ def test_voq_drop_counters(self, vct):
                 value = stat_entry.get("SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
                 assert value == "0", "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP is non zero in COUNTERS_DB"
 
->>>>>>> Stashed changes
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
