@@ -1121,7 +1121,7 @@ class TestVirtualChassis(object):
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
 
-def test_voq_drop_counters(self, vct):
+    def test_voq_drop_counters(self, vct):
         """Test VOQ switch drop counters.
 
         This test validates VOQ Switch counters for Voq/fabric switches - packet integrity counters
