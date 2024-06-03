@@ -808,27 +808,14 @@ bool MuxNbrHandler::enable(bool update_rt)
             route_ctx_list.push_back(MuxRouteBulkContext(pfx));
         }
 
+        updateTunnelRoute(nh_key, false);
+
         it++;
     }
 
-    if (update_rt)
+    if (update_rt && !removeRoutes(route_ctx_list))
     {
-        if (!removeRoutes(route_ctx_list))
-        {
-            return false;
-        }
-
-        it = neighbors_.begin();
-        while (it != neighbors_.end())
-        {
-            NextHopKey nh_key = NextHopKey(it->first, alias_);
-            if (update_rt)
-            {
-                updateTunnelRoute(nh_key, false);
-            }
-
-            it++;
-        }
+        return false;
     }
 
     gRouteBulker.clear();
