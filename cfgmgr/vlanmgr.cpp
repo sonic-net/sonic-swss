@@ -113,6 +113,17 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
         EXEC_WITH_ERROR_THROW(echo_cmd_backup, res);
     }
+
+    // not learn from link-local frames
+    // /bin/echo 1 > /sys/class/net/Bridge/bridge/no_linklocal_learn
+    const std::string no_ll_learn_cmd = std::string("")
+      + ECHO_CMD + " 1 > /sys/class/net/" + DOT1Q_BRIDGE_NAME + "/bridge/no_linklocal_learn";
+
+    ret = swss::exec(no_ll_learn_cmd, res);
+    if (ret != 0) {
+        EXEC_WITH_ERROR_THROW(no_ll_learn_cmd, res);
+    }
+
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)

@@ -26,6 +26,7 @@ public:
     std::string getLearnModeStr(const PortConfig &port) const;
     std::string getLinkTrainingStr(const PortConfig &port) const;
     std::string getAdminStatusStr(const PortConfig &port) const;
+    std::string getPtTimestampTemplateStr(const PortConfig &port) const;
 
     bool parsePortConfig(PortConfig &port) const;
     bool validatePortConfig(PortConfig &port) const;
@@ -53,4 +54,7 @@ private:
     bool parsePortRole(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdminStatus(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortDescription(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortSubport(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortPtIntfId(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortPtTimestampTemplate(PortConfig &port, const std::string &field, const std::string &value) const;
 };

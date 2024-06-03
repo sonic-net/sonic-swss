@@ -208,6 +208,10 @@ public:
 
     int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
     int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
+
+    /* Path Tracing */
+    uint16_t m_pt_intf_id = 0;
+    sai_port_path_tracing_timestamp_type_t m_pt_timestamp_template = SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23;
 };
 
 }

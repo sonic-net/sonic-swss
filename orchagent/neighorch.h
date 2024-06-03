@@ -72,6 +72,7 @@ public:
     bool removeTunnelNextHop(const NextHopKey&);
 
     bool ifChangeInformNextHop(const string &, bool);
+    
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);
     bool removeOverlayNextHop(const NextHopKey &);
     void update(SubjectType, void *);
@@ -81,6 +82,7 @@ public:
 
     void resolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
+    bool ifChangeInformRemoteNextHop(const string &, bool);
 
 private:
     PortsOrch *m_portsOrch;
