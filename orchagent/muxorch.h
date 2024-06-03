@@ -41,15 +41,14 @@ struct MuxRouteBulkContext
     std::deque<sai_status_t>            object_statuses;            // Bulk statuses
     IpPrefix                            pfx;                        // Route prefix
     sai_object_id_t                     nh;                         // nexthop id
-    bool                                add;                        // add route bool
 
-    MuxRouteBulkContext(IpPrefix pfx, bool add)
-        : pfx(pfx), add(add)
+    MuxRouteBulkContext(IpPrefix pfx)
+        : pfx(pfx)
     {
     }
 
-    MuxRouteBulkContext(IpPrefix pfx, sai_object_id_t nh, bool add)
-        : pfx(pfx), nh(nh), add(add)
+    MuxRouteBulkContext(IpPrefix pfx, sai_object_id_t nh)
+        : pfx(pfx), nh(nh)
     {
     }
 };
@@ -97,8 +96,8 @@ public:
     string getAlias() const { return alias_; };
 
 private:
-    bool createBulkRouteEntries(std::list<MuxRouteBulkContext>& bulk_ctx_list);
-    bool processBulkRouteEntries(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+    bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+    bool addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
 
     inline void updateTunnelRoute(NextHopKey, bool = true);
 

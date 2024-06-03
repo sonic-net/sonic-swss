@@ -44,16 +44,25 @@ struct NeighborUpdate
     bool add;
 };
 
-struct NeighborBulkContext
+/*
+ * Keeps track of neighbor entry information primarily for bulk operations
+ */
+struct NeighborContext
 {
-    std::deque<sai_status_t>            object_statuses;            // Bulk statuses
-    NeighborEntry                       neighborEntry;              // Neighbor entry to process
+    NeighborEntry                       neighborEntry;              // neighbor entry to process
+    std::deque<sai_status_t>            object_statuses;            // bulk statuses
     MacAddress                          mac;                        // neighbor mac
-    bool                                enable;                     // enable/disable
-    int                                 set_neigh_attr_count = 0;   // Keeps track of number of attr set
 
-    NeighborBulkContext(NeighborEntry neighborEntry, bool enable)
-        : neighborEntry(neighborEntry), enable(enable)
+    bool                                bulk_op = false;            // use bulker (only for mux use for now)
+    int                                 set_neigh_attr_count = 0;   // number of attr set
+
+    NeighborContext(NeighborEntry neighborEntry)
+        : neighborEntry(neighborEntry)
+    {
+    }
+
+    NeighborContext(NeighborEntry neighborEntry, bool bulk_op)
+        : neighborEntry(neighborEntry), bulk_op(bulk_op)
     {
     }
 };
@@ -81,8 +90,8 @@ public:
 
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
-    bool createBulkNeighborEntries(std::list<NeighborBulkContext>&);
-    bool flushBulkNeighborEntries(std::list<NeighborBulkContext>&);
+    bool enableNeighbors(std::list<NeighborContext>&);
+    bool disableNeighbors(std::list<NeighborContext>&);
     bool isHwConfigured(const NeighborEntry&);
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
@@ -116,12 +125,10 @@ private:
 
     bool removeNextHop(const IpAddress&, const string&);
 
-    bool addNeighbor(const NeighborEntry&, const MacAddress&);
-    bool removeNeighbor(const NeighborEntry&, bool disable = false);
-    bool addBulkNeighbor(NeighborBulkContext& ctx);
-    bool addBulkNeighborPost(NeighborBulkContext& ctx);
-    bool removeBulkNeighbor(NeighborBulkContext& ctx);
-    bool removeBulkNeighborPost(NeighborBulkContext& ctx, bool disable = false);
+    bool addNeighbor(NeighborContext& ctx);
+    bool removeNeighbor(NeighborContext& ctx, bool disable = false);
+    bool addNeighborPost(NeighborContext& ctx);
+    bool removeNeighborPost(NeighborContext& ctx, bool disable = false);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
