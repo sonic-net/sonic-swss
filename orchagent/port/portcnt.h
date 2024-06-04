@@ -217,6 +217,40 @@ public:
         bool is_set = false;
     } pt_timestamp_template; // Port timestamp template for Path Tracing
 
+    struct {
+        sai_redis_link_event_damping_algorithm_t value;
+        bool is_set = false;
+    } link_event_damping_algorithm; // Port link event damping algorithm
+
+    struct {
+
+        struct {
+            uint32_t value;
+            bool is_set = false;
+        } max_suppress_time; // Max suppress time
+
+        struct {
+            uint32_t value;
+            bool is_set = false;
+        } decay_half_life; // Decay half life
+
+        struct {
+            uint32_t value;
+            bool is_set = false;
+        } suppress_threshold; // Suppress threshold
+
+        struct {
+            uint32_t value;
+            bool is_set = false;
+        } reuse_threshold; // Reuse threshold
+
+        struct {
+            uint32_t value;
+            bool is_set = false;
+        } flap_penalty; // Flap penalty
+
+    } link_event_damping_config; // Port link event damping config
+
     std::string key;
     std::string op;
 
