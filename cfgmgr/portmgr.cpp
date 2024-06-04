@@ -7,6 +7,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include <swss/redisutility.h>
+#include <iostream>
 
 using namespace std;
 using namespace swss;
@@ -84,6 +85,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     int ret;
     int byte_rate = stoi(dhcp_rate_limit) * 406;
 
+    std::cout<<std::endl<<"setPortDHCPMitigationRate function is called"<<std::endl;
     if (dhcp_rate_limit != "0")
     {
         // tc qdisc add dev <port_name> handle ffff: ingress for background
@@ -100,6 +102,8 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     else
     {
         // tc qdisc del dev <port_name> handle ffff: ingress
+        std::cout<<std::endl<<"inside deletion of tc que portion"<<std::endl;
+
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
@@ -216,6 +220,8 @@ void PortMgr::doTask(Consumer &consumer)
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
                 dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT_STR;
+                std::cout<<std::endl<<"inside not configured and Default Rate Limit is applied"<<std::endl;
+
 
                 m_portList.insert(alias);
             }
@@ -234,6 +240,8 @@ void PortMgr::doTask(Consumer &consumer)
                 else if (fvField(i) == "dhcp_rate_limit")
                 {
                     dhcp_rate_limit = fvValue(i);
+                    std::cout<<std::endl<<"if field in db is dhcp_limit then assign it for futheer use"<<std::endl;
+
                 }
                 else if (fvField(i) == "admin_status")
                 {
@@ -258,6 +266,8 @@ void PortMgr::doTask(Consumer &consumer)
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                std::cout<<std::endl<<"writing content of dhcp_rate_limit to Appl DB from config DB if port not ok"<<std::endl;
+
 
 
                 /* Retry setting these params after the netdev is created */
@@ -287,6 +297,8 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
+                std::cout<<std::endl<<"seting rate limit function is called"<<std::endl;
+
             }
         }
         else if (op == DEL_COMMAND)
