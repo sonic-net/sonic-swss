@@ -101,6 +101,8 @@ class TestMuxTunnelBase():
     DSCP_TO_TC_MAP = {str(i):str(1) for i in range(0, 64)}
     TC_TO_PRIORITY_GROUP_MAP = {str(i):str(i) for i in range(0, 8)}
 
+    BULK_NEIGHBOR_COUNT = 254
+
     def check_syslog(self, dvs, marker, err_log, expected_cnt):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
         assert num.strip() >= str(expected_cnt)
@@ -337,8 +339,66 @@ class TestMuxTunnelBase():
         ps = swsscommon.ProducerStateTable(apdb.db_connection, self.APP_ROUTE_TABLE)
         ps._del(route)
 
+    def wait_for_mux_state(self, dvs, interface, expected_state):
+        """
+        Waits until state change completes - expected state is in state_db
+        """
+
+        apdb = dvs.get_app_db()
+        expected_field = {"state": expected_state}
+        apdb.wait_for_field_match(self.APP_MUX_CABLE, interface, expected_field)
+
+    def bulk_neighbor_test(self, confdb, appdb, asicdb, dvs, dvs_route):
+        dvs.runcmd("ip neigh flush all")
+        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-11-11")
+        self.set_mux_state(appdb, "Ethernet0", "active")
+
+        class neighbor_info:
+            ipv4_key = ""
+            ipv6_key = ""
+            ipv4 = ""
+            ipv6 = ""
+
+            def __init__(self, i):
+                self.ipv4 = "192.168.1." + str(i)
+                self.ipv6 = "fc02:1001::" + str(i)
+
+        neighbor_list = [neighbor_info(i) for i in range(100, self.BULK_NEIGHBOR_COUNT)]
+        for neigh_info in neighbor_list:
+            self.add_neighbor(dvs, neigh_info.ipv4, "00:00:00:00:11:11")
+            self.add_neighbor(dvs, neigh_info.ipv6, "00:00:00:00:11:11")
+            neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+            neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+
+        try:
+            self.set_mux_state(appdb, "Ethernet0", "standby")
+            self.wait_for_mux_state(dvs, "Ethernet0", "standby")
+
+            for neigh_info in neighbor_list:
+                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv4_key)
+                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv6_key)
+                dvs_route.check_asicdb_route_entries(
+                    [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
+                )
+
+            self.set_mux_state(appdb, "Ethernet0", "active")
+            self.wait_for_mux_state(dvs, "Ethernet0", "active")
+
+            for neigh_info in neighbor_list:
+                dvs_route.check_asicdb_deleted_route_entries(
+                    [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
+                )
+                neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+                neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+
+        finally:
+            for neigh_info in neighbor_list:
+                self.del_neighbor(dvs, neigh_info.ipv4)
+                self.del_neighbor(dvs, neigh_info.ipv6)
+
     def create_and_test_neighbor(self, confdb, appdb, asicdb, dvs, dvs_route):
 
+        self.bulk_neighbor_test(confdb, appdb, asicdb, dvs, dvs_route)
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "standby")
 

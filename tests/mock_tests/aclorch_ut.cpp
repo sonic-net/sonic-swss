@@ -24,6 +24,7 @@ extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_route_api_t *sai_route_api;
+extern sai_route_api_t *sai_neighbor_api;
 extern sai_mpls_api_t *sai_mpls_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern string gMySwitchType;
@@ -318,6 +319,7 @@ namespace aclorch_test
             sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
             sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
             sai_api_query(SAI_API_ROUTE, (void **)&sai_route_api);
+            sai_api_query(SAI_API_NEIGHBOR, (void **)&sai_neighbor_api);
             sai_api_query(SAI_API_MPLS, (void **)&sai_mpls_api);
             sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
             sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
@@ -490,6 +492,7 @@ namespace aclorch_test
             sai_vlan_api = nullptr;
             sai_bridge_api = nullptr;
             sai_route_api = nullptr;
+            sai_neighbor_api = nullptr;
             sai_mpls_api = nullptr;
         }
 
