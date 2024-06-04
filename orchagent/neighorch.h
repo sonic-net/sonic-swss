@@ -127,8 +127,8 @@ private:
 
     bool addNeighbor(NeighborContext& ctx);
     bool removeNeighbor(NeighborContext& ctx, bool disable = false);
-    bool addNeighborPost(NeighborContext& ctx);
-    bool removeNeighborPost(NeighborContext& ctx, bool disable = false);
+    bool processBulkEnableNeighbor(NeighborContext& ctx);
+    bool processBulkDisableNeighbor(NeighborContext& ctx);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);

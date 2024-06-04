@@ -906,8 +906,7 @@ bool MuxNbrHandler::addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
     sai_status_t status;
     bool ret = true;
 
-    auto ctx = bulk_ctx_list.begin();
-    while (ctx != bulk_ctx_list.end())
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         auto& object_statuses = ctx->object_statuses;
         sai_route_entry_t route_entry;
@@ -931,14 +930,6 @@ bool MuxNbrHandler::addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
         attrs.push_back(attr);
 
         status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)attrs.size(), attrs.data());
-        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-        {
-            // entry exists in bulker, erase and continue
-            ctx = bulk_ctx_list.erase(ctx);
-            continue;
-        }
-
-        ctx++;
     }
 
     gRouteBulker.flush();
@@ -946,12 +937,6 @@ bool MuxNbrHandler::addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         auto& object_statuses = ctx->object_statuses;
-
-        if (object_statuses.empty())
-        {
-            continue;
-        }
-
         auto it_status = object_statuses.begin();
         status = *it_status++;
 
@@ -994,8 +979,7 @@ bool MuxNbrHandler::removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
     sai_status_t status;
     bool ret = true;
 
-    auto ctx = bulk_ctx_list.begin();
-    while (ctx != bulk_ctx_list.end())
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         auto& object_statuses = ctx->object_statuses;
         sai_route_entry_t route_entry;
@@ -1008,13 +992,6 @@ bool MuxNbrHandler::removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
 
         object_statuses.emplace_back();
         status = gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
-        if (status == SAI_STATUS_SUCCESS)
-        {
-            // entry already removed, clear from list and continue
-            ctx = bulk_ctx_list.erase(ctx);
-            continue;
-        }
-        ctx++;
     }
 
     gRouteBulker.flush();
@@ -1022,12 +999,6 @@ bool MuxNbrHandler::removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         auto& object_statuses = ctx->object_statuses;
-
-        if (object_statuses.empty())
-        {
-            continue;
-        }
-
         auto it_status = object_statuses.begin();
         status = *it_status++;
 

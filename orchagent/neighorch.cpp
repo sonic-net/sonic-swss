@@ -1012,12 +1012,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         {
             SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
             object_statuses.emplace_back();
-            status = gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
-            if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-            {
-                // clear object_statuses so that this neighbor entry is skipped
-                object_statuses.clear();
-            }
+            gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
             return true;
         }
 
@@ -1089,13 +1084,6 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         ctx.set_neigh_attr_count = (int)neighbor_attrs.size();
         for (auto itr : neighbor_attrs)
         {
-            if (bulk_op)
-            {
-                object_statuses.emplace_back();
-                gNeighBulker.set_entry_attribute(&object_statuses.back(), &neighbor_entry, &itr);
-                return true;
-            }
-
             status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -1209,12 +1197,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         if (bulk_op)
         {
             object_statuses.emplace_back();
-            status = gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry);
-            if (status == SAI_STATUS_SUCCESS)
-            {
-                // clear object_statuses so that this neighbor entry is skipped
-                object_statuses.clear();
-            }
+            gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry);
             return true;
         }
 
@@ -1277,7 +1260,8 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     return true;
 }
 
-bool NeighOrch::addNeighborPost(NeighborContext& ctx)
+/* Process bulk ctx entry and enable the neigbor */
+bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
 
@@ -1290,7 +1274,13 @@ bool NeighOrch::addNeighborPost(NeighborContext& ctx)
     string alias = neighborEntry.alias;
     IpAddress ip_address = neighborEntry.ip_address;
 
-    SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
+    if (!ctx.bulk_op)
+    {
+        SWSS_LOG_INFO("Not a bulk entry for %s on %s", ip_address.to_string().c_str(), alias.c_str());
+        return true;
+    }
+
+    SWSS_LOG_INFO("Checking neighbor create entry status %s on %s.", ip_address.to_string().c_str(), alias.c_str());
 
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
     if (rif_id == SAI_NULL_OBJECT_ID)
@@ -1304,16 +1294,15 @@ bool NeighOrch::addNeighborPost(NeighborContext& ctx)
     neighbor_entry.switch_id = gSwitchId;
     copy(neighbor_entry.ip_address, ip_address);
 
-    bool hw_config = isHwConfigured(neighborEntry);
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
-    if (!hw_config && mux_orch->isNeighborActive(ip_address, macAddress, alias))
+    if (mux_orch->isNeighborActive(ip_address, macAddress, alias))
     {
         status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
         {
             if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
             {
-                SWSS_LOG_ERROR("Neighbor exists: neighbor %s on %s, skipping: status:%s",
+                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, skipping: status:%s",
                            macAddress.to_string().c_str(), alias.c_str(), sai_serialize_status(status).c_str());
                 return true;
             }
@@ -1369,42 +1358,18 @@ bool NeighOrch::addNeighborPost(NeighborContext& ctx)
 
             return false;
         }
-        hw_config = true;
-    }
-    else if (hw_config)
-    {
-        for (int i = 0; i < ctx.set_neigh_attr_count; i++)
-        {
-            status = *it_status++;
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Bulker failed to update neighbor %s on %s, rv:%d",
-                               macAddress.to_string().c_str(), alias.c_str(), status);
-                task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-        }
-        SWSS_LOG_NOTICE("Bulker updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
 
-    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config };
+    m_syncdNeighbors[neighborEntry] = { macAddress, true };
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(gMySwitchType == "voq")
-    {
-        //Sync the neighbor to add to the CHASSIS_APP_DB
-        voqSyncAddNeigh(alias, ip_address, macAddress, neighbor_entry);
-    }
-
     return true;
 }
 
-bool NeighOrch::removeNeighborPost(NeighborContext& ctx, bool disable)
+/* Process bulk ctx entry and disable the neigbor */
+bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
 
@@ -1421,13 +1386,7 @@ bool NeighOrch::removeNeighborPost(NeighborContext& ctx, bool disable)
         return true;
     }
 
-    SWSS_LOG_NOTICE("Removing neighbor %s on %s", ip_address.to_string().c_str(),
-                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str());
-
-    if (object_statuses.empty())
-    {
-        return true;
-    }
+    SWSS_LOG_INFO("Checking neighbor remove entry status %s on %s.", ip_address.to_string().c_str(), m_syncdNeighbors[neighborEntry].mac.to_string().c_str());
 
     if (isHwConfigured(neighborEntry))
     {
@@ -1443,12 +1402,12 @@ bool NeighOrch::removeNeighborPost(NeighborContext& ctx, bool disable)
         {
             if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
-                SWSS_LOG_NOTICE("Bulker skipped, neighbor %s on %s already removed, rv:%d",
+                SWSS_LOG_NOTICE("Bulk remove entry skipped, neighbor %s on %s already removed, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
             }
             else
             {
-                SWSS_LOG_ERROR("Bulker failed to remove neighbor %s on %s, rv:%d",
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
                 task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
                 if (handle_status != task_success)
@@ -1475,25 +1434,8 @@ bool NeighOrch::removeNeighborPost(NeighborContext& ctx, bool disable)
         }
     }
 
-
-    /* Do not delete entry from cache if its disable request */
-    if (disable)
-    {
-        m_syncdNeighbors[neighborEntry].hw_configured = false;
-        return true;
-    }
-
-    m_syncdNeighbors.erase(neighborEntry);
-
-    NeighborUpdate update = { neighborEntry, MacAddress(), false };
-    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-
-    if(gMySwitchType == "voq")
-    {
-        //Sync the neighbor to delete from the CHASSIS_APP_DB
-        voqSyncDelNeigh(alias, ip_address);
-    }
-
+    /* Do not delete entry from cache for disable request */
+    m_syncdNeighbors[neighborEntry].hw_configured = false;
     return true;
 }
 
@@ -1551,33 +1493,25 @@ bool NeighOrch::disableNeighbor(const NeighborEntry& neighborEntry)
     return removeNeighbor(ctx, true);
 }
 
+/* enable neighbors using bulker */
 bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
 {
     bool ret = true;
 
-    auto ctx = bulk_ctx_list.begin();
-    while (ctx != bulk_ctx_list.end())
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
-        if (!ctx->bulk_op)
-        {
-            SWSS_LOG_ERROR("Calling enableNeighbors with bulking disabled is not supported");
-            ctx++;
-            continue;
-        }
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
         ctx->mac = m_syncdNeighbors[neighborEntry].mac;
 
         if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
-            ctx++;
             continue;
         }
 
         if (isHwConfigured(neighborEntry))
         {
             SWSS_LOG_INFO("Neighbor %s is already programmed to HW", neighborEntry.ip_address.to_string().c_str());
-            ctx++;
             continue;
         }
 
@@ -1585,21 +1519,22 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
 
         if(!addNeighbor(*ctx))
         {
-            SWSS_LOG_INFO("Adding bulk neighbor entry failed for %s", neighborEntry.ip_address.to_string().c_str());
-            /* remove from list, and continue */
-            ctx = bulk_ctx_list.erase(ctx);
+            SWSS_LOG_ERROR("Neighbor %s create entry failed.", neighborEntry.ip_address.to_string().c_str());
             continue;
         }
-
-        ctx++;
     }
 
     gNeighBulker.flush();
 
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
+        if (ctx->object_statuses.empty())
+        {
+            continue;
+        }
+
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        if (!addNeighborPost(*ctx))
+        if (!processBulkEnableNeighbor(*ctx))
         {
             SWSS_LOG_INFO("Enable neighbor failed for %s", neighborEntry.ip_address.to_string().c_str());
             /* finish processing bulk entries */
@@ -1611,50 +1546,44 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     return ret;
 }
 
+/* disable neighbors using bulker */
 bool NeighOrch::disableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
 {
     bool ret = true;
 
-    auto ctx = bulk_ctx_list.begin();
-    while (ctx != bulk_ctx_list.end())
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
-        if (!ctx->bulk_op)
-        {
-            SWSS_LOG_ERROR("Calling disableNeighbors with bulking disabled is not supported");
-            ctx++;
-            continue;
-        }
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
         ctx->mac = m_syncdNeighbors[neighborEntry].mac;
 
         if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
-            ctx++;
             continue;
         }
 
         SWSS_LOG_NOTICE("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
 
-        if(!removeNeighbor(*ctx))
+        if(!removeNeighbor(*ctx, true))
         {
-            SWSS_LOG_INFO("Removing bulk neighbor entry failed for %s", neighborEntry.ip_address.to_string().c_str());
-            /* remove from list, and continue */
-            ctx = bulk_ctx_list.erase(ctx);
-            continue;
+            SWSS_LOG_ERROR("Neighbor %s remove entry failed.", neighborEntry.ip_address.to_string().c_str());
         }
-        ctx++;
     }
 
     gNeighBulker.flush();
 
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
+        if (ctx->object_statuses.empty())
+        {
+            continue;
+        }
+
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        if (!removeNeighborPost(*ctx, true))
+        if (!processBulkDisableNeighbor(*ctx))
         {
             SWSS_LOG_INFO("Disable neighbor failed for %s", neighborEntry.ip_address.to_string().c_str());
-            /* finish processing bulk entries */
+            /* finish processing bulk entries but return false */
             ret = false;
         }
     }
