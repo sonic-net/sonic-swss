@@ -2,6 +2,7 @@
 #include "bulker.h"
 
 extern sai_route_api_t *sai_route_api;
+extern sai_neighbor_api_t *sai_neighbor_api;
 
 namespace bulker_test
 {
@@ -17,12 +18,18 @@ namespace bulker_test
         {
             ASSERT_EQ(sai_route_api, nullptr);
             sai_route_api = new sai_route_api_t();
+
+            ASSERT_EQ(sai_neighbor_api, nullptr);
+            sai_neighbor_api = new sai_neighbor_api_t();
         }
 
         void TearDown() override
         {
             delete sai_route_api;
             sai_route_api = nullptr;
+
+            delete sai_neighbor_api;
+            sai_neighbor_api = nullptr;
         }
     };
 
@@ -141,5 +148,29 @@ namespace bulker_test
 
         // Confirm route entry is not pending removal
         ASSERT_FALSE(gRouteBulker.bulk_entry_pending_removal(route_entry_non_remove));
+    }
+
+    TEST_F(BulkerTest, NeighborBulker)
+    {
+        // Create bulker
+        EntityBulker<sai_neighbor_api_t> gNeighBulker(sai_neighbor_api, 1000);
+        deque<sai_status_t> object_statuses;
+
+        // Check max bulk size
+        ASSERT_EQ(gNeighBulker.max_bulk_size, 1000);
+
+        // Create a dummy neighbor entry
+        sai_neighbor_entry_t neighbor_entry_remove;
+        neighbor_entry_remove.ip_address.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        neighbor_entry_remove.ip_address.addr.ip4 = 0x10000001;
+        neighbor_entry_remove.rif_id = 0x0;
+        neighbor_entry_remove.switch_id = 0x0;
+
+        // Put neighbor entry into remove
+        object_statuses.emplace_back();
+        gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry_remove);
+
+        // Confirm neighbor entry is pending removal
+        ASSERT_TRUE(gNeighBulker.bulk_entry_pending_removal(neighbor_entry_remove));
     }
 }

@@ -744,6 +744,8 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
 bool MuxNbrHandler::enable(bool update_rt)
 {
     NeighborEntry neigh;
+    std::list<NeighborContext> neigh_ctx_list;
+    std::list<MuxRouteBulkContext> route_ctx_list;
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -751,13 +753,21 @@ bool MuxNbrHandler::enable(bool update_rt)
         SWSS_LOG_INFO("Enabling neigh %s on %s", it->first.to_string().c_str(), alias_.c_str());
 
         neigh = NeighborEntry(it->first, alias_);
-        if (!gNeighOrch->enableNeighbor(neigh))
-        {
-            SWSS_LOG_INFO("Enabling neigh failed for %s", neigh.ip_address.to_string().c_str());
-            return false;
-        }
+        // Create neighbor context with bulk_op enabled
+        neigh_ctx_list.push_back(NeighborContext(neigh, true));
+        it++;
+    }
 
+    if (!gNeighOrch->enableNeighbors(neigh_ctx_list))
+    {
+        return false;
+    }
+
+    it = neighbors_.begin();
+    while (it != neighbors_.end())
+    {
         /* Update NH to point to learned neighbor */
+        neigh = NeighborEntry(it->first, alias_);
         it->second = gNeighOrch->getLocalNextHopId(neigh);
 
         /* Reprogram route */
@@ -795,14 +805,16 @@ bool MuxNbrHandler::enable(bool update_rt)
         IpPrefix pfx = it->first.to_string();
         if (update_rt)
         {
-            if (remove_route(pfx) != SAI_STATUS_SUCCESS)
-            {
-                return false;
-            }
+            route_ctx_list.push_back(MuxRouteBulkContext(pfx));
             updateTunnelRoute(nh_key, false);
         }
 
         it++;
+    }
+
+    if (update_rt && !removeRoutes(route_ctx_list))
+    {
+        return false;
     }
 
     return true;
@@ -811,6 +823,8 @@ bool MuxNbrHandler::enable(bool update_rt)
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
     NeighborEntry neigh;
+    std::list<NeighborContext> neigh_ctx_list;
+    std::list<MuxRouteBulkContext> route_ctx_list;
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -852,19 +866,23 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
         updateTunnelRoute(nh_key, true);
 
         IpPrefix pfx = it->first.to_string();
-        if (create_route(pfx, it->second) != SAI_STATUS_SUCCESS)
-        {
-            return false;
-        }
+        route_ctx_list.push_back(MuxRouteBulkContext(pfx, it->second));
 
         neigh = NeighborEntry(it->first, alias_);
-        if (!gNeighOrch->disableNeighbor(neigh))
-        {
-            SWSS_LOG_INFO("Disabling neigh failed for %s", neigh.ip_address.to_string().c_str());
-            return false;
-        }
+        // Create neighbor context with bulk_op enabled
+        neigh_ctx_list.push_back(NeighborContext(neigh, true));
 
         it++;
+    }
+
+    if (!addRoutes(route_ctx_list))
+    {
+        return false;
+    }
+
+    if (!gNeighOrch->disableNeighbors(neigh_ctx_list))
+    {
+        return false;
     }
 
     return true;
@@ -879,6 +897,141 @@ sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)
     }
 
     return SAI_NULL_OBJECT_ID;
+}
+
+bool MuxNbrHandler::addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
+{
+    sai_status_t status;
+    bool ret = true;
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        SWSS_LOG_INFO("Adding route entry %s, nh %" PRIx64 " to bulker", ctx->pfx.getIp().to_string().c_str(), ctx->nh);
+
+        object_statuses.emplace_back();
+        sai_attribute_t attr;
+        vector<sai_attribute_t> attrs;
+
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+        attrs.push_back(attr);
+
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = ctx->nh;
+        attrs.push_back(attr);
+
+        status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)attrs.size(), attrs.data());
+    }
+
+    gRouteBulker.flush();
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        auto it_status = object_statuses.begin();
+        status = *it_status++;
+
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            if (status == SAI_STATUS_ITEM_ALREADY_EXISTS) {
+                SWSS_LOG_INFO("Tunnel route to %s already exists", ctx->pfx.to_string().c_str());
+                continue;
+            }
+            SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %" PRIx64 " rv:%d",
+                    ctx->pfx.getIp().to_string().c_str(), ctx->nh, status);
+            ret = false;
+            continue;
+        }
+
+        if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        }
+
+        SWSS_LOG_NOTICE("Created tunnel route to %s ", ctx->pfx.to_string().c_str());
+    }
+
+    gRouteBulker.clear();
+    return ret;
+}
+
+bool MuxNbrHandler::removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
+{
+    sai_status_t status;
+    bool ret = true;
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        SWSS_LOG_INFO("Removing route entry %s, nh %" PRIx64 "", ctx->pfx.getIp().to_string().c_str(), ctx->nh);
+
+        object_statuses.emplace_back();
+        status = gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
+    }
+
+    gRouteBulker.flush();
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        auto it_status = object_statuses.begin();
+        status = *it_status++;
+
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            if (status == SAI_STATUS_ITEM_NOT_FOUND) {
+                SWSS_LOG_INFO("Tunnel route to %s already removed", ctx->pfx.to_string().c_str());
+                continue;
+            }
+            SWSS_LOG_ERROR("Failed to remove tunnel route %s, rv:%d",
+                            ctx->pfx.getIp().to_string().c_str(), status);
+            ret = false;
+            continue;
+        }
+
+        if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        }
+
+        SWSS_LOG_NOTICE("Removed tunnel route to %s ", ctx->pfx.to_string().c_str());
+    }
+
+    gRouteBulker.clear();
+    return ret;
 }
 
 void MuxNbrHandler::updateTunnelRoute(NextHopKey nh, bool add)
