@@ -52,9 +52,7 @@ struct NeighborContext
     NeighborEntry                       neighborEntry;              // neighbor entry to process
     std::deque<sai_status_t>            object_statuses;            // bulk statuses
     MacAddress                          mac;                        // neighbor mac
-
     bool                                bulk_op = false;            // use bulker (only for mux use for now)
-    int                                 set_neigh_attr_count = 0;   // number of attr set
 
     NeighborContext(NeighborEntry neighborEntry)
         : neighborEntry(neighborEntry)

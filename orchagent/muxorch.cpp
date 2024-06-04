@@ -806,9 +806,8 @@ bool MuxNbrHandler::enable(bool update_rt)
         if (update_rt)
         {
             route_ctx_list.push_back(MuxRouteBulkContext(pfx));
+            updateTunnelRoute(nh_key, false);
         }
-
-        updateTunnelRoute(nh_key, false);
 
         it++;
     }
@@ -818,7 +817,6 @@ bool MuxNbrHandler::enable(bool update_rt)
         return false;
     }
 
-    gRouteBulker.clear();
     return true;
 }
 

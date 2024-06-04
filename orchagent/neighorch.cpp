@@ -1081,7 +1081,6 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
     else if (isHwConfigured(neighborEntry))
     {
-        ctx.set_neigh_attr_count = (int)neighbor_attrs.size();
         for (auto itr : neighbor_attrs)
         {
             status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
