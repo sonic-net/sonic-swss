@@ -17,14 +17,17 @@ class TestVirtualChassis(object):
             dvs = dvss[name]
             # Get the config information and choose a linecard or fabric card to test.
             config_db = dvs.get_config_db()
+            adb = dvs.get_app_db()
             metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
 
             cfg_switch_type = metatbl.get("switch_type")
             if cfg_switch_type == "fabric":
 
                max_poll = PollingConfig(polling_interval=60, timeout=600, strict=True)
+               config_db.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'disable'})
+               adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'disable'}, polling_config=max_poll)
+               # enable monitoring
                config_db.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'enable'})
-               adb = dvs.get_app_db()
                adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'enable'}, polling_config=max_poll)
 
                # get state_db infor
@@ -39,8 +42,12 @@ class TestVirtualChassis(object):
                sdb.update_entry("FABRIC_PORT_TABLE", sdb_port, {"TEST": "TEST"})
 
                # get current fabric capacity
-               capacity = sdb.get_entry("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA")['operating_links']
-               if sdb.get_entry("FABRIC_PORT_TABLE", sdb_port)['STATUS'] == 'up':
+               fvs = sdb.wait_for_fields("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA",['operating_links'], polling_config=max_poll)
+               capacity = fvs['operating_links']
+
+               fvs = sdb.wait_for_fields("FABRIC_PORT_TABLE", sdb_port, ['STATUS'], polling_config=max_poll)
+               link_status = fvs['STATUS']
+               if link_status == 'up':
                    try:
                        # clean up the testing port.
                        # set TEST_CRC_ERRORS to 0
@@ -57,6 +64,21 @@ class TestVirtualChassis(object):
                        config_db.update_entry("FABRIC_PORT", cdb_port, {"isolateStatus": "False"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "0"}, polling_config=max_poll)
                        sdb.wait_for_field_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
+
+                       # now disable fabric link monitor
+                       config_db.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'disable'})
+                       adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'disable'}, polling_config=max_poll)
+                       # isolate the link from config_db
+                       config_db.update_entry("FABRIC_PORT", cdb_port, {"isolateStatus": "True"})
+                       try:
+                          max_poll = PollingConfig(polling_interval=30, timeout=90, strict=True)
+                          sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "1"}, polling_config=max_poll)
+                          # check if capacity reduced
+                          sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
+                          assert False, "Expecting no change here"
+                       except Exception as e:
+                          # Expect field not change here
+                          pass
                    finally:
                        # cleanup
                        sdb.update_entry("FABRIC_PORT_TABLE", sdb_port, {"TEST_CRC_ERRORS": "0"})

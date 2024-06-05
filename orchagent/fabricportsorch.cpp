@@ -1444,32 +1444,6 @@ void FabricPortsOrch::doTask(Consumer &consumer)
     {
         doFabricPortTask(consumer);
     }
-    if (table_name == APP_FABRIC_MONITOR_DATA_TABLE_NAME)
-    {
-        SWSS_LOG_INFO("doTask for APP_FABRIC_MONITOR_DATA_TABLE_NAME");
-        auto it = consumer.m_toSync.begin();
-        while (it != consumer.m_toSync.end())
-        {
-            KeyOpFieldsValuesTuple t = it->second;
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "monState")
-                {
-                    if (fvValue(i) == "enable")
-                    {
-                        m_debugTimer->start();
-                        SWSS_LOG_INFO("debugTimer started");
-                    }
-                    else
-                    {
-                        m_debugTimer->stop();
-                        SWSS_LOG_INFO("debugTimer stopped");
-                    }
-                }
-            }
-            it = consumer.m_toSync.erase(it);
-        }
-    }
 }
 
 void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
@@ -1487,6 +1461,16 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
         {
             updateFabricPortState();
         }
+
+        if (checkFabricPortMonState() && !m_debugTimerEnabled)
+        {
+            m_debugTimer->start();
+            m_debugTimerEnabled = true;
+        }
+        else if (!checkFabricPortMonState())
+        {
+            m_debugTimerEnabled = false;
+        }
     }
     else if (timer.getFd() == m_debugTimer->getFd())
     {
@@ -1494,6 +1478,12 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
         {
             // Skip collecting debug information
             // as we don't have all fabric ports yet.
+            return;
+        }
+
+        if (!m_debugTimerEnabled)
+        {
+            m_debugTimer->stop();
             return;
         }
 
