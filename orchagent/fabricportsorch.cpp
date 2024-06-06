@@ -1480,7 +1480,11 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
         {
             updateFabricPortState();
         }
-
+        if (((gMySwitchType == "voq") || (gMySwitchType == "fabric")) && (!m_isSwitchStatsGenerated))
+        {
+            createSwitchDropCounters();
+            m_isSwitchStatsGenerated = true;
+        }
         if (checkFabricPortMonState() && !m_debugTimerEnabled)
         {
             m_debugTimer->start();
@@ -1512,11 +1516,6 @@ void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
             updateFabricDebugCounters();
             updateFabricCapacity();
             updateFabricRate();
-        }
-        if (((gMySwitchType == "voq") || (gMySwitchType == "fabric")) && (!m_isSwitchStatsGenerated))
-        {
-            createSwitchDropCounters();
-            m_isSwitchStatsGenerated = true;
         }
     }
 }
