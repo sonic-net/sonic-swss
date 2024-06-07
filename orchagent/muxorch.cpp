@@ -1134,9 +1134,8 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
         MacAddress mac;
 
         gNeighOrch->getNeighborEntry(nexthop, neighbor, mac);
-        auto standalone = standalone_tunnel_neighbors_.find(neighbor.ip_address);
 
-        if (isNeighborActive(neighbor.ip_address, mac, neighbor.alias) && standalone == standalone_tunnel_neighbors_.end())
+        if (isNeighborActive(neighbor.ip_address, mac, neighbor.alias))
         {
             /* Here we pull from local nexthop ID because neighbor update occurs during state change
              * before nexthopID is updated in neighorch. This ensures that if a neighbor is Active
