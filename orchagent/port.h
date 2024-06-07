@@ -13,6 +13,7 @@ extern "C" {
 #include <unordered_set>
 
 #include <macaddress.h>
+#include <sairedis.h>
 
 #define DEFAULT_PORT_VLAN_ID    1
 /*
@@ -212,6 +213,14 @@ public:
     /* Path Tracing */
     uint16_t m_pt_intf_id = 0;
     sai_port_path_tracing_timestamp_type_t m_pt_timestamp_template = SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23;
+
+    /* link event damping */
+    sai_redis_link_event_damping_algorithm_t m_link_event_damping_algorithm = SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED;
+    uint32_t m_max_suppress_time = 0;
+    uint32_t m_decay_half_life = 0;
+    uint32_t m_suppress_threshold = 0;
+    uint32_t m_reuse_threshold = 0;
+    uint32_t m_flap_penalty = 0;
 };
 
 }
