@@ -739,14 +739,20 @@ class TestMuxTunnelBase():
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops)
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops)
 
+            # Testing mux neighbors that do not match mux configured ip
+            self.add_route(dvs, route_ipv4, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            self.add_route(dvs, route_ipv6, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            self.del_route(dvs,route_ipv4)
+            self.del_route(dvs,route_ipv6)
+
             # # These tests do not create route, so create beforehand:
             self.add_route(dvs, route_ipv4, ipv4_nexthops)
             self.add_route(dvs, route_ipv6, ipv6_nexthops)
             self.add_route(dvs, route_B_ipv4, ipv4_nexthops)
             self.add_route(dvs, route_B_ipv6, ipv6_nexthops)
 
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
             self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops, macs)
             self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops, macs)
             self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops)
