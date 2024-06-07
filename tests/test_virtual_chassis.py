@@ -1152,25 +1152,19 @@ class TestVirtualChassis(object):
                    if "SWITCH_DEBUG_COUNTER" in key:
                       drop_entry = flex_db.get_entry("FLEX_COUNTER_TABLE", key)
                       value = drop_entry.get("SWITCH_DEBUG_COUNTER_ID_LIST")
-                      print("drop_entry:",drop_entry)
                       assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter from FLEX_COUNTER_DB"
 
                 cntr_db = dvs.get_counters_db()
                 stat_name_entry = cntr_db.get_entry("COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP", "")
-                print("stat_name_entry:",stat_name_entry)
                 value = stat_name_entry.get("SWITCH_STD_DROP_COUNTER-SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
-                print("name value:",value)
                 assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter name map from COUNTERS_DB"
 
                 asic_db = dvs.get_asic_db()
                 keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
                 switch_oid_key = keys[0]
-                print("swtch_oid_key", switch_oid_key)
                 stat_entry = cntr_db.get_entry("COUNTERS", switch_oid_key)
-                print("stat_entry:",stat_entry)
                 value = stat_entry.get("SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
-                print("cntr_value:",value)
-                assert value == "1", "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP is non zero in COUNTERS_DB"
+                assert value == "0", "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP is non zero in COUNTERS_DB"
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
