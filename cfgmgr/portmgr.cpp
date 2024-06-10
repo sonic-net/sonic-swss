@@ -102,7 +102,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     else
     {
         // tc qdisc del dev <port_name> handle ffff: ingress
-        std::cout<<std::endl<<"inside deletion of tc que portion"<<std::endl;
 
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
