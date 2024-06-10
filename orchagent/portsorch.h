@@ -462,6 +462,11 @@ private:
     task_process_status setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types);
     task_process_status setPortLinkTraining(const Port& port, bool state);
 
+    ReturnCode setPortLinkEventDampingAlgorithm(Port &port,
+                                                sai_redis_link_event_damping_algorithm_t &link_event_damping_algorithm);
+    ReturnCode setPortLinkEventDampingAiedConfig(Port &port,
+                                                 sai_redis_link_event_damping_algo_aied_config_t &config);
+
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;

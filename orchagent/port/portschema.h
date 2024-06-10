@@ -96,3 +96,10 @@
 #define PORT_PT_INTF_ID            "pt_interface_id"
 #define PORT_PT_TIMESTAMP_TEMPLATE "pt_timestamp_template"
 #define PORT_DHCP_RATE_LIMIT       "dhcp_rate_limit"
+=======
+#define PORT_DAMPING_ALGO          "link_event_damping_algorithm"
+#define PORT_MAX_SUPPRESS_TIME     "max_suppress_time"
+#define PORT_DECAY_HALF_LIFE       "decay_half_life"
+#define PORT_SUPPRESS_THRESHOLD    "suppress_threshold"
+#define PORT_REUSE_THRESHOLD       "reuse_threshold"
+#define PORT_FLAP_PENALTY          "flap_penalty"
