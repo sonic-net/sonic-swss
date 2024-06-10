@@ -1121,7 +1121,51 @@ class TestVirtualChassis(object):
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
 
-        
+    def test_voq_drop_counters(self, vct):
+        """Test VOQ switch drop counters.
+
+        This test validates VOQ Switch counters for Voq/fabric switches - packet integrity counters
+        """
+
+        if vct is None:
+            return
+
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            # Get the config info
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Test only for voq or fabric
+            if cfg_switch_type == "voq" or cfg_switch_type == "fabric":
+                print("VOQ drop counters test for {}".format(name))
+
+                # Verify that a counter has been created FLEX_COUNTER_DB and COUNTERS_DB. We will verify the state of
+                # the counter in the next step.
+                flex_db = dvs.get_flex_db()
+                keys = flex_db.get_keys("FLEX_COUNTER_TABLE")
+                assert len(keys), "No FLEX_COUNTER_TABLE in FLEX_COUNTER_DB"
+                for key in keys:
+                   if "SWITCH_DEBUG_COUNTER" in key:
+                      drop_entry = flex_db.get_entry("FLEX_COUNTER_TABLE", key)
+                      value = drop_entry.get("SWITCH_DEBUG_COUNTER_ID_LIST")
+                      assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter from FLEX_COUNTER_DB"
+
+                cntr_db = dvs.get_counters_db()
+                stat_name_entry = cntr_db.get_entry("COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP", "")
+                value = stat_name_entry.get("SWITCH_STD_DROP_COUNTER-SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
+                assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter name map from COUNTERS_DB"
+
+                asic_db = dvs.get_asic_db()
+                keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+                switch_oid_key = keys[0]
+                stat_entry = cntr_db.get_entry("COUNTERS", switch_oid_key)
+                value = stat_entry.get("SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
+                assert value == "0", "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP is non zero in COUNTERS_DB"
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

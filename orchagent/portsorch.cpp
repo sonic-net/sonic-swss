@@ -279,6 +279,11 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
 };
+static const vector<sai_queue_stat_t> voq_stat_ids =
+{
+    SAI_QUEUE_STAT_CREDIT_WD_DELETED_PACKETS
+};
+
 
 static const vector<sai_queue_stat_t> queueWatermarkStatIds =
 {
@@ -7415,6 +7420,10 @@ void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_
     }
     if (voq)
     {
+        for (const auto& voq_it: voq_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_queue_stat(voq_it));
+        }
         queue_ids = m_port_voq_ids[port.m_alias];
     }
     else
