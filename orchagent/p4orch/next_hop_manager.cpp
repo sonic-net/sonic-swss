@@ -8,7 +8,7 @@
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "ipaddress.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"

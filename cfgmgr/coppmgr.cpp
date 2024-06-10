@@ -8,7 +8,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include <unordered_map>
 #include <unordered_set>
 
