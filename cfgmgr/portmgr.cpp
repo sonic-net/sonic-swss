@@ -220,7 +220,6 @@ void PortMgr::doTask(Consumer &consumer)
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
                 dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT_STR;
-                std::cout<<std::endl<<"inside not configured and Default Rate Limit is applied"<<std::endl;
 
 
                 m_portList.insert(alias);
@@ -240,7 +239,6 @@ void PortMgr::doTask(Consumer &consumer)
                 else if (fvField(i) == "dhcp_rate_limit")
                 {
                     dhcp_rate_limit = fvValue(i);
-                    std::cout<<std::endl<<"if field in db is dhcp_limit then assign it for futheer use"<<std::endl;
 
                 }
                 else if (fvField(i) == "admin_status")
@@ -266,7 +264,6 @@ void PortMgr::doTask(Consumer &consumer)
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-                std::cout<<std::endl<<"writing content of dhcp_rate_limit to Appl DB from config DB if port not ok"<<std::endl;
 
 
 
@@ -297,7 +294,6 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
-                std::cout<<std::endl<<"seting rate limit function is called"<<std::endl;
 
             }
         }
