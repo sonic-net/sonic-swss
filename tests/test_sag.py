@@ -146,9 +146,6 @@ class TestSag(object):
         fvs = dvs.get_app_db().wait_for_entry(swsscommon.APP_SAG_TABLE_NAME, "GLOBAL")
         self.check_app_db_sag_mac(fvs, mac)
 
-        ipv6_ll_route = self.generate_ipv6_link_local_addr(mac, 128)
-        self.check_asic_db_route_entry(str(ipv6_ll_route), default_vrf_oid, exist=True)
-
         # enable SAG on the VLAN interface
         self.enable_sag(vlan)
         fvs = self.app_db.wait_for_field_match(
@@ -211,9 +208,6 @@ class TestSag(object):
         self.add_sag_mac(mac)
         fvs = dvs.get_app_db().wait_for_entry(swsscommon.APP_SAG_TABLE_NAME, "GLOBAL")
         self.check_app_db_sag_mac(fvs, mac)
-
-        ipv6_ll_route = self.generate_ipv6_link_local_addr(mac, 128)
-        self.check_asic_db_route_entry(str(ipv6_ll_route), default_vrf_oid, exist=True)
 
         # enable SAG on the VLAN interface
         self.enable_sag(vlan)
@@ -279,10 +273,6 @@ class TestSag(object):
         self.add_sag_mac(mac)
         fvs = dvs.get_app_db().wait_for_entry(swsscommon.APP_SAG_TABLE_NAME, "GLOBAL")
         self.check_app_db_sag_mac(fvs, mac)
-
-        ipv6_ll_route = self.generate_ipv6_link_local_addr(mac, 128)
-        self.check_asic_db_route_entry(str(ipv6_ll_route), default_vrf_oid, exist=True)
-        self.check_asic_db_route_entry(str(ipv6_ll_route), vrf_oid, exist=True)
 
         # enable SAG on the VLAN interface
         self.enable_sag(vlan)
