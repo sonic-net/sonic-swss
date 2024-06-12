@@ -794,6 +794,8 @@ class TestMuxTunnelBase():
         new_ipv6_nexthop = self.SERV3_IPV6
         non_mux_ipv4 = "11.11.11.11"
         non_mux_ipv6 = "2222::100"
+        mux_neighbor_ipv4 = "192.170.0.100"
+        mux_neighbor_ipv6 = "fc02:1000:100::100"
         non_mux_mac = "00:aa:aa:aa:aa:aa"
         mux_ports = ["Ethernet0", "Ethernet4"]
         new_mux_port = "Ethernet8"
@@ -806,6 +808,8 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, new_ipv6_nexthop, new_mac)
         self.add_neighbor(dvs, non_mux_ipv4, non_mux_mac)
         self.add_neighbor(dvs, non_mux_ipv6, non_mux_mac)
+        self.add_neighbor(dvs, mux_neighbor_ipv4, macs[1])
+        self.add_neighbor(dvs, mux_neighbor_ipv6, macs[1])
 
         for port in mux_ports:
             self.set_mux_state(appdb, port, ACTIVE)
@@ -825,6 +829,14 @@ class TestMuxTunnelBase():
             self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_nexthop=non_mux_ipv4)
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
+
+            # Testing mux neighbors that do not match mux configured ip
+            self.add_route(dvs, route_ipv4, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            self.add_route(dvs, route_ipv6, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            self.del_route(dvs,route_ipv4)
+            self.del_route(dvs,route_ipv6)
 
             # # These tests do not create route, so create beforehand:
             self.add_route(dvs, route_ipv4, ipv4_nexthops)
@@ -850,6 +862,8 @@ class TestMuxTunnelBase():
                 self.del_neighbor(dvs, neighbor)
             self.del_neighbor(dvs, new_ipv4_nexthop)
             self.del_neighbor(dvs, new_ipv6_nexthop)
+            self.del_neighbor(dvs, mux_neighbor_ipv4)
+            self.del_neighbor(dvs, mux_neighbor_ipv6)
 
     def create_and_test_NH_routes(self, appdb, asicdb, dvs, dvs_route, mac):
         '''

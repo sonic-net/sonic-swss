@@ -1283,14 +1283,12 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
     for (auto it = nextHops.begin(); it != nextHops.end(); it++)
     {
         NextHopKey nexthop = *it;
-        /* This will only work for configured MUX neighbors (most cases)
-         * TODO: add way to find MUX from neighbor
-         */
-        MuxCable* cable = findMuxCableInSubnet(nexthop.ip_address);
-        auto standalone = standalone_tunnel_neighbors_.find(nexthop.ip_address);
+        NeighborEntry neighbor;
+        MacAddress mac;
 
-        if ((cable == nullptr && standalone == standalone_tunnel_neighbors_.end()) ||
-             cable->isActive())
+        gNeighOrch->getNeighborEntry(nexthop, neighbor, mac);
+
+        if (isNeighborActive(neighbor.ip_address, mac, neighbor.alias))
         {
             /* Here we pull from local nexthop ID because neighbor update occurs during state change
              * before nexthopID is updated in neighorch. This ensures that if a neighbor is Active
@@ -1302,11 +1300,11 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set route entry %s to nexthop %s",
-                        pfx.to_string().c_str(), nexthop.to_string().c_str());
+                        pfx.to_string().c_str(), neighbor.to_string().c_str());
                 continue;
             }
             SWSS_LOG_NOTICE("setting route %s with nexthop %s %" PRIx64 "",
-                pfx.to_string().c_str(), nexthop.to_string().c_str(), next_hop_id);
+                pfx.to_string().c_str(), neighbor.to_string().c_str(), next_hop_id);
             active_found = true;
             break;
         }
