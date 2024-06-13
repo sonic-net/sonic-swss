@@ -5,6 +5,7 @@ extern "C"
 #include <inttypes.h>
 #include "routeorch.h"
 #include "nhgorch.h"
+#include "table.h"
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
