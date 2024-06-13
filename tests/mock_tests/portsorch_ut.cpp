@@ -735,6 +735,12 @@ namespace portsorch_test
 
         // Cleanup ports
         cleanupPorts(gPortsOrch);
+
+        // Check buffer maximum parameter table entries are removed
+        auto bufferMaxParameterTable = Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE);
+        std::vector<std::string> keys;
+        bufferMaxParameterTable.getKeys(keys);
+        ASSERT_TRUE(keys.empty());
     }
 
     TEST_F(PortsOrchTest, PortBasicConfig)
