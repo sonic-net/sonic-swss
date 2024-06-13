@@ -92,6 +92,12 @@ namespace portsorch_test
     uint32_t set_pt_interface_id_failures;
     uint32_t set_pt_timestamp_template_failures;
     uint32_t set_port_tam_failures;
+    bool set_link_event_damping_success = true;
+    uint32_t _sai_set_link_event_damping_algorithm_count;
+    uint32_t _sai_set_link_event_damping_config_count;
+    int32_t _sai_link_event_damping_algorithm = 0;
+    sai_redis_link_event_damping_algo_aied_config_t _sai_link_event_damping_config = {0, 0, 0, 0, 0};
+
     sai_status_t _ut_stub_sai_set_port_attribute(
         _In_ sai_object_id_t port_id,
         _In_ const sai_attribute_t *attr)
@@ -147,6 +153,26 @@ namespace portsorch_test
                 set_port_tam_failures++;
                 return SAI_STATUS_INVALID_ATTR_VALUE_0;
             }
+        }
+        else if (attr[0].id == SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGORITHM)
+        {
+            _sai_set_link_event_damping_algorithm_count++;
+
+            if (set_link_event_damping_success) {
+                _sai_link_event_damping_algorithm = attr[0].value.s32;
+                return SAI_STATUS_SUCCESS;
+            }
+            return SAI_STATUS_FAILURE;
+        }
+        else if (attr[0].id == SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGO_AIED_CONFIG)
+        {
+            _sai_set_link_event_damping_config_count++;
+
+            if (set_link_event_damping_success) {
+                _sai_link_event_damping_config = *(reinterpret_cast<sai_redis_link_event_damping_algo_aied_config_t*>(attr[0].value.ptr));
+                return SAI_STATUS_SUCCESS;
+            }
+            return SAI_STATUS_FAILURE;
         }
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
@@ -1669,6 +1695,314 @@ namespace portsorch_test
         EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, _, _)).Times(0);
 
         _unhook_sai_bridge_api();
+    }
+
+    TEST_F(PortsOrchTest, SupportedLinkEventDampingAlgorithmSuccess)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_link_event_damping_algorithm_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"link_event_damping_algorithm", "aied"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // verify SAI call was made and set algorithm successfully
+        ASSERT_EQ(_sai_set_link_event_damping_algorithm_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_link_event_damping_algorithm, SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_AIED);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, SupportedLinkEventDampingAlgorithmFailure)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        set_link_event_damping_success = false;
+        _sai_link_event_damping_algorithm = SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED;
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_link_event_damping_algorithm_count;
+
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"link_event_damping_algorithm", "aied"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // Verify that SAI call was made, algorithm not set
+        ASSERT_EQ(_sai_set_link_event_damping_algorithm_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_link_event_damping_algorithm, SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, NotSupportedLinkEventDampingAlgorithm)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_link_event_damping_algorithm_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"link_event_damping_algorithm", "test_algo"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // Verify that no SAI call was made
+        ASSERT_EQ(_sai_set_link_event_damping_algorithm_count, current_sai_api_call_count);
+        ASSERT_EQ(_sai_link_event_damping_algorithm, SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, SetLinkEventDampingFullConfigSuccess) {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        set_link_event_damping_success = true;
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_link_event_damping_config_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"max_suppress_time", "64000"},
+                               {"decay_half_life", "45000"},
+                               {"suppress_threshold", "1650"},
+                               {"reuse_threshold", "1500"},
+                               {"flap_penalty", "1000"},
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_link_event_damping_config_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_link_event_damping_config.max_suppress_time, 64000);
+        ASSERT_EQ(_sai_link_event_damping_config.decay_half_life, 45000);
+        ASSERT_EQ(_sai_link_event_damping_config.suppress_threshold, 1650);
+        ASSERT_EQ(_sai_link_event_damping_config.reuse_threshold, 1500);
+        ASSERT_EQ(_sai_link_event_damping_config.flap_penalty, 1000);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, SetLinkEventDampingPartialConfigSuccess) {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        _sai_link_event_damping_config = {0, 0, 0, 0, 0};
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_link_event_damping_config_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"decay_half_life", "30000"},
+                               {"reuse_threshold", "1200"},
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_link_event_damping_config_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_link_event_damping_config.max_suppress_time, 0);
+        ASSERT_EQ(_sai_link_event_damping_config.decay_half_life, 30000);
+        ASSERT_EQ(_sai_link_event_damping_config.suppress_threshold, 0);
+        ASSERT_EQ(_sai_link_event_damping_config.reuse_threshold, 1200);
+        ASSERT_EQ(_sai_link_event_damping_config.flap_penalty, 0);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, SetLinkEventDampingConfigFailure) {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        set_link_event_damping_success = false;
+        _sai_link_event_damping_config = {0, 0, 0, 0, 0};
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_link_event_damping_config_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"max_suppress_time", "64000"},
+                               {"decay_half_life", "45000"},
+                               {"suppress_threshold", "1650"},
+                               {"reuse_threshold", "1500"},
+                               {"flap_penalty", "1000"},
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // Verify that config is not set
+        ASSERT_EQ(_sai_set_link_event_damping_config_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_link_event_damping_config.max_suppress_time, 0);
+        ASSERT_EQ(_sai_link_event_damping_config.decay_half_life, 0);
+        ASSERT_EQ(_sai_link_event_damping_config.suppress_threshold, 0);
+        ASSERT_EQ(_sai_link_event_damping_config.reuse_threshold, 0);
+        ASSERT_EQ(_sai_link_event_damping_config.flap_penalty, 0);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_port_api();
     }
 
     TEST_F(PortsOrchTest, PortSupportedFecModes)

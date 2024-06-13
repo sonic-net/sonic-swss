@@ -21,6 +21,7 @@ using namespace swss;
 // types --------------------------------------------------------------------------------------------------------------
 
 typedef decltype(PortConfig::serdes) PortSerdes_t;
+typedef decltype(PortConfig::link_event_damping_config) PortDampingConfig_t;
 
 // constants ----------------------------------------------------------------------------------------------------------
 
@@ -124,6 +125,12 @@ static const std::unordered_map<std::string, sai_port_path_tracing_timestamp_typ
     { PORT_PT_TIMESTAMP_TEMPLATE_2,   SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19 },
     { PORT_PT_TIMESTAMP_TEMPLATE_3,   SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23 },
     { PORT_PT_TIMESTAMP_TEMPLATE_4,   SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_20_27 }
+};
+
+static const std::unordered_map<std::string, sai_redis_link_event_damping_algorithm_t> g_linkEventDampingAlgorithmMap =
+{
+    { "disabled", SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED },
+    { "aied", SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_AIED }
 };
 
 // functions ----------------------------------------------------------------------------------------------------------
@@ -244,6 +251,11 @@ std::string PortHelper::getAdminStatusStr(const PortConfig &port) const
 std::string PortHelper::getPtTimestampTemplateStr(const PortConfig &port) const
 {
     return this->getFieldValueStr(port, PORT_PT_TIMESTAMP_TEMPLATE);
+}
+
+std::string PortHelper::getDampingAlgorithm(const PortConfig &port) const
+{
+    return this->getFieldValueStr(port, PORT_DAMPING_ALGO);
 }
 
 bool PortHelper::parsePortAlias(PortConfig &port, const std::string &field, const std::string &value) const
@@ -786,6 +798,60 @@ bool PortHelper::parsePortSubport(PortConfig &port, const std::string &field, co
     return true;
 }
 
+bool PortHelper::parsePortLinkEventDampingAlgorithm(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    const auto &cit = g_linkEventDampingAlgorithmMap.find(value);
+    if (cit == g_linkEventDampingAlgorithmMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+
+    port.link_event_damping_algorithm.value = cit->second;
+    port.link_event_damping_algorithm.is_set = true;
+
+    return true;
+}
+
+template<typename T>
+bool PortHelper::parsePortLinkEventDampingConfig(T &damping_config_attr, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited", field.c_str());
+        return false;
+    }
+
+    try
+    {
+        damping_config_attr.value = to_uint<std::uint32_t>(value);
+        damping_config_attr.is_set = true;
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
+        return false;
+    }
+
+    return true;
+}
+
+template bool PortHelper::parsePortLinkEventDampingConfig(decltype(PortDampingConfig_t::max_suppress_time) &damping_config_attr, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortLinkEventDampingConfig(decltype(PortDampingConfig_t::decay_half_life) &damping_config_attr, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortLinkEventDampingConfig(decltype(PortDampingConfig_t::suppress_threshold) &damping_config_attr, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortLinkEventDampingConfig(decltype(PortDampingConfig_t::reuse_threshold) &damping_config_attr, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortLinkEventDampingConfig(decltype(PortDampingConfig_t::flap_penalty) &damping_config_attr, const std::string &field, const std::string &value) const;
+
 bool PortHelper::parsePortPtIntfId(PortConfig &port, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
@@ -1117,6 +1183,48 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_PT_TIMESTAMP_TEMPLATE)
         {
             if (!this->parsePortPtTimestampTemplate(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_DAMPING_ALGO)
+        {
+            if (!this->parsePortLinkEventDampingAlgorithm(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_MAX_SUPPRESS_TIME)
+        {
+            if (!this->parsePortLinkEventDampingConfig(port.link_event_damping_config.max_suppress_time, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_DECAY_HALF_LIFE)
+        {
+            if (!this->parsePortLinkEventDampingConfig(port.link_event_damping_config.decay_half_life, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SUPPRESS_THRESHOLD)
+        {
+            if (!this->parsePortLinkEventDampingConfig(port.link_event_damping_config.suppress_threshold, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_REUSE_THRESHOLD)
+        {
+            if (!this->parsePortLinkEventDampingConfig(port.link_event_damping_config.reuse_threshold, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_FLAP_PENALTY)
+        {
+            if (!this->parsePortLinkEventDampingConfig(port.link_event_damping_config.flap_penalty, field, value))
             {
                 return false;
             }
