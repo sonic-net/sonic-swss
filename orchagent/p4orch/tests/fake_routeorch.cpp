@@ -5,7 +5,6 @@ extern "C"
 #include <inttypes.h>
 #include "routeorch.h"
 #include "nhgorch.h"
-#include "table.h"
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -24,7 +23,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
-        Orch(db, tableNames)
+        Orch(db, std::vector<std::string>{})
 {
 
 }
