@@ -7,6 +7,7 @@ extern "C"
 #include <string>
 
 #include "portsorch.h"
+#include "neighorch.h"
 
 sai_object_id_t gBridgePortOid;
 
