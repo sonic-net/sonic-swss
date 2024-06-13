@@ -54,7 +54,6 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       fake_portorch.cpp \
 		       fake_crmorch.cpp \
 		       fake_flexcounterorch.cpp \
-		       fake_routeorch.cpp \
 		       fake_flowcounterrouteorch.cpp \
 		       fake_dbconnector.cpp \
 		       fake_producertable.cpp \

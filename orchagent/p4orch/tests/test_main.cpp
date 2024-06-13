@@ -17,7 +17,6 @@ extern "C"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
-#include "routeorch.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
 #include "vrforch.h"
@@ -60,7 +59,6 @@ PortsOrch *gPortsOrch;
 CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
-RouteOrch *gRouteOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch *> gDirectory;
@@ -76,7 +74,6 @@ sai_neighbor_api_t *sai_neighbor_api;
 sai_next_hop_api_t *sai_next_hop_api;
 sai_next_hop_group_api_t *sai_next_hop_group_api;
 sai_route_api_t *sai_route_api;
-sai_mpls_api_t *sai_mpls_api;
 sai_acl_api_t *sai_acl_api;
 sai_policer_api_t *sai_policer_api;
 sai_virtual_router_api_t *sai_virtual_router_api;
@@ -206,7 +203,6 @@ int main(int argc, char *argv[])
     sai_next_hop_api_t next_hop_api;
     sai_next_hop_group_api_t next_hop_group_api;
     sai_route_api_t route_api;
-    sai_mpls_api_t mpls_api; 
     sai_acl_api_t acl_api;
     sai_policer_api_t policer_api;
     sai_virtual_router_api_t virtual_router_api;
@@ -228,7 +224,6 @@ int main(int argc, char *argv[])
     sai_next_hop_api = &next_hop_api;
     sai_next_hop_group_api = &next_hop_group_api;
     sai_route_api = &route_api;
-    sai_mpls_api = &mpls_api;
     sai_acl_api = &acl_api;
     sai_policer_api = &policer_api;
     sai_virtual_router_api = &virtual_router_api;
@@ -263,15 +258,6 @@ int main(int argc, char *argv[])
     VRFOrch vrf_orch(gAppDb, APP_VRF_TABLE_NAME, gStateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gVrfOrch = &vrf_orch;
     gDirectory.set(static_cast<VRFOrch *>(&vrf_orch));
-
-    const int routeorch_pri = 5;
-    vector<table_name_with_pri_t> route_tables = {
-        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
-        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
-    };
-    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL, NULL);
-    gRouteOrch = &route_orch;
-    gDirectory.set(static_cast<RouteOrch *>(&route_orch));
 
     FlowCounterRouteOrch flow_counter_route_orch(gConfigDb, std::vector<std::string>{});
     gFlowCounterRouteOrch = &flow_counter_route_orch;
