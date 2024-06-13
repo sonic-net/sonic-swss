@@ -8,7 +8,7 @@
 #include "neighorch.h"
 #include "vxlanorch.h"
 #include "srv6orch.h"
-
+#include "producertable.h"
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
