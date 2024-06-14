@@ -31,7 +31,7 @@ class TestSag(object):
     def create_vrf(self, vrf_name):
         initial_entries = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
         self.cfg_db.create_entry(swsscommon.CFG_VRF_TABLE_NAME, vrf_name, {"empty": "empty"})
-        time.sleep(1)
+        time.sleep(2)
 
         current_entries = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
         assert len(current_entries - initial_entries) == 1
@@ -39,25 +39,25 @@ class TestSag(object):
 
     def remove_vrf(self, vrf_name):
         self.cfg_db.delete_entry(swsscommon.CFG_VRF_TABLE_NAME, vrf_name)
-        time.sleep(1)
+        time.sleep(2)
 
     def add_sag_mac(self, mac):
         self.cfg_db.create_entry(swsscommon.CFG_SAG_TABLE_NAME, "GLOBAL", {"gateway_mac": mac})
-        time.sleep(1)
+        time.sleep(2)
 
     def remove_sag_mac(self):
         self.cfg_db.delete_entry(swsscommon.CFG_SAG_TABLE_NAME, "GLOBAL")
-        time.sleep(1)
+        time.sleep(2)
 
     def enable_sag(self, vlan):
         vlan_intf = "Vlan{}".format(vlan)
         self.cfg_db.update_entry(swsscommon.CFG_VLAN_INTF_TABLE_NAME, vlan_intf, {"static_anycast_gateway": "true"})
-        time.sleep(1)
+        time.sleep(2)
 
     def disable_sag(self, vlan):
         vlan_intf = "Vlan{}".format(vlan)
         self.cfg_db.update_entry(swsscommon.CFG_VLAN_INTF_TABLE_NAME, vlan_intf, {"static_anycast_gateway": "false"})
-        time.sleep(1)
+        time.sleep(2)
 
     def get_system_mac(self, dvs):
         (exit_code, result) = dvs.runcmd(["sh", "-c", "ip link show eth0 | grep ether | awk '{print $2}'"])
