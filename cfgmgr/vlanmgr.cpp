@@ -96,15 +96,11 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     EXEC_WITH_ERROR_THROW(cmds, res);
 
     // /sbin/ip link set Bridge type bridge vlan_filtering 1
-    const std::string vlan_filtering_cmd = std::string("")
-      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
-
+    const std::string vlan_filtering_cmd = IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
     EXEC_WITH_ERROR_THROW(vlan_filtering_cmd, res);
 
     // /sbin/ip link set Bridge type bridge no_linklocal_learn 1
-    const std::string no_ll_learn_cmd = std::string("")
-      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge no_linklocal_learn 1";
-
+    const std::string no_ll_learn_cmd = IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge no_linklocal_learn 1";
     EXEC_WITH_ERROR_THROW(no_ll_learn_cmd, res);
 }
 
