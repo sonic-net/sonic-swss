@@ -58,6 +58,25 @@ class TestPort(object):
             if fv[0] == "mtu":
                 assert fv[1] == "9100"
 
+    def test_PortDhcpRateLimit(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # set DHCP rate limit to port
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("DCHP_RATE_LIMIT", "300")])
+        tbl.set("Ethernet8", fvs)
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "dhcp_rate_limit":
+                assert fv[1] == "300"
+
     def test_PortNotification(self, dvs, testlog):
         dvs.port_admin_set("Ethernet0", "up")
         dvs.interface_ip_add("Ethernet0", "10.0.0.0/31")

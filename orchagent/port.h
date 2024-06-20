@@ -23,6 +23,7 @@ extern "C" {
  */
 #define DEFAULT_MTU             1492
 
+#define DEFAULT_DHCP_RATE_LIMIT 300
 /*
  * Default TPID is 8100
  * User can configure other values such as 9100, 9200, or 88A8
@@ -130,6 +131,7 @@ public:
     Type                m_type = UNKNOWN;
     uint16_t            m_index = 0;    // PHY_PORT: index
     uint32_t            m_mtu = DEFAULT_MTU;
+    uint32_t            m_dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT;
     uint32_t            m_speed = 0;    // Mbps
     port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     bool                m_autoneg = false;

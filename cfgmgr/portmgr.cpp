@@ -80,7 +80,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 {
     stringstream cmd;
     string res, cmd_str;
-    int ret = 1;
+    int ret;
     int byte_rate = stoi(dhcp_rate_limit) * 406;
     
     if (dhcp_rate_limit != "0")
@@ -89,9 +89,17 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         // &&
         // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
           
-        cmd << "sudo "<< TC_CMD << " qdisc add dev " << alias << " handle ffff: ingress" << " && " \
-            <<" sudo "<< TC_CMD << " filter add dev " << alias << " protocol ip parent ffff: prio 1 "\
-            <<" u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " <<to_string(byte_rate) << "b conform-exceed drop";
+        cmd << TC_CMD << " qdisc add dev " << alias << " handle ffff: ingress" << " && " \
+            << TC_CMD << " filter add dev " << alias << " protocol ip parent ffff: prio 1 "\
+            <<"u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
+        cmd_str = cmd.str();
+        ret = swss::exec(cmd_str, res);
+    }
+    else
+    {
+        // tc qdisc del dev <port_name> handle ffff: ingress
+
+        cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
     }
@@ -245,6 +253,7 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
+                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
