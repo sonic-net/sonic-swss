@@ -463,6 +463,8 @@ private:
     void updateVnetTunnel(const BfdUpdate&);
     void updateVnetTunnelCustomMonitor(const MonitorUpdate& update);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
+    void createSubnetDecapTerm(const IpPrefix &ipPrefix);
+    void removeSubnetDecapTerm(const IpPrefix &ipPrefix);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
@@ -485,7 +487,9 @@ private:
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
     std::map<IpPrefix, IpPrefix> prefix_to_adv_prefix_;
     std::map<IpPrefix, int> adv_prefix_refcount_;
+    std::set<IpPrefix> subnet_decap_terms_created_;
     ProducerStateTable bfd_session_producer_;
+    ProducerStateTable app_tunnel_decap_term_producer_;
     unique_ptr<Table> monitor_session_producer_;
     shared_ptr<DBConnector> state_db_;
     shared_ptr<DBConnector> app_db_;

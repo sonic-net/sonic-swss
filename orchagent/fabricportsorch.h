@@ -36,12 +36,14 @@ private:
     unique_ptr<Table> m_fabricCapacityTable;
     unique_ptr<Table> m_applMonitorConstTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
+    shared_ptr<Table> m_counterNameToSwitchStatMap;
 
     swss::SelectableTimer *m_timer = nullptr;
     swss::SelectableTimer *m_debugTimer = nullptr;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager queue_stat_manager;
+    FlexCounterManager *switch_drop_counter_manager = nullptr;
 
     sai_uint32_t m_fabricPortCount;
     map<int, sai_object_id_t> m_fabricLanePortMap;
@@ -51,6 +53,8 @@ private:
 
     bool m_getFabricPortListDone = false;
     bool m_isQueueStatsGenerated = false;
+    bool m_debugTimerEnabled = false;
+    bool m_isSwitchStatsGenerated = false;
 
     string m_defaultPollWithErrors = "0";
     string m_defaultPollWithNoErrors = "8";
@@ -65,6 +69,9 @@ private:
     void updateFabricPortState();
     void updateFabricDebugCounters();
     void updateFabricCapacity();
+    bool checkFabricPortMonState();
+    void updateFabricRate();
+    void createSwitchDropCounters();
 
     void doTask() override;
     void doTask(Consumer &consumer);

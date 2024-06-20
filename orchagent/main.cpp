@@ -588,6 +588,28 @@ int main(int argc, char **argv)
         attr.value.u32 = SAI_SWITCH_TYPE_FABRIC;
         attrs.push_back(attr);
 
+        //Read switch_id from config_db.
+        Table cfgDeviceMetaDataTable(&config_db, CFG_DEVICE_METADATA_TABLE_NAME);
+        string value;
+        if (cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+        {
+            if (value.size())
+            {
+                gVoqMySwitchId = stoi(value);
+            }
+
+            if (gVoqMySwitchId < 0)
+            {
+                SWSS_LOG_ERROR("Invalid fabric switch id %d configured", gVoqMySwitchId);
+                exit(EXIT_FAILURE);
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Fabric switch id is not configured");
+            exit(EXIT_FAILURE);
+        }
+
         attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
         attr.value.u32 = gVoqMySwitchId;
         attrs.push_back(attr);
