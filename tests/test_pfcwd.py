@@ -12,6 +12,8 @@ PFCWD_TC = ["3", "4"]
 PFCWD_RULE_NAME_1 =  "DROP_TEST_RULE_1"
 PFCWD_RULE_NAME_2 =  "DROP_TEST_RULE_2"
 
+DVS_ENV = ["ASIC_TYPE=vs", "PFC_DLR_INIT_ENABLE=1"]
+
 class TestPfcWd:
     def test_PfcWdAclCreationDeletion(self, dvs, dvs_acl, testlog):
         try:
