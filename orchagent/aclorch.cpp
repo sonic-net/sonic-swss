@@ -878,6 +878,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             if (port.m_type != Port::PHY)
             {
                 SWSS_LOG_ERROR("Cannot bind rule to %s: OUT_PORT can only match physical interfaces", alias.c_str());
+                return false;
             }
 
             matchData.data.oid = port.m_port_id;
