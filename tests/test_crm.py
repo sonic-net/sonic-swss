@@ -28,6 +28,11 @@ def crm_update(dvs, field, value):
     tbl.set("Config", fvs)
     time.sleep(1)
 
+def allocate_dram(size_kb):
+    chunk_size = 1024 * 1024 # 1 Mb chunk
+    size_mb = int(size_kb / 1024)
+    return [bytearray(chunk_size) for _ in range(size_mb)]
+
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
 
@@ -783,6 +788,70 @@ class TestCrm(object):
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
         time.sleep(2)
+
+    def test_CrmDram(self, dvs, testlog):
+        crm_update(dvs, "polling_interval", "1")
+        time.sleep(2)
+
+        dram_used = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_used')
+        dram_available = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_available')
+
+        # Allocate 20% of available but not more than 100M
+        alloc_size = min(dram_available / 5, 102400)
+        m = allocate_dram(alloc_size)
+        time.sleep(2)
+
+        dram_used_after_alloc = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_used')
+        dram_available_after_alloc = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_available')
+        assert dram_used_after_alloc > dram_used
+        assert dram_available_after_alloc < dram_available
+
+        del m
+        # Ask linux to reclaim the memory to make sure the DRAM usage is updated
+        dvs.runcmd(['sh', '-c', "timeout 10s echo 3 > /proc/sys/vm/drop_caches"])
+        time.sleep(2)
+
+        dram_used_after_free = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_used')
+        dram_available_after_free = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_available')
+        assert dram_used_after_free < dram_used_after_alloc
+        assert dram_available_after_free > dram_available_after_alloc
+
+    def test_CrmDramThresholds(self, dvs, testlog):
+        crm_update(dvs, "polling_interval", "1")
+        time.sleep(2)
+
+        # get counters
+        dram_used = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_used')
+        dram_available = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_available')
+        # Allocate 20% of available but not more than 100M
+        alloc_size = min(dram_available / 5, 102400)
+
+        marker = dvs.add_log_marker()
+
+        # Setting high_threshold to trigger THRESHOLD_EXCEEDED after the allocation
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "dram_low_threshold", "0")
+        crm_update(dvs, "dram_high_threshold", str(dram_used + int(alloc_size / 2)))
+        crm_update(dvs, "dram_threshold_type", "used")
+
+        m = allocate_dram(alloc_size)
+        time.sleep(2)
+
+        check_syslog(dvs, marker, "DRAM THRESHOLD_EXCEEDED for TH_USED", 1)
+        check_syslog(dvs, marker, "DRAM THRESHOLD_CLEAR for TH_USED", 0)
+
+        dram_used_after_alloc = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dram_used')
+
+        # Setting low_threshold to trigger THRESHOLD_CLEAR after the deallocation
+        crm_update(dvs, "dram_high_threshold", str(dram_used_after_alloc * 2))
+        crm_update(dvs, "dram_low_threshold", str(dram_used_after_alloc - 1))
+
+        del m
+        # Ask linux to reclaim the memory to make sure the crm_stats_dram_used goes down
+        dvs.runcmd(['sh', '-c', "timeout 10s echo 3 > /proc/sys/vm/drop_caches"])
+        time.sleep(3)
+
+        check_syslog(dvs, marker, "DRAM THRESHOLD_CLEAR for TH_USED", 1)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

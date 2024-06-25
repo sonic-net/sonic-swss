@@ -50,7 +50,8 @@ enum class CrmResourceType
     CRM_DASH_IPV6_ACL_GROUP,
     CRM_DASH_IPV4_ACL_RULE,
     CRM_DASH_IPV6_ACL_RULE,
-    CRM_TWAMP_ENTRY
+    CRM_TWAMP_ENTRY,
+    CRM_DRAM,
 };
 
 enum class CrmThresholdType
@@ -129,6 +130,7 @@ private:
     void getResAvailableCounters();
     void updateCrmCountersTable();
     void checkCrmThresholds();
+    void getDramAvailability(CrmResourceEntry &res);
     std::string getCrmAclKey(sai_acl_stage_t stage, sai_acl_bind_point_type_t bindPoint);
     std::string getCrmAclTableKey(sai_object_id_t id);
     std::string getCrmP4rtTableKey(std::string table_name);

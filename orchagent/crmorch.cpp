@@ -64,7 +64,8 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, "DASH_IPV6_ACL_GROUP" },
     { CrmResourceType::CRM_DASH_IPV4_ACL_RULE, "DASH_IPV4_ACL_RULE" },
     { CrmResourceType::CRM_DASH_IPV6_ACL_RULE, "DASH_IPV6_ACL_RULE" },
-    { CrmResourceType::CRM_TWAMP_ENTRY, "TWAMP_ENTRY" }
+    { CrmResourceType::CRM_TWAMP_ENTRY, "TWAMP_ENTRY" },
+    { CrmResourceType::CRM_DRAM, "DRAM" }
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -189,7 +190,8 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "dash_ipv6_acl_group_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "dash_ipv6_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
-    { "twamp_entry_threshold_type", CrmResourceType::CRM_TWAMP_ENTRY }
+    { "twamp_entry_threshold_type", CrmResourceType::CRM_TWAMP_ENTRY },
+    { "dram_threshold_type", CrmResourceType::CRM_DRAM },
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -231,7 +233,8 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     { "dash_ipv6_acl_group_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "dash_ipv6_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
-    { "twamp_entry_low_threshold", CrmResourceType::CRM_TWAMP_ENTRY }
+    { "twamp_entry_low_threshold", CrmResourceType::CRM_TWAMP_ENTRY },
+    { "dram_low_threshold", CrmResourceType::CRM_DRAM }
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -273,7 +276,8 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     { "dash_ipv6_acl_group_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "dash_ipv6_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
-    { "twamp_entry_high_threshold", CrmResourceType::CRM_TWAMP_ENTRY }
+    { "twamp_entry_high_threshold", CrmResourceType::CRM_TWAMP_ENTRY },
+    { "dram_high_threshold", CrmResourceType::CRM_DRAM }
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -322,7 +326,8 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_dash_ipv6_acl_group_available", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "crm_stats_dash_ipv4_acl_rule_available", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "crm_stats_dash_ipv6_acl_rule_available", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
-    { "crm_stats_twamp_entry_available", CrmResourceType::CRM_TWAMP_ENTRY }
+    { "crm_stats_twamp_entry_available", CrmResourceType::CRM_TWAMP_ENTRY },
+    { "crm_stats_dram_available", CrmResourceType::CRM_DRAM }
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -365,6 +370,7 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_dash_ipv4_acl_rule_used", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "crm_stats_dash_ipv6_acl_rule_used", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
     { "crm_stats_twamp_entry_used", CrmResourceType::CRM_TWAMP_ENTRY },
+    { "crm_stats_dram_used", CrmResourceType::CRM_DRAM }
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -806,6 +812,58 @@ bool CrmOrch::getResAvailability(CrmResourceType type, CrmResourceEntry &res)
     return true;
 }
 
+static bool read_meminfo(uint32_t &total, uint32_t &free, uint32_t &hugepages)
+{
+    SWSS_LOG_ENTER();
+
+    std::ifstream meminfo("/proc/meminfo");
+
+    if (!meminfo.is_open()) {
+        SWSS_LOG_ERROR("Unable to open /proc/meminfo");
+        return false;
+    }
+
+    total = free = hugepages = 0;
+
+    std::string line;
+    while (std::getline(meminfo, line)) {
+        std::istringstream iss(line);
+        std::string key;
+        uint32_t value;
+
+        iss >> key >> value;
+        if (!total && key == "MemTotal:") {
+            total = value;
+        }
+
+        if (!free && key == "MemFree:") {
+            free = value;
+        }
+
+        if (!hugepages && key == "Hugetlb:") {
+            hugepages = value;
+        }
+    }
+
+    return total && free;
+}
+
+void CrmOrch::getDramAvailability(CrmResourceEntry &res)
+{
+    SWSS_LOG_ENTER();
+
+    uint32_t total, free, hugepages;
+
+    bool ok = read_meminfo(total, free, hugepages);
+    if (!ok) {
+        SWSS_LOG_ERROR("Failed to read DRAM information from /proc/meminfo");
+        return;
+    }
+
+    res.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = free;
+    res.countersMap[CRM_COUNTERS_TABLE_KEY].usedCounter = total - hugepages - free;
+}
+
 bool CrmOrch::getDashAclGroupResAvailability(CrmResourceType type, CrmResourceEntry &res)
 {
     if (gMySwitchType != "dpu")
@@ -905,6 +963,11 @@ void CrmOrch::getResAvailableCounters()
                 }
 
                 getResAvailability(res.first, res.second);
+                break;
+            }
+
+            case CrmResourceType::CRM_DRAM: {
+                getDramAvailability(res.second);
                 break;
             }
 
