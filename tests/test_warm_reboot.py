@@ -1015,6 +1015,8 @@ class TestWarmReboot(object):
         else:
             assert oper_status == "down"
 
+            
+
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     intf_tbl._del("Ethernet4|10.0.0.2/31")
     intf_tbl._del("Ethernet8|10.0.0.4/31")
