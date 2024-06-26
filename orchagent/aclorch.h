@@ -527,9 +527,6 @@ public:
         return m_AclTables;
     }
 
-    bool bindEgrAclTableToSwitch(AclTable &table);
-    bool unbindEgrAclTableFromSwitch(AclTable &table);
-
 private:
     SwitchOrch *m_switchOrch;
     void doTask(Consumer &consumer);
