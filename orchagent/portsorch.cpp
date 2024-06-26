@@ -3551,6 +3551,9 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
 
+    /* Remove the entry from buffer maximum parameter table*/
+    m_stateBufferMaximumValueTable->del(alias);
+
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
 }
