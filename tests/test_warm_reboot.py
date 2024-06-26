@@ -967,6 +967,137 @@ class TestWarmReboot(object):
         time.sleep(5)
 
     def test_swss_port_state_syncup(self, dvs, testlog):
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    dvs.warm_restart_swss("true")
+
+    tbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
+
+    # Update port admin state
+    intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+    intf_tbl.set("Ethernet0", fvs)
+    intf_tbl.set("Ethernet4", fvs)
+    intf_tbl.set("Ethernet8", fvs)
+    dvs.port_admin_set("Ethernet0", "up")
+    dvs.port_admin_set("Ethernet4", "up")
+    dvs.port_admin_set("Ethernet8", "up")
+
+    dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
+    dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
+    dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
+
+    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+
+    dvs.servers[2].runcmd("ip link set up dev eth0") == 0
+
+    time.sleep(5)  # Increased delay
+
+    for i in [0, 1, 2]:
+        (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+        assert status == True
+        oper_status = "unknown"
+        for v in fvs:
+            if v[0] == "oper_status":
+                oper_status = v[1]
+                break
+        print(f"Ethernet{i * 4} initial oper_status: {oper_status}")
+        if i == 2:
+            assert oper_status == "up"
+        else:
+            assert oper_status == "down"
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    intf_tbl._del("Ethernet8|10.0.0.4/31")
+    intf_tbl._del("Ethernet0")
+    intf_tbl._del("Ethernet4")
+    intf_tbl._del("Ethernet8")
+    time.sleep(3)  # Increased delay
+
+    dvs.stop_swss()
+    time.sleep(5)  # Increased delay
+
+    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+
+    dvs.servers[0].runcmd("ip link set up dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set up dev eth0") == 0
+
+    time.sleep(5)  # Increased delay
+    dbobjs = [
+        (swsscommon.APPL_DB, swsscommon.APP_PORT_TABLE_NAME + ":*"),
+        (swsscommon.STATE_DB, swsscommon.STATE_WARM_RESTART_TABLE_NAME + "|orchagent"),
+    ]
+    pubsubDbs = dvs.SubscribeDbObjects(dbobjs)
+    dvs.start_swss()
+    start_restore_neighbors(dvs)
+    time.sleep(10)
+
+    swss_check_RestoreCount(dvs, state_db, restore_count)
+
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+    intf_tbl.set("Ethernet0", fvs)
+    intf_tbl.set("Ethernet4", fvs)
+    intf_tbl.set("Ethernet8", fvs)
+    time.sleep(5)  # Increased delay
+
+    for i in [0, 1, 2]:
+        (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+        assert status == True
+        oper_status = "unknown"
+        for v in fvs:
+            if v[0] == "oper_status":
+                oper_status = v[1]
+                break
+        print(f"Ethernet{i * 4} final oper_status: {oper_status}")
+        if i == 2:
+            assert oper_status == "down"
+        else:
+            assert oper_status == "up"
+
+    # Check the pubsub messages.
+    pubsubMessages = dvs.GetSubscribedMessages(pubsubDbs)
+    portOperStatusChanged = False
+    orchStateCount = 0
+    for message in pubsubMessages:
+        print(message)
+        key = message['channel'].split(':', 1)[1]
+        print(key)
+        if message['data'] != 'hset' and message['data'] != 'del':
+            continue
+        if key.find(swsscommon.APP_PORT_TABLE_NAME) == 0:
+            portOperStatusChanged = True
+        else:
+            if portOperStatusChanged == True:
+                orchStateCount += 1
+
+    assert orchStateCount == 2
+
+    # Clean up ARP
+    dvs.runcmd("arp -d 10.0.0.1")
+    dvs.runcmd("arp -d 10.0.0.3")
+    dvs.runcmd("arp -d 10.0.0.5")
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    intf_tbl._del("Ethernet8|10.0.0.4/31")
+    intf_tbl._del("Ethernet0")
+    intf_tbl._del("Ethernet4")
+    intf_tbl._del("Ethernet8")
+    time.sleep(2)
+
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
