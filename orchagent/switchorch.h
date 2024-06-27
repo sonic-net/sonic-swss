@@ -43,6 +43,9 @@ public:
 
     bool checkOrderedEcmpEnable() { return m_orderedEcmpEnable; }
 
+    bool bindEgrAclTableToSwitch(sai_object_id_t table_id);
+    bool unbindEgrAclTableFromSwitch(sai_object_id_t table_id);
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);

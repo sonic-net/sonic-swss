@@ -28,6 +28,7 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
+extern SwitchOrch *gSwitchOrch;
 
 #define MIN_VLAN_ID 1    // 0 is a reserved VLAN ID
 #define MAX_VLAN_ID 4095 // 4096 is a reserved VLAN ID
@@ -3822,10 +3823,11 @@ bool AclOrch::addAclTable(AclTable &newTable)
         if (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING &&
             newTable.type.getName() == TABLE_TYPE_PFCWD)
         {
-            if(!bindEgrAclTableToSwitch(newTable))
+            if(!gSwitchOrch->bindEgrAclTableToSwitch(newTable.getOid()))
             {
                 return false;
             }
+            newTable.bindToSwitch = true;
         }
 
         return true;
@@ -3858,7 +3860,7 @@ bool AclOrch::removeAclTable(string table_id)
     {
         // Only bind egress table to switch for now.
         assert(table->stage == ACL_STAGE_EGRESS);
-        if(!unbindEgrAclTableFromSwitch(table))
+        if(!gSwitchOrch->unbindEgrAclTableFromSwitch(table.getOid()))
         {
             return false;
         }
@@ -4948,50 +4950,3 @@ void AclOrch::removeAllAclRuleStatus()
         m_aclRuleStateTable.del(key);
     }
 }
-
-// Bind egress ACL table (with bind type switch) to switch
-bool AclOrch::bindEgrAclTableToSwitch(AclTable &table)
-{
-    sai_attribute_t attr;
-    attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
-    attr.value.oid = table.getOid();
-
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status == SAI_STATUS_SUCCESS)
-    {
-        table.bindToSwitch = true;
-        SWSS_LOG_NOTICE("Bind egress acl table %s to switch", table.id.c_str());
-        return true;
-    }
-    else
-    {
-       SWSS_LOG_ERROR("Failed to bind egress acl table %s to switch", table.id.c_str());
-       return false;
-    }
-}
-
-// Unbind egress ACL table from swtich
-bool AclOrch::unbindEgrAclTableFromSwitch(AclTable &table)
-{
-    if (!table.bindToSwitch)
-    {
-        return false;
-    }
-
-    sai_attribute_t attr;
-    attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
-    attr.value.oid = SAI_NULL_OBJECT_ID;
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status == SAI_STATUS_SUCCESS)
-    {
-        table.bindToSwitch = false;
-        SWSS_LOG_NOTICE("unbind egress acl table %s to switch", table.id.c_str());
-        return true;
-    }
-    else
-    {
-       SWSS_LOG_ERROR("Failed to unbind egress acl table %s to switch", table.id.c_str());
-       return false;
-    }
-}
-
