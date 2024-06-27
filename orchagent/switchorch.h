@@ -65,8 +65,8 @@ public:
             return (m_fatalEventCount != 0);
         }
 
-    bool bindEgrAclTableToSwitch(sai_object_id_t table_id);
-    bool unbindEgrAclTableFromSwitch(sai_object_id_t table_id);
+    bool bindAclTableToSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
+    bool unbindAclTableFromSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
 
 private:
     void doTask(Consumer &consumer);
