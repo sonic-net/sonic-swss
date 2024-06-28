@@ -31,7 +31,6 @@ static const std::uint32_t maxPortSpeed = 800000;
 static const std::uint32_t minPortMtu = 68;
 static const std::uint32_t maxPortMtu = 9216;
 
-static const std::uint32_t minPortDhcpRateLimit = 0;
 
 static const std::unordered_map<std::string, bool> portModeMap =
 {
@@ -576,38 +575,7 @@ bool PortHelper::parsePortMtu(PortConfig &port, const std::string &field, const 
     return true;
 }
 
-bool PortHelper::parsePortDhcpRateLimit(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    SWSS_LOG_ENTER();
 
-    if (value.empty())
-    {
-        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
-        return false;
-    }
-
-    try
-    {
-        port.dhcp_rate_limit.value = to_uint<std::uint32_t>(value);
-        port.dhcp_rate_limit.is_set = true;
-    }
-    catch (const std::exception &e)
-    {
-        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
-        return false;
-    }
-
-    if (!(minPortDhcpRateLimit <= port.dhcp_rate_limit.value))
-    {
-        SWSS_LOG_ERROR(
-            "Failed to parse field(%s): value(%s) is out of range: %u <= mtu",
-            field.c_str(), value.c_str(), minPortDhcpRateLimit
-        );
-        return false;
-    }
-
-    return true;
-}
 
 bool PortHelper::parsePortTpid(PortConfig &port, const std::string &field, const std::string &value) const
 {
@@ -1029,13 +997,6 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_MTU)
         {
             if (!this->parsePortMtu(port, field, value))
-            {
-                return false;
-            }
-        }
-        else if (field == PORT_DHCP_RATE_LIMIT)
-        {
-            if (!this->parsePortDhcpRateLimit(port, field, value))
             {
                 return false;
             }
