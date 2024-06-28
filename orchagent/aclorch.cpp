@@ -3823,7 +3823,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
         if (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING &&
             newTable.type.getName() == TABLE_TYPE_PFCWD)
         {
-            if(!gSwitchOrch->bindEgrAclTableToSwitch(newTable.getOid()))
+            if(!gSwitchOrch->bindAclTableToSwitch(ACL_STAGE_EGRESS, newTable.getOid()))
             {
                 return false;
             }
@@ -3860,7 +3860,7 @@ bool AclOrch::removeAclTable(string table_id)
     {
         // Only bind egress table to switch for now.
         assert(table->stage == ACL_STAGE_EGRESS);
-        if(!gSwitchOrch->unbindEgrAclTableFromSwitch(table.getOid()))
+        if(!gSwitchOrch->unbindAclTableFromSwitch(ACL_STAGE_EGRESS, table.getOid()))
         {
             return false;
         }
