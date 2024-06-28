@@ -65,6 +65,9 @@ public:
             return (m_fatalEventCount != 0);
         }
 
+    bool bindAclTableToSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
+    bool unbindAclTableFromSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
