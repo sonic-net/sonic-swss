@@ -16,6 +16,8 @@
 #include "mock_sai_ipmc_group.h"
 #include "mock_sai_l2mc.h"
 #include "mock_sai_l2mc_group.h"
+#include "mock_sai_neighbor.h"
+#include "mock_sai_next_hop.h"
 #include "mock_sai_router_interface.h"
 #include "mock_sai_switch.h"
 #include "p4orch.h"
@@ -49,6 +51,8 @@ extern sai_l2mc_api_t* sai_l2mc_api;
 extern sai_l2mc_group_api_t* sai_l2mc_group_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_bridge_api_t* sai_bridge_api;
+extern sai_neighbor_api_t* sai_neighbor_api;
+extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_switch_api_t* sai_switch_api;
 
 extern char* gVrfName;
@@ -66,17 +70,23 @@ constexpr char* kSrcMac3 = "10:20:30:40:50:60";
 constexpr char* kSrcMac4 = "15:25:35:45:55:65";
 constexpr char* kSrcMac5 = "10:20:30:40:50:60";
 
-constexpr char* kDstMac0 = "00:00:00:00:00:00";
+constexpr char* kDstMac0 = "00:00:00:00:00:01";
 constexpr char* kDstMac1 = "00:11:22:33:44:55";
 
 constexpr char* kVlanId1 = "0x041";
 constexpr uint16_t kVlanIdNum1 = 65;
+
+constexpr char* kLinkLocalIpv4Address = "169.254.0.1";
+constexpr char* kNeighborMacAddress = "00:00:00:00:00:01";
 
 constexpr sai_object_id_t kRifOid1 = 0x123456;
 constexpr sai_object_id_t kRifOid2 = 0x22789a;
 constexpr sai_object_id_t kRifOid3 = 0x33feed;
 constexpr sai_object_id_t kRifOid4 = 0x44cafe;
 constexpr sai_object_id_t kRifOid5 = 0x55abcd;
+
+constexpr sai_object_id_t kNextHopOid1 = 0x100a;
+constexpr sai_object_id_t kNextHopOid2 = 0x100b;
 
 constexpr sai_object_id_t kGroupOid1 = 0x1;
 constexpr sai_object_id_t kGroupOid2 = 0x2;
@@ -98,10 +108,18 @@ constexpr sai_object_id_t kDefaultVlanOid = 0x201;
 bool MacCmp(const sai_mac_t* x, const sai_mac_t* y) {
   return memcmp(x, y, sizeof(sai_mac_t)) == 0;
 }
+bool AddressCmp(const sai_ip_address_t* x, const sai_ip_address_t* y) {
+  if (x->addr_family != y->addr_family) {
+    return false;
+  }
+  if (x->addr_family == SAI_IP_ADDR_FAMILY_IPV4) {
+    return memcmp(&x->addr.ip4, &y->addr.ip4, sizeof(sai_ip4_t)) == 0;
+  }
+  return memcmp(&x->addr.ip6, &y->addr.ip6, sizeof(sai_ip6_t)) == 0;
+}
 
-// Matches two SAI attributes.
-bool MatchSaiAttribute(const sai_attribute_t& attr,
-                       const sai_attribute_t& exp_attr) {
+bool MatchIpmcSaiAttribute(const sai_attribute_t& attr,
+                           const sai_attribute_t& exp_attr) {
   if (exp_attr.id == SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID) {
     if (attr.id != SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID ||
         attr.value.oid != exp_attr.value.oid) {
@@ -114,6 +132,11 @@ bool MatchSaiAttribute(const sai_attribute_t& attr,
       return false;
     }
   }
+  return true;
+}
+
+bool MatchL2mcSaiAttribute(const sai_attribute_t& attr,
+                           const sai_attribute_t& exp_attr) {
   if (exp_attr.id == SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID) {
     if (attr.id != SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID ||
         attr.value.oid != exp_attr.value.oid) {
@@ -126,11 +149,122 @@ bool MatchSaiAttribute(const sai_attribute_t& attr,
       return false;
     }
   }
+  return true;
+}
+
+bool MatchRifSaiAttribute(const sai_attribute_t& attr,
+                          const sai_attribute_t& exp_attr) {
   if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS) {
     if (attr.id != SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS) {
       return false;
     }
     return MacCmp(&attr.value.mac, &exp_attr.value.mac);
+  }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_TYPE) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_TYPE ||
+        attr.value.s32 != exp_attr.value.s32) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID ||
+        attr.value.u16 != exp_attr.value.u16) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_PORT_ID) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_PORT_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_MTU) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_MTU ||
+        attr.value.u32 != exp_attr.value.u32) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MatchNeighborSaiAttribute(const sai_attribute_t& attr,
+                               const sai_attribute_t& exp_attr) {
+  if (exp_attr.id == SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS) {
+    if (attr.id != SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS) {
+      return false;
+    }
+    return MacCmp(&attr.value.mac, &exp_attr.value.mac);
+  }
+  if (exp_attr.id == SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE) {
+    if (attr.id != SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MatchNextHopSaiAttribute(const sai_attribute_t& attr,
+                              const sai_attribute_t& exp_attr) {
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_TYPE) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_TYPE ||
+        attr.value.s32 != exp_attr.value.s32) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_IP) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_IP) {
+      return false;
+    }
+    return AddressCmp(&attr.value.ipaddr, &exp_attr.value.ipaddr);
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
   }
   return true;
 }
@@ -144,11 +278,47 @@ bool MatchSaiSwitchAttr(const sai_attr_id_t expected_switch_attr,
   return true;
 }
 
-MATCHER_P(AttrEq, attr, "") { return MatchSaiAttribute(*arg, *attr); }
+MATCHER_P(RifAttrEq, attr, "") { return MatchRifSaiAttribute(*arg, *attr); }
 
-MATCHER_P(AttrArrayEq, array, "") {
+MATCHER_P(IpmcAttrArrayEq, array, "") {
   for (size_t i = 0; i < array.size(); ++i) {
-    if (!MatchSaiAttribute(arg[i], array[i])) {
+    if (!MatchIpmcSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(L2mcAttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchL2mcSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(RifAttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchRifSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(NeighborAttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchNeighborSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(NextHopAttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchNextHopSaiAttribute(arg[i], array[i])) {
       return false;
     }
   }
@@ -175,6 +345,8 @@ class L3MulticastManagerTest : public ::testing::Test {
     router_interface_entry.action = action;
     router_interface_entry.src_mac = src_mac;
     router_interface_entry.has_src_mac = action == p4orch::kSetMulticastSrcMac;
+    router_interface_entry.dst_mac = swss::MacAddress(kNeighborMacAddress);
+    router_interface_entry.has_dst_mac = false;
     router_interface_entry.multicast_metadata = multicast_metadata;
     router_interface_entry.multicast_router_interface_entry_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(
@@ -205,6 +377,8 @@ class L3MulticastManagerTest : public ::testing::Test {
     if (action == p4orch::kMulticastSetSrcMacAndDstMacAndVlanId) {
       router_interface_entry.dst_mac = dst_mac;
       router_interface_entry.has_dst_mac = true;
+    } else {
+      router_interface_entry.dst_mac = swss::MacAddress(kNeighborMacAddress);
     }
 
     if (action == p4orch::kMulticastSetSrcMacAndVlanId ||
@@ -262,6 +436,38 @@ class L3MulticastManagerTest : public ::testing::Test {
                   entries[0].multicast_router_interface_entry_key),
               nullptr);
     EXPECT_EQ(GetRifOid(&entries[0]), rif_oid);
+    return entry;
+  }
+
+  P4MulticastRouterInterfaceEntry SetupNewP4MulticastRouterInterfaceEntry(
+      const std::string& port, const std::string& instance,
+      const swss::MacAddress src_mac, const swss::MacAddress dst_mac,
+      const uint16_t vlan_id, const std::string& action,
+      const sai_object_id_t rif_oid, const sai_object_id_t next_hop_oid) {
+    std::vector<P4MulticastRouterInterfaceEntry> entries;
+    auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+        port, instance, src_mac, dst_mac, vlan_id, "metadata", action);
+    entries.push_back(entry);
+
+    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(rif_oid), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, Eq(2), _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, Eq(6), _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(next_hop_oid), Return(SAI_STATUS_SUCCESS)));
+
+    std::vector<ReturnCode> statuses =
+        AddMulticastRouterInterfaceEntries(entries);
+
+    EXPECT_EQ(statuses.size(), 1);
+    EXPECT_TRUE(statuses[0].ok());
+
+    EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                  entries[0].multicast_router_interface_entry_key),
+              nullptr);
+    EXPECT_EQ(GetRifOid(&entries[0]), rif_oid);
+    EXPECT_EQ(GetNextHopOid(&entries[0]), next_hop_oid);
     return entry;
   }
 
@@ -387,9 +593,9 @@ class L3MulticastManagerTest : public ::testing::Test {
     exp_member_attrs0.push_back(attr);
 
     if (group_member_oids.size() == 1) {
-      EXPECT_CALL(
-          mock_sai_l2mc_group_,
-          create_l2mc_group_member(_, _, Eq(2), AttrArrayEq(exp_member_attrs0)))
+      EXPECT_CALL(mock_sai_l2mc_group_,
+                  create_l2mc_group_member(_, _, Eq(2),
+                                           L2mcAttrArrayEq(exp_member_attrs0)))
           .WillOnce(DoAll(SetArgPointee<0>(group_member_oids.at(0)),
                           Return(SAI_STATUS_SUCCESS)));
     } else if (group_member_oids.size() == 2) {
@@ -402,14 +608,14 @@ class L3MulticastManagerTest : public ::testing::Test {
       attr.value.oid = bridge_port_oids[1];
       exp_member_attrs1.push_back(attr);
 
-      EXPECT_CALL(
-          mock_sai_l2mc_group_,
-          create_l2mc_group_member(_, _, Eq(2), AttrArrayEq(exp_member_attrs0)))
+      EXPECT_CALL(mock_sai_l2mc_group_,
+                  create_l2mc_group_member(_, _, Eq(2),
+                                           L2mcAttrArrayEq(exp_member_attrs0)))
           .WillOnce(DoAll(SetArgPointee<0>(group_member_oids.at(0)),
                           Return(SAI_STATUS_SUCCESS)));
-      EXPECT_CALL(
-          mock_sai_l2mc_group_,
-          create_l2mc_group_member(_, _, Eq(2), AttrArrayEq(exp_member_attrs1)))
+      EXPECT_CALL(mock_sai_l2mc_group_,
+                  create_l2mc_group_member(_, _, Eq(2),
+                                           L2mcAttrArrayEq(exp_member_attrs1)))
           .WillOnce(DoAll(SetArgPointee<0>(group_member_oids.at(1)),
                           Return(SAI_STATUS_SUCCESS)));
     }
@@ -434,6 +640,101 @@ class L3MulticastManagerTest : public ::testing::Test {
     }
 
     return entry;
+  }
+
+  std::vector<sai_attribute_t> PrepareRifSaiAttrs(
+      const sai_object_id_t port_oid, uint32_t mtu, bool use_vlan,
+      uint16_t vlan_id, swss::MacAddress src_mac) {
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    attr.value.oid = gVirtualRouterId;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    if (use_vlan) {
+      attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
+    } else {
+      attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
+    }
+    attrs.push_back(attr);
+
+    if (use_vlan) {
+      attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
+      attr.value.u16 = vlan_id;
+      attrs.push_back(attr);
+    }
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
+    attr.value.oid = port_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = mtu;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+    memcpy(attr.value.mac, src_mac.getMac(), sizeof(sai_mac_t));
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    return attrs;
+  }
+
+  std::vector<sai_attribute_t> PrepareNeighborEntrySaiAttrs(
+      const swss::MacAddress& dst_mac) {
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+    memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    return attrs;
+  }
+
+  std::vector<sai_attribute_t> PrepareNextHopSaiAttrs(
+      const sai_object_id_t rif_oid, bool write_vlan, bool write_dst_mac) {
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    attr.value.s32 = SAI_NEXT_HOP_TYPE_IPMC;
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+    attr.value.oid = rif_oid;
+    attrs.push_back(attr);
+
+    swss::IpAddress link_local_ip = swss::IpAddress(kLinkLocalIpv4Address);
+    attr.id = SAI_NEXT_HOP_ATTR_IP;
+    swss::copy(attr.value.ipaddr, link_local_ip);
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE;
+    attr.value.booldata = false;  // All actions write the source MAC.
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE;
+    attr.value.booldata = !write_dst_mac;
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
+    attr.value.booldata = !write_vlan;
+    attrs.push_back(attr);
+
+    return attrs;
   }
 
   void VerifyP4MulticastRouterInterfaceEntryEqual(
@@ -505,6 +806,15 @@ class L3MulticastManagerTest : public ::testing::Test {
     mock_sai_l2mc = &mock_sai_l2mc_;
     sai_l2mc_api->create_l2mc_entry = mock_create_l2mc_entry;
     sai_l2mc_api->remove_l2mc_entry = mock_remove_l2mc_entry;
+
+    mock_sai_next_hop = &mock_sai_next_hop_;
+    sai_next_hop_api->create_next_hop = mock_create_next_hop;
+    sai_next_hop_api->remove_next_hop = mock_remove_next_hop;
+    sai_next_hop_api->set_next_hop_attribute = mock_set_next_hop_attribute;
+
+    mock_sai_neighbor = &mock_sai_neighbor_;
+    sai_neighbor_api->create_neighbor_entry = mock_create_neighbor_entry;
+    sai_neighbor_api->remove_neighbor_entry = mock_remove_neighbor_entry;
 
     mock_sai_switch = &mock_sai_switch_;
     sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
@@ -609,6 +919,17 @@ class L3MulticastManagerTest : public ::testing::Test {
     return l3_multicast_manager_.createRouterInterface(entry, rif_oid);
   }
 
+  ReturnCode CreateNextHop(P4MulticastRouterInterfaceEntry& entry,
+                           const sai_object_id_t rif_oid,
+                           sai_object_id_t* next_hop_oid) {
+    return l3_multicast_manager_.createNextHop(entry, rif_oid, next_hop_oid);
+  }
+
+  ReturnCode CreateNeighborEntry(P4MulticastRouterInterfaceEntry& entry,
+                                 const sai_object_id_t rif_oid) {
+    return l3_multicast_manager_.createNeighborEntry(entry, rif_oid);
+  }
+
   ReturnCode CreateBridgePort(P4MulticastRouterInterfaceEntry& entry,
                               sai_object_id_t* bridge_port_oid) {
     return l3_multicast_manager_.createBridgePort(entry, bridge_port_oid);
@@ -671,6 +992,16 @@ class L3MulticastManagerTest : public ::testing::Test {
     return l3_multicast_manager_.getRifOid(multicast_router_interface_entry);
   }
 
+  sai_object_id_t GetNextHopOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+    return l3_multicast_manager_.getNextHopOid(
+        multicast_router_interface_entry);
+  }
+
+  sai_object_id_t GetNextHopOid(const P4Replica& replica) {
+    return l3_multicast_manager_.getNextHopOid(replica);
+  }
+
   sai_object_id_t GetBridgePortOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
     return l3_multicast_manager_.getBridgePortOid(
@@ -681,6 +1012,8 @@ class L3MulticastManagerTest : public ::testing::Test {
   StrictMock<MockSaiIpmcGroup> mock_sai_ipmc_group_;
   StrictMock<MockSaiBridge> mock_sai_bridge_;
   StrictMock<MockSaiL2mc> mock_sai_l2mc_;
+  StrictMock<MockSaiNeighbor> mock_sai_neighbor_;
+  StrictMock<MockSaiNextHop> mock_sai_next_hop_;
   StrictMock<MockSaiL2mcGroup> mock_sai_l2mc_group_;
    StrictMock<MockSaiSwitch> mock_sai_switch_;
   StrictMock<MockResponsePublisher> publisher_;
@@ -1420,6 +1753,473 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(GetBridgePortOid(&entries[1]), SAI_NULL_OBJECT_ID);
 }
 
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryActionSetSrcMac) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ConfirmAddMulticastRouterInterfaceEntryActionSetSrcMac) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMac);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, _, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetRifOid(&entries[0]), kRifOid1);
+  EXPECT_EQ(GetNextHopOid(&entries[0]), kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryActionSetSrcMacAndVlanId) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest, GetNextHopOidForReplica) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0001");
+  P4Replica replica2 = P4Replica("0x0001", "Ethernet1", "0x0002");
+
+  EXPECT_EQ(GetNextHopOid(replica1), kNextHopOid1);
+  EXPECT_EQ(GetNextHopOid(replica2), SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ConfirmAddMulticastRouterInterfaceEntryActionSetSrcMacAndVlanId) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, "metadata",
+      p4orch::kMulticastSetSrcMacAndVlanId);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/true, kVlanIdNum1,
+      swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, _, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetRifOid(&entries[0]), kRifOid1);
+  EXPECT_EQ(GetNextHopOid(&entries[0]), kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryActionSetSrcMacAndDstMacAndVlanId) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(
+    L3MulticastManagerTest,
+    ConfirmAddMulticastRouterInterfaceEntryActionSetSrcMacAndDstMacAndVlanId) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1, "metadata",
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/true, kVlanIdNum1,
+      swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
+                             /*write_dst_mac=*/true);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, _, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetRifOid(&entries[0]), kRifOid1);
+  EXPECT_EQ(GetNextHopOid(&entries[0]), kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryActionSetSrcPreserveVlan) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac0),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0,
+      p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId, kRifOid1,
+      kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ConfirmAddMulticastRouterInterfaceEntryActionSetSrcPreserveVlan) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, _, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetRifOid(&entries[0]), kRifOid1);
+  EXPECT_EQ(GetNextHopOid(&entries[0]), kNextHopOid1);
+
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryNeighborEntryFails) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMac);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryNeighborEntryFailsDeleteRifFails) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMac);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryNextHopOidAlreadyExists) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMac);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  // Pre-populate Next Hop OID to force an error.
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                        entry.multicast_router_interface_entry_key,
+                        kNextHopOid1);
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMac);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryNextHopFailsUnableToRemoveNeighEntry) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMac);
+  entries.push_back(entry);
+
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+}
+
 TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSuccess) {
   auto entry1 = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
@@ -1772,7 +2572,7 @@ TEST_F(L3MulticastManagerTest, UpdateMulticastRouterInterfaceEntriesSuccess) {
   memcpy(exp_attr.value.mac, entries2[0].src_mac.getMac(), sizeof(sai_mac_t));
 
   EXPECT_CALL(mock_sai_router_intf_,
-              set_router_interface_attribute(kRifOid1, AttrEq(&exp_attr)))
+              set_router_interface_attribute(kRifOid1, RifAttrEq(&exp_attr)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
   auto statuses = UpdateMulticastRouterInterfaceEntries(entries2);
   EXPECT_EQ(statuses.size(), 1);
@@ -1804,7 +2604,7 @@ TEST_F(L3MulticastManagerTest, UpdateMulticastRouterInterfaceEntriesSaiFails) {
   memcpy(exp_attr.value.mac, entries2[0].src_mac.getMac(), sizeof(sai_mac_t));
 
   EXPECT_CALL(mock_sai_router_intf_,
-              set_router_interface_attribute(kRifOid1, AttrEq(&exp_attr)))
+              set_router_interface_attribute(kRifOid1, RifAttrEq(&exp_attr)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   auto statuses = UpdateMulticastRouterInterfaceEntries(entries2);
@@ -2314,7 +3114,7 @@ TEST_F(L3MulticastManagerTest,
   memcpy(exp_attr.value.mac, expect_entry.src_mac.getMac(), sizeof(sai_mac_t));
 
   EXPECT_CALL(mock_sai_router_intf_,
-              set_router_interface_attribute(kRifOid2, AttrEq(&exp_attr)))
+              set_router_interface_attribute(kRifOid2, RifAttrEq(&exp_attr)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes2),
@@ -4196,8 +4996,9 @@ TEST_F(L3MulticastManagerTest, UpdateMulticastGroupEntriesTestSuccess) {
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                 Return(SAI_STATUS_SUCCESS)));
 
@@ -4362,8 +5163,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid1;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                 Return(SAI_STATUS_SUCCESS)));
 
@@ -4420,8 +5222,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid1;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<P4MulticastGroupEntry> entries = {group_entry2};
@@ -4477,8 +5280,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                 Return(SAI_STATUS_SUCCESS)));
   // Try to add replica4, but it fails.
@@ -4489,8 +5293,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid4;
   exp_member_attrs2.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs2)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs2)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   // Remove replica3.
   EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid3))
@@ -4503,8 +5308,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid1;
   exp_member_attrs3.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs3)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs3)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                 Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_member_attrs4;
@@ -4514,8 +5320,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid2;
   exp_member_attrs4.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs4)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs4)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
                 Return(SAI_STATUS_SUCCESS)));
 
@@ -4580,8 +5387,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                 Return(SAI_STATUS_SUCCESS)));
   // Try to add replica4, but it fails.
@@ -4592,8 +5400,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid4;
   exp_member_attrs2.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs2)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs2)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   // Remove replica3, but it fails.
   EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid3))
@@ -4654,8 +5463,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                 Return(SAI_STATUS_SUCCESS)));
   // Try to add replica4, but it fails.
@@ -4666,8 +5476,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid4;
   exp_member_attrs2.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs2)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs2)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   // Remove replica3.
   EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid3))
@@ -4681,8 +5492,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid1;
   exp_member_attrs3.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs3)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs3)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                 Return(SAI_STATUS_SUCCESS)));
 
@@ -4694,8 +5506,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kRifOid2;
   exp_member_attrs4.push_back(attr);
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs4)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs4)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<P4MulticastGroupEntry> entries = {group_entry2};
@@ -4744,8 +5557,9 @@ TEST_F(L3MulticastManagerTest, UpdateL2MulticastGroupEntriesTestSuccess) {
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                       Return(SAI_STATUS_SUCCESS)));
 
@@ -4894,8 +5708,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid1;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                       Return(SAI_STATUS_SUCCESS)));
 
@@ -4952,8 +5767,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid1;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<P4MulticastGroupEntry> entries = {entry2};
@@ -5008,8 +5824,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                       Return(SAI_STATUS_SUCCESS)));
   // Try to add replica4, but it fails.
@@ -5020,8 +5837,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid4;
   exp_member_attrs2.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs2)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs2)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   // Remove replica3.
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid3))
@@ -5034,8 +5852,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid1;
   exp_member_attrs3.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs3)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs3)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                       Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_member_attrs4;
@@ -5045,8 +5864,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid2;
   exp_member_attrs4.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs4)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs4)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
                       Return(SAI_STATUS_SUCCESS)));
 
@@ -5110,8 +5930,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                       Return(SAI_STATUS_SUCCESS)));
   // Try to add replica4, but it fails.
@@ -5122,8 +5943,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid4;
   exp_member_attrs2.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs2)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs2)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   // Remove replica3, but it fails.
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid3))
@@ -5183,8 +6005,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid3;
   exp_member_attrs.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
                       Return(SAI_STATUS_SUCCESS)));
   // Try to add replica4, but it fails.
@@ -5195,8 +6018,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid4;
   exp_member_attrs2.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs2)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs2)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   // Remove replica3.
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid3))
@@ -5210,8 +6034,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid1;
   exp_member_attrs3.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs3)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs3)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                       Return(SAI_STATUS_SUCCESS)));
 
@@ -5223,8 +6048,9 @@ TEST_F(L3MulticastManagerTest,
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid2;
   exp_member_attrs4.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs4)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs4)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<P4MulticastGroupEntry> entries = {entry2};
@@ -5509,8 +6335,9 @@ TEST_F(L3MulticastManagerTest, DrainMulticastGroupEntryAddSuccessTest) {
   attr.value.oid = kRifOid1;
   exp_member_attrs.push_back(attr);
 
-  EXPECT_CALL(mock_sai_ipmc_group_,
-              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                       Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
@@ -6380,8 +7207,9 @@ TEST_F(L3MulticastManagerTest, DrainL2MulticastGroupEntryAddSuccessTest) {
   attr.value.oid = kBridgePortOid1;
   exp_member_attrs.push_back(attr);
 
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
                       Return(SAI_STATUS_SUCCESS)));
 
@@ -6392,8 +7220,9 @@ TEST_F(L3MulticastManagerTest, DrainL2MulticastGroupEntryAddSuccessTest) {
   attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
   attr.value.oid = kBridgePortOid2;
   exp_member_attrs2.push_back(attr);
-  EXPECT_CALL(mock_sai_l2mc_group_,
-              create_l2mc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs2)))
+  EXPECT_CALL(
+      mock_sai_l2mc_group_,
+      create_l2mc_group_member(_, _, 2, L2mcAttrArrayEq(exp_member_attrs2)))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
                       Return(SAI_STATUS_SUCCESS)));
 
