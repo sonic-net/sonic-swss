@@ -377,7 +377,7 @@ bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkConte
     vector<sai_attribute_t> inbound_routing_attrs;
 
     inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    inbound_routing_attr.value.u32 = ctxt.metadata.pa_validation() ? SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE : SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP;
+    inbound_routing_attr.value.u32 = ctxt.metadata.pa_validation() ? SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE : SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP;
     inbound_routing_attrs.push_back(inbound_routing_attr);
 
     if (ctxt.metadata.has_vnet())

@@ -1515,3 +1515,51 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
         }
     }
 }
+
+// Bind ACL table (with bind type switch) to switch
+bool SwitchOrch::bindAclTableToSwitch(acl_stage_type_t stage, sai_object_id_t table_id)
+{
+    sai_attribute_t attr;
+    if ( stage == ACL_STAGE_INGRESS ) {
+        attr.id = SAI_SWITCH_ATTR_INGRESS_ACL;
+    } else {
+        attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    }
+    attr.value.oid = table_id;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    string stage_str = (stage == ACL_STAGE_INGRESS) ? "ingress" : "egress";
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Bind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to bind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return false;
+    }
+}
+
+// Unbind ACL table from swtich
+bool SwitchOrch::unbindAclTableFromSwitch(acl_stage_type_t stage,sai_object_id_t table_id)
+{
+    sai_attribute_t attr;
+    if ( stage == ACL_STAGE_INGRESS ) {
+        attr.id = SAI_SWITCH_ATTR_INGRESS_ACL;
+    } else {
+        attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    }
+    attr.value.oid = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    string stage_str = (stage == ACL_STAGE_INGRESS) ? "ingress" : "egress";
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Unbind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to unbind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return false;
+    }
+}
