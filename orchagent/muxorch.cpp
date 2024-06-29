@@ -719,6 +719,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
             break;
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
+            gRouteOrch->updateNextHopRoutes(nh, num_routes);
             gNeighOrch->disableNeighbor(nh);
             updateTunnelRoute(nh, true);
             create_route(pfx, tunnelId);
