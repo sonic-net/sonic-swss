@@ -135,7 +135,8 @@ else
     worst_case_factor = (2 * cell_size) / (1 + cell_size)
 end
 
-cell_occupancy = (100 - small_packet_percentage + small_packet_percentage * worst_case_factor) / 100
+local small_packet_percentage_by_byte = 100 * minimal_packet_size / ((small_packet_percentage * minimal_packet_size + (100 - small_packet_percentage) * lossless_mtu) / 100)
+cell_occupancy = (100 - small_packet_percentage_by_byte + small_packet_percentage_by_byte * worst_case_factor) / 100
 
 if (gearbox_delay == 0) then
     bytes_on_gearbox = 0
