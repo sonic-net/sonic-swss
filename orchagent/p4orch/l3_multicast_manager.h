@@ -197,6 +197,9 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
 
+  ReturnCode deleteNextHop(P4MulticastRouterInterfaceEntry* entry,
+                           const sai_object_id_t next_hop_oid);
+
   // Wrapper around SAI setup and call to create multicast group.
   ReturnCode createMulticastGroup(P4MulticastGroupEntry& entry,
                                   sai_object_id_t* mcast_group_oid);
@@ -235,7 +238,7 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> deleteMulticastRouterInterfaceEntries(
       const std::vector<P4MulticastRouterInterfaceEntry>& entries);
   ReturnCode deleteL3MulticastRouterInterfaceEntry(
-      const P4MulticastRouterInterfaceEntry* entry);
+      P4MulticastRouterInterfaceEntry* entry);
   ReturnCode deleteL2MulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry* entry);
 
