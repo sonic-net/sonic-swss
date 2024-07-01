@@ -37,61 +37,81 @@ namespace portmgr_ut
     };
 
     TEST_F(PortMgrTest, DoTask)
-    {
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+{
+    // Initialize necessary tables
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // Port is not ready, verify that doTask does not handle port configuration
-        
-        cfg_port_table.set("Ethernet0", {
-            {"speed", "100000"},
-            {"index", "1"},
-            {"dhcp_rate_limit", "300"}
-        });
-        mockCallArgs.clear();
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-        ASSERT_TRUE(mockCallArgs.empty());
-        std::vector<FieldValueTuple> values;
-        app_port_table.get("Ethernet0", values);
-        auto value_opt = swss::fvsGetValue(values, "mtu", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
-        value_opt = swss::fvsGetValue(values, "admin_status", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
-        value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR, value_opt.get());
-        value_opt = swss::fvsGetValue(values, "speed", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ("100000", value_opt.get());
-        value_opt = swss::fvsGetValue(values, "index", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ("1", value_opt.get());
+    // Step 1: Simulate port configuration in CFG table
+    cfg_port_table.set("Ethernet0", {
+        {"speed", "100000"},
+        {"index", "1"},
+        {"dhcp_rate_limit", "300"}
+    });
 
-        // Set port state to ok, verify that doTask handle port configuration
-        state_port_table.set("Ethernet0", {
-            {"state", "ok"}
-        });
-        m_portMgr->doTask();
-        ASSERT_EQ(size_t(3), mockCallArgs.size());
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
-        ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop", mockCallArgs[2]);
-        
-        // Set port admin_status, verify that it could override the default value
-        cfg_port_table.set("Ethernet0", {
-            {"admin_status", "up"}
-        });
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-        app_port_table.get("Ethernet0", values);
-        value_opt = swss::fvsGetValue(values, "admin_status", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ("up", value_opt.get());
-    }
+    // Clear any previous mock call arguments and add configuration to PortMgr
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+
+    // Step 2: Execute doTask() to handle port configuration
+    m_portMgr->doTask();
+
+    // Verify no unexpected operations were performed (mockCallArgs should be empty)
+    ASSERT_TRUE(mockCallArgs.empty());
+
+    // Step 3: Check the resulting values in app_port_table
+    std::vector<FieldValueTuple> values;
+    app_port_table.get("Ethernet0", values);
+
+    auto value_opt = swss::fvsGetValue(values, "mtu", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
+
+    value_opt = swss::fvsGetValue(values, "admin_status", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
+
+    value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR, value_opt.get());
+
+    value_opt = swss::fvsGetValue(values, "speed", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ("100000", value_opt.get());
+
+    value_opt = swss::fvsGetValue(values, "index", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ("1", value_opt.get());
+
+    // Step 4: Set port state to "ok" and verify subsequent configurations
+    state_port_table.set("Ethernet0", {
+        {"state", "ok"}
+    });
+
+    // Step 5: Execute doTask() again to process port configurations
+    m_portMgr->doTask();
+
+    // Verify the expected IP commands were executed
+    ASSERT_EQ(size_t(3), mockCallArgs.size());
+    ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
+    ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
+    ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop", mockCallArgs[2]);
+
+    // Step 6: Update admin_status and verify it's reflected in app_port_table
+    cfg_port_table.set("Ethernet0", {
+        {"admin_status", "up"}
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Verify admin_status has been updated correctly
+    app_port_table.get("Ethernet0", values);
+    value_opt = swss::fvsGetValue(values, "admin_status", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ("up", value_opt.get());
+}
+
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
