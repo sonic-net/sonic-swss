@@ -123,7 +123,7 @@ local speed_overhead
 
 -- Adjustment for 8-lane port
 if is_8lane ~= nil and is_8lane then
-    pipeline_latency = pipeline_latency * 2 - 1024
+    pipeline_latency = pipeline_latency * 2
     speed_overhead = port_mtu
 else
     speed_overhead = 0
