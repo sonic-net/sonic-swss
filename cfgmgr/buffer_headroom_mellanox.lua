@@ -79,6 +79,11 @@ for i = 1, #asic_table_content, 2 do
     end
 end
 
+local kb_on_tile = 0
+if asic_keys[1]:sub(-1) == '4' or asic_keys[1]:sub(-1) == '5' then
+    kb_on_tile = port_speed / 1000 * 120 / 8 
+end
+
 -- Fetch lossless traffic info from CONFIG_DB
 redis.call('SELECT', config_db)
 local lossless_traffic_keys = redis.call('KEYS', 'LOSSLESS_TRAFFIC_PATTERN*')
@@ -150,7 +155,7 @@ if pause_quanta ~= nil then
 end
 
 bytes_on_cable = 2 * cable_length * port_speed * 1000000000 / speed_of_light / (8 * 1024)
-propagation_delay = port_mtu + bytes_on_cable + 2 * bytes_on_gearbox + mac_phy_delay + peer_response_time
+propagation_delay = port_mtu + bytes_on_cable + 2 * bytes_on_gearbox + mac_phy_delay + peer_response_time + kb_on_tile
 
 -- Calculate the xoff and xon and then round up at 1024 bytes
 xoff_value = lossless_mtu + propagation_delay * cell_occupancy
