@@ -22,6 +22,18 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
 }
 
+bool PortMgr::containsDhcpRateLimit(const std::vector<FieldValueTuple>& field_values)
+{
+    for (const auto& fv : field_values)
+    {
+        if (fvField(fv) == "dhcp_rate_limit")
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 {
     stringstream cmd;
@@ -106,11 +118,15 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     
     if (!ret)
     {
-        return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+        // Write the dhcp_rate_limit value to the config_db
+        vector<FieldValueTuple> fvs;
+        fvs.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+        m_cfgPortTable.set(alias, fvs);
+        return true;
     }
     else if (!isPortStateOk(alias))
     {
-        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
         SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
         return false;
     }
@@ -120,6 +136,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     }
     return true;
 }
+
 
 bool PortMgr::isPortStateOk(const string &alias)
 {
@@ -242,10 +259,11 @@ void PortMgr::doTask(Consumer &consumer)
                 }
             }
 
-            if (field_values.size())
+            if (field_values.size() && !containsDhcpRateLimit(field_values))
             {
                 writeConfigToAppDb(alias, field_values);
             }
+            
 
             if (!portOk)
             {
@@ -253,7 +271,6 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
