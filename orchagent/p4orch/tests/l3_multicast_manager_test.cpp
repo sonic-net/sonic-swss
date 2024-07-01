@@ -2381,6 +2381,232 @@ TEST_F(L3MulticastManagerTest,
 }
 
 TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceWithNextHopSuccess) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(kNextHopOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  // Expect no more references to entries.
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceWithNextHopOidMissing) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  // Artificially remove next hop OID.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                          entry1.multicast_router_interface_entry_key);
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_INTERNAL);
+
+  // Expect entry to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceWithNextHopSaiFailure) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(kNextHopOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceWithNeighborSaiFailureRestoreNextHop) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(kNextHopOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceWithNeighborSaiFailureRestoreNextHopFail) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(kNextHopOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  // Expect to enter critical state.
+  EXPECT_CALL(*gMockStateHelper,
+              ReportComponentState(Eq(swss::ComponentState::kError), _))
+      .WillRepeatedly(Return(true));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceWithRifSaiFailureRestoreSucceeds) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(kNextHopOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry1.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<sai_attribute_t> exp_nh_attrs =
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+                             /*write_dst_mac=*/false);
+  EXPECT_CALL(mock_sai_next_hop_,
+              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
+                              NextHopAttrArrayEq(exp_nh_attrs)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceWithRifSaiFailureRestoreFails) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(kNextHopOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<sai_attribute_t> exp_neigh_attrs =
+      PrepareNeighborEntrySaiAttrs(entry1.dst_mac);
+  EXPECT_CALL(mock_sai_neighbor_,
+              create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
+                                    NeighborAttrArrayEq(exp_neigh_attrs)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  // Expect to enter critical state.
+  EXPECT_CALL(*gMockStateHelper,
+              ReportComponentState(Eq(swss::ComponentState::kError), _))
+      .WillRepeatedly(Return(true));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry1.multicast_router_interface_entry_key),
+            nullptr);
+}
+
+TEST_F(L3MulticastManagerTest,
        UpdateMulticastRouterInterfaceNoActionEntriesSuccess) {
   auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
       "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
@@ -6239,6 +6465,21 @@ TEST_F(L3MulticastManagerTest,
 
   ReturnCode status = ValidateMulticastGroupEntry(entry, DEL_COMMAND);
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, status);
+}
+
+TEST_F(L3MulticastManagerTest, ValidateDelMulticastGroupEntryMissingNextHop) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  EXPECT_TRUE(ValidateMulticastRouterInterfaceEntry(entry1, DEL_COMMAND).ok());
+
+  // Force delete next hop OID and expect failure.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                          entry1.multicast_router_interface_entry_key);
+
+  EXPECT_FALSE(ValidateMulticastRouterInterfaceEntry(entry1, DEL_COMMAND).ok());
 }
 
 TEST_F(L3MulticastManagerTest,
