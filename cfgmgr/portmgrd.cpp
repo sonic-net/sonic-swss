@@ -50,17 +50,31 @@ int main(int argc, char **argv)
             ret = s.select(&sel, SELECT_TIMEOUT);
             if (ret == Select::ERROR)
             {
-                SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
+                SWSS_LOG_ERROR("Select error: %s!", strerror(errno));
                 continue;
             }
             if (ret == Select::TIMEOUT)
             {
-                portmgr.doTask();
+                try
+                {
+                    portmgr.doTask();
+                }
+                catch (const exception &e)
+                {
+                    SWSS_LOG_ERROR("Exception during doTask: %s", e.what());
+                }
                 continue;
             }
 
-            auto *c = (Executor *)sel;
-            c->execute();
+            try
+            {
+                auto *c = (Executor *)sel;
+                c->execute();
+            }
+            catch (const exception &e)
+            {
+                SWSS_LOG_ERROR("Exception during execute: %s", e.what());
+            }
         }
     }
     catch (const exception &e)
