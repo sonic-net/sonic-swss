@@ -304,6 +304,25 @@ class TestPort(object):
         transceiver_info_tbl.hdel("Ethernet0", "supported_max_tx_power")
         expected_fields = {"SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE":"false"}
         adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+      
+    def test_Portdhcp_rate_limit(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # set DHCP_RATE_LIMIT to port
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("DHCP_RATE_LIMIT", "300")])
+        tbl.set("Ethernet8", fvs)
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "dhcp_rate_limit":
+                assert fv[1] == "300"
 
     def test_PortPathTracing(self, dvs, testlog):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
