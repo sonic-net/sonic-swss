@@ -31,6 +31,7 @@ static const std::uint32_t maxPortSpeed = 800000;
 static const std::uint32_t minPortMtu = 68;
 static const std::uint32_t maxPortMtu = 9216;
 
+
 static const std::unordered_map<std::string, bool> portModeMap =
 {
     { PORT_MODE_ON,  true  },
@@ -573,6 +574,8 @@ bool PortHelper::parsePortMtu(PortConfig &port, const std::string &field, const 
 
     return true;
 }
+
+
 
 bool PortHelper::parsePortTpid(PortConfig &port, const std::string &field, const std::string &value) const
 {

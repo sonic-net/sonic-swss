@@ -78,6 +78,8 @@ public:
         bool is_set = false;
     } mtu; // Port MTU
 
+    
+
     struct {
         std::uint16_t value;
         bool is_set = false;
