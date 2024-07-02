@@ -1070,6 +1070,23 @@ ReturnCode L3MulticastManager::validateL3SetMulticastRouterInterfaceEntry(
                   multicast_router_interface_entry.multicast_replica_instance);
   }
 
+  if (router_interface_entry_ptr->action == p4orch::kMulticastSetSrcMac ||
+      router_interface_entry_ptr->action ==
+          p4orch::kMulticastSetSrcMacAndVlanId ||
+      router_interface_entry_ptr->action ==
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
+      router_interface_entry_ptr->action ==
+          p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId) {
+    // Confirm the next hop object ID exists in central mapper.
+    if (getNextHopOid(router_interface_entry_ptr) == SAI_OBJECT_TYPE_NULL) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Next hop was not assigned before updating multicast router "
+                "interface entry with key "
+             << QuotedVar(multicast_router_interface_entry
+                              .multicast_router_interface_entry_key);
+    }
+  }
+
   return ReturnCode();
 }
 
@@ -1734,6 +1751,28 @@ ReturnCode L3MulticastManager::addL2MulticastRouterInterfaceEntry(
   return ReturnCode();
 }
 
+ReturnCode L3MulticastManager::setDstMac(
+    const swss::MacAddress& new_dst_mac,
+    P4MulticastRouterInterfaceEntry* existing_entry) {
+  SWSS_LOG_ENTER();
+
+  sai_attribute_t attr;
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, new_dst_mac.getMac(), sizeof(sai_mac_t));
+
+  sai_status_t update_status = sai_neighbor_api->set_neighbor_entry_attribute(
+      &existing_entry->sai_neighbor_entry, &attr);
+  if (update_status != SAI_STATUS_SUCCESS) {
+    return ReturnCode(update_status)
+           << "Unable to update Dst MAC from "
+           << QuotedVar(existing_entry->dst_mac.to_string()) << " to "
+           << QuotedVar(new_dst_mac.to_string()) << " for entry "
+           << QuotedVar(existing_entry->multicast_router_interface_entry_key);
+  }
+
+  return ReturnCode();
+}
+
 std::vector<ReturnCode>
 L3MulticastManager::updateMulticastRouterInterfaceEntries(
     std::vector<P4MulticastRouterInterfaceEntry>& entries) {
@@ -1763,11 +1802,39 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
       continue;
     }
 
-    // No change to src mac means there is nothing to do.
+    // VLAN ID is a "create only" attribute.  It cannot be modified without
+    // deleting the RIF.
+    if (old_entry_ptr->vlan_id != entry.vlan_id) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+                    << "VLAN ID cannot be updated from '"
+                    << old_entry_ptr->vlan_id << "' to '" << entry.vlan_id
+                    << "' for entry "
+                    << QuotedVar(entry.multicast_router_interface_entry_key);
+      break;
+    }
+
+    // Dst MAC is part of the neighbor entry.
+    if (old_entry_ptr->dst_mac != entry.dst_mac) {
+      statuses[i] = setDstMac(entry.dst_mac, old_entry_ptr);
+      if (!statuses[i].ok()) {
+        break;
+      }
+    }
+
+    // No change to src mac means there is nothing else to do.
     if (old_entry_ptr->src_mac == entry.src_mac) {
       SWSS_LOG_INFO(
           "No update required for %s because the src mac did not change",
           QuotedVar(entry.multicast_router_interface_entry_key).c_str());
+
+      // Replace table with new entry if Dst MAC changed.
+      if (old_entry_ptr->dst_mac != entry.dst_mac) {
+        entry.sai_neighbor_entry = std::move(old_entry_ptr->sai_neighbor_entry);
+        m_multicastRouterInterfaceTable.erase(
+            old_entry_ptr->multicast_router_interface_entry_key);
+        m_multicastRouterInterfaceTable
+            [entry.multicast_router_interface_entry_key] = entry;
+      }
       statuses[i] = ReturnCode();
       continue;
     }
@@ -1794,15 +1861,31 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
                                                              &new_mac_attr);
     if (new_mac_status != SAI_STATUS_SUCCESS) {
       std::stringstream err_msg;
-      err_msg << "Unable to update MAC address from "
+      err_msg << "Unable to update Src MAC address from "
               << QuotedVar(old_entry_ptr->src_mac.to_string()) << " to "
               << QuotedVar(entry.src_mac.to_string());
       SWSS_LOG_ERROR("%s", err_msg.str().c_str());
       statuses[i] = ReturnCode(new_mac_status) << err_msg.str();
+
+      // Restore Dst MAC if it was changed.
+      if (old_entry_ptr->dst_mac != entry.dst_mac) {
+        ReturnCode restore_status =
+            setDstMac(old_entry_ptr->dst_mac, old_entry_ptr);
+        if (!restore_status.ok()) {
+          std::stringstream err_msg;
+          err_msg << "Unable to restore Dst MAC address back to "
+                  << QuotedVar(old_entry_ptr->dst_mac.to_string())
+                  << " after failure to update Src MAC address";
+          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        }
+      }
+
       break;
     }
 
     // Replace table with new entry.
+    entry.sai_neighbor_entry = std::move(old_entry_ptr->sai_neighbor_entry);
     m_multicastRouterInterfaceTable.erase(
         old_entry_ptr->multicast_router_interface_entry_key);
     m_multicastRouterInterfaceTable[entry
