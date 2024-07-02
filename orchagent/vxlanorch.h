@@ -46,6 +46,7 @@ typedef enum
 #define MAX_VLAN_ID 4095
 
 #define MAX_VNI_ID 16777215
+#define DEFAULT_TUNNEL_ENCAP_TTL 64
 
 typedef enum
 {
