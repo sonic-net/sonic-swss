@@ -193,7 +193,11 @@ std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
   bool write_vlan = multicast_router_interface_entry.action ==
                         p4orch::kMulticastSetSrcMacAndVlanId ||
                     multicast_router_interface_entry.action ==
-                        p4orch::kMulticastSetSrcMacAndDstMacAndVlanId;
+                        p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
+                    // In P4, this action is expected to write the internal
+                    // VLAN value (not provided from P4).
+                    multicast_router_interface_entry.action ==
+                        p4orch::kMulticastSetSrcMac;
 
   attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
   attr.value.booldata = !write_vlan;
