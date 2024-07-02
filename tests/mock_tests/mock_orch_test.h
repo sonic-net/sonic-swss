@@ -159,7 +159,11 @@ namespace mock_orch_test
             gDirectory.set(gVrfOrch);
             ut_orch_list.push_back((Orch **)&gVrfOrch);
 
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
             gDirectory.set(gIntfsOrch);
             ut_orch_list.push_back((Orch **)&gIntfsOrch);
 
