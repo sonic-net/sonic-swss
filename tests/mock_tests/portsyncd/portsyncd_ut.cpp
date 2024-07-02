@@ -88,6 +88,7 @@ namespace portsyncd_ut
         vec.emplace_back("index", "2");
         vec.emplace_back("lanes", "4,5,6,7");
         vec.emplace_back("mtu", "9100");
+        vec.emplace_back("dhcp_rate_limit","300");
         vec.emplace_back("speed", "10000");
         vec.emplace_back("alias", "etp1");
         tbl->set("Ethernet0", vec);
@@ -139,6 +140,7 @@ namespace portsyncd_ut
                                  const std::string& ll_add,
                                  int ifindex,
                                  unsigned int mtu,
+                                 unsigned int dhcp_rate_limit,
                                  int master_ifindex = 0){
                                 
         struct rtnl_link* nl_obj =  rtnl_link_alloc();
@@ -171,6 +173,9 @@ namespace portsyncd_ut
 
         /* Set mtu */
         rtnl_link_set_mtu(nl_obj, mtu);
+
+        /* Set dhcp_rate_limit */
+        rtnl_link_set_dhcp_rate_limit(nl_obj, dhcp_rate_limit);
 
         /* Set master_ifindex if any */
         if (master_ifindex){
@@ -236,6 +241,7 @@ namespace portsyncd_ut
         for (auto value : ovalues){
             if (fvField(value) == "state") {ASSERT_EQ(fvValue(value), "ok");}
             if (fvField(value) == "mtu") {ASSERT_EQ(fvValue(value), "9100");}
+            if (fvField(value) == "dhcp_rate_limit") {ASSERT_EQ(fvValue(value), "300");}
             if (fvField(value) == "netdev_oper_status") {ASSERT_EQ(fvValue(value), "up");}
             if (fvField(value) == "admin_status") {ASSERT_EQ(fvValue(value), "up");}
             if (fvField(value) == "speed") {ASSERT_EQ(fvValue(value), "10000");}
@@ -269,6 +275,7 @@ namespace portsyncd_ut
                                             "1c:34:da:1c:9f:00",
                                             142,
                                             9100,
+                                            300,
                                             0);
         sync.onMsg(RTM_NEWLINK, msg);
 
@@ -286,6 +293,7 @@ namespace portsyncd_ut
                            "1c:34:da:1c:9f:00",
                            142,
                            9100,
+                           300,
                            0);
 
         sync.onMsg(RTM_DELLINK, msg);
@@ -306,6 +314,7 @@ namespace portsyncd_ut
                                             "00:50:56:28:0e:4a",
                                             16222,
                                             9100,
+                                            300,
                                             0);
         sync.onMsg(RTM_NEWLINK, msg);
 
@@ -333,6 +342,7 @@ namespace portsyncd_ut
                                             "1c:34:da:1c:9f:00",
                                             142,
                                             9100,
+                                            300,
                                             0);
         sync.onMsg(RTM_NEWLINK, msg);
 
