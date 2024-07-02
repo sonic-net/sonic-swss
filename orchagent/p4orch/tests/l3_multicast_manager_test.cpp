@@ -1798,7 +1798,7 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
   std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
                              /*write_dst_mac=*/false);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, _, Eq(exp_nh_attrs.size()),
@@ -2157,7 +2157,7 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
   std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
                              /*write_dst_mac=*/false);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
@@ -2205,7 +2205,7 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
   std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
                              /*write_dst_mac=*/false);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
@@ -2475,7 +2475,7 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
                              /*write_dst_mac=*/false);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
@@ -2508,7 +2508,7 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
                              /*write_dst_mac=*/false);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
@@ -2550,7 +2550,7 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
   std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
+      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
                              /*write_dst_mac=*/false);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
