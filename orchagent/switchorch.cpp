@@ -609,10 +609,17 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         invalid_attr = true;
                         break;
                 }
-                if (invalid_attr || unsupported_attr)
+                if (invalid_attr)
                 {
                     /* break from kfvFieldsValues for loop */
+                    SWSS_LOG_ERROR("Invalid Attribute %s", attribute.c_str());
+                    // Will not continue to set the rest of the attributes
                     break;
+                }
+                if (unsupported_attr){
+                    SWSS_LOG_ERROR("Unsupported Attribute %s", attribute.c_str());
+                    // Continue to set the rest of the attributes, even if current attribute is unsupported
+                    continue;
                 }
 
                 sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
