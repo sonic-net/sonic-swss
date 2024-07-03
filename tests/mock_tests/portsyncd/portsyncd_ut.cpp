@@ -140,7 +140,6 @@ namespace portsyncd_ut
                                  const std::string& ll_add,
                                  int ifindex,
                                  unsigned int mtu,
-                                 unsigned int dhcp_rate_limit,
                                  int master_ifindex = 0){
                                 
         struct rtnl_link* nl_obj =  rtnl_link_alloc();
@@ -173,9 +172,6 @@ namespace portsyncd_ut
 
         /* Set mtu */
         rtnl_link_set_mtu(nl_obj, mtu);
-
-        /* Set dhcp_rate_limit */
-        rtnl_link_set_dhcp_rate_limit(nl_obj, dhcp_rate_limit);
 
         /* Set master_ifindex if any */
         if (master_ifindex){
