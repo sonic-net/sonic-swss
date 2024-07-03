@@ -270,8 +270,7 @@ namespace portsyncd_ut
                                             "sx_netdev",
                                             "1c:34:da:1c:9f:00",
                                             142,
-                                            9100,
-                                            300,
+                                            9100,                                            
                                             0);
         sync.onMsg(RTM_NEWLINK, msg);
 
@@ -289,7 +288,6 @@ namespace portsyncd_ut
                            "1c:34:da:1c:9f:00",
                            142,
                            9100,
-                           300,
                            0);
 
         sync.onMsg(RTM_DELLINK, msg);
@@ -310,7 +308,6 @@ namespace portsyncd_ut
                                             "00:50:56:28:0e:4a",
                                             16222,
                                             9100,
-                                            300,
                                             0);
         sync.onMsg(RTM_NEWLINK, msg);
 
@@ -338,7 +335,6 @@ namespace portsyncd_ut
                                             "1c:34:da:1c:9f:00",
                                             142,
                                             9100,
-                                            300,
                                             0);
         sync.onMsg(RTM_NEWLINK, msg);
 
