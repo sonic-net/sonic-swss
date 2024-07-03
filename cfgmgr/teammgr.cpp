@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "shellcmd.h"
 #include "tokenize.h"
+#include "interface.h"
 #include "warm_restart.h"
 #include "portmgr.h"
 #include <swss/redisutility.h>
@@ -257,6 +258,12 @@ void TeamMgr::doLagTask(Consumer &consumer)
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
+
+            if (!isInterfaceNameLenOk(alias))
+            {
+                it++;
+                continue;
+            }
 
             for (auto i : kfvFieldsValues(t))
             {

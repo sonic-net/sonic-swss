@@ -5,6 +5,7 @@
 #include "tokenize.h"
 #include "ipprefix.h"
 #include "intfmgr.h"
+#include "interface.h"
 #include "exec.h"
 #include "shellcmd.h"
 #include "macaddress.h"
@@ -739,7 +740,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         subIntf subIf(alias);
         // alias holds the complete sub interface name
         // while parentAlias holds the parent port name
-        /*Check if subinterface is valid and sub interface name length is < 15(IFNAMSIZ)*/
         if (!subIf.isValid())
         {
             SWSS_LOG_ERROR("Invalid subnitf: %s", alias.c_str());
@@ -839,6 +839,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             if (m_loopbackIntfList.find(alias) == m_loopbackIntfList.end())
             {
+                if (!isInterfaceNameLenOk(alias))
+                {
+                    return false;
+                }
                 addLoopbackIntf(alias);
                 m_loopbackIntfList.insert(alias);
                 SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
@@ -893,6 +897,11 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (!parentAlias.empty())
         {
+            if (!isInterfaceNameLenOk(alias))
+            {
+                return false;
+            }
+
             subIntf subIf(alias);
             if (m_subIntfList.find(alias) == m_subIntfList.end())
             {
