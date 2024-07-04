@@ -28,6 +28,7 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
+extern SwitchOrch *gSwitchOrch;
 extern string gMySwitchType;
 
 #define MIN_VLAN_ID 1    // 0 is a reserved VLAN ID
@@ -46,6 +47,7 @@ const int TCP_PROTOCOL_NUM = 6; // TCP protocol number
 acl_rule_attr_lookup_t aclMatchLookup =
 {
     { MATCH_IN_PORTS,          SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS },
+    { MATCH_OUT_PORT,          SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT },
     { MATCH_OUT_PORTS,         SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS },
     { MATCH_SRC_IP,            SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP },
     { MATCH_DST_IP,            SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
@@ -864,6 +866,23 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
             matchData.data.objlist.count = static_cast<uint32_t>(outPorts.size());
             matchData.data.objlist.list = outPorts.data();
+        }
+        else if (attr_name == MATCH_OUT_PORT)
+        {
+            auto alias = attr_value;
+            Port port;
+            if (!gPortsOrch->getPort(alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
+                return false;
+            }
+            if (port.m_type != Port::PHY)
+            {
+                SWSS_LOG_ERROR("Cannot bind rule to %s: OUT_PORT can only match physical interfaces", alias.c_str());
+                return false;
+            }
+
+            matchData.data.oid = port.m_port_id;
         }
         else if (attr_name == MATCH_IP_TYPE)
         {
@@ -3201,14 +3220,14 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_mirrorV6TableId[stage] = "";
     }
 
-    initDefaultTableTypes();
+    initDefaultTableTypes(platform, sub_platform);
 
     // Attach observers
     m_mirrorOrch->attach(this);
     gPortsOrch->attach(this);
 }
 
-void AclOrch::initDefaultTableTypes()
+void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_platform)
 {
     SWSS_LOG_ENTER();
 
@@ -3295,12 +3314,26 @@ void AclOrch::initDefaultTableTypes()
             .build()
     );
 
-    addAclTableType(
-        builder.withName(TABLE_TYPE_PFCWD)
-            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
-            .build()
-    );
+    // Use SAI_ACL_BIND_POINT_TYPE_SWITCH in BRCM DNX platforms to use shared egress ACL table for PFCWD.
+    if (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING)
+    {
+        addAclTableType(
+            builder.withName(TABLE_TYPE_PFCWD)
+                .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUT_PORT))
+                .build()
+        );
+    }
+    else
+    {
+        addAclTableType(
+            builder.withName(TABLE_TYPE_PFCWD)
+                .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+                .build()
+        );
+    }
 
     addAclTableType(
         builder.withName(TABLE_TYPE_DROP)
@@ -3974,6 +4007,20 @@ bool AclOrch::addAclTable(AclTable &newTable)
             m_mirrorV6TableId[table_stage] = table_id;
         }
 
+        // We use SAI_ACL_BIND_POINT_TYPE_SWITCH for PFCWD table in DNX platform.
+        // This bind type requires to bind the table to switch.
+        string platform = getenv("platform") ? getenv("platform") : "";
+        string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
+        if (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING &&
+            newTable.type.getName() == TABLE_TYPE_PFCWD)
+        {
+            if(!gSwitchOrch->bindAclTableToSwitch(ACL_STAGE_EGRESS, newTable.getOid()))
+            {
+                return false;
+            }
+            newTable.bindToSwitch = true;
+        }
+
         return true;
     }
     else
@@ -3997,6 +4044,18 @@ bool AclOrch::removeAclTable(string table_id)
     /* If ACL rules associate with this table, remove the rules first.*/
     bool suc = m_AclTables[table_oid].clear();
     if (!suc) return false;
+
+    // Unbind table from switch if needed.
+    AclTable &table = m_AclTables.at(table_oid);
+    if (table.bindToSwitch)
+    {
+        // Only bind egress table to switch for now.
+        assert(table->stage == ACL_STAGE_EGRESS);
+        if(!gSwitchOrch->unbindAclTableFromSwitch(ACL_STAGE_EGRESS, table.getOid()))
+        {
+            return false;
+        }
+    }
 
     if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
     {
@@ -5111,4 +5170,3 @@ void AclOrch::removeAllAclRuleStatus()
         m_aclRuleStateTable.del(key);
     }
 }
-
