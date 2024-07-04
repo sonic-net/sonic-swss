@@ -136,7 +136,7 @@ namespace portmgr_ut
             {"index", "1"},
             {"mtu", "1518"},
             {"admin_status", "up"},
-            {"dhcp_rate_limit", "50"}
+            {"dhcp_rate_limit", "1"}
         });
 
         m_portMgr->addExistingData(&cfg_port_table);
@@ -150,7 +150,7 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(3), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
-        ASSERT_EQ("sudo tc qdisc add dev \"Ethernet0\" handle ffff: ingress && sudo tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 20300bps burst 20300b conform-exceed drop", mockCallArgs[2]);
+        ASSERT_EQ("sudo tc qdisc add dev \"Ethernet0\" handle ffff: ingress && sudo tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 406bps burst 406b conform-exceed drop", mockCallArgs[2]);
     }
                    
     TEST_F(PortMgrTest, ConfigurePortPTDefaultTimestampTemplate)
