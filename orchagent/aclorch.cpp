@@ -2055,6 +2055,11 @@ bool AclRuleMirror::activate()
 
     if (!state)
     {
+        // if the mirror session is inactive, do not create the counter yet. FlexCounter registration will be skipped as well.
+        if (hasCounter())
+        {
+            removeCounter();
+        }
         return true;
     }
 
@@ -2152,7 +2157,11 @@ void AclRuleMirror::onUpdate(SubjectType type, void *cntx)
     if (update->active)
     {
         SWSS_LOG_INFO("Activating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
-        activate();
+        // During mirror session activation, the newly created counter needs to be registered to the FC.
+        if(activate() && hasCounter())
+        {
+            m_pAclOrch->registerFlexCounter(*this);
+        }
     }
     else
     {
