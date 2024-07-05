@@ -63,7 +63,7 @@ bool PortsOrch::getBridgePort(sai_object_id_t id, Port &port)
     return true;
 }
 
-bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
+bool PortsOrch::setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
 {
     return true;
 }
