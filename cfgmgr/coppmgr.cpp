@@ -183,14 +183,13 @@ bool CoppMgr::isTrapIdDisabled(string trap_id)
             {
                 return false;
             }
-            break;
+            if (isFeatureEnabled(trap_name))
+            {
+                return false;
+            }
         }
     }
 
-    if (isFeatureEnabled(trap_name))
-    {
-        return false;
-    }
     return true;
 }
 
@@ -941,7 +940,9 @@ void CoppMgr::doFeatureTask(Consumer &consumer)
         {
             if (m_featuresCfgTable.find(key) == m_featuresCfgTable.end())
             {
-                m_featuresCfgTable.emplace(key, kfvFieldsValues(t));
+                // Init with empty feature state which will be updated  in setFeatureTrapIdsStatus
+                FieldValueTuple fv("state", "");
+                m_featuresCfgTable[key].push_back(fv);
             }
             for (auto i : kfvFieldsValues(t))
             {

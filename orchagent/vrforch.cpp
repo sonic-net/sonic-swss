@@ -147,6 +147,7 @@ bool VRFOrch::addOperation(const Request& request)
             return false;
         }
 
+        m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
         SWSS_LOG_NOTICE("VRF '%s' was updated", vrf_name.c_str());
     }
 

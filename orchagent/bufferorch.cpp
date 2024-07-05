@@ -23,9 +23,6 @@ extern string gMySwitchType;
 extern string gMyHostName;
 extern string gMyAsicName;
 
-#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
-
-
 static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 {
     SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,
@@ -52,9 +49,6 @@ std::map<string, std::map<size_t, string>> queue_port_flags;
 
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
-    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
@@ -229,22 +223,23 @@ void BufferOrch::initBufferConstants()
 void BufferOrch::initFlexCounterGroupTable(void)
 {
     string bufferPoolWmPluginName = "watermark_bufferpool.lua";
+    string bufferPoolWmSha;
 
     try
     {
         string bufferPoolLuaScript = swss::loadLuaScript(bufferPoolWmPluginName);
-        string bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
-
-        vector<FieldValueTuple> fvTuples;
-        fvTuples.emplace_back(BUFFER_POOL_PLUGIN_FIELD, bufferPoolWmSha);
-        fvTuples.emplace_back(POLL_INTERVAL_FIELD, BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
-
-        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvTuples);
+        bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Buffer pool watermark lua script and/or flex counter group not set successfully. Runtime error: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 "", // do not touch stats_mode
+                                 BUFFER_POOL_PLUGIN_FIELD,
+                                 bufferPoolWmSha);
 }
 
 bool BufferOrch::isPortReady(const std::string& port_name) const
@@ -275,7 +270,7 @@ void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t obj
     if (m_isBufferPoolWatermarkCounterIdListGenerated)
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
-        m_flexCounterTable->del(key);
+        stopFlexCounterPolling(gSwitchId, key);
     }
 }
 
@@ -326,37 +321,32 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 
     if (!noWmClrCapability)
     {
-        vector<FieldValueTuple> fvs;
-
-        fvs.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
+        setFlexCounterGroupStatsMode(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                     STATS_MODE_READ_AND_CLEAR);
     }
 
     // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
-    vector<FieldValueTuple> fvTuples;
-    fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
+    string stats_mode;
+
     bitMask = 1;
+
     for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
 
+        stats_mode = "";
+
         if (noWmClrCapability)
         {
-            string stats_mode = STATS_MODE_READ_AND_CLEAR;
             if (noWmClrCapability & bitMask)
             {
                 stats_mode = STATS_MODE_READ;
             }
-            fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
 
-            m_flexCounterTable->set(key, fvTuples);
-            fvTuples.pop_back();
             bitMask <<= 1;
         }
-        else
-        {
-            m_flexCounterTable->set(key, fvTuples);
-        }
+
+        startFlexCounterPolling(gSwitchId, key, statList, BUFFER_POOL_COUNTER_ID_LIST, stats_mode);
     }
 
     m_isBufferPoolWatermarkCounterIdListGenerated = true;

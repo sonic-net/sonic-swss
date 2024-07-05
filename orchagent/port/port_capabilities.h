@@ -4,6 +4,7 @@ extern "C" {
 #include <saiobject.h>
 #include <saitypes.h>
 #include <saiport.h>
+#include <saiqueue.h>
 }
 
 class PortCapabilities final

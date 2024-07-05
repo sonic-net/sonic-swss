@@ -19,16 +19,24 @@ namespace mock_orch_test
     static const string PEER_IPV4_ADDRESS = "1.1.1.1";
     static const string ACTIVE_INTERFACE = "Ethernet4";
     static const string STANDBY_INTERFACE = "Ethernet8";
+    static const string ETHERNET0 = "Ethernet0";
+    static const string ETHERNET4 = "Ethernet4";
+    static const string ETHERNET8 = "Ethernet8";
+    static const string ETHERNET12 = "Ethernet12";
     static const string ACTIVE_STATE = "active";
     static const string STANDBY_STATE = "standby";
     static const string STATE = "state";
     static const string VLAN_1000 = "Vlan1000";
     static const string VLAN_2000 = "Vlan2000";
+    static const string VLAN_3000 = "Vlan3000";
+    static const string VLAN_4000 = "Vlan4000";
     static const string SERVER_IP1 = "192.168.0.2";
     static const string SERVER_IP2 = "192.168.0.3";
     static const string MAC1 = "62:f9:65:10:2f:01";
     static const string MAC2 = "62:f9:65:10:2f:02";
     static const string MAC3 = "62:f9:65:10:2f:03";
+    static const string MAC4 = "62:f9:65:10:2f:04";
+    static const string MAC5 = "62:f9:65:10:2f:05";
 
     class MockOrchTest: public ::testing::Test
     {
@@ -119,6 +127,19 @@ namespace mock_orch_test
                 { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
             };
 
+            TableConnector stateDbSwitchTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
+            TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
+            TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+
+            vector<TableConnector> switch_tables = {
+                conf_asic_sensors,
+                app_switch_table
+            };
+
+            gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
+            gDirectory.set(gSwitchOrch);
+            ut_orch_list.push_back((Orch **)&gSwitchOrch);
+
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
@@ -176,7 +197,11 @@ namespace mock_orch_test
             gDirectory.set(gNeighOrch);
             ut_orch_list.push_back((Orch **)&gNeighOrch);
 
-            m_TunnelDecapOrch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            vector<string> tunnel_tables = {
+                APP_TUNNEL_DECAP_TABLE_NAME,
+                APP_TUNNEL_DECAP_TERM_TABLE_NAME
+            };
+            m_TunnelDecapOrch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
             gDirectory.set(m_TunnelDecapOrch);
             ut_orch_list.push_back((Orch **)&m_TunnelDecapOrch);
             vector<string> mux_tables = {
@@ -193,15 +218,8 @@ namespace mock_orch_test
                 APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
             };
             gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
+            ut_orch_list.push_back((Orch **)&gBufferOrch);
 
-            TableConnector stateDbSwitchTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
-            TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
-            TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
-
-            vector<TableConnector> switch_tables = {
-                conf_asic_sensors,
-                app_switch_table
-            };
             vector<TableConnector> policer_tables = {
                 TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
                 TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
@@ -211,10 +229,6 @@ namespace mock_orch_test
             gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
             gDirectory.set(gPolicerOrch);
             ut_orch_list.push_back((Orch **)&gPolicerOrch);
-
-            gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
-            gDirectory.set(gSwitchOrch);
-            ut_orch_list.push_back((Orch **)&gSwitchOrch);
 
             gNhgOrch = new NhgOrch(m_app_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
             gDirectory.set(gNhgOrch);

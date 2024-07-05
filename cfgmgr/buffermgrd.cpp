@@ -46,7 +46,7 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 
 void write_to_state_db(shared_ptr<vector<KeyOpFieldsValuesTuple>> db_items_ptr)
 {
-    DBConnector db("STATE_DB", 0, true);
+    DBConnector db("STATE_DB", 0);
     auto &db_items = *db_items_ptr;
     for (auto &db_item : db_items)
     {

@@ -69,9 +69,6 @@ class TestP4RTVIPLB(object):
         db_list = ((self._p4rt_viplb_obj.appl_db,
                     "%s:%s" % (self._p4rt_viplb_obj.APP_DB_TBL_NAME,
                                self._p4rt_viplb_obj.TBL_NAME)),
-                   (self._p4rt_viplb_obj.appl_state_db,
-                    "%s:%s" % (self._p4rt_viplb_obj.APP_DB_TBL_NAME,
-                               self._p4rt_viplb_obj.TBL_NAME)),
                    (self._p4rt_viplb_obj.asic_db,
                     self._p4rt_viplb_obj.ASIC_DB_TBL_NAME))
         self._p4rt_viplb_obj.get_original_redis_entries(db_list)
@@ -149,22 +146,6 @@ class TestP4RTVIPLB(object):
                                      viplb_key)
         assert status == True
         util.verify_attr(fvs, attr_list)
-
-        # Query application state database for viplb entries.
-        state_viplb_entries = util.get_keys(
-            self._p4rt_viplb_obj.appl_state_db,
-            self._p4rt_viplb_obj.APP_DB_TBL_NAME + ":" + self._p4rt_viplb_obj.TBL_NAME)
-        assert len(state_viplb_entries) == (
-            self._p4rt_viplb_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created viplb key.
-        (status, fvs) = util.get_key(self._p4rt_viplb_obj.appl_state_db,
-                                     self._p4rt_viplb_obj.APP_DB_TBL_NAME,
-                                     viplb_key)
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
 
         # get programmable_object_oid of newly created viplb
         viplb_oid = self._p4rt_viplb_obj.get_newly_created_programmable_object_oid()

@@ -84,6 +84,8 @@ class TestNextHopGroupBase(object):
 
         # Create a NHG
         fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+        nhg_ps.set('_testnhg', fvs)
+        fvs = swsscommon.FieldValuePairs([('nexthop_group', '_testnhg')])
         nhg_ps.set('testnhg', fvs)
 
         # Add a CBF NHG pointing to the given map
@@ -98,6 +100,7 @@ class TestNextHopGroupBase(object):
             # Remove the added NHGs
             cbf_nhg_ps._del('testcbfnhg')
             nhg_ps._del('testnhg')
+            nhg_ps._del('_testnhg')
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
             return None
 
@@ -111,6 +114,7 @@ class TestNextHopGroupBase(object):
         # Remove the added NHGs
         cbf_nhg_ps._del('testcbfnhg')
         nhg_ps._del('testnhg')
+        nhg_ps._del('_testnhg')
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
 
         return nhg_map_id
@@ -1547,6 +1551,67 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
     def test_nhgorch_nh_group(self, dvs, testlog):
         # Test scenario:
+        # - create recursive nhg - rec_grp1 with two members - grp1 and grp2 only one of which exists
+        # - create singleton nhg grp2 and check if the rec_grp1 is updated with both the members
+        # - create a recursive nhg - rec_grp2 with another recursive nhg - rec_grp1 as member. Assert that the nhg is not created.
+        def create_recursive_nhg_test():
+            # create next hop group in APPL DB
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("grp1", fvs)
+
+            # create a recursive nexthop group with two members
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if group was propagated to ASIC DB with the existing member
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('rec_grp1')
+
+            # check if the existing member was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 1
+
+            # add another singleton nexthop group - grp2
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3'), ('ifname', 'Ethernet4')])
+            self.nhg_ps.set("grp2", fvs)
+
+            # check if both the members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # update the recursive nexthop group with another member not yet existing
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2,grp3')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if only two members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # add another singleton nexthop group - grp3
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.5'), ('ifname', 'Ethernet8')])
+            self.nhg_ps.set("grp3", fvs)
+
+            # check if all members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 3
+
+            # create a recursive nhg with another recursive nhg as member
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'rec_grp1')])
+            self.nhg_ps.set("rec_grp2", fvs)
+
+            # check that the group was not propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert not self.nhg_exists('rec_grp2')
+
+            self.nhg_ps._del("rec_grp2")
+            self.nhg_ps._del("rec_grp1")
+            self.nhg_ps._del("grp1")
+            self.nhg_ps._del("grp2")
+            self.nhg_ps._del("grp3")
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+        # Test scenario:
         # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
         def create_nhg_test():
             # create next hop group in APPL DB
@@ -1705,8 +1770,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
             # Update the group to one NH only
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
             self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
-            assert len(self.get_nhgm_ids('group1')) == 1
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+            assert len(self.get_nhgm_ids('group1')) == 0
 
             # Update the group to 2 NHs
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])
@@ -1716,6 +1781,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         self.init_test(dvs, 4)
 
+        create_recursive_nhg_test()
         create_nhg_test()
         create_route_nhg_test()
         link_flap_test()
@@ -1838,9 +1904,11 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         # - update the CBF NHG reordering the members and assert the new details match
         def update_cbf_nhg_members_test():
             # Create a NHG with a single next hop
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
-                                            ("ifname", "Ethernet0")])
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("_group3", fvs)
+            fvs = swsscommon.FieldValuePairs([('nexthop_group','_group3')])
             self.nhg_ps.set("group3", fvs)
+
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 3)
 
             # Create a CBF NHG
@@ -2035,6 +2103,8 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         self.cbf_nhg_ps._del('cbfgroup1')
         self.nhg_ps._del('group2')
         self.nhg_ps._del('group3')
+        self.nhg_ps._del('_group3')
+
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
         self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
 

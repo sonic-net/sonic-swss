@@ -64,26 +64,45 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
 
 } // namespace
 
-ResponsePublisher::ResponsePublisher(bool buffered)
-    : m_db(std::make_unique<swss::DBConnector>("APPL_STATE_DB", 0)),
-      m_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())), m_buffered(buffered)
+ResponsePublisher::ResponsePublisher(const std::string &dbName, bool buffered, bool db_write_thread)
+    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)), m_buffered(buffered)
 {
+    if (m_buffered)
+    {
+        m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
+        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
+    }
+    else
+    {
+        m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
+        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
+    }
+    if (db_write_thread)
+    {
+        m_update_thread = std::unique_ptr<std::thread>(new std::thread(&ResponsePublisher::dbUpdateThread, this));
+    }
+}
+
+ResponsePublisher::~ResponsePublisher()
+{
+    if (m_update_thread != nullptr)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/false, /*shutdown=*/true);
+        }
+        m_signal.notify_one();
+        m_update_thread->join();
+    }
 }
 
 void ResponsePublisher::publish(const std::string &table, const std::string &key,
                                 const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
                                 const std::vector<swss::FieldValueTuple> &state_attrs, bool replace)
 {
-    // Write to the DB only if:
-    // 1) A write operation is being performed and state attributes are specified.
-    // 2) A successful delete operation.
-    if ((intent_attrs.size() && state_attrs.size()) || (status.ok() && !intent_attrs.size()))
-    {
-        writeToDB(table, key, state_attrs, intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
-    }
-
     std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
-    swss::NotificationProducer notificationProducer{m_pipe.get(), response_channel, m_buffered};
+    swss::NotificationProducer notificationProducer{m_ntf_pipe.get(), response_channel, m_buffered};
 
     auto intent_attrs_copy = intent_attrs;
     // Add error message as the first field-value-pair.
@@ -92,6 +111,14 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
     // Sends the response to the notification channel.
     notificationProducer.send(status.codeStr(), key, intent_attrs_copy);
     RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr());
+
+    // Write to the DB only if:
+    // 1) A write operation is being performed and state attributes are specified.
+    // 2) A successful delete operation.
+    if ((intent_attrs.size() && state_attrs.size()) || (status.ok() && !intent_attrs.size()))
+    {
+        writeToDB(table, key, state_attrs, intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
+    }
 }
 
 void ResponsePublisher::publish(const std::string &table, const std::string &key,
@@ -113,7 +140,26 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
 void ResponsePublisher::writeToDB(const std::string &table, const std::string &key,
                                   const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace)
 {
-    swss::Table applStateTable{m_pipe.get(), table, m_buffered};
+    if (m_update_thread != nullptr)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(table, key, values, op, replace, /*flush=*/false, /*shutdown=*/false);
+        }
+        m_signal.notify_one();
+    }
+    else
+    {
+        writeToDBInternal(table, key, values, op, replace);
+    }
+    RecordDBWrite(table, key, values, op);
+}
+
+void ResponsePublisher::writeToDBInternal(const std::string &table, const std::string &key,
+                                          const std::vector<swss::FieldValueTuple> &values, const std::string &op,
+                                          bool replace)
+{
+    swss::Table applStateTable{m_db_pipe.get(), table, m_buffered};
 
     auto attrs = values;
     if (op == SET_COMMAND)
@@ -133,7 +179,6 @@ void ResponsePublisher::writeToDB(const std::string &table, const std::string &k
         if (!applStateTable.get(key, fv))
         {
             applStateTable.set(key, attrs);
-            RecordDBWrite(table, key, attrs, op);
             return;
         }
         for (auto it = attrs.cbegin(); it != attrs.cend();)
@@ -150,22 +195,63 @@ void ResponsePublisher::writeToDB(const std::string &table, const std::string &k
         if (attrs.size())
         {
             applStateTable.set(key, attrs);
-            RecordDBWrite(table, key, attrs, op);
         }
     }
     else if (op == DEL_COMMAND)
     {
         applStateTable.del(key);
-        RecordDBWrite(table, key, {}, op);
     }
 }
 
 void ResponsePublisher::flush()
 {
-    m_pipe->flush();
+    m_ntf_pipe->flush();
+    if (m_update_thread != nullptr)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/true, /*shutdown=*/false);
+        }
+        m_signal.notify_one();
+    }
+    else
+    {
+        m_db_pipe->flush();
+    }
 }
 
 void ResponsePublisher::setBuffered(bool buffered)
 {
     m_buffered = buffered;
+}
+
+void ResponsePublisher::dbUpdateThread()
+{
+    while (true)
+    {
+        entry e;
+        {
+            std::unique_lock<std::mutex> lock(m_lock);
+            while (m_queue.empty())
+            {
+                m_signal.wait(lock);
+            }
+
+            e = m_queue.front();
+            m_queue.pop();
+        }
+        if (e.shutdown)
+        {
+            break;
+        }
+        if (e.flush)
+        {
+            m_db_pipe->flush();
+        }
+        else
+        {
+            writeToDBInternal(e.table, e.key, e.values, e.op, e.replace);
+        }
+    }
 }
