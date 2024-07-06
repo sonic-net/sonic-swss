@@ -23,6 +23,8 @@ int main(int argc, char **argv)
 
     FdbSync sync(&pipelineAppDB, &stateDb, &config_db);
 
+    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEXTHOP, &sync);
+    NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEXTHOP, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
@@ -73,6 +75,7 @@ int main(int argc, char **argv)
 
             netlink.registerGroup(RTNLGRP_LINK);
             netlink.registerGroup(RTNLGRP_NEIGH);
+            netlink.registerGroup(RTNLGRP_NEXTHOP);
             SWSS_LOG_NOTICE("Listens to link and neigh messages...");
             netlink.dumpRequest(RTM_GETLINK);
             s.addSelectable(&netlink);
