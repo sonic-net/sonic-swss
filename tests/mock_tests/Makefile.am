@@ -118,6 +118,9 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/muxorch.cpp \
                 $(top_srcdir)/orchagent/mlagorch.cpp \
                 $(top_srcdir)/orchagent/isolationgrouporch.cpp \
+                $(top_srcdir)/orchagent/shlorch.cpp \
+                $(top_srcdir)/orchagent/l2nhgorch.cpp \
+                $(top_srcdir)/orchagent/evpnmhorch.cpp \
                 $(top_srcdir)/orchagent/macsecorch.cpp \
                 $(top_srcdir)/orchagent/lagid.cpp \
                 $(top_srcdir)/orchagent/bfdorch.cpp \
