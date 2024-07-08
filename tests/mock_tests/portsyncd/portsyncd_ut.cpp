@@ -173,6 +173,9 @@ namespace portsyncd_ut
         /* Set mtu */
         rtnl_link_set_mtu(nl_obj, mtu);
 
+        /* set dhcp_rate_limit*/
+        
+
         /* Set master_ifindex if any */
         if (master_ifindex){
             rtnl_link_set_master(nl_obj, master_ifindex);

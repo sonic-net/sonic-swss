@@ -1137,12 +1137,13 @@ class DockerVirtualSwitch:
         tbl.set(interface, fvs)
         time.sleep(1)
         
-    def set_rate(self, interface, rate):
+    def set_dhcp_rate_limit(self, interface, dhcp_rate_limit):
         tbl_name = "PORT"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        fvs = swsscommon.FieldValuePairs([("dhcp_rate_limit", rate)])
+        fvs = swsscommon.FieldValuePairs([("dhcp_rate_limit", dhcp_rate_limit)])
         tbl.set(interface, fvs)
         time.sleep(1)
+
 
     # deps: acl, mirror_port_erspan
     def add_neighbor(self, interface, ip, mac):
