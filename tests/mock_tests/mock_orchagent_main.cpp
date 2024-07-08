@@ -9,6 +9,7 @@ extern "C" {
 sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
+sai_object_id_t gPoeSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 

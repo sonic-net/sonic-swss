@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gearboxutils.h"
+#include "poecfg.h"
 
 #include <string>
 #include "orch.h"
@@ -13,6 +14,7 @@ void initFlexCounterTables();
 void initSaiApi();
 void initSaiRedis();
 sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy);
+sai_status_t initSaiPoeApi(sai_object_id_t &switchOid);
 
 /* Handling SAI status*/
 task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
