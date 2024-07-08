@@ -279,6 +279,11 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
 };
+static const vector<sai_queue_stat_t> voq_stat_ids =
+{
+    SAI_QUEUE_STAT_CREDIT_WD_DELETED_PACKETS
+};
+
 
 static const vector<sai_queue_stat_t> queueWatermarkStatIds =
 {
@@ -3545,6 +3550,9 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
+
+    /* Remove the entry from buffer maximum parameter table*/
+    m_stateBufferMaximumValueTable->del(alias);
 
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
@@ -7415,6 +7423,10 @@ void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_
     }
     if (voq)
     {
+        for (const auto& voq_it: voq_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_queue_stat(voq_it));
+        }
         queue_ids = m_port_voq_ids[port.m_alias];
     }
     else
