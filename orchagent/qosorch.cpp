@@ -2018,6 +2018,7 @@ task_process_status QosOrch::handleGlobalQosMap(const string &OP, KeyOpFieldsVal
             {
                 SWSS_LOG_INFO("Global QoS map %s is not yet created", map_name.c_str());
                 task_status = task_process_status::task_need_retry;
+                continue;
             }
 
             if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, id))

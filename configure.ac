@@ -133,6 +133,7 @@ if test "x$asan_enabled" = "xtrue"; then
     CFLAGS_ASAN+=" -fsanitize=address"
     CFLAGS_ASAN+=" -DASAN_ENABLED"
     CFLAGS_ASAN+=" -ggdb -fno-omit-frame-pointer -U_FORTIFY_SOURCE"
+    CFLAGS_ASAN+=" -Wno-maybe-uninitialized"
     AC_SUBST(CFLAGS_ASAN)
 
     LDFLAGS_ASAN+=" -lasan"

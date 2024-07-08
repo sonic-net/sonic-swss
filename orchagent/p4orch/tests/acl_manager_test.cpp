@@ -3,13 +3,13 @@
 
 #include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 
 #include "acl_rule_manager.h"
 #include "acl_table_manager.h"
 #include "acl_util.h"
 #include "acltable.h"
-#include <nlohmann/json.hpp>
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"
 #include "mock_sai_policer.h"
@@ -240,7 +240,7 @@ std::string BuildMatchFieldJsonStrKindComposite(std::vector<nlohmann::json> elem
 {
     nlohmann::json match_json;
     match_json[kAclMatchFieldKind] = kAclMatchFieldKindComposite;
-    for (const auto element : elements)
+    for (const auto &element : elements)
     {
         match_json[kAclMatchFieldElements].push_back(element);
     }

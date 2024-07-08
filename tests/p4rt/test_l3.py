@@ -59,11 +59,6 @@ class TestP4RTL3(object):
                 "%s:%s"
                 % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
             ),
-            (
-                self._p4rt_route_obj.appl_state_db,
-                "%s:%s"
-                % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
-            ),
             (self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME),
         )
         self._p4rt_route_obj.get_original_redis_entries(db_list)
@@ -145,24 +140,6 @@ class TestP4RTL3(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created route key.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Query ASIC database for route entries.
         route_entries = util.get_keys(
             self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME
@@ -227,24 +204,6 @@ class TestP4RTL3(object):
         ]
         util.verify_attr(fvs, attr_list_appl_db)
 
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for the updated route key.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Query ASIC database for route entries.
         route_entries = util.get_keys(
             self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME
@@ -291,37 +250,6 @@ class TestP4RTL3(object):
         # Query application database for the updated route key.
         (status, fvs) = util.get_key(
             self._p4rt_route_obj.appl_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == True
-        attr_list_appl_db = [
-            (self._p4rt_route_obj.ACTION_FIELD, "drop"),
-            (
-                util.prepend_param_field(
-                    self._p4rt_route_obj.NEXTHOP_ID_FIELD),
-                nexthop_id,
-            ),
-            (
-                util.prepend_param_field(
-                    self._p4rt_route_obj.ROUTE_METADATA_FIELD),
-                "2",
-            ),
-        ]
-        util.verify_attr(fvs, attr_list_appl_db)
-
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for the updated route key.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
             self._p4rt_route_obj.APP_DB_TBL_NAME,
             route_key,
         )
@@ -417,24 +345,6 @@ class TestP4RTL3(object):
         )
         assert status == False
 
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that the route_key no longer exists in application state
-        # database.
-        (status, fsv) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == False
-
         # Query ASIC database for route entries.
         route_entries = util.get_keys(
             self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME
@@ -468,11 +378,6 @@ class TestP4RTL3(object):
                 "%s:%s"
                 % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
             ),
-            (
-                self._p4rt_route_obj.appl_state_db,
-                "%s:%s"
-                % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
-            ),
             (self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME),
         )
         self._p4rt_route_obj.get_original_redis_entries(db_list)
@@ -484,14 +389,6 @@ class TestP4RTL3(object):
         db_list = (
             (
                 self._p4rt_wcmp_group_obj.appl_db,
-                "%s:%s"
-                % (
-                    self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-                    self._p4rt_wcmp_group_obj.TBL_NAME,
-                ),
-            ),
-            (
-                self._p4rt_wcmp_group_obj.appl_state_db,
                 "%s:%s"
                 % (
                     self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
@@ -597,26 +494,6 @@ class TestP4RTL3(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # Query application state database for wcmp group entries.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_wcmp_group_obj.TBL_NAME,
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created wcmp group key.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-            wcmp_group_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Query ASIC database for wcmp group entries.
         wcmp_group_entries = util.get_keys(
             self._p4rt_wcmp_group_obj.asic_db,
@@ -708,24 +585,6 @@ class TestP4RTL3(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created route key.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Query ASIC database for route entries.
         route_entries = util.get_keys(
             self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME
@@ -772,32 +631,6 @@ class TestP4RTL3(object):
         # Query application database for the updated route key.
         (status, fvs) = util.get_key(
             self._p4rt_route_obj.appl_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == True
-        attr_list_appl_db = [
-            (self._p4rt_route_obj.ACTION_FIELD, "drop"),
-            (
-                util.prepend_param_field(
-                    self._p4rt_route_obj.WCMP_GROUP_ID_FIELD),
-                wcmp_group_id,
-            ),
-        ]
-        util.verify_attr(fvs, attr_list_appl_db)
-
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for the updated route key.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
             self._p4rt_route_obj.APP_DB_TBL_NAME,
             route_key,
         )
@@ -855,32 +688,6 @@ class TestP4RTL3(object):
         # Query application database for the updated route key.
         (status, fvs) = util.get_key(
             self._p4rt_route_obj.appl_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == True
-        attr_list_appl_db = [
-            (self._p4rt_route_obj.ACTION_FIELD, "trap"),
-            (
-                util.prepend_param_field(
-                    self._p4rt_route_obj.WCMP_GROUP_ID_FIELD),
-                wcmp_group_id,
-            ),
-        ]
-        util.verify_attr(fvs, attr_list_appl_db)
-
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for the updated route key.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
             self._p4rt_route_obj.APP_DB_TBL_NAME,
             route_key,
         )
@@ -988,24 +795,6 @@ class TestP4RTL3(object):
         )
         assert status == False
 
-        # Query application state database for route entries.
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that the route_key no longer exists in application state
-        # database.
-        (status, fsv) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == False
-
         # Query ASIC database for route entries.
         route_entries = util.get_keys(
             self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME
@@ -1036,26 +825,6 @@ class TestP4RTL3(object):
         # Verify that the route_key no longer exists in application database.
         (status, fsv) = util.get_key(
             self._p4rt_wcmp_group_obj.appl_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-            wcmp_group_key,
-        )
-        assert status == False
-
-        # Query application state database for wcmp group entries.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_wcmp_group_obj.TBL_NAME,
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that the wcmp_group_key no longer exists in application state
-        # database.
-        (status, fsv) = util.get_key(
-            self._p4rt_wcmp_group_obj.appl_state_db,
             self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
             wcmp_group_key,
         )
@@ -1114,14 +883,6 @@ class TestP4RTL3(object):
                     self._p4rt_nexthop_obj.TBL_NAME,
                 ),
             ),
-            (
-                self._p4rt_nexthop_obj.appl_state_db,
-                "%s:%s"
-                % (
-                    self._p4rt_nexthop_obj.APP_DB_TBL_NAME,
-                    self._p4rt_nexthop_obj.TBL_NAME,
-                ),
-            ),
             (self._p4rt_nexthop_obj.asic_db,
              self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME),
         )
@@ -1129,14 +890,6 @@ class TestP4RTL3(object):
         db_list = (
             (
                 self._p4rt_gre_tunnel_obj.appl_db,
-                "%s:%s"
-                % (
-                    self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME,
-                    self._p4rt_gre_tunnel_obj.TBL_NAME,
-                ),
-            ),
-            (
-                self._p4rt_gre_tunnel_obj.appl_state_db,
                 "%s:%s"
                 % (
                     self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME,
@@ -1215,25 +968,6 @@ class TestP4RTL3(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # Query application state database for tunnel entries.
-        state_tunnel_entries = util.get_keys(
-            self._p4rt_gre_tunnel_obj.appl_state_db,
-            self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME +
-            ":" + self._p4rt_gre_tunnel_obj.TBL_NAME,
-        )
-        assert len(state_tunnel_entries) == (
-            self._p4rt_gre_tunnel_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created tunnel key.
-        (status, fvs) = util.get_key(
-            self._p4rt_gre_tunnel_obj.appl_state_db,
-            self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME,
-            tunnel_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Query ASIC database for tunnel entries.
         tunnel_entries = util.get_keys(
             self._p4rt_gre_tunnel_obj.asic_db, self._p4rt_gre_tunnel_obj.ASIC_DB_TBL_NAME
@@ -1305,24 +1039,6 @@ class TestP4RTL3(object):
         # Query application database for newly created nexthop key.
         (status, fvs) = util.get_key(
             self._p4rt_nexthop_obj.appl_db,
-            self._p4rt_nexthop_obj.APP_DB_TBL_NAME,
-            nexthop_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # Query application state database for nexthop entries.
-        state_nexthop_entries = util.get_keys(
-            self._p4rt_nexthop_obj.appl_state_db,
-            self._p4rt_nexthop_obj.APP_DB_TBL_NAME + ":" + self._p4rt_nexthop_obj.TBL_NAME,
-        )
-        assert len(state_nexthop_entries) == (
-            self._p4rt_nexthop_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created nexthop key.
-        (status, fvs) = util.get_key(
-            self._p4rt_nexthop_obj.appl_state_db,
             self._p4rt_nexthop_obj.APP_DB_TBL_NAME,
             nexthop_key,
         )
@@ -1418,24 +1134,6 @@ class TestP4RTL3(object):
         )
         assert status == False
 
-        # Query application state database for nexthop entries.
-        state_nexthop_entries = util.get_keys(
-            self._p4rt_nexthop_obj.appl_state_db,
-            self._p4rt_nexthop_obj.APP_DB_TBL_NAME + ":" + self._p4rt_nexthop_obj.TBL_NAME,
-        )
-        assert len(state_nexthop_entries) == (
-            self._p4rt_nexthop_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that the nexthop_key no longer exists in application state
-        # database.
-        (status, fsv) = util.get_key(
-            self._p4rt_nexthop_obj.appl_state_db,
-            self._p4rt_nexthop_obj.APP_DB_TBL_NAME,
-            nexthop_key,
-        )
-        assert status == False
-
         # Query ASIC database for nexthop entries.
         nexthop_entries = util.get_keys(
             self._p4rt_nexthop_obj.asic_db, self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME
@@ -1465,25 +1163,6 @@ class TestP4RTL3(object):
         # Verify that the tunnel_key no longer exists in application database.
         (status, fsv) = util.get_key(
             self._p4rt_gre_tunnel_obj.appl_db,
-            self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME,
-            tunnel_key,
-        )
-        assert status == False
-
-        # Query application state database for tunnel entries.
-        state_tunnel_entries = util.get_keys(
-            self._p4rt_gre_tunnel_obj.appl_state_db,
-            self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME +
-            ":" + self._p4rt_gre_tunnel_obj.TBL_NAME,
-        )
-        assert len(state_tunnel_entries) == (
-            self._p4rt_gre_tunnel_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that the tunnel_key no longer exists in application state
-        # database.
-        (status, fsv) = util.get_key(
-            self._p4rt_gre_tunnel_obj.appl_state_db,
             self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME,
             tunnel_key,
         )
@@ -1524,11 +1203,6 @@ class TestP4RTL3(object):
                 "%s:%s"
                 % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
             ),
-            (
-                self._p4rt_route_obj.appl_state_db,
-                "%s:%s"
-                % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
-            ),
             (self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME),
         )
         self._p4rt_route_obj.get_original_redis_entries(db_list)
@@ -1557,25 +1231,6 @@ class TestP4RTL3(object):
         )
         assert status == True
         util.verify_attr(fvs, attr_list)
-
-        # Query application database for route entries (no new route entry
-        # expected).
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that the newly added route key does not exist in application
-        # state db.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == False
 
         # Query ASIC database for route entries (no new ASIC DB entry should be
         # created for route entry).
@@ -1612,11 +1267,6 @@ class TestP4RTL3(object):
                 "%s:%s"
                 % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
             ),
-            (
-                self._p4rt_route_obj.appl_state_db,
-                "%s:%s"
-                % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
-            ),
             (self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME),
         )
         self._p4rt_route_obj.get_original_redis_entries(db_list)
@@ -1648,25 +1298,6 @@ class TestP4RTL3(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # Query application state database for route entries (no new APPL STATE DB
-        # entry should be created for route entry).
-        state_route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
-        )
-        assert len(state_route_entries) == (
-            self._p4rt_route_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that newly created route key does not exist in application
-        # state db.
-        (status, fvs) = util.get_key(
-            self._p4rt_route_obj.appl_state_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME,
-            route_key,
-        )
-        assert status == False
-
         # Query ASIC database for route entries (no new ASIC DB entry should be
         # created for route entry).
         route_entries = util.get_keys(
@@ -1693,14 +1324,6 @@ class TestP4RTL3(object):
         db_list = (
             (
                 self._p4rt_wcmp_group_obj.appl_db,
-                "%s:%s"
-                % (
-                    self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-                    self._p4rt_wcmp_group_obj.TBL_NAME,
-                ),
-            ),
-            (
-                self._p4rt_wcmp_group_obj.appl_state_db,
                 "%s:%s"
                 % (
                     self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
@@ -1807,26 +1430,6 @@ class TestP4RTL3(object):
         # Query application database for newly created wcmp group key.
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.appl_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-            wcmp_group_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # Query application state database for wcmp group entries.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_wcmp_group_obj.TBL_NAME,
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created wcmp group key.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.appl_state_db,
             self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
             wcmp_group_key,
         )
@@ -1898,15 +1501,6 @@ class TestP4RTL3(object):
             self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
         )
 
-        # Check APPL STATE DB to verify no change.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-            wcmp_group_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Force oper-up for associated port.
         util.set_interface_status(dvs, if_name, "up")
 
@@ -1939,19 +1533,6 @@ class TestP4RTL3(object):
         status, fvs = key_to_oid_helper.get_db_info()
         assert status == True
         assert len(fvs) == len(original_key_oid_info) + count
-
-        # Verify that APPL STATE DB is now updated.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            (
-                self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-                + ":"
-                + self._p4rt_wcmp_group_obj.TBL_NAME
-            ),
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count()
-        )
 
         # Delete next hop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
@@ -1988,14 +1569,6 @@ class TestP4RTL3(object):
         db_list = (
             (
                 self._p4rt_wcmp_group_obj.appl_db,
-                "%s:%s"
-                % (
-                    self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-                    self._p4rt_wcmp_group_obj.TBL_NAME,
-                ),
-            ),
-            (
-                self._p4rt_wcmp_group_obj.appl_state_db,
                 "%s:%s"
                 % (
                     self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
@@ -2102,26 +1675,6 @@ class TestP4RTL3(object):
         # Query application database for newly created wcmp group key.
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.appl_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-            wcmp_group_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # Query application state database for wcmp group entries.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_wcmp_group_obj.TBL_NAME,
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created wcmp group key.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.appl_state_db,
             self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
             wcmp_group_key,
         )
@@ -2219,19 +1772,6 @@ class TestP4RTL3(object):
         assert status == True
         assert len(fvs) == len(original_key_oid_info) + count
 
-        # Verify that APPL STATE DB is updated.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            (
-                self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-                + ":"
-                + self._p4rt_wcmp_group_obj.TBL_NAME
-            ),
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count()
-        )
-
         # Delete next hop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
 
@@ -2267,14 +1807,6 @@ class TestP4RTL3(object):
         db_list = (
             (
                 self._p4rt_wcmp_group_obj.appl_db,
-                "%s:%s"
-                % (
-                    self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-                    self._p4rt_wcmp_group_obj.TBL_NAME,
-                ),
-            ),
-            (
-                self._p4rt_wcmp_group_obj.appl_state_db,
                 "%s:%s"
                 % (
                     self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
@@ -2381,26 +1913,6 @@ class TestP4RTL3(object):
         # Query application database for newly created wcmp group key.
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.appl_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-            wcmp_group_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # Query application state database for wcmp group entries.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_wcmp_group_obj.TBL_NAME,
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created wcmp group key.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.appl_state_db,
             self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
             wcmp_group_key,
         )
@@ -2496,19 +2008,6 @@ class TestP4RTL3(object):
         assert status == True
         assert len(fvs) == len(original_key_oid_info) + count
 
-        # Verify that APPL STATE DB is updated.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            (
-                self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-                + ":"
-                + self._p4rt_wcmp_group_obj.TBL_NAME
-            ),
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count()
-        )
-
         # Delete next hop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
 
@@ -2544,14 +2043,6 @@ class TestP4RTL3(object):
         db_list = (
             (
                 self._p4rt_wcmp_group_obj.appl_db,
-                "%s:%s"
-                % (
-                    self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-                    self._p4rt_wcmp_group_obj.TBL_NAME,
-                ),
-            ),
-            (
-                self._p4rt_wcmp_group_obj.appl_state_db,
                 "%s:%s"
                 % (
                     self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
@@ -2664,26 +2155,6 @@ class TestP4RTL3(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # Query application state database for wcmp group entries.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-            + ":"
-            + self._p4rt_wcmp_group_obj.TBL_NAME,
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created wcmp group key.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME,
-            wcmp_group_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Query ASIC database for wcmp group entries.
         wcmp_group_entries = util.get_keys(
             self._p4rt_wcmp_group_obj.asic_db,
@@ -2740,14 +2211,6 @@ class TestP4RTL3(object):
         assert status == True
         assert len(fvs) == len(original_key_oid_info) + count
 
-        # Verify that the next hop still exists in app state db.
-        (status, fvs) = util.get_key(
-            self._p4rt_nexthop_obj.appl_state_db,
-            self._p4rt_nexthop_obj.APP_DB_TBL_NAME,
-            nexthop_key,
-        )
-        assert status == True
-
         # Delete the pruned wcmp group member and try again.
         self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
 
@@ -2756,19 +2219,6 @@ class TestP4RTL3(object):
         status, fvs = key_to_oid_helper.get_db_info()
         assert status == True
         assert len(fvs) == len(original_key_oid_info) + count
-
-        # Verify that APPL STATE DB is updated.
-        state_wcmp_group_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.appl_state_db,
-            (
-                self._p4rt_wcmp_group_obj.APP_DB_TBL_NAME
-                + ":"
-                + self._p4rt_wcmp_group_obj.TBL_NAME
-            ),
-        )
-        assert len(state_wcmp_group_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_appl_state_db_entries_count()
-        )
 
         # Verify that ASIC DB is updated.
         wcmp_group_entries = util.get_keys(
@@ -2828,14 +2278,6 @@ class TestP4RTL3(object):
                     self._p4rt_nexthop_obj.TBL_NAME,
                 ),
             ),
-            (
-                self._p4rt_nexthop_obj.appl_state_db,
-                "%s:%s"
-                % (
-                    self._p4rt_nexthop_obj.APP_DB_TBL_NAME,
-                    self._p4rt_nexthop_obj.TBL_NAME,
-                ),
-            ),
             (self._p4rt_nexthop_obj.asic_db,
              self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME),
         )
@@ -2843,14 +2285,6 @@ class TestP4RTL3(object):
         db_list = (
             (
                 self._p4rt_gre_tunnel_obj.appl_db,
-                "%s:%s"
-                % (
-                    self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME,
-                    self._p4rt_gre_tunnel_obj.TBL_NAME,
-                ),
-            ),
-            (
-                self._p4rt_gre_tunnel_obj.appl_state_db,
                 "%s:%s"
                 % (
                     self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME,
@@ -2893,16 +2327,6 @@ class TestP4RTL3(object):
             self._p4rt_gre_tunnel_obj.get_original_appl_db_entries_count() + 1
         )
 
-        # Query application state database for tunnel entries.
-        state_tunnel_entries = util.get_keys(
-            self._p4rt_gre_tunnel_obj.appl_state_db,
-            self._p4rt_gre_tunnel_obj.APP_DB_TBL_NAME +
-            ":" + self._p4rt_gre_tunnel_obj.TBL_NAME,
-        )
-        assert len(state_tunnel_entries) == (
-            self._p4rt_gre_tunnel_obj.get_original_appl_state_db_entries_count()
-        )
-
         # Query ASIC database for tunnel entries.
         tunnel_entries = util.get_keys(
             self._p4rt_gre_tunnel_obj.asic_db, self._p4rt_gre_tunnel_obj.ASIC_DB_TBL_NAME
@@ -2932,15 +2356,6 @@ class TestP4RTL3(object):
         )
         assert len(nexthop_entries) == (
             self._p4rt_nexthop_obj.get_original_appl_db_entries_count() + 1
-        )
-
-        # Query application state database for nexthop entries.
-        state_nexthop_entries = util.get_keys(
-            self._p4rt_nexthop_obj.appl_state_db,
-            self._p4rt_nexthop_obj.APP_DB_TBL_NAME + ":" + self._p4rt_nexthop_obj.TBL_NAME,
-        )
-        assert len(state_nexthop_entries) == (
-            self._p4rt_nexthop_obj.get_original_appl_state_db_entries_count()
         )
 
         # Query ASIC database for nexthop entries.
