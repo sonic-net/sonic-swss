@@ -9,18 +9,21 @@
 #include <utility>
 
 extern "C" {
-#include "sai.h"
-#include "saistatus.h"
+#include <sai.h>
+#include <saistatus.h>
 }
 
 #include "dbconnector.h"
 #include "table.h"
 #include "consumertable.h"
 #include "consumerstatetable.h"
+#include "zmqconsumerstatetable.h"
+#include "zmqserver.h"
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
 #include "response_publisher.h"
+#include "recorder.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -71,7 +74,7 @@ typedef struct
 } referenced_object;
 
 typedef std::map<std::string, referenced_object> object_reference_map;
-typedef std::map<std::string, object_reference_map*> type_map;
+typedef std::map<std::string, std::shared_ptr<object_reference_map>> type_map;
 
 typedef std::map<std::string, sai_object_id_t> object_map;
 typedef std::pair<std::string, sai_object_id_t> object_map_pair;
@@ -153,10 +156,16 @@ public:
     // TODO: hide?
     SyncMap m_toSync;
 
+    /* record the tuple */
+    void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
+
     void addToSync(const swss::KeyOpFieldsValuesTuple &entry);
 
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+
+    size_t refillToSync();
+    size_t refillToSync(swss::Table* table);
 };
 
 class Consumer : public ConsumerBase {
@@ -188,8 +197,6 @@ public:
         return getDbConnector()->getDbName();
     }
 
-    size_t refillToSync();
-    size_t refillToSync(swss::Table* table);
     void execute() override;
     void drain() override;
 };
@@ -216,7 +223,7 @@ public:
     Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
-    virtual ~Orch();
+    virtual ~Orch() = default;
 
     std::vector<swss::Selectable*> getSelectables();
 
@@ -236,9 +243,6 @@ public:
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
-    /* TODO: refactor recording */
-    static void recordTuple(ConsumerBase &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
-
     void dumpPendingTasks(std::vector<std::string> &ts);
 
     /**
@@ -248,8 +252,7 @@ public:
 protected:
     ConsumerMap m_consumerMap;
 
-    static void logfileReopen();
-    std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
+    Orch();
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
     std::set<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
     unsigned long generateBitMapFromIdsStr(const std::string &idsStr);
@@ -268,7 +271,7 @@ protected:
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
 
-    ResponsePublisher m_publisher;
+    ResponsePublisher m_publisher{"APPL_STATE_DB"};
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };

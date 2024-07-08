@@ -33,7 +33,7 @@ ifeq ($(ENABLE_ASAN), y)
 endif
 
 ifeq ($(ENABLE_GCOV), y)
-	configure_opts += --enable-gcov CFLAGS="-g -O0" CXXFLAGS="-g -O0"
+	configure_opts += --enable-gcov --enable-code-coverage CFLAGS="-g -O0" CXXFLAGS="-g -O0"
 endif
 
 override_dh_auto_configure:
@@ -43,9 +43,10 @@ override_dh_auto_install:
 	dh_auto_install --destdir=debian/swss
 ifeq ($(ENABLE_GCOV), y)
 	mkdir -p debian/swss/tmp/gcov
-	sh ./tests/gcov_support.sh collect swss
+	lcov -c --directory . --no-external --exclude "$(shell pwd)/tests/*" --exclude "$(shell pwd)/**/tests/*" --output-file coverage.info
+	lcov_cobertura coverage.info -o coverage.xml
+	find ./ -type f -regex '.*\.\(h\|cpp\|gcno\|info\)' | tar -cf debian/swss/tmp/gcov/gcov-source.tar -T -
 endif
 
 override_dh_strip:
 	dh_strip --dbg-package=swss-dbg
-

@@ -64,6 +64,7 @@ namespace ut_helper
         }
 
         sai_api_query(SAI_API_SWITCH, (void **)&sai_switch_api);
+        sai_api_query(SAI_API_HASH, (void **)&sai_hash_api);
         sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
         sai_api_query(SAI_API_VIRTUAL_ROUTER, (void **)&sai_virtual_router_api);
         sai_api_query(SAI_API_SAMPLEPACKET, (void **)&sai_samplepacket_api);
@@ -88,6 +89,8 @@ namespace ut_helper
         sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
+        sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
+        sai_api_query(SAI_API_TAM, (void**)&sai_tam_api);
 
         return SAI_STATUS_SUCCESS;
     }
@@ -117,6 +120,8 @@ namespace ut_helper
         sai_buffer_api = nullptr;
         sai_queue_api = nullptr;
         sai_counter_api = nullptr;
+        sai_twamp_api = nullptr;
+        sai_tam_api = nullptr;
 
         return SAI_STATUS_SUCCESS;
     }

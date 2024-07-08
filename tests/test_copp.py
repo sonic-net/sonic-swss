@@ -841,3 +841,38 @@ class TestCopp(object):
         self.feature_tbl.set("lldp", fvs)
 
         assert table_found == False
+
+    def test_multi_feature_trap_add(self, dvs, testlog):
+        self.setup_copp(dvs)
+        global copp_trap
+        traps = "eapol"
+        fvs = swsscommon.FieldValuePairs([("state", "disbled")])
+        self.feature_tbl.set("macsec", fvs)
+        fvs = swsscommon.FieldValuePairs([("state", "enabled")])
+        self.feature_tbl.set("pac", fvs)
+        fvs = swsscommon.FieldValuePairs([("trap_group", "queue4_group1"),("trap_ids", traps)])
+        self.trap_ctbl.set("pac", fvs)
+
+
+        copp_trap["eapol"] = [traps, copp_group_queue4_group1]
+        time.sleep(2)
+
+        trap_keys = self.trap_atbl.getKeys()
+        trap_ids = traps.split(",")
+        trap_group = copp_group_queue4_group1
+        for trap_id in trap_ids:
+            trap_type = traps_to_trap_type[trap_id]
+            trap_found = False
+            trap_group_oid = ""
+            for key in trap_keys:
+                (status, fvs) = self.trap_atbl.get(key)
+                assert status == True
+                for fv in fvs:
+                    if fv[0] == "SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE":
+                        if fv[1] == trap_type:
+                            trap_found = True
+                if trap_found:
+                    self.validate_trap_group(key,trap_group)
+                    break
+            if trap_id not in disabled_traps:
+                assert trap_found == True

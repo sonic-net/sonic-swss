@@ -24,6 +24,7 @@
 #include "routeorch.h"
 #include "fdborch.h"
 #include "qosorch.h"
+#include "warm_restart.h"
 
 /* Global variables */
 extern Directory<Orch*> gDirectory;
@@ -409,9 +410,18 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_STANDBY, &MuxCable::stateStandby));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
 
-    /* Set initial state to "standby" */
-    stateStandby();
-    state_ = MuxState::MUX_STATE_STANDBY;
+    if (WarmStart::isWarmStart()) {
+        /* Warmboot case, Set initial state to "init" 
+         * State will be updated to previous value upon APP DB sync
+         */
+        state_ = MuxState::MUX_STATE_INIT;
+    }
+    else
+    {
+        /* Set initial state to "standby" */
+        stateStandby();
+        state_ = MuxState::MUX_STATE_STANDBY;
+    }
 }
 
 bool MuxCable::stateInitActive()
@@ -659,6 +669,7 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
  */
 void MuxCable::updateRoutes()
 {
+    SWSS_LOG_INFO("Updating routes pointing to multiple mux nexthops");
     MuxNeighbor neighbors = nbr_handler_->getNeighbors();
     string alias = nbr_handler_->getAlias();
     for (auto nh = neighbors.begin(); nh != neighbors.end(); nh ++)
@@ -733,6 +744,8 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
 bool MuxNbrHandler::enable(bool update_rt)
 {
     NeighborEntry neigh;
+    std::list<NeighborContext> neigh_ctx_list;
+    std::list<MuxRouteBulkContext> route_ctx_list;
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -740,13 +753,21 @@ bool MuxNbrHandler::enable(bool update_rt)
         SWSS_LOG_INFO("Enabling neigh %s on %s", it->first.to_string().c_str(), alias_.c_str());
 
         neigh = NeighborEntry(it->first, alias_);
-        if (!gNeighOrch->enableNeighbor(neigh))
-        {
-            SWSS_LOG_INFO("Enabling neigh failed for %s", neigh.ip_address.to_string().c_str());
-            return false;
-        }
+        // Create neighbor context with bulk_op enabled
+        neigh_ctx_list.push_back(NeighborContext(neigh, true));
+        it++;
+    }
 
+    if (!gNeighOrch->enableNeighbors(neigh_ctx_list))
+    {
+        return false;
+    }
+
+    it = neighbors_.begin();
+    while (it != neighbors_.end())
+    {
         /* Update NH to point to learned neighbor */
+        neigh = NeighborEntry(it->first, alias_);
         it->second = gNeighOrch->getLocalNextHopId(neigh);
 
         /* Reprogram route */
@@ -784,14 +805,16 @@ bool MuxNbrHandler::enable(bool update_rt)
         IpPrefix pfx = it->first.to_string();
         if (update_rt)
         {
-            if (remove_route(pfx) != SAI_STATUS_SUCCESS)
-            {
-                return false;
-            }
+            route_ctx_list.push_back(MuxRouteBulkContext(pfx));
             updateTunnelRoute(nh_key, false);
         }
 
         it++;
+    }
+
+    if (update_rt && !removeRoutes(route_ctx_list))
+    {
+        return false;
     }
 
     return true;
@@ -800,6 +823,8 @@ bool MuxNbrHandler::enable(bool update_rt)
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
     NeighborEntry neigh;
+    std::list<NeighborContext> neigh_ctx_list;
+    std::list<MuxRouteBulkContext> route_ctx_list;
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -838,22 +863,26 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
             return false;
         }
 
-        neigh = NeighborEntry(it->first, alias_);
-        if (!gNeighOrch->disableNeighbor(neigh))
-        {
-            SWSS_LOG_INFO("Disabling neigh failed for %s", neigh.ip_address.to_string().c_str());
-            return false;
-        }
-
         updateTunnelRoute(nh_key, true);
 
         IpPrefix pfx = it->first.to_string();
-        if (create_route(pfx, it->second) != SAI_STATUS_SUCCESS)
-        {
-            return false;
-        }
+        route_ctx_list.push_back(MuxRouteBulkContext(pfx, it->second));
+
+        neigh = NeighborEntry(it->first, alias_);
+        // Create neighbor context with bulk_op enabled
+        neigh_ctx_list.push_back(NeighborContext(neigh, true));
 
         it++;
+    }
+
+    if (!addRoutes(route_ctx_list))
+    {
+        return false;
+    }
+
+    if (!gNeighOrch->disableNeighbors(neigh_ctx_list))
+    {
+        return false;
     }
 
     return true;
@@ -868,6 +897,141 @@ sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)
     }
 
     return SAI_NULL_OBJECT_ID;
+}
+
+bool MuxNbrHandler::addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
+{
+    sai_status_t status;
+    bool ret = true;
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        SWSS_LOG_INFO("Adding route entry %s, nh %" PRIx64 " to bulker", ctx->pfx.getIp().to_string().c_str(), ctx->nh);
+
+        object_statuses.emplace_back();
+        sai_attribute_t attr;
+        vector<sai_attribute_t> attrs;
+
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+        attrs.push_back(attr);
+
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = ctx->nh;
+        attrs.push_back(attr);
+
+        status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)attrs.size(), attrs.data());
+    }
+
+    gRouteBulker.flush();
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        auto it_status = object_statuses.begin();
+        status = *it_status++;
+
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            if (status == SAI_STATUS_ITEM_ALREADY_EXISTS) {
+                SWSS_LOG_INFO("Tunnel route to %s already exists", ctx->pfx.to_string().c_str());
+                continue;
+            }
+            SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %" PRIx64 " rv:%d",
+                    ctx->pfx.getIp().to_string().c_str(), ctx->nh, status);
+            ret = false;
+            continue;
+        }
+
+        if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        }
+
+        SWSS_LOG_NOTICE("Created tunnel route to %s ", ctx->pfx.to_string().c_str());
+    }
+
+    gRouteBulker.clear();
+    return ret;
+}
+
+bool MuxNbrHandler::removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list)
+{
+    sai_status_t status;
+    bool ret = true;
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        SWSS_LOG_INFO("Removing route entry %s, nh %" PRIx64 "", ctx->pfx.getIp().to_string().c_str(), ctx->nh);
+
+        object_statuses.emplace_back();
+        status = gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
+    }
+
+    gRouteBulker.flush();
+
+    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
+    {
+        auto& object_statuses = ctx->object_statuses;
+        auto it_status = object_statuses.begin();
+        status = *it_status++;
+
+        sai_route_entry_t route_entry;
+        route_entry.switch_id = gSwitchId;
+        route_entry.vr_id = gVirtualRouterId;
+        copy(route_entry.destination, ctx->pfx);
+        subnet(route_entry.destination, route_entry.destination);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            if (status == SAI_STATUS_ITEM_NOT_FOUND) {
+                SWSS_LOG_INFO("Tunnel route to %s already removed", ctx->pfx.to_string().c_str());
+                continue;
+            }
+            SWSS_LOG_ERROR("Failed to remove tunnel route %s, rv:%d",
+                            ctx->pfx.getIp().to_string().c_str(), status);
+            ret = false;
+            continue;
+        }
+
+        if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        }
+
+        SWSS_LOG_NOTICE("Removed tunnel route to %s ", ctx->pfx.to_string().c_str());
+    }
+
+    gRouteBulker.clear();
+    return ret;
 }
 
 void MuxNbrHandler::updateTunnelRoute(NextHopKey nh, bool add)
@@ -1088,7 +1252,8 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
 
     if (!add)
     {
-        mux_multi_active_nh_table.erase(pfx);
+        SWSS_LOG_INFO("Removing route %s from mux_multi_active_nh_table",
+                      pfx.to_string().c_str());
         return;
     }
 
@@ -1100,6 +1265,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
      */
     if (nhg_key.getSize() <= 1)
     {
+        SWSS_LOG_INFO("Route points to single nexthop, ignoring");
         return;
     }
 
@@ -1111,38 +1277,18 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
     /* get nexthops from nexthop group */
     nextHops = nhg_key.getNextHops();
 
-    auto it = mux_multi_active_nh_table.find(pfx);
-    if (it != mux_multi_active_nh_table.end())
-    {
-        /* This will only work for configured MUX neighbors (most cases)
-         * TODO: add way to find MUX from neighbor
-         */
-        MuxCable* cable = findMuxCableInSubnet(it->second.ip_address);
-        auto standalone = standalone_tunnel_neighbors_.find(it->second.ip_address);
-
-        if ((cable == nullptr && standalone == standalone_tunnel_neighbors_.end()) ||
-             cable->isActive())
-        {
-            SWSS_LOG_INFO("Route %s pointing to active neighbor %s",
-                pfx.to_string().c_str(), it->second.to_string().c_str());
-            return;
-        }
-    }
-
     SWSS_LOG_NOTICE("Updating route %s pointing to Mux nexthops %s",
                 pfx.to_string().c_str(), nhg_key.to_string().c_str());
 
     for (auto it = nextHops.begin(); it != nextHops.end(); it++)
     {
         NextHopKey nexthop = *it;
-        /* This will only work for configured MUX neighbors (most cases)
-         * TODO: add way to find MUX from neighbor
-         */
-        MuxCable* cable = findMuxCableInSubnet(nexthop.ip_address);
-        auto standalone = standalone_tunnel_neighbors_.find(nexthop.ip_address);
+        NeighborEntry neighbor;
+        MacAddress mac;
 
-        if ((cable == nullptr && standalone == standalone_tunnel_neighbors_.end()) ||
-             cable->isActive())
+        gNeighOrch->getNeighborEntry(nexthop, neighbor, mac);
+
+        if (isNeighborActive(neighbor.ip_address, mac, neighbor.alias))
         {
             /* Here we pull from local nexthop ID because neighbor update occurs during state change
              * before nexthopID is updated in neighorch. This ensures that if a neighbor is Active
@@ -1154,12 +1300,11 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set route entry %s to nexthop %s",
-                        pfx.to_string().c_str(), nexthop.to_string().c_str());
+                        pfx.to_string().c_str(), neighbor.to_string().c_str());
                 continue;
             }
-            SWSS_LOG_INFO("setting route %s with nexthop %s %" PRIx64 "",
-                pfx.to_string().c_str(), nexthop.to_string().c_str(), next_hop_id);
-            mux_multi_active_nh_table[pfx] = nexthop;
+            SWSS_LOG_NOTICE("setting route %s with nexthop %s %" PRIx64 "",
+                pfx.to_string().c_str(), neighbor.to_string().c_str(), next_hop_id);
             active_found = true;
             break;
         }
@@ -1177,7 +1322,6 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
             SWSS_LOG_ERROR("Failed to set route entry %s to tunnel",
                     pfx.getIp().to_string().c_str());
         }
-        mux_multi_active_nh_table.erase(pfx);
     }
 }
 
@@ -1432,9 +1576,11 @@ bool MuxOrch::isMuxNexthops(const NextHopGroupKey& nextHops)
     {
         if (this->containsNextHop(*it))
         {
+            SWSS_LOG_INFO("Found mux nexthop %s", it->to_string().c_str());
             return true;
         }
     }
+    SWSS_LOG_INFO("No mux nexthop found");
     return false;
 }
 

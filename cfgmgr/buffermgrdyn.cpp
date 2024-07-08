@@ -934,15 +934,6 @@ void BufferMgrDynamic::updateBufferObjectToDb(const string &key, const string &p
 void BufferMgrDynamic::updateBufferObjectListToDb(const string &key, const string &profileList, buffer_direction_t dir)
 {
     auto &table = m_applBufferProfileListTables[dir];
-    const auto &direction = m_bufferDirectionNames[dir];
-
-    if (!m_bufferPoolReady)
-    {
-        SWSS_LOG_NOTICE("Buffer pools are not ready when configuring buffer %s profile list %s, pending", direction.c_str(), key.c_str());
-        m_bufferObjectsPending = true;
-        return;
-    }
-
     vector<FieldValueTuple> fvVector;
 
     fvVector.emplace_back(buffer_profile_list_field_name, profileList);
@@ -3243,6 +3234,15 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortProfileListEntry(con
                 SWSS_LOG_ERROR("Unknown field %s in %s", fvField(i).c_str(), key.c_str());
                 continue;
             }
+        }
+
+        if (!m_bufferPoolReady)
+        {
+            const auto &direction = m_bufferDirectionNames[dir];
+
+            SWSS_LOG_NOTICE("Buffer pools are not ready when configuring buffer %s profile list %s, pending", direction.c_str(), key.c_str());
+            m_bufferObjectsPending = true;
+            return task_process_status::task_success;
         }
 
         auto &portInfo = m_portInfoLookup[port];

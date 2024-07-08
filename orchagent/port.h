@@ -2,7 +2,7 @@
 #define SWSS_PORT_H
 
 extern "C" {
-#include "sai.h"
+#include <sai.h>
 }
 
 #include <set>
@@ -11,6 +11,9 @@ extern "C" {
 #include <map>
 #include <bitset>
 #include <unordered_set>
+
+#include <macaddress.h>
+#include <sairedis.h>
 
 #define DEFAULT_PORT_VLAN_ID    1
 /*
@@ -74,6 +77,9 @@ struct SystemLagInfo
 class Port
 {
 public:
+    typedef sai_bridge_port_fdb_learning_mode_t port_learn_mode_t;
+
+public:
     enum Type {
         CPU,
         PHY,
@@ -85,14 +91,22 @@ public:
         SUBPORT,
         SYSTEM,
         UNKNOWN
-    } ;
-
-    enum AutoNegMode {
-        AUTONEG_NOT_SET = -1,
-        AUTONEG_OFF = 0,
-        AUTONEG_ON = 1
     };
 
+    enum Role
+    {
+        Ext, // external
+        Int, // internal
+        Inb, // inband
+        Rec, // recirculation
+        Dpc  // DPU Connect Port on SmartSwitch
+    };
+
+public:
+    static constexpr std::size_t max_lanes = 8; // Max HW lanes
+    static constexpr std::size_t max_fec_modes = 3; // Max FEC modes (sync with SAI)
+
+public:
     Port() {};
     Port(std::string alias, Type type) :
             m_alias(alias), m_type(type) {};
@@ -114,12 +128,12 @@ public:
 
     std::string         m_alias;
     Type                m_type = UNKNOWN;
-    int                 m_index = 0;    // PHY_PORT: index
+    uint16_t            m_index = 0;    // PHY_PORT: index
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
-    std::string         m_learn_mode = "hardware";
-    AutoNegMode         m_autoneg = Port::AutoNegMode::AUTONEG_NOT_SET;
-    int                 m_link_training = -1; // -1 means not set, 0 = disabled, 1 = enabled
+    port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+    bool                m_autoneg = false;
+    bool                m_link_training = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;
     bool                m_l3_vni = false;
@@ -152,11 +166,12 @@ public:
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
+    uint64_t  m_flap_count = 0;
     uint32_t  m_up_member_count = 0;
     uint32_t  m_maximum_headroom = 0;
-    std::vector<uint32_t> m_adv_speeds;
+    std::set<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
-    std::vector<uint32_t> m_adv_interface_types;
+    std::set<sai_port_interface_type_t> m_adv_interface_types;
     bool      m_mpls = false;
     /*
      * Following bit vector is used to lock
@@ -181,11 +196,31 @@ public:
     /* pre-emphasis */
     std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
 
-    bool m_fec_cfg = false;
-    bool m_an_cfg = false;
+    /* Force initial parameter configuration flags */
+    bool m_an_cfg = false;        // Auto-negotiation (AN)
+    bool m_adv_speed_cfg = false; // Advertised speed
+    bool m_intf_cfg = false;      // Interface type
+    bool m_adv_intf_cfg = false;  // Advertised interface type
+    bool m_fec_cfg = false;       // Forward Error Correction (FEC)
+    bool m_override_fec = false;  // Enable Override FEC
+    bool m_pfc_asym_cfg = false;  // Asymmetric Priority Flow Control (PFC)
+    bool m_lm_cfg = false;        // Forwarding Database (FDB) Learning Mode (LM)
+    bool m_lt_cfg = false;        // Link Training (LT)
 
     int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
     int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
+
+    /* Path Tracing */
+    uint16_t m_pt_intf_id = 0;
+    sai_port_path_tracing_timestamp_type_t m_pt_timestamp_template = SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23;
+
+    /* link event damping */
+    sai_redis_link_event_damping_algorithm_t m_link_event_damping_algorithm = SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED;
+    uint32_t m_max_suppress_time = 0;
+    uint32_t m_decay_half_life = 0;
+    uint32_t m_suppress_threshold = 0;
+    uint32_t m_reuse_threshold = 0;
+    uint32_t m_flap_penalty = 0;
 };
 
 }

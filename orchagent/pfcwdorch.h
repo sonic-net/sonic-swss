@@ -15,6 +15,8 @@ extern "C" {
 
 #define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
 
+const string pfc_wd_flex_counter_group = PFC_WD_FLEX_COUNTER_GROUP;
+
 enum class PfcWdAction
 {
     PFC_WD_ACTION_UNKNOWN,
@@ -60,7 +62,7 @@ public:
     void setPfcDlrPacketAction(PfcWdAction action) { PfcDlrPacketAction = action; }
 
 protected:
-    virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
+    virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
     string m_platform = "";
 private:
 
@@ -96,7 +98,7 @@ public:
     void doTask() override;
 
 protected:
-    bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) override;
+    bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") override;
 
 private:
     struct PfcWdQueueEntry
@@ -128,7 +130,7 @@ private:
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
 
-    void report_pfc_storm(sai_object_id_t id, const PfcWdQueueEntry *);
+    void report_pfc_storm(sai_object_id_t id, const PfcWdQueueEntry *, const string&);
 
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
@@ -136,10 +138,6 @@ private:
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-
-    shared_ptr<DBConnector> m_flexCounterDb = nullptr;
-    shared_ptr<ProducerTable> m_flexCounterTable = nullptr;
-    shared_ptr<ProducerTable> m_flexCounterGroupTable = nullptr;
 
     bool m_bigRedSwitchFlag = false;
     int m_pollInterval;

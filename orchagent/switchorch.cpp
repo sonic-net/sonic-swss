@@ -1,6 +1,7 @@
 #include <map>
 #include <set>
 #include <inttypes.h>
+#include <iomanip>
 
 #include "switchorch.h"
 #include "crmorch.h"
@@ -10,6 +11,9 @@
 #include "macaddress.h"
 #include "return_code.h"
 #include "saihelper.h"
+#include "sai_serialize.h"
+#include "notifications.h"
+#include "redisapi.h"
 
 using namespace std;
 using namespace swss;
@@ -17,8 +21,11 @@ using namespace swss;
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
+extern sai_hash_api_t *sai_hash_api;
 extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
+extern event_handle_t g_events_handle;
+extern string gMyAsicName;
 
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
@@ -30,7 +37,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME},
     {"debug_shell_enable",                  SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE},
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
-    {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC}
+    {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC},
+    {"ecmp_hash_offset",                    SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
+    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET}
 };
 
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
@@ -46,6 +55,43 @@ const map<string, sai_packet_action_t> packet_action_map =
     {"trap",    SAI_PACKET_ACTION_TRAP}
 };
 
+const map<string, sai_switch_attr_t> switch_asic_sdk_health_event_severity_to_switch_attribute_map =
+{
+    {"fatal", SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY},
+    {"warning", SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY},
+    {"notice", SAI_SWITCH_ATTR_REG_NOTICE_SWITCH_ASIC_SDK_HEALTH_CATEGORY}
+};
+
+const map<sai_switch_asic_sdk_health_severity_t, string> switch_asic_sdk_health_event_severity_reverse_map =
+{
+    {SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_FATAL, "fatal"},
+    {SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_WARNING, "warning"},
+    {SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_NOTICE, "notice"},
+};
+
+const map<sai_switch_asic_sdk_health_category_t, string> switch_asic_sdk_health_event_category_reverse_map =
+{
+    {SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_SW, "software"},
+    {SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW, "firmware"},
+    {SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_CPU_HW, "cpu_hw"},
+    {SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW, "asic_hw"}
+};
+
+const map<string, sai_switch_asic_sdk_health_category_t> switch_asic_sdk_health_event_category_map =
+{
+    {"software", SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_SW},
+    {"firmware", SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW},
+    {"cpu_hw", SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_CPU_HW},
+    {"asic_hw", SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW}
+};
+
+const std::set<sai_switch_asic_sdk_health_category_t> switch_asic_sdk_health_event_category_universal_set =
+{
+    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_SW,
+    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
+    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_CPU_HW,
+    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW
+};
 
 const std::set<std::string> switch_non_sai_attribute_set = {"ordered_ecmp"};
 
@@ -76,18 +122,117 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         m_db(db),
         m_stateDb(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
-        m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 })))
+        m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
+        m_stateDbForNotification(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+        m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME))
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
 
+    initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
+    querySwitchHashDefaults();
+
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+}
+
+void SwitchOrch::initAsicSdkHealthEventNotification()
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+    vector<FieldValueTuple> fvVector;
+    vector<tuple<sai_switch_attr_t, const string, const string>> reg_severities = {
+        {SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY, SWITCH_CAPABILITY_TABLE_REG_FATAL_ASIC_SDK_HEALTH_CATEGORY, "fatal"},
+        {SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY, SWITCH_CAPABILITY_TABLE_REG_WARNING_ASIC_SDK_HEALTH_CATEGORY, "warning"},
+        {SAI_SWITCH_ATTR_REG_NOTICE_SWITCH_ASIC_SDK_HEALTH_CATEGORY, SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY, "notice"}
+    };
+
+    bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_SWITCH_ASIC_SDK_HEALTH_EVENT_NOTIFY);
+    if (supported)
+    {
+        attr.id = SAI_SWITCH_ATTR_SWITCH_ASIC_SDK_HEALTH_EVENT_NOTIFY;
+        attr.value.ptr = (void *)on_switch_asic_sdk_health_event;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to register ASIC/SDK health event handler: %s", sai_serialize_status(status).c_str());
+            supported = false;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE, "true");
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("ASIC/SDK health event is not supported");
+    }
+
+    DBConnector cfgDb("CONFIG_DB", 0);
+    Table cfgSuppressASHETable(&cfgDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
+    string suppressedCategories;
+    bool atLeastOneSupported = false;
+
+    if (!supported)
+    {
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE, "false");
+        for (auto c : reg_severities)
+        {
+            fvVector.emplace_back(get<1>(c), "false");
+        }
+        set_switch_capability(fvVector);
+
+        return;
+    }
+
+    for (auto c : reg_severities)
+    {
+        supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, get<0>(c));
+        if (supported)
+        {
+            cfgSuppressASHETable.hget(get<2>(c), "categories", suppressedCategories);
+            registerAsicSdkHealthEventCategories(get<0>(c), get<2>(c), suppressedCategories, true);
+            suppressedCategories.clear();
+
+            m_supportedAsicSdkHealthEventAttributes.insert(get<0>(c));
+            fvVector.emplace_back(get<1>(c), "true");
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Unsupport to register ASIC/SDK health categories for severity %s", get<2>(c).c_str());
+            fvVector.emplace_back(get<1>(c), "false");
+        }
+        atLeastOneSupported = atLeastOneSupported || supported;
+    }
+
+    set_switch_capability(fvVector);
+
+    if (atLeastOneSupported)
+    {
+        try
+        {
+            // Load the Lua script to eliminate oldest entries
+            string eliminateEventsLuaScript = swss::loadLuaScript("eliminate_events.lua");
+            m_eliminateEventsSha = swss::loadRedisScript(m_stateDb.get(), eliminateEventsLuaScript);
+
+            // Init timer
+            auto interv = timespec { .tv_sec = ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL, .tv_nsec = 0 };
+            m_eliminateEventsTimer = new SelectableTimer(interv);
+            auto executor = new ExecutableTimer(m_eliminateEventsTimer, this, "ASIC_SDK_HEALTH_EVENT_ELIMINATE_TIMER");
+            Orch::addExecutor(executor);
+            m_eliminateEventsTimer->start();
+        }
+        catch (...)
+        {
+            // This can happen only on mock test. If it happens on a real switch, we should log an error message
+            SWSS_LOG_ERROR("Unable to load the Lua script to eliminate events\n");
+        }
+    }
 }
 
 void SwitchOrch::initAclGroupsBindToSwitch()
@@ -398,6 +543,8 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                 MacAddress mac_addr;
                 bool invalid_attr = false;
+                bool ret = false;
+                bool unsupported_attr = false;
                 switch (attr.id)
                 {
                     case SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION:
@@ -435,6 +582,29 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
                         break;
 
+                    case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET:
+                        ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+                    case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET:
+                        ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+
                     default:
                         invalid_attr = true;
                         break;
@@ -442,7 +612,14 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 if (invalid_attr)
                 {
                     /* break from kfvFieldsValues for loop */
+                    SWSS_LOG_ERROR("Invalid Attribute %s", attribute.c_str());
+                    // Will not continue to set the rest of the attributes
                     break;
+                }
+                if (unsupported_attr){
+                    SWSS_LOG_ERROR("Unsupported Attribute %s", attribute.c_str());
+                    // Continue to set the rest of the attributes, even if current attribute is unsupported
+                    continue;
                 }
 
                 sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
@@ -473,24 +650,409 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
     }
 }
 
-void SwitchOrch::doTask(Consumer &consumer)
+bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const
+{
+    const auto &oid = isEcmpHash ? m_switchHashDefaults.ecmpHash.oid : m_switchHashDefaults.lagHash.oid;
+    const auto &hfSet = isEcmpHash ? hash.ecmp_hash.value : hash.lag_hash.value;
+
+    std::vector<sai_int32_t> hfList;
+    std::transform(
+        hfSet.cbegin(), hfSet.cend(), std::back_inserter(hfList),
+        [](sai_native_hash_field_t value) { return static_cast<sai_int32_t>(value); }
+    );
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST;
+    attr.value.s32list.list = hfList.data();
+    attr.value.s32list.count = static_cast<sai_uint32_t>(hfList.size());
+
+    auto status = sai_hash_api->set_hash_attribute(oid, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchHashAlgorithmSai(const SwitchHash &hash, bool isEcmpHash) const
+{
+    sai_attribute_t attr;
+
+    attr.id = isEcmpHash ? SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM : SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM;
+    attr.value.s32 = static_cast<sai_int32_t>(isEcmpHash ? hash.ecmp_hash_algorithm.value : hash.lag_hash_algorithm.value);
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
 {
     SWSS_LOG_ENTER();
-    const string & table_name = consumer.getTableName();
 
-    if (table_name == APP_SWITCH_TABLE_NAME)
+    auto hObj = swHlpr.getSwHash();
+    auto cfgUpd = false;
+
+    if (hash.ecmp_hash.is_set)
     {
-        doAppSwitchTableTask(consumer);
-    }
-    else if (table_name == CFG_ASIC_SENSORS_TABLE_NAME)
-    {
-        doCfgSensorsTableTask(consumer);
+        if (hObj.ecmp_hash.value != hash.ecmp_hash.value)
+        {
+            if (swCap.isSwitchEcmpHashSupported())
+            {
+                if (!swCap.validateSwitchHashFieldCap(hash.ecmp_hash.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch ECMP hash: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchHashFieldListSai(hash, true))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch ECMP hash in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Switch ECMP hash configuration is not supported: skipping ...");
+            }
+        }
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
+        if (hObj.ecmp_hash.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch ECMP hash configuration: operation is not supported");
+            return false;
+        }
     }
 
+    if (hash.lag_hash.is_set)
+    {
+        if (hObj.lag_hash.value != hash.lag_hash.value)
+        {
+            if (swCap.isSwitchLagHashSupported())
+            {
+                if (!swCap.validateSwitchHashFieldCap(hash.lag_hash.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch LAG hash: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchHashFieldListSai(hash, false))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch LAG hash in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Switch LAG hash configuration is not supported: skipping ...");
+            }
+        }
+    }
+    else
+    {
+        if (hObj.lag_hash.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch LAG hash configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (hash.ecmp_hash_algorithm.is_set)
+    {
+        if (!hObj.ecmp_hash_algorithm.is_set || (hObj.ecmp_hash_algorithm.value != hash.ecmp_hash_algorithm.value))
+        {
+            if (swCap.isSwitchEcmpHashAlgorithmSupported())
+            {
+                if (!swCap.validateSwitchEcmpHashAlgorithmCap(hash.ecmp_hash_algorithm.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch ECMP hash algorithm: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchHashAlgorithmSai(hash, true))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch ECMP hash algorithm in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Switch ECMP hash algorithm configuration is not supported: skipping ...");
+            }
+        }
+    }
+    else
+    {
+        if (hObj.ecmp_hash_algorithm.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch ECMP hash algorithm configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (hash.lag_hash_algorithm.is_set)
+    {
+        if (!hObj.lag_hash_algorithm.is_set || (hObj.lag_hash_algorithm.value != hash.lag_hash_algorithm.value))
+        {
+            if (swCap.isSwitchLagHashAlgorithmSupported())
+            {
+                if (!swCap.validateSwitchLagHashAlgorithmCap(hash.lag_hash_algorithm.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch LAG hash algorithm: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchHashAlgorithmSai(hash, false))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch LAG hash algorithm in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Switch LAG hash algorithm configuration is not supported: skipping ...");
+            }
+        }
+    }
+    else
+    {
+        if (hObj.lag_hash_algorithm.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch LAG hash algorithm configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    // Don't update internal cache when config remains unchanged
+    if (!cfgUpd)
+    {
+        SWSS_LOG_NOTICE("Switch hash in SAI is up-to-date");
+        return true;
+    }
+
+    swHlpr.setSwHash(hash);
+
+    SWSS_LOG_NOTICE("Set switch hash in SAI");
+
+    return true;
+}
+
+void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        SWSS_LOG_INFO("KEY: %s, OP: %s", key.c_str(), op.c_str());
+
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("Failed to parse switch hash key: empty string");
+            it = map.erase(it);
+            continue;
+        }
+
+        SwitchHash hash;
+
+        if (op == SET_COMMAND)
+        {
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+
+                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+
+                hash.fieldValueMap[fieldName] = fieldValue;
+            }
+
+            if (swHlpr.parseSwHash(hash))
+            {
+                if (!setSwitchHash(hash))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch hash: ASIC and CONFIG DB are diverged");
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch hash: operation is not supported: ASIC and CONFIG DB are diverged");
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation(%s)", op.c_str());
+        }
+
+        it = map.erase(it);
+    }
+}
+
+void SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const string &severityString, const string &suppressed_category_list, bool isInitializing)
+{
+    sai_status_t status;
+    set<sai_switch_asic_sdk_health_category_t> interested_categories_set = switch_asic_sdk_health_event_category_universal_set;
+
+    SWSS_LOG_INFO("Register ASIC/SDK health event for severity %s(%d) with categories [%s] suppressed", severityString.c_str(), saiSeverity, suppressed_category_list.c_str());
+
+    if (!suppressed_category_list.empty())
+    {
+        auto &&categories = tokenize(suppressed_category_list, ',');
+        for (auto category : categories)
+        {
+            try
+            {
+                interested_categories_set.erase(switch_asic_sdk_health_event_category_map.at(category));
+            }
+            catch (std::out_of_range &e)
+            {
+                SWSS_LOG_ERROR("Unknown ASIC/SDK health category %s to suppress", category.c_str());
+                continue;
+            }
+        }
+    }
+
+    if (isInitializing && interested_categories_set.empty())
+    {
+        SWSS_LOG_INFO("All categories are suppressed for severity %s", severityString.c_str());
+        return;
+    }
+
+    vector<int32_t> sai_categories(interested_categories_set.begin(), interested_categories_set.end());
+    sai_attribute_t attr;
+
+    attr.id = saiSeverity;
+    attr.value.s32list.count = (uint32_t)sai_categories.size();
+    attr.value.s32list.list = sai_categories.data();
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to register ASIC/SDK health event categories for severity %s, status: %s", severityString.c_str(), sai_serialize_status(status).c_str());
+    }
+}
+
+void SwitchOrch::doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        SWSS_LOG_INFO("KEY: %s, OP: %s", key.c_str(), op.c_str());
+
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("Failed to parse switch hash key: empty string");
+            it = map.erase(it);
+            continue;
+        }
+
+        sai_switch_attr_t saiSeverity;
+        try
+        {
+            saiSeverity = switch_asic_sdk_health_event_severity_to_switch_attribute_map.at(key);
+        }
+        catch (std::out_of_range &e)
+        {
+            SWSS_LOG_ERROR("Unknown severity %s in SUPPRESS_ASIC_SDK_HEALTH_EVENT table", key.c_str());
+            it = map.erase(it);
+            continue;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            bool categoriesConfigured = false;
+            bool continueMainLoop = false;
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+
+                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+
+                if (m_supportedAsicSdkHealthEventAttributes.find(saiSeverity) == m_supportedAsicSdkHealthEventAttributes.end())
+                {
+                    SWSS_LOG_NOTICE("Unsupport to register categories on severity %d", saiSeverity);
+                    it = map.erase(it);
+                    continueMainLoop = true;
+                    break;
+                }
+
+                if (fieldName == "categories")
+                {
+                    registerAsicSdkHealthEventCategories(saiSeverity, key, fieldValue);
+                    categoriesConfigured = true;
+                }
+            }
+
+            if (continueMainLoop)
+            {
+                continue;
+            }
+
+            if (!categoriesConfigured)
+            {
+                registerAsicSdkHealthEventCategories(saiSeverity, key);
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            registerAsicSdkHealthEventCategories(saiSeverity, key);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation(%s)", op.c_str());
+        }
+
+        it = map.erase(it);
+    }
+}
+
+void SwitchOrch::doTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    const auto &tableName = consumer.getTableName();
+
+    if (tableName == APP_SWITCH_TABLE_NAME)
+    {
+        doAppSwitchTableTask(consumer);
+    }
+    else if (tableName == CFG_ASIC_SENSORS_TABLE_NAME)
+    {
+        doCfgSensorsTableTask(consumer);
+    }
+    else if (tableName == CFG_SWITCH_HASH_TABLE_NAME)
+    {
+        doCfgSwitchHashTableTask(consumer);
+    }
+    else if (tableName == CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME)
+    {
+        doCfgSuppressAsicSdkHealthEventTableTask(consumer);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown table : %s", tableName.c_str());
+    }
 }
 
 void SwitchOrch::doTask(NotificationConsumer& consumer)
@@ -540,6 +1102,85 @@ void SwitchOrch::restartCheckReply(const string &op, const string &data, std::ve
     NotificationProducer restartRequestReply(m_db, "RESTARTCHECKREPLY");
     restartRequestReply.send(op, data, values);
     checkRestartReadyDone();
+}
+
+void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
+                                            sai_switch_asic_sdk_health_severity_t severity,
+                                            sai_timespec_t timestamp,
+                                            sai_switch_asic_sdk_health_category_t category,
+                                            sai_switch_health_data_t data,
+                                            const sai_u8_list_t &description)
+{
+    std::vector<swss::FieldValueTuple> values;
+    const string &severity_str = switch_asic_sdk_health_event_severity_reverse_map.at(severity);
+    const string &category_str = switch_asic_sdk_health_event_category_reverse_map.at(category);
+    string description_str;
+    const std::time_t &t = (std::time_t)timestamp.tv_sec;
+    stringstream time_ss;
+    time_ss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+
+    switch (data.data_type)
+    {
+    case SAI_HEALTH_DATA_TYPE_GENERAL:
+    {
+        vector<uint8_t> description_with_terminator(description.list, description.list + description.count);
+        // Add the terminate character
+        description_with_terminator.push_back(0);
+        description_str = string(reinterpret_cast<char*>(description_with_terminator.data()));
+        // Remove unprintable characters but keep CR and NL
+        if (description_str.end() !=
+            description_str.erase(std::remove_if(
+                                  description_str.begin(),
+                                  description_str.end(),
+                                  [](unsigned char x) {
+                                      return (x != 0x0d) && (x != 0x0a) && !std::isprint(x);
+                                  }),
+                                  description_str.end()))
+        {
+            SWSS_LOG_NOTICE("Unprintable characters in description of ASIC/SDK health event");
+        }
+        break;
+    }
+    default:
+        SWSS_LOG_ERROR("Unknown data type %d when receiving ASIC/SDK health event", data.data_type);
+        // Do not return. The ASIC/SDK health event will still be recorded but without the description
+        break;
+    }
+
+    event_params_t params = {
+        { "sai_timestamp", time_ss.str() },
+        { "severity", severity_str },
+        { "category", category_str },
+        { "description", description_str }};
+
+    string asic_name_str;
+    if (!gMyAsicName.empty())
+    {
+        asic_name_str = "asic " + gMyAsicName + ",";
+        params["asic_name"] = gMyAsicName;
+    }
+
+    if (severity == SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_FATAL)
+    {
+        SWSS_LOG_ERROR("[%s] ASIC/SDK health event occurred at %s, %scategory %s: %s", severity_str.c_str(), time_ss.str().c_str(), asic_name_str.c_str(), category_str.c_str(), description_str.c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, %scategory %s: %s", severity_str.c_str(), time_ss.str().c_str(), asic_name_str.c_str(), category_str.c_str(), description_str.c_str());
+    }
+
+    values.emplace_back("severity", severity_str);
+    values.emplace_back("category", category_str);
+    values.emplace_back("description", description_str);
+
+    m_asicSdkHealthEventTable->set(time_ss.str(),values);
+
+    event_publish(g_events_handle, "asic-sdk-health-event", &params);
+
+    if (severity == SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_FATAL)
+    {
+        m_fatalEventCount++;
+    }
 }
 
 bool SwitchOrch::setAgingFDB(uint32_t sec)
@@ -653,6 +1294,14 @@ void SwitchOrch::doTask(SelectableTimer &timer)
                 m_sensorsAvgTempSupported = false;
                 SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_AVERAGE_TEMP: %d", status);
             }
+        }
+    }
+    else if (&timer == m_eliminateEventsTimer)
+    {
+        auto ret = swss::runRedisScript(*m_stateDb, m_eliminateEventsSha, {}, {});
+        for (auto str: ret)
+        {
+            SWSS_LOG_INFO("Eliminate ASIC/SDK health %s", str.c_str());
         }
     }
 }
@@ -814,6 +1463,38 @@ void SwitchOrch::querySwitchTpidCapability()
     }
 }
 
+bool SwitchOrch::getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const
+{
+    sai_attribute_t attr;
+    attr.id = isEcmpHash ? SAI_SWITCH_ATTR_ECMP_HASH : SAI_SWITCH_ATTR_LAG_HASH;
+    attr.value.oid = SAI_NULL_OBJECT_ID;
+
+    auto status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
+    oid = attr.value.oid;
+
+    return true;
+}
+
+void SwitchOrch::querySwitchHashDefaults()
+{
+    SWSS_LOG_ENTER();
+
+    if (!getSwitchHashOidSai(m_switchHashDefaults.ecmpHash.oid, true))
+    {
+        SWSS_LOG_WARN("Failed to get switch ECMP hash OID");
+    }
+
+    if (!getSwitchHashOidSai(m_switchHashDefaults.lagHash.oid, false))
+    {
+        SWSS_LOG_WARN("Failed to get switch LAG hash OID");
+    }
+}
+
 bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
 {
     SWSS_LOG_ENTER();
@@ -839,5 +1520,53 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
         {
             return false;
         }
+    }
+}
+
+// Bind ACL table (with bind type switch) to switch
+bool SwitchOrch::bindAclTableToSwitch(acl_stage_type_t stage, sai_object_id_t table_id)
+{
+    sai_attribute_t attr;
+    if ( stage == ACL_STAGE_INGRESS ) {
+        attr.id = SAI_SWITCH_ATTR_INGRESS_ACL;
+    } else {
+        attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    }
+    attr.value.oid = table_id;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    string stage_str = (stage == ACL_STAGE_INGRESS) ? "ingress" : "egress";
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Bind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to bind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return false;
+    }
+}
+
+// Unbind ACL table from swtich
+bool SwitchOrch::unbindAclTableFromSwitch(acl_stage_type_t stage,sai_object_id_t table_id)
+{
+    sai_attribute_t attr;
+    if ( stage == ACL_STAGE_INGRESS ) {
+        attr.id = SAI_SWITCH_ATTR_INGRESS_ACL;
+    } else {
+        attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    }
+    attr.value.oid = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    string stage_str = (stage == ACL_STAGE_INGRESS) ? "ingress" : "egress";
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Unbind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to unbind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return false;
     }
 }
