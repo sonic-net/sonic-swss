@@ -1865,11 +1865,11 @@ def manage_dvs(request) -> str:
     if graceful_stop:
         dvs.stop_swss()
         dvs.stop_syncd()
-        sleep(60)
+        sleep(30)
 
     dvs.get_logs()
     dvs.destroy()
-
+    sleep(30)
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
