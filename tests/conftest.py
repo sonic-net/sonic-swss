@@ -1856,6 +1856,7 @@ def manage_dvs(request) -> str:
             dvs.destroy_servers()
             dvs.create_servers()
             dvs.restart()
+            sleep(30)
 
         return dvs
 
@@ -1864,6 +1865,7 @@ def manage_dvs(request) -> str:
     if graceful_stop:
         dvs.stop_swss()
         dvs.stop_syncd()
+        sleep(60)
 
     dvs.get_logs()
     dvs.destroy()
