@@ -4678,14 +4678,19 @@ bool PortsOrch::setSaiHostTxSignal(const Port &port, bool enable)
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
     attr.value.booldata = enable;
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
 
-    if (status != SAI_STATUS_SUCCESS)
+    if (saiOidToAlias.find(port.m_port_id) != saiOidToAlias.end())
     {
-        SWSS_LOG_ERROR("Could not setSAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE to port 0x%" PRIx64, port.m_port_id);
-        return false;
+        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Could not set SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE to port 0x%" PRIx64, port.m_port_id);
+            return false;
+        }
+        return true;
     }
 
+    SWSS_LOG_NOTICE("Could not set SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE - OID does not exist 0x%" PRIx64, port.m_port_id);
     return true;
 }
 
