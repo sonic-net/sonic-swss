@@ -51,12 +51,15 @@ def wait_for_result(
         status, result = polling_function()
 
         if status:
+            print("status up")
             return (True, result)
 
+        time.sleep(60)
         time.sleep(polling_config.polling_interval)
 
     if polling_config.strict:
         message = failure_message or f"Operation timed out after {polling_config.timeout} seconds with result {result}"
+        print("polling_config.strict not status  by function [status, result = polling_function()]")
         assert False, message
 
     return (False, result)
