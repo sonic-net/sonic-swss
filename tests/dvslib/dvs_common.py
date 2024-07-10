@@ -16,7 +16,7 @@ class PollingConfig:
         strict: If the strict flag is set, reaching the timeout will cause tests to fail.
     """
 
-    polling_interval: float = 0.01
+    polling_interval: float = 0.1
     timeout: float = 20.00
     strict: bool = True
 
