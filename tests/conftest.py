@@ -1095,7 +1095,7 @@ class DockerVirtualSwitch:
         time.sleep(1)
 
     # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan, sub port intf
-    def add_ip_address(self, interface, ip, vrf_name=None):
+    def add_ip_address(self, intadmin_statuserface, ip, vrf_name=None):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
         elif interface.startswith("Vlan"):

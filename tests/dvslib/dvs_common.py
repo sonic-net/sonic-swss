@@ -16,7 +16,7 @@ class PollingConfig:
         strict: If the strict flag is set, reaching the timeout will cause tests to fail.
     """
 
-    polling_interval: float = 0.1
+    polling_interval: float = 0.02
     timeout: float = 20.00
     strict: bool = True
 
@@ -51,15 +51,15 @@ def wait_for_result(
         status, result = polling_function()
 
         if status:
-            print("status up")
+            print("xflow status up")
             return (True, result)
 
-        time.sleep(60)
         time.sleep(polling_config.polling_interval)
-
+        time.sleep(30)
+        
     if polling_config.strict:
-        message = failure_message or f"Operation timed out after {polling_config.timeout} seconds with result {result}"
         print("polling_config.strict not status  by function [status, result = polling_function()]")
+        message = failure_message or f"Operation timed out after {polling_config.timeout} seconds with result {result}"
         assert False, message
 
     return (False, result)

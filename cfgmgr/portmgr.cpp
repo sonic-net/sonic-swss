@@ -260,7 +260,7 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     field_values.emplace_back(i);
                 }
-            }
+            }inside not configured
 
             if (field_values.size())
             {
@@ -273,8 +273,8 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                //writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-                //std::cout<<std::endl<<"writing content of dhcp_rate_limit to Appl DB from config DB if port not ok"<<std::endl;
+                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                std::cout<<std::endl<<"writing content of dhcp_rate_limit to Appl DB from config DB if port not ok"<<std::endl;
 
 
 
@@ -282,7 +282,7 @@ void PortMgr::doTask(Consumer &consumer)
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
-                //field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+                field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
