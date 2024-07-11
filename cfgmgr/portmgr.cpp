@@ -260,7 +260,7 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     field_values.emplace_back(i);
                 }
-            }inside not configured
+            }
 
             if (field_values.size())
             {
