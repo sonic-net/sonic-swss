@@ -139,6 +139,7 @@ if cell_size > 2 * minimal_packet_size then
 else
     worst_case_factor = (2 * cell_size) / (1 + cell_size)
 end
+worst_case_factor = math.ceil(worst_case_factor)
 
 local small_packet_percentage_by_byte = 100 * minimal_packet_size / ((small_packet_percentage * minimal_packet_size + (100 - small_packet_percentage) * lossless_mtu) / 100)
 cell_occupancy = (100 - small_packet_percentage_by_byte + small_packet_percentage_by_byte * worst_case_factor) / 100
@@ -154,7 +155,7 @@ if pause_quanta ~= nil then
     peer_response_time = (pause_quanta) * 512 / 8
 end
 
-bytes_on_cable = 2 * cable_length * port_speed * 1000000000 / speed_of_light / (8 * 1024)
+bytes_on_cable = 2 * cable_length * port_speed * 1000000000 / speed_of_light / (8 * 1000)
 propagation_delay = port_mtu + bytes_on_cable + 2 * bytes_on_gearbox + mac_phy_delay + peer_response_time + kb_on_tile
 
 -- Calculate the xoff and xon and then round up at 1024 bytes
