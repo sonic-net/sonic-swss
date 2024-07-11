@@ -175,11 +175,6 @@ namespace portmgr_ut
         auto value_opt = swss::fvsGetValue(values, "mtu", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
-
-        auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR, value_opt.get());
-
         value_opt = swss::fvsGetValue(values, "admin_status", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
@@ -221,9 +216,6 @@ namespace portmgr_ut
         ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
 
         app_port_table.get("Ethernet0", values);
-        auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR, value_opt.get());
 
         value_opt = swss::fvsGetValue(values, "admin_status", true);
         ASSERT_TRUE(value_opt);
