@@ -82,6 +82,8 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_shlTable(pipeline, APP_EVPN_SH_TABLE_NAME, true),
     m_shl_dfmodeTable(pipeline, APP_EVPN_DF_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelperShl(pipeline, &m_shlTable, APP_EVPN_SH_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelperDf(pipeline, &m_shl_dfmodeTable, APP_EVPN_DF_TABLE_NAME, "bgp", "bgp"),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_nl_sock = nl_socket_alloc();
@@ -640,35 +642,44 @@ void RouteSync::onBridgePortMsg(struct nlmsghdr *h, int len)
     if (nlmsg_type == RTM_NEWTFILTER && vteps_str.empty())
         return;
 
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+    bool warmRestartShlInProgress = m_warmStartHelperShl.inProgress();
+    bool warmRestartDfInProgress = m_warmStartHelperDf.inProgress();
     string key = ifname;
 
     if (nlmsg_type == RTM_DELTFILTER) 
     {
-        if (!warmRestartInProgress)
+        if (!warmRestartShlInProgress)
         {
             m_shlTable.del(key);
             SWSS_LOG_INFO("EVPN_SPLIT_HORIZON_TABLE del msg: %s", key.c_str());
-
-            m_shl_dfmodeTable.del(key);
-            SWSS_LOG_INFO("EVPN_DF_TABLE del msg: %s", key.c_str());
         }
         else
         {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
+            SWSS_LOG_INFO("Warm-Restart mode SHL: Receiving delete msg: %s",
                           key.c_str());
 
             vector<FieldValueTuple> shl_fvVector;
             const KeyOpFieldsValuesTuple shl_kfv = std::make_tuple(key,
                                                                DEL_COMMAND,
                                                                shl_fvVector);
-            m_warmStartHelper.insertRefreshMap(shl_kfv);
+            m_warmStartHelperShl.insertRefreshMap(shl_kfv);
+        }
+
+        if (!warmRestartDfInProgress)
+        {
+            m_shl_dfmodeTable.del(key);
+            SWSS_LOG_INFO("EVPN_DF_TABLE del msg: %s", key.c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode DF: Receiving delete msg: %s",
+                          key.c_str());
 
             vector<FieldValueTuple> df_fvVector;
             const KeyOpFieldsValuesTuple df_kfv = std::make_tuple(key,
                                                                DEL_COMMAND,
                                                                df_fvVector);
-            m_warmStartHelper.insertRefreshMap(df_kfv);
+            m_warmStartHelperDf.insertRefreshMap(df_kfv);
         }
     } 
     else 
@@ -681,12 +692,32 @@ void RouteSync::onBridgePortMsg(struct nlmsghdr *h, int len)
         FieldValueTuple df_fv("df", df ? "true" : "false");
         df_fvVector.push_back(df_fv);
 
-        if (!warmRestartInProgress)
+        if (!warmRestartShlInProgress)
         {
             m_shlTable.set(key, shf_fvVector);
-            m_shl_dfmodeTable.set(key, df_fvVector);
             SWSS_LOG_INFO("EVPN_SPLIT_HORIZON_TABLE set msg: %s vteps %s",
                            key.c_str(), vteps_str.c_str());
+        }
+
+        /*
+         * During Split Horizon Filtering (SHF)/Designated Forwarder (DF) status updates
+         * will be temporarily put on hold by the warm-restart logic.
+         */
+
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode: EVPN_SPLIT_HORIZON_TABLE SHL set msg: %s vteps %s",
+                          key.c_str(), vteps_str.c_str());
+
+            const KeyOpFieldsValuesTuple shf_kfv = std::make_tuple(key,
+                                                               SET_COMMAND,
+                                                               shf_fvVector);
+            m_warmStartHelperShl.insertRefreshMap(shf_kfv);
+        }
+
+        if (!warmRestartDfInProgress)
+        {
+            m_shl_dfmodeTable.set(key, df_fvVector);
             SWSS_LOG_INFO("EVPN_DF_TABLE set msg: %s df %s",
                            key.c_str(), df ? "true" : "false");
         }
@@ -698,17 +729,13 @@ void RouteSync::onBridgePortMsg(struct nlmsghdr *h, int len)
 
         else
         {
-            SWSS_LOG_INFO("Warm-Restart mode: EVPN_SPLIT_HORIZON_TABLE set msg: %s vteps %s",
-                          key.c_str(), vteps_str.c_str());
+            SWSS_LOG_INFO("Warm-Restart mode: EVPN_SPLIT_HORIZON_TABLE DF set msg: %s DF - %s",
+                          key.c_str(), df ? "true" : "false");
 
-            const KeyOpFieldsValuesTuple shf_kfv = std::make_tuple(key,
-                                                               SET_COMMAND,
-                                                               shf_fvVector);
-            m_warmStartHelper.insertRefreshMap(shf_kfv);
             const KeyOpFieldsValuesTuple df_kfv = std::make_tuple(key,
                                                                SET_COMMAND,
                                                                df_fvVector);
-            m_warmStartHelper.insertRefreshMap(df_kfv);
+            m_warmStartHelperDf.insertRefreshMap(df_kfv);
         }
     }
 
@@ -1651,5 +1678,27 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
     {
         m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
+    }
+}
+
+void RouteSync::onWarmStartShlEnd()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_warmStartHelperShl.inProgress())
+    {
+        m_warmStartHelperShl.reconcile();
+        SWSS_LOG_NOTICE("Warm-Restart reconciliation SHL processed.");
+    }
+}
+
+void RouteSync::onWarmStartDfEnd()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_warmStartHelperDf.inProgress())
+    {
+        m_warmStartHelperDf.reconcile();
+        SWSS_LOG_NOTICE("Warm-Restart reconciliation DF processed.");
     }
 }

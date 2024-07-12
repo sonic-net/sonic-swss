@@ -50,6 +50,8 @@ public:
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
     void onWarmStartEnd(swss::DBConnector& applStateDb);
+    void onWarmStartShlEnd();
+    void onWarmStartDfEnd();
 
     /* Mark all routes from DB with offloaded flag */
     void markRoutesOffloaded(swss::DBConnector& db);
@@ -65,6 +67,8 @@ public:
     }
 
     WarmStartHelper  m_warmStartHelper;
+    WarmStartHelper  m_warmStartHelperShl;
+    WarmStartHelper  m_warmStartHelperDf;
 
 private:
     /* regular route table */
