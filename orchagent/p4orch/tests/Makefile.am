@@ -90,6 +90,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_ipmc_group.cpp \
 		       mock_sai_l2mc.cpp \
 		       mock_sai_l2mc_group.cpp \
+		       mock_sai_my_mac.cpp \
 		       mock_sai_serialize.cpp \
 		       mock_sai_router_interface.cpp \
 		       mock_sai_rpf_group.cpp \
