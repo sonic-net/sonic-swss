@@ -38,6 +38,7 @@ extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_bridge_api_t* sai_bridge_api;
 extern sai_switch_api_t* sai_switch_api;
+extern sai_my_mac_api_t* sai_my_mac_api;
 
 extern PortsOrch* gPortsOrch;
 
@@ -52,6 +53,8 @@ namespace {
 // the value will be provided by the P4 action.
 constexpr char* kLinkLocalIpv4Address = "169.254.0.1";
 constexpr char* kNeighborMacAddress = "00:00:00:00:00:01";
+constexpr char* kDefaultMyMacAddress = "00:00:00:00:00:01";
+constexpr char* kDefaultMyMacAddressMask = "00:00:00:00:00:00";
 
 void fillStatusArrayWithNotExecuted(std::vector<ReturnCode>& array,
                                     size_t startIndex) {
@@ -62,7 +65,8 @@ void fillStatusArrayWithNotExecuted(std::vector<ReturnCode>& array,
 
 // Create the vector of SAI attributes for creating a new RIF object.
 ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
-    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry) {
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+    const sai_object_id_t my_mac_oid) {
   Port port;
   if (!gPortsOrch->getPort(
           multicast_router_interface_entry.multicast_replica_port, port)) {
@@ -127,6 +131,14 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
   attr.id = SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE;
   attr.value.booldata = true;
   attrs.push_back(attr);
+
+  // For NSF purposes, we cannot add the new SAI_ROUTER_INTERFACE_ATTR_MY_MAC,
+  // a CREATE_ONLY attribute, for the deprecated action.
+  if (multicast_router_interface_entry.action != p4orch::kSetMulticastSrcMac) {
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MY_MAC;
+    attr.value.oid = my_mac_oid;
+    attrs.push_back(attr);
+  }
 
   return attrs;
 }
@@ -1327,9 +1339,41 @@ ReturnCode L3MulticastManager::createBridgePort(
   return ReturnCode();
 }
 
+ReturnCode L3MulticastManager::createDefaultMyMac() {
+  SWSS_LOG_ENTER();
+
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+
+  swss::MacAddress dummy_mac = swss::MacAddress(kDefaultMyMacAddress);
+  swss::MacAddress dummy_mac_mask = swss::MacAddress(kDefaultMyMacAddressMask);
+
+  attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS;
+  memcpy(attr.value.mac, dummy_mac.getMac(), sizeof(sai_mac_t));
+  attrs.push_back(attr);
+
+  attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS_MASK;
+  memcpy(attr.value.mac, dummy_mac_mask.getMac(), sizeof(sai_mac_t));
+  attrs.push_back(attr);
+
+  CHECK_ERROR_AND_LOG_AND_RETURN(
+      sai_my_mac_api->create_my_mac(&m_my_mac_oid, gSwitchId,
+                                    (uint32_t)attrs.size(), attrs.data()),
+      "Failed to create default My MAC object needed for multicast RIFs");
+
+  return ReturnCode();
+}
+
 ReturnCode L3MulticastManager::createRouterInterface(
     P4MulticastRouterInterfaceEntry& entry, sai_object_id_t* rif_oid) {
   SWSS_LOG_ENTER();
+
+  // For NSF purposes, we cannot add the new SAI_ROUTER_INTERFACE_ATTR_MY_MAC,
+  // a CREATE_ONLY attribute, for the deprecated action.
+  if (entry.action != p4orch::kSetMulticastSrcMac &&
+      m_my_mac_oid == SAI_NULL_OBJECT_ID) {
+    RETURN_IF_ERROR(createDefaultMyMac());
+  }
 
   // Confirm we haven't already created a RIF for this.
   if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
@@ -1342,7 +1386,7 @@ ReturnCode L3MulticastManager::createRouterInterface(
 
   // Create RIF SAI object.
   ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
-                   prepareRifSaiAttrs(entry));
+                   prepareRifSaiAttrs(entry, m_my_mac_oid));
   auto sai_status = sai_router_intfs_api->create_router_interface(
       rif_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
   if (sai_status != SAI_STATUS_SUCCESS) {
@@ -3192,7 +3236,8 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
 
 std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
-  auto attrs_or = prepareRifSaiAttrs(*multicast_router_interface_entry);
+  auto attrs_or =
+      prepareRifSaiAttrs(*multicast_router_interface_entry, m_my_mac_oid);
   if (!attrs_or.ok()) {
     return std::string("Failed to get multicast router interface SAI attrs: ") +
            attrs_or.status().message();
