@@ -197,6 +197,8 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
 
+  ReturnCode createDefaultMyMac();
+
   ReturnCode deleteNextHop(P4MulticastRouterInterfaceEntry* entry,
                            const sai_object_id_t next_hop_oid);
 
@@ -364,6 +366,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
   P4MulticastGroupTable m_multicastGroupEntryTable;
+
+  // OID for a valid MyMAC object, needed for creating multicast RIFs that will
+  // *not* result in a MyStation entry being added.  This will prevent the
+  // MyStation table size from blocking creating additional RIFs.
+  sai_object_id_t m_my_mac_oid = SAI_NULL_OBJECT_ID;
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;

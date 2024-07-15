@@ -24,6 +24,7 @@ class TestP4RTL3MulticastRouterInterface(object):
     self.l2_asic_db_table = self._p4rt_l3_multicast_router_intf.L2_ASIC_DB_TBL_NAME
     self.next_hop_asic_db_table = self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME
     self.neighbor_asic_db_table = self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME
+    self.my_mac_asic_db_table = self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME
 
   def _cleanup(self):
     self._p4rt_l3_multicast_router_intf.clean_up()
@@ -474,6 +475,8 @@ class TestP4RTL3MulticastRouterInterface(object):
         self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
     original_neighbor_asic_db_entries = util.get_keys(
         self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    original_my_mac_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
 
     ####################################
     # Add operation
@@ -499,6 +502,26 @@ class TestP4RTL3MulticastRouterInterface(object):
         mcast_router_intf_key)
     assert status == True
     util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Fetch my MAC oid
+    # ------------------------------------------------------
+    mcast_my_mac_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+    assert len(mcast_my_mac_asic_entries) == (
+        len(original_my_mac_asic_db_entries) + 1)
+
+    my_mac_asic_db_key = None
+    for key in mcast_my_mac_asic_entries:
+      if key not in original_my_mac_asic_db_entries:
+          my_mac_asic_db_key = key
+          break
+    assert my_mac_asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
+        my_mac_asic_db_key)
+    assert status == True
 
     # ------------------------------------------------------
     # Check that ASIC DB has expected values (RIF).
@@ -536,6 +559,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -662,6 +686,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -753,6 +778,12 @@ class TestP4RTL3MulticastRouterInterface(object):
     assert len(mcast_neighbor_asic_entries) == len(original_neighbor_asic_db_entries)
 
     self._cleanup()
+
+    ####################################
+    # Cleanup
+    ####################################
+    # Cleanup needed to clear MyMac for next test.
+    dvs.restart()
 
   def test_L3MulticastRouterInterfaceAddUpdateDeleteMulticastSetSrcMacAndVlanId(self, dvs, testlog):
     """
@@ -773,6 +804,8 @@ class TestP4RTL3MulticastRouterInterface(object):
         self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
     original_neighbor_asic_db_entries = util.get_keys(
         self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    original_my_mac_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
 
     ####################################
     # Add operation
@@ -798,6 +831,26 @@ class TestP4RTL3MulticastRouterInterface(object):
         mcast_router_intf_key)
     assert status == True
     util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Fetch my MAC oid
+    # ------------------------------------------------------
+    mcast_my_mac_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+    assert len(mcast_my_mac_asic_entries) == (
+        len(original_my_mac_asic_db_entries) + 1)
+
+    my_mac_asic_db_key = None
+    for key in mcast_my_mac_asic_entries:
+        if key not in original_my_mac_asic_db_entries:
+            my_mac_asic_db_key = key
+            break
+    assert my_mac_asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
+        my_mac_asic_db_key)
+    assert status == True
 
     # ------------------------------------------------------
     # Check that ASIC DB has expected values (RIF).
@@ -836,6 +889,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -963,6 +1017,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -1054,6 +1109,12 @@ class TestP4RTL3MulticastRouterInterface(object):
     assert len(mcast_neighbor_asic_entries) == len(original_neighbor_asic_db_entries)
 
     self._cleanup()
+
+    ####################################
+    # Cleanup
+    ####################################
+    # Cleanup needed to clear MyMac for next test.
+    dvs.restart()
 
   def test_L3MulticastRouterInterfaceAddUpdateDeleteMulticastSetSrcMacAndDstMacAndVlanId(self, dvs, testlog):
     """
@@ -1075,6 +1136,8 @@ class TestP4RTL3MulticastRouterInterface(object):
         self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
     original_neighbor_asic_db_entries = util.get_keys(
         self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    original_my_mac_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
 
     ####################################
     # Add operation
@@ -1101,6 +1164,26 @@ class TestP4RTL3MulticastRouterInterface(object):
     util.verify_attr(fvs, attr_list)
 
     # ------------------------------------------------------
+    # Fetch my MAC oid
+    # ------------------------------------------------------
+    mcast_my_mac_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+    assert len(mcast_my_mac_asic_entries) == (
+        len(original_my_mac_asic_db_entries) + 1)
+
+    my_mac_asic_db_key = None
+    for key in mcast_my_mac_asic_entries:
+        if key not in original_my_mac_asic_db_entries:
+            my_mac_asic_db_key = key
+            break
+    assert my_mac_asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
+        my_mac_asic_db_key)
+    assert status == True
+
+    # ------------------------------------------------------
     # Check that ASIC DB has expected values (RIF).
     # ------------------------------------------------------
     mcast_rif_asic_entries = util.get_keys(
@@ -1137,6 +1220,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -1264,6 +1348,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -1355,6 +1440,12 @@ class TestP4RTL3MulticastRouterInterface(object):
     assert len(mcast_neighbor_asic_entries) == len(original_neighbor_asic_db_entries)
 
     self._cleanup()
+
+    ####################################
+    # Cleanup
+    ####################################
+    # Cleanup needed to clear MyMac for next test.
+    dvs.restart()
 
 class TestP4RTL3MulticastGroup(object):
   """Tests interacting with replication multicast table"""
