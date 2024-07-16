@@ -298,7 +298,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             //     SWSS_LOG_WARN("Failed to bind policer %" PRId64 " to counter %" PRId64 "", policer_id, counter_id);
             // }
 
-            addPolicerToFlexCounter(policer_id, key.c_str());
+            // addPolicerToFlexCounter(policer_id, key.c_str());
             
         }
         // Update an existing policer
@@ -451,7 +451,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
 //     return m_counterOid;
 // }
 
-void PolicerOrch::generatePolicerCounterStats(std::unordered_set<std::string> counter_stats)
+void PolicerOrch::generatePolicerCounterStats(std::unordered_set<std::string>& counter_stats)
 {
     for (const auto& it: policer_stat_ids)
     {
@@ -537,7 +537,7 @@ void PolicerOrch::doTask(SelectableTimer &timer)
 
             SWSS_LOG_DEBUG("policer2");
             // auto &&counters_str = counter_stats.str();
-            m_policer_counter_manager.setCounterIdList(it->first, CounterType::POLICER, counter_stats);
+            m_policer_counter_manager.setCounterIdList(it->first, CounterType::POLICER, pcounter_stats, gSwitchId);
             // startFlexCounterPolling(gSwitchId, it->second.c_str(), serializeCounterStats(counter_stats), POLICER_COUNTER_ID_LIST);
             // startFlexCounterPolling(gSwitchId, it->second.c_str(), counters_str.c_str(), POLICER_COUNTER_ID_LIST);
             SWSS_LOG_DEBUG("inserted %s to flex counter", it->second.c_str());
@@ -548,6 +548,17 @@ void PolicerOrch::doTask(SelectableTimer &timer)
             ++it;
         }
     }
+}
+
+
+std::unordered_set<std::string> PolicerOrch::generatePCounterStats()
+{
+    std::unordered_set<std::string> counter_stats;
+    for (const auto& it: policer_stat_ids)
+    {
+        counter_stats.emplace(sai_serialize_policer_stat(it));
+    }
+    return counter_stats;
 }
 
 

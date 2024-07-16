@@ -44,8 +44,9 @@ private:
     void getPolicerCounter(void);
     void initPolicerCounterPlugin(void);
     void removePCFromFlexCounter(const string &id, const string &name);
-    void generatePolicerCounterStats(std::unordered_set<std::string> counter_stats);
+    void generatePolicerCounterStats(std::unordered_set<std::string>& counter_stats);
     string getPolicerFlexCounterTableKey(string key);
+    std::unordered_set<std::string> generatePCounterStats();
 
 protected:
     std::shared_ptr<DBConnector> m_counter_db;
