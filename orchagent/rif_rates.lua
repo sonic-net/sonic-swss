@@ -10,6 +10,15 @@ local function logit(msg)
   logtable[#logtable+1] = tostring(msg)
 end
 
+local function calc_diff(new, last)
+    if new < last then
+        return 0
+    else
+        return new - last
+    end
+end
+
+
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
 local rates_table_name = "RATES"
@@ -45,10 +54,10 @@ for i = 1, n do
         local out_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS_last')
 
         -- Calculate new rates values
-        local rx_bps_new = (in_octets - in_octets_last) / delta * 1000
-        local tx_bps_new = (out_octets - out_octets_last) / delta * 1000
-        local rx_pps_new = (in_pkts - in_pkts_last) / delta * 1000
-        local tx_pps_new = (out_pkts - out_pkts_last) / delta * 1000
+        local rx_bps_new = calc_diff(in_octets, in_octets_last) / delta * 1000
+        local tx_bps_new = calc_diff(out_octets, out_octets_last) / delta * 1000
+        local rx_pps_new = calc_diff(in_pkts, in_pkts_last) / delta * 1000
+        local tx_pps_new = calc_diff(out_pkts, out_pkts_last) / delta * 1000
 
         if initialized == "DONE" then
             -- Get old rates values
