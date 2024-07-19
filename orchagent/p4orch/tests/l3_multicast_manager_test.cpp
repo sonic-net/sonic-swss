@@ -139,12 +139,6 @@ bool MatchIpmcSaiAttribute(const sai_attribute_t& attr,
       return false;
     }
   }
-  if (exp_attr.id == SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP) {
-    if (attr.id != SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP ||
-        attr.value.oid != exp_attr.value.oid) {
-      return false;
-    }
-  }
   return true;
 }
 
@@ -5341,7 +5335,7 @@ TEST_F(L3MulticastManagerTest, ConfirmAddMulticastGroupEntryWithNextHop) {
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID;
   attr.value.oid = kGroupOid1;
   exp_member_attrs1.push_back(attr);
-  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP;
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kNextHopOid1;
   exp_member_attrs1.push_back(attr);
   EXPECT_CALL(
@@ -5355,7 +5349,7 @@ TEST_F(L3MulticastManagerTest, ConfirmAddMulticastGroupEntryWithNextHop) {
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID;
   attr.value.oid = kGroupOid1;
   exp_member_attrs2.push_back(attr);
-  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP;
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = kNextHopOid2;
   exp_member_attrs2.push_back(attr);
   EXPECT_CALL(
@@ -8422,12 +8416,13 @@ TEST_F(L3MulticastManagerTest,
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
             std::vector<swss::FieldValueTuple>{});
-  table.set("SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
-            std::vector<swss::FieldValueTuple>{
-                swss::FieldValueTuple{
-                    "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID", "oid:0x1"},
-                swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP",
-                                      "oid:0x100a"}});
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
+                                "oid:0x1"},
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
+                                "oid:0x100a"}});
 
   // Verification should succeed with vaild key and value.
   EXPECT_EQ(VerifyState(db_key, attributes), "");
