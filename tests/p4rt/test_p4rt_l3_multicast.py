@@ -1761,7 +1761,7 @@ class TestP4RTL3MulticastGroup(object):
         asic_group_member_attr_list = [
             (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_ID,
              group_oid_to_ret),
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_NEXT_HOP,
+            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_OUTPUT_ID,
              next_hop_oids[idx]),
         ]
         util.verify_attr(fvs_asic_group_member,
@@ -2181,9 +2181,10 @@ class TestP4RTL3MulticastGroup(object):
     ####################################
     dvs.restart()
 
+  @pytest.mark.skip(reason="The SAI header change needs to be merged first")
   def test_L3MulticastGroupWithNextHopAddUpdateDelete(self, dvs, testlog):
     """
-    This test adds a muliticast group member that will use next hops,
+    This test adds a multicast group member that will use next hops,
     confirms a group and a member were created, confirms an update operation
     can add a new member, and then deletes the group.
     """
