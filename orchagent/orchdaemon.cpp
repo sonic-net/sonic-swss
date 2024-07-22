@@ -87,6 +87,12 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
+    // Stop the ring thread before delete orch pointers
+    if (gRingBuffer) {
+        ring_thread_exited = true;
+        ring_thread.detach();
+    }
+
     /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
@@ -103,6 +109,44 @@ OrchDaemon::~OrchDaemon()
     delete m_select;
 
     events_deinit_publisher(g_events_handle);
+}
+
+void OrchDaemon::popRingBuffer()
+{
+    SWSS_LOG_ENTER();
+
+    // make sure there is only one thread created to run popRingBuffer()
+    if (!gRingBuffer || gRingBuffer->threadCreated)
+        return;
+
+    gRingBuffer->threadCreated = true;
+    SWSS_LOG_NOTICE("OrchDaemon starts the popRingBuffer thread!");
+
+    while (!ring_thread_exited)
+    {
+        gRingBuffer->pause_thread();
+
+        gRingBuffer->Idle = false;
+
+        AnyTask func;
+        while (gRingBuffer->pop(func)) {
+            func();
+        }
+
+        gRingBuffer->Idle = true;
+    }
+}
+
+/**
+ * This function initializes gRingBuffer for the OrchDaemon instance,
+ * (otherwise gRingBuffer is nullptr, which indicates ring mode is not enabled)
+ * then syncs this gRingBuffer with Executor and Orch.
+ * Hence the whole program shares this single global RingBuffer.
+ */
+void OrchDaemon::enableRingBuffer() {
+    gRingBuffer = OrchRing::Get();
+    Executor::gRingBuffer = gRingBuffer;
+    Orch::gRingBuffer = gRingBuffer;
 }
 
 bool OrchDaemon::init()
@@ -818,6 +862,8 @@ void OrchDaemon::start()
 
     Recorder::Instance().sairedis.setRotate(false);
 
+    ring_thread = std::thread(&OrchDaemon::popRingBuffer, this);
+
     for (Orch *o : m_orchList)
     {
         m_select->addSelectables(o->getSelectables());
@@ -858,6 +904,17 @@ void OrchDaemon::start()
              * requests live in it. When the daemon has nothing to do, it
              * is a good chance to flush the pipeline  */
             flush();
+
+            /* Normally the ring thread would not get locked if buffer isn't empty.
+             * Still it's possible that the previous cv notification was missed.
+             * Make sure there is a cv notification being sent periodically. */
+            if (gRingBuffer)
+                gRingBuffer->notify();
+
+            if (!gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->Idle))
+                for (Orch *o : m_orchList)
+                    o->doTask();
+
             continue;
         }
 
@@ -875,9 +932,9 @@ void OrchDaemon::start()
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
 
-        /* TODO: Abstract Orch class to have a specific todo list */
-        for (Orch *o : m_orchList)
-            o->doTask();
+        if (!gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->Idle))
+            for (Orch *o : m_orchList)
+                o->doTask();
 
         /*
          * Asked to check warm restart readiness.
@@ -906,8 +963,8 @@ void OrchDaemon::start()
                         }
                     }
 
-                    // Flush sairedis's redis pipeline
-                    flush();
+                    // Flush sairedis's redis pipeline after the ring becomes empty
+                    while (gRingBuffer && !(gRingBuffer->IsEmpty() && gRingBuffer->Idle)) {std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));}
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
                     freezeAndHeartBeat(UINT_MAX);
