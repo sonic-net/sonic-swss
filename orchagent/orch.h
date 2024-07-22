@@ -7,6 +7,7 @@
 #include <set>
 #include <memory>
 #include <utility>
+#include <condition_variable>
 
 extern "C" {
 #include <sai.h>
@@ -24,6 +25,7 @@ extern "C" {
 #include "macaddress.h"
 #include "response_publisher.h"
 #include "recorder.h"
+#include "schema.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -48,6 +50,9 @@ const char state_db_key_delimiter  = '|';
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
 #define VLAN_SUB_INTERFACE_SEPARATOR "."
+
+#define ORCH_RING_SIZE 30
+#define SLEEP_MSECONDS 500
 
 const int default_orch_pri = 0;
 
@@ -88,6 +93,11 @@ typedef std::pair<std::string, int> table_name_with_pri_t;
 
 class Orch;
 
+using AnyTask = std::function<void()>;
+template<typename DataType, int RingSize>
+class RingBuffer;
+typedef RingBuffer<AnyTask, ORCH_RING_SIZE> OrchRing;
+
 // Design assumption
 // 1. one Orch can have one or more Executor
 // 2. one Executor must belong to one and only one Orch
@@ -124,6 +134,10 @@ public:
         return m_name;
     }
 
+    Orch *getOrch() const { return m_orch; }
+    static OrchRing* gRingBuffer;
+    void pushRingBuffer(AnyTask&& func);
+
 protected:
     swss::Selectable *m_selectable;
     Orch *m_orch;
@@ -134,6 +148,8 @@ protected:
     // Get the underlying selectable
     swss::Selectable *getSelectable() const { return m_selectable; }
 };
+
+typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
 
 class ConsumerBase : public Executor {
 public:
@@ -163,10 +179,138 @@ public:
 
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries);
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
 };
+
+template<typename DataType, int RingSize>
+class RingBuffer
+{
+private:
+    static RingBuffer<DataType, RingSize>* instance;
+    std::vector<DataType> buffer;
+    int head = 0;
+    int tail = 0;
+    ConsumerMap m_consumerMap;
+
+    std::condition_variable cv;
+    std::mutex mtx;
+
+protected:
+    RingBuffer<DataType, RingSize>(): buffer(RingSize) {}
+    ~RingBuffer<DataType, RingSize>() {
+        delete instance;
+    }
+
+public:
+    RingBuffer<DataType, RingSize>(const RingBuffer<DataType, RingSize>&) = delete;
+    RingBuffer<DataType, RingSize>(RingBuffer<DataType, RingSize>&&) = delete;
+    RingBuffer<DataType, RingSize>& operator= (const RingBuffer<DataType, RingSize>&) = delete;
+    RingBuffer<DataType, RingSize>& operator= (RingBuffer<DataType, RingSize>&&) = delete;
+
+    static RingBuffer<DataType, RingSize>* Get();
+    bool threadCreated = false;
+    bool Idle = true;
+
+    // pause the ring thread if the buffer is empty
+    void pause_thread();
+    // wake up the ring thread in case it's locked but not empty
+    void notify();
+
+    bool IsFull();
+    bool IsEmpty();
+
+    bool push(DataType entry);
+    bool pop(DataType& entry);
+
+    void addExecutor(Executor* executor);
+    bool Serves(const std::string& tableName);
+};
+
+template<typename DataType, int RingSize>
+void RingBuffer<DataType, RingSize>::pause_thread()
+{
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, [&](){ return !IsEmpty(); });
+}
+
+template<typename DataType, int RingSize>
+void RingBuffer<DataType, RingSize>::notify()
+{
+    if (!IsEmpty() && Idle)
+        cv.notify_all();
+}
+
+template<typename DataType, int RingSize>
+RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::instance = nullptr;
+
+template<typename DataType, int RingSize>
+RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::Get()
+{
+    if (instance == nullptr) {
+        instance = new RingBuffer<DataType, RingSize>();
+        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)instance);
+    }
+    return instance;
+}
+
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::IsFull()
+{
+    return (tail + 1) % RingSize == head;
+}
+
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::IsEmpty()
+{
+    return tail == head;
+}
+
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::push(DataType ringEntry)
+{
+    if (IsFull())
+        return false;
+    buffer[tail] = std::move(ringEntry);
+    tail = (tail + 1) % RingSize;
+    return true;
+}
+
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::pop(DataType& ringEntry)
+{
+    if (IsEmpty())
+        return false;
+    ringEntry = std::move(buffer[head]);
+    head = (head + 1) % RingSize;
+    return true;
+}
+
+template<typename DataType, int RingSize>
+void RingBuffer<DataType, RingSize>::addExecutor(Executor* executor)
+{
+    auto inserted = m_consumerMap.emplace(std::piecewise_construct,
+            std::forward_as_tuple(executor->getName()),
+            std::forward_as_tuple(executor));
+
+    // If there is duplication of executorName in m_consumerMap, logic error
+    if (!inserted.second)
+    {
+        SWSS_LOG_THROW("Duplicated executorName in m_consumerMap: %s", executor->getName().c_str());
+    }
+}
+
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::Serves(const std::string& tableName)
+{
+    for (auto &it : m_consumerMap) {
+        if (it.first == tableName)
+            return true;
+    }
+    return false;
+}
 
 class Consumer : public ConsumerBase {
 public:
@@ -175,7 +319,7 @@ public:
     {
     }
 
-    swss::TableBase *getConsumerTable() const override
+    swss::ConsumerTableBase *getConsumerTable() const override
     {
         // ConsumerTableBase is a subclass of TableBase
         return static_cast<swss::ConsumerTableBase *>(getSelectable());
@@ -201,8 +345,6 @@ public:
     void drain() override;
 };
 
-typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
-
 typedef enum
 {
     success,
@@ -226,6 +368,8 @@ public:
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
+
+    static OrchRing* gRingBuffer;
 
     std::vector<swss::Selectable*> getSelectables();
 
