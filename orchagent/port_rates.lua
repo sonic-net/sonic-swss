@@ -10,6 +10,14 @@ local function logit(msg)
   logtable[#logtable+1] = tostring(msg)
 end
 
+local function calc_diff(new, last)
+    if new < last then
+        return 0
+    else
+        return (new - last)
+    end
+end
+
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
 local rates_table_name = "RATES"
@@ -58,8 +66,8 @@ local function compute_rate(port)
         local out_octets_last = redis.call('HGET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_OUT_OCTETS_last')
 
         -- Calculate new rates values
-        local rx_bps_new = (in_octets - in_octets_last) / delta * 1000
-        local tx_bps_new = (out_octets - out_octets_last) / delta * 1000
+        local rx_bps_new = calc_diff(in_octets, in_octets_last) / delta * 1000
+        local tx_bps_new = calc_diff(out_octets, out_octets_last) / delta * 1000
         local rx_pps_new = ((in_ucast_pkts + in_non_ucast_pkts) - (in_ucast_pkts_last + in_non_ucast_pkts_last)) / delta * 1000
         local tx_pps_new = ((out_ucast_pkts + out_non_ucast_pkts) - (out_ucast_pkts_last + out_non_ucast_pkts_last)) / delta * 1000
 
