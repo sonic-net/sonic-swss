@@ -12,10 +12,14 @@
 #include "zmqserver.h"
 #include "zmqconsumerstatetable.h"
 #include "sai_serialize.h"
+#include "fpmsyncd/fpmsyncd.h"
 
 using namespace swss;
 
 int gBatchSize = 0;
+
+OrchRing* Orch::gRingBuffer = nullptr;
+OrchRing* Executor::gRingBuffer = nullptr;
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
@@ -155,6 +159,10 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
     return entries.size();
 }
 
+size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries) {
+    return addToSync(*entries);
+}
+
 // TODO: Table should be const
 size_t ConsumerBase::refillToSync(Table* table)
 {
@@ -239,23 +247,67 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 
 void Consumer::execute()
 {
-    // ConsumerBase::execute_impl<swss::ConsumerTableBase>();
     SWSS_LOG_ENTER();
 
-    auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    table->pops(entries);
+    size_t total_size = 0;
 
-    // add to sync
-    addToSync(entries);
+    while (true)
+    {
+        size_t popped_size = 0; // number of entries popped from the redis table
 
-    drain();
+        auto entries = std::make_shared<std::deque<KeyOpFieldsValuesTuple>>();
+        getConsumerTable()->pops(*entries);
+
+        popped_size = entries->size();
+        total_size += popped_size;
+
+        pushRingBuffer([=](){
+            addToSync(entries);
+        });
+
+        if (!gBatchSize || popped_size * 10 <= (size_t)gBatchSize || total_size >= ROUTE_SYNC_PPL_SIZE) {
+            // some program doesn't initialize gBatchSize and use TableConsumable::DEFAULT_POP_BATCH_SIZE instead
+            break;
+        }
+    }
+
+    pushRingBuffer([=](){
+        drain();
+    });
+}
+
+void Executor::pushRingBuffer(AnyTask&& task)
+{
+    if (!gRingBuffer || !gRingBuffer->threadCreated) 
+    {
+        // execute the task right now in this thread if gRingBuffer is not initialized
+        // or the ring thread is not created, or this executor is not served by gRingBuffer
+        task();
+    }
+    else if (!gRingBuffer->Serves(getName())) // not served by ring thread
+    {
+        while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle) {
+            gRingBuffer->notify();
+            std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
+        }
+        // if ring thread is enabled, make sure to execute task after the ring finishes its work
+        task();
+    }
+    else
+    {
+        // if this executor is served by gRingBuffer, push the task to gRingBuffer
+        // and notify the ring thread to flush gRingBuffer
+        while (!gRingBuffer->push(task)) {
+            gRingBuffer->notify();
+            SWSS_LOG_WARN("ring is full...push again");
+        }
+        gRingBuffer->notify();
+    }
 }
 
 void Consumer::drain()
 {
-    if (!m_toSync.empty())
-        ((Orch *)m_orch)->doTask((Consumer&)*this);
+    m_orch->doTask(*this);
 }
 
 size_t Orch::addExistingData(const string& tableName)
@@ -801,6 +853,10 @@ void Orch::addExecutor(Executor* executor)
     if (!inserted.second)
     {
         SWSS_LOG_THROW("Duplicated executorName in m_consumerMap: %s", executor->getName().c_str());
+    }
+
+    if (gRingBuffer && executor->getName() == APP_ROUTE_TABLE_NAME) {
+        gRingBuffer->addExecutor(executor);
     }
 }
 
