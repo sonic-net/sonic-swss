@@ -1136,6 +1136,14 @@ class DockerVirtualSwitch:
         fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
         tbl.set(interface, fvs)
         time.sleep(1)
+        
+    def set_dhcp_rate_limit(self, interface, dhcp_rate_limit):
+        tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("dhcp_rate_limit", dhcp_rate_limit)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
 
     # deps: acl, mirror_port_erspan
     def add_neighbor(self, interface, ip, mac):
@@ -1848,6 +1856,7 @@ def manage_dvs(request) -> str:
             dvs.destroy_servers()
             dvs.create_servers()
             dvs.restart()
+            sleep(60)
 
         return dvs
 
@@ -1856,13 +1865,15 @@ def manage_dvs(request) -> str:
     if graceful_stop:
         dvs.stop_swss()
         dvs.stop_syncd()
+        
 
     dvs.get_logs()
     dvs.destroy()
-
+    
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
+        sleep(60)
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:

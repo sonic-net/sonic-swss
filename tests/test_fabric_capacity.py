@@ -1,5 +1,5 @@
 import random
-from dvslib.dvs_database import DVSDatabase
+from .dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig
 
 
