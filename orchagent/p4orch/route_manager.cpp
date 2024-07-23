@@ -1,6 +1,7 @@
 #include "p4orch/route_manager.h"
 
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -16,7 +17,6 @@
 #include "sai_serialize.h"
 #include "swssnet.h"
 #include "table.h"
-#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 

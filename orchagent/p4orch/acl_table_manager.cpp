@@ -1,5 +1,6 @@
 #include "p4orch/acl_table_manager.h"
 
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -15,7 +16,6 @@
 #include "switchorch.h"
 #include "table.h"
 #include "tokenize.h"
-#include <nlohmann/json.hpp>
 extern "C"
 {
 #include "sai.h"

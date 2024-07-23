@@ -40,6 +40,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
                 mock_consumerstatetable.cpp \
+                mock_subscriberstatetable.cpp \
                 common/mock_shell_command.cpp \
                 mock_table.cpp \
                 mock_hiredis.cpp \
@@ -56,9 +57,11 @@ tests_SOURCES = aclorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
+                switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
                 twamporch_ut.cpp \
+                flexcounter_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \

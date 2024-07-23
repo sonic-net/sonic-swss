@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_set>
 
@@ -12,7 +13,6 @@
 #include "p4orch/p4orch_util.h"
 #include "return_code.h"
 #include "swssnet.h"
-#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 
@@ -124,6 +124,8 @@ class NeighborManagerTest : public ::testing::Test
         mock_sai_neighbor = &mock_sai_neighbor_;
         sai_neighbor_api->create_neighbor_entry = mock_create_neighbor_entry;
         sai_neighbor_api->remove_neighbor_entry = mock_remove_neighbor_entry;
+        sai_neighbor_api->create_neighbor_entries = mock_create_neighbor_entries;
+        sai_neighbor_api->remove_neighbor_entries = mock_remove_neighbor_entries;
         sai_neighbor_api->set_neighbor_entry_attribute = mock_set_neighbor_entry_attribute;
         sai_neighbor_api->get_neighbor_entry_attribute = mock_get_neighbor_entry_attribute;
     }

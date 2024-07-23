@@ -1,4 +1,5 @@
 import time
+import ipaddress
 import json
 import random
 import time
@@ -541,6 +542,62 @@ def check_syslog(dvs, marker, err_log):
     assert num.strip() == "0"
 
 
+def create_fvs(**kwargs):
+    return swsscommon.FieldValuePairs(list(kwargs.items()))
+
+
+def create_subnet_decap_tunnel(dvs, tunnel_name, **kwargs):
+    """Create tunnel and verify all needed entries in state DB exists."""
+    appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    fvs = create_fvs(**kwargs)
+    # create tunnel entry in DB
+    ps = swsscommon.ProducerStateTable(appdb, "TUNNEL_DECAP_TABLE")
+    ps.set(tunnel_name, fvs)
+
+    # wait till config will be applied
+    time.sleep(1)
+
+    # validate the tunnel entry in state db
+    tunnel_state_table = swsscommon.Table(statedb, "TUNNEL_DECAP_TABLE")
+
+    tunnels = tunnel_state_table.getKeys()
+    for tunnel in tunnels:
+        status, fvs = tunnel_state_table.get(tunnel)
+        assert status == True
+
+        for field, value in fvs:
+            if field == "tunnel_type":
+                assert value == "IPINIP"
+            elif field == "dscp_mode":
+                assert value == kwargs["dscp_mode"]
+            elif field == "ecn_mode":
+                assert value == kwargs["ecn_mode"]
+            elif field == "ttl_mode":
+                assert value == kwargs["ttl_mode"]
+            elif field == "encap_ecn_mode":
+                assert value == kwargs["encap_ecn_mode"]
+            else:
+                assert False, "Field %s is not tested" % field
+
+
+def delete_subnet_decap_tunnel(dvs, tunnel_name):
+    """Delete tunnel and checks that state DB is cleared."""
+    appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tunnel_app_table = swsscommon.Table(appdb, "TUNNEL_DECAP_TABLE")
+    tunnel_state_table = swsscommon.Table(statedb, "TUNNEL_DECAP_TABLE")
+
+    ps = swsscommon.ProducerStateTable(appdb, "TUNNEL_DECAP_TABLE")
+    ps._del(tunnel_name)
+
+    # wait till config will be applied
+    time.sleep(1)
+
+    assert len(tunnel_app_table.getKeys()) == 0
+    assert len(tunnel_state_table.getKeys()) == 0
+
+
 loopback_id = 0
 def_vr_id = 0
 switch_mac = None
@@ -577,11 +634,27 @@ class VnetVxlanVrfTunnel(object):
     ASIC_BFD_SESSION        = "ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"
     APP_VNET_MONITOR        =  "VNET_MONITOR_TABLE"
 
+    ecn_modes_map = {
+        "standard"       : "SAI_TUNNEL_DECAP_ECN_MODE_STANDARD",
+        "copy_from_outer": "SAI_TUNNEL_DECAP_ECN_MODE_COPY_FROM_OUTER"
+    }
+
+    dscp_modes_map = {
+        "pipe"    : "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL",
+        "uniform" : "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL"
+    }
+
+    ttl_modes_map = {
+        "pipe"    : "SAI_TUNNEL_TTL_MODE_PIPE_MODEL",
+        "uniform" : "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
+    }
+
     def __init__(self):
         self.tunnel_map_ids       = set()
         self.tunnel_map_entry_ids = set()
         self.tunnel_ids           = set()
         self.tunnel_term_ids      = set()
+        self.ipinip_tunnel_term_ids = {}
         self.tunnel_map_map       = {}
         self.tunnel               = {}
         self.vnet_vr_ids          = set()
@@ -610,6 +683,61 @@ class VnetVxlanVrfTunnel(object):
 
         if switch_mac is None:
             switch_mac = get_switch_mac(dvs)
+
+    def check_ipinip_tunnel(self, dvs, tunnel_name, dscp_mode, ecn_mode, ttl_mode):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        tunnel_id = get_created_entry(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids)
+        tunnel_attrs = {
+            'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_IPINIP',
+            'SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE': self.dscp_modes_map[dscp_mode],
+            'SAI_TUNNEL_ATTR_ENCAP_ECN_MODE': self.ecn_modes_map[ecn_mode],
+            'SAI_TUNNEL_ATTR_ENCAP_TTL_MODE': self.ttl_modes_map[ttl_mode]
+        }
+        check_object(asic_db, self.ASIC_TUNNEL_TABLE, tunnel_id, tunnel_attrs)
+
+        self.tunnel_ids.add(tunnel_id)
+        self.tunnel[tunnel_name] = tunnel_id
+
+    def check_del_ipinip_tunnel(self, dvs, tunnel_name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        tunnel_id = get_deleted_entries(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids, 1)[0]
+        check_deleted_object(asic_db, self.ASIC_TUNNEL_TABLE, tunnel_id)
+        self.tunnel_ids.remove(tunnel_id)
+        assert tunnel_id == self.tunnel[tunnel_name]
+        self.tunnel.pop(tunnel_name)
+
+    def check_ipinip_tunnel_decap_term(self, dvs, tunnel_name, dst_ip, src_ip):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        dst_ip = ipaddress.ip_network(dst_ip)
+        src_ip = ipaddress.ip_network(src_ip)
+        tunnel_term_id = get_created_entry(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids)
+        tunnel_term_attrs = {
+            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE': 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_MP2MP',
+            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE': 'SAI_TUNNEL_TYPE_IPINIP',
+            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP': str(dst_ip.network_address),
+            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK': str(dst_ip.netmask),
+            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP': str(src_ip.network_address),
+            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP_MASK': str(src_ip.netmask),
+            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID': self.tunnel[tunnel_name]
+        }
+        check_object(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, tunnel_term_id, tunnel_term_attrs)
+
+        self.tunnel_term_ids.add(tunnel_term_id)
+        self.ipinip_tunnel_term_ids[(tunnel_name, src_ip, dst_ip)] = tunnel_term_id
+
+    def check_del_ipinip_tunnel_decap_term(self, dvs, tunnel_name, dst_ip, src_ip):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        dst_ip = ipaddress.ip_network(dst_ip)
+        src_ip = ipaddress.ip_network(src_ip)
+        tunnel_term_id = get_deleted_entries(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids, 1)[0]
+        check_deleted_object(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, tunnel_term_id)
+        self.tunnel_term_ids.remove(tunnel_term_id)
+        assert self.ipinip_tunnel_term_ids[(tunnel_name, src_ip, dst_ip)] == tunnel_term_id
+        self.ipinip_tunnel_term_ids.pop((tunnel_name, src_ip, dst_ip))
 
     def check_vxlan_tunnel(self, dvs, tunnel_name, src_ip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -1098,6 +1226,30 @@ class VnetVxlanVrfTunnel(object):
         check_deleted_object(app_db, self.APP_VNET_MONITOR, key)
 
 class TestVnetOrch(object):
+
+    CFG_SUBNET_DECAP_TABLE_NAME = "SUBNET_DECAP"
+
+    @pytest.fixture
+    def setup_subnet_decap(self, dvs):
+
+        def _apply_subnet_decap_config(subnet_decap_config):
+            """Apply subnet decap config to CONFIG_DB."""
+            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
+            fvs = create_fvs(**subnet_decap_config)
+            subnet_decap_tbl.set("AZURE", fvs)
+
+        def _cleanup_subnet_decap_config():
+            """Cleanup subnet decap config in CONFIG_DB."""
+            subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
+            for key in subnet_decap_tbl.getKeys():
+                subnet_decap_tbl._del(key)
+
+        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        _cleanup_subnet_decap_config()
+
+        yield _apply_subnet_decap_config
+
+        _cleanup_subnet_decap_config()
 
     def get_vnet_obj(self):
         return VnetVxlanVrfTunnel()
@@ -3523,6 +3675,178 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet25')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet25')
         delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 26 - Test for vnet tunnel routes with ECMP nexthop group with subnet decap enable
+    '''
+    def test_vnet_orch_26(self, dvs, setup_subnet_decap):
+        # apply subnet decap config
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        setup_subnet_decap(subnet_decap_config)
+
+        vnet_obj = self.get_vnet_obj()
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Add the subnet decap tunnel
+        create_subnet_decap_tunnel(dvs, "IPINIP_SUBNET", tunnel_type="IPINIP",
+                                   dscp_mode="uniform", ecn_mode="standard", ttl_mode="pipe")
+        vnet_obj.check_ipinip_tunnel(dvs, "IPINIP_SUBNET", "uniform", "standard", "pipe")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        tunnel_name = 'tunnel_26'
+        create_vxlan_tunnel(dvs, tunnel_name, '26.26.26.26')
+        create_vnet_entry(dvs, 'Vnet26', tunnel_name, '10026', "", advertise_prefix=True)
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet26')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet26', '10026')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '26.26.26.26')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet26', '26.0.0.1,26.0.0.2,26.0.0.3', ep_monitor='26.1.0.1,26.1.0.2,26.1.0.3', profile="test_profile")
+
+        with pytest.raises(AssertionError):
+            vnet_obj.check_ipinip_tunnel_decap_term(dvs, "IPINIP_SUBNET", "100.100.1.1/32", "10.10.10.0/24")
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet26', ["100.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up
+        update_bfd_session_state(dvs, '26.1.0.1', 'Up')
+
+        time.sleep(2)
+        # subnet decap term should be created as one bfd session state go up
+        vnet_obj.check_ipinip_tunnel_decap_term(dvs, "IPINIP_SUBNET", "100.100.1.1/32", "10.10.10.0/24")
+
+        update_bfd_session_state(dvs, '26.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '26.1.0.3', 'Up')
+        time.sleep(2)
+        vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet26', ['26.0.0.1', '26.0.0.2', '26.0.0.3'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32", ['26.0.0.1', '26.0.0.2', '26.0.0.3'])
+        check_routes_advertisement(dvs, "100.100.1.1/32", "test_profile")
+
+        # Set all endpoint to down state
+        update_bfd_session_state(dvs, '26.1.0.1', 'Down')
+        update_bfd_session_state(dvs, '26.1.0.2', 'Down')
+        update_bfd_session_state(dvs, '26.1.0.3', 'Down')
+        time.sleep(2)
+
+        # subnet decap term should be removed as all bfd session states go down
+        vnet_obj.check_del_ipinip_tunnel_decap_term(dvs, "IPINIP_SUBNET", "100.100.1.1/32", "10.10.10.0/24")
+
+        # Confirm the tunnel route is updated in ASIC
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet26', ["100.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Remove tunnel route
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet26')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet26', ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet26', "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Confirm the BFD sessions are removed
+        check_del_bfd_session(dvs, ['12.1.0.1', '12.1.0.2', '12.1.0.3'])
+
+        delete_vnet_entry(dvs, 'Vnet26')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet26')
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        # Remove the subnet decap tunnel
+        vnet_obj.fetch_exist_entries(dvs)
+        delete_subnet_decap_tunnel(dvs, "IPINIP_SUBNET")
+        vnet_obj.check_del_ipinip_tunnel(dvs, "IPINIP_SUBNET")
+
+    '''
+    Test 27 - Test for IPv6 vnet tunnel routes with ECMP nexthop group with subnet decap enable
+    '''
+    def test_vnet_orch_27(self, dvs, setup_subnet_decap):
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        setup_subnet_decap(subnet_decap_config)
+
+        vnet_obj = self.get_vnet_obj()
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Add the subnet decap tunnel
+        create_subnet_decap_tunnel(dvs, "IPINIP_SUBNET_V6", tunnel_type="IPINIP",
+                                   dscp_mode="uniform", ecn_mode="standard", ttl_mode="pipe")
+        vnet_obj.check_ipinip_tunnel(dvs, "IPINIP_SUBNET_V6", "uniform", "standard", "pipe")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        tunnel_name = 'tunnel_27'
+        vnet_name = 'Vnet26'
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:10::32')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10010', "", advertise_prefix=True)
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10010')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:10::32')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::1,fd:10:1::2,fd:10:1::3', ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3', profile="test_profile")
+
+        with pytest.raises(AssertionError):
+            vnet_obj.check_ipinip_tunnel_decap_term(dvs, "IPINIP_SUBNET_V6", "100.100.1.1/32", "10.10.10.0/24")
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", [])
+        check_remove_routes_advertisement(dvs, "fd:10:10::1/128")
+
+        # Route should be properly configured when all bfd session states go up
+        update_bfd_session_state(dvs, 'fd:10:2::2', 'Up')
+
+        time.sleep(2)
+        # subnet decap term should be created as one bfd session state go up
+        vnet_obj.check_ipinip_tunnel_decap_term(dvs, "IPINIP_SUBNET_V6", "fd:10:10::1/128", "20c1:ba8::/64")
+
+        update_bfd_session_state(dvs, 'fd:10:2::3', 'Up')
+        update_bfd_session_state(dvs, 'fd:10:2::1', 'Up')
+        time.sleep(2)
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3'])
+        check_routes_advertisement(dvs, "fd:10:10::1/128", "test_profile")
+
+        # Set all endpoint to down state
+        update_bfd_session_state(dvs, 'fd:10:2::1', 'Down')
+        update_bfd_session_state(dvs, 'fd:10:2::2', 'Down')
+        update_bfd_session_state(dvs, 'fd:10:2::3', 'Down')
+        time.sleep(2)
+
+        # subnet decap term should be removed as all bfd session states go down
+        vnet_obj.check_del_ipinip_tunnel_decap_term(dvs, "IPINIP_SUBNET_V6", "fd:10:10::1/128", "20c1:ba8::/64")
+
+        # Confirm the tunnel route is updated in ASIC
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", [])
+        check_remove_routes_advertisement(dvs, "fd:10:10::1/128")
+
+        # Remove tunnel route
+        delete_vnet_routes(dvs, "fd:10:10::1/128", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_remove_state_db_routes(dvs, vnet_name, "fd:10:10::1/128")
+        check_remove_routes_advertisement(dvs, "fd:10:10::1/128")
+
+        # Confirm the BFD sessions are removed
+        check_del_bfd_session(dvs, ['fd:10:2::1', 'fd:10:2::2', 'fd:10:2::3'])
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        # Remove the subnet decap tunnel
+        vnet_obj.fetch_exist_entries(dvs)
+        delete_subnet_decap_tunnel(dvs, "IPINIP_SUBNET_V6")
+        vnet_obj.check_del_ipinip_tunnel(dvs, "IPINIP_SUBNET_V6")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

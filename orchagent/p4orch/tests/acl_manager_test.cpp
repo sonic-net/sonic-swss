@@ -3,6 +3,7 @@
 
 #include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 
 #include "acl_rule_manager.h"
@@ -21,7 +22,6 @@
 #include "table.h"
 #include "tokenize.h"
 #include "vrforch.h"
-#include <nlohmann/json.hpp>
 
 using ::p4orch::kTableKeyDelimiter;
 
@@ -240,7 +240,7 @@ std::string BuildMatchFieldJsonStrKindComposite(std::vector<nlohmann::json> elem
 {
     nlohmann::json match_json;
     match_json[kAclMatchFieldKind] = kAclMatchFieldKindComposite;
-    for (const auto element : elements)
+    for (const auto &element : elements)
     {
         match_json[kAclMatchFieldElements].push_back(element);
     }

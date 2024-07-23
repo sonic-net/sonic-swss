@@ -1,11 +1,12 @@
 #include "p4orch/acl_util.h"
 
+#include <nlohmann/json.hpp>
+
 #include "converter.h"
 #include "logger.h"
 #include "sai_serialize.h"
 #include "table.h"
 #include "tokenize.h"
-#include <nlohmann/json.hpp>
 
 namespace p4orch
 {

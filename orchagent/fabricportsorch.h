@@ -9,6 +9,9 @@
 #include "producertable.h"
 #include "flex_counter_manager.h"
 
+#define STATE_FABRIC_CAPACITY_TABLE_NAME "FABRIC_CAPACITY_TABLE"
+#define STATE_PORT_CAPACITY_TABLE_NAME "PORT_CAPACITY_TABLE"
+
 class FabricPortsOrch : public Orch, public Subject
 {
 public:
@@ -23,7 +26,6 @@ private:
 
     shared_ptr<DBConnector> m_state_db;
     shared_ptr<DBConnector> m_counter_db;
-    shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_appl_db;
 
     unique_ptr<Table> m_stateTable;
@@ -31,13 +33,17 @@ private:
     unique_ptr<Table> m_portNamePortCounterTable;
     unique_ptr<Table> m_fabricCounterTable;
     unique_ptr<Table> m_applTable;
+    unique_ptr<Table> m_fabricCapacityTable;
+    unique_ptr<Table> m_applMonitorConstTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
+    shared_ptr<Table> m_counterNameToSwitchStatMap;
 
     swss::SelectableTimer *m_timer = nullptr;
     swss::SelectableTimer *m_debugTimer = nullptr;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager queue_stat_manager;
+    FlexCounterManager *switch_drop_counter_manager = nullptr;
 
     sai_uint32_t m_fabricPortCount;
     map<int, sai_object_id_t> m_fabricLanePortMap;
@@ -47,13 +53,29 @@ private:
 
     bool m_getFabricPortListDone = false;
     bool m_isQueueStatsGenerated = false;
+    bool m_debugTimerEnabled = false;
+    bool m_isSwitchStatsGenerated = false;
+
+    string m_defaultPollWithErrors = "0";
+    string m_defaultPollWithNoErrors = "8";
+    string m_defaultPollWithFecErrors = "0";
+    string m_defaultPollWithNoFecErrors = "8";
+    string m_defaultConfigIsolated = "0";
+    string m_defaultIsolated = "0";
+    string m_defaultAutoIsolated = "0";
+
     int getFabricPortList();
     void generatePortStats();
     void updateFabricPortState();
     void updateFabricDebugCounters();
+    void updateFabricCapacity();
+    bool checkFabricPortMonState();
+    void updateFabricRate();
+    void createSwitchDropCounters();
 
     void doTask() override;
     void doTask(Consumer &consumer);
+    void doFabricPortTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
 };
 
