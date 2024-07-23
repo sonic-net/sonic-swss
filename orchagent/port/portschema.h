@@ -68,7 +68,6 @@
 #define PORT_ADV_INTERFACE_TYPES   "adv_interface_types"
 #define PORT_FEC                   "fec"
 #define PORT_MTU                   "mtu"
-#define PORT_DHCP_RATE_LIMIT       "dhcp_rate_limit"
 #define PORT_TPID                  "tpid"
 #define PORT_PFC_ASYM              "pfc_asym"
 #define PORT_LEARN_MODE            "learn_mode"

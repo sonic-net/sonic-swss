@@ -52,7 +52,6 @@ private:
     bool parsePortAdvInterfaceTypes(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortFec(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortMtu(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortDhcpRateLimit(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortTpid(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortPfcAsym(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortLearnMode(PortConfig &port, const std::string &field, const std::string &value) const;
