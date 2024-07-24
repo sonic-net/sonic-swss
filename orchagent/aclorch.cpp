@@ -2023,6 +2023,18 @@ bool AclRuleMirror::validate()
     return true;
 }
 
+bool AclRuleMirror::createCounter()
+{
+    SWSS_LOG_ENTER();
+
+    // If the mirror session is inactive, do not create the ACL counter from the first place
+    bool state = false;
+
+    m_pMirrorOrch->getSessionStatus(m_sessionName, state);
+
+    return !state ? true : AclRule::createCounter();
+}
+
 bool AclRuleMirror::createRule()
 {
     SWSS_LOG_ENTER();
@@ -2055,11 +2067,6 @@ bool AclRuleMirror::activate()
 
     if (!state)
     {
-        // if the mirror session is inactive, do not create the counter yet. FlexCounter registration will be skipped as well.
-        if (hasCounter())
-        {
-            removeCounter();
-        }
         return true;
     }
 
