@@ -958,7 +958,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
             attr.value.booldata = false;
             attrList.push_back(attr);
         }
-        
+
         if (cit.pt_intf_id.is_set)
         {
             if (!m_isPathTracingSupported)
@@ -5128,14 +5128,19 @@ bool PortsOrch::setSaiHostTxSignal(const Port &port, bool enable)
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
     attr.value.booldata = enable;
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
 
-    if (status != SAI_STATUS_SUCCESS)
+    if (saiOidToAlias.find(port.m_port_id) != saiOidToAlias.end())
     {
-        SWSS_LOG_ERROR("Could not setSAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE to port 0x%" PRIx64, port.m_port_id);
-        return false;
+        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Could not set SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE to port 0x%" PRIx64, port.m_port_id);
+            return false;
+        }
+        return true;
     }
 
+    SWSS_LOG_NOTICE("Could not set SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE - OID does not exist 0x%" PRIx64, port.m_port_id);
     return true;
 }
 
@@ -8122,7 +8127,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         }
     }
     SWSS_LOG_INFO("Updating the nexthop for port %s and operational status %s", port.m_alias.c_str(), isUp ? "up" : "down");
-    
+
     if (!gNeighOrch->ifChangeInformNextHop(port.m_alias, isUp))
     {
         SWSS_LOG_WARN("Inform nexthop operation failed for interface %s", port.m_alias.c_str());
