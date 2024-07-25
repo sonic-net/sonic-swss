@@ -13,8 +13,7 @@ class TestPortChannelAcl(object):
     def create_port_channel(self, dvs, alias):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
         fvs = swsscommon.FieldValuePairs([("admin_status", "up"),
-                                          ("mtu", "9100"),
-                                          ("dhcp_rate_limit", "300")])
+                                          ("mtu", "9100"))
         tbl.set(alias, fvs)
         time.sleep(1)
 
