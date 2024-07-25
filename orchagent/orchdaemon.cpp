@@ -591,7 +591,7 @@ bool OrchDaemon::init()
                     PFC_WD_POLL_MSECS));
     }
     else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
-	     || (platform == MRVL_PLATFORM_SUBSTRING)
+	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
@@ -624,7 +624,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        if ((platform == MRVL_PLATFORM_SUBSTRING) ||
+        if ((platform == MRVL_PRST_PLATFORM_SUBSTRING) ||
 	    (platform == MRVL_TL_PLATFORM_SUBSTRING) ||
 	    (platform == NPS_PLATFORM_SUBSTRING))
         {
