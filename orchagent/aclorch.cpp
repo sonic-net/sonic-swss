@@ -2027,12 +2027,17 @@ bool AclRuleMirror::createCounter()
 {
     SWSS_LOG_ENTER();
 
-    // If the mirror session is inactive, do not create the ACL counter from the first place
     bool state = false;
 
     m_pMirrorOrch->getSessionStatus(m_sessionName, state);
 
-    return !state ? true : AclRule::createCounter();
+    // If the mirror session is active, create the ACL counter
+    if(state)
+    {
+        return AclRule::createCounter();
+    }
+
+    return true;
 }
 
 bool AclRuleMirror::createRule()
