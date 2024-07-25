@@ -85,31 +85,25 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     int ret;
     int byte_rate = stoi(dhcp_rate_limit) * 406;
 
-    std::cout<<std::endl<<"setPortDHCPMitigationRate function is called"<<std::endl;
     if (dhcp_rate_limit != "0")
     {
-        // tc qdisc add dev <port_name> handle ffff: ingress for background
+        // tc qdisc add dev <port_name> handle ffff: ingress
         // &&
         // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
-        cmd << TC_CMD << " qdisc add dev " << alias << " handle ffff: ingress" << " && " \
-            << TC_CMD << " filter add dev " << alias << " protocol ip parent ffff: prio 1 "\
-            <<" u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " <<to_string(byte_rate) << "b conform-exceed drop";
+        cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
+            << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
-
-
     }
     else
     {
         // tc qdisc del dev <port_name> handle ffff: ingress
-
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
     }
     if (!ret)
     {
-
 
     }
     else if (!isPortStateOk(alias))
@@ -205,7 +199,7 @@ void PortMgr::doTask(Consumer &consumer)
              */
             bool portOk = isPortStateOk(alias);
 
-            string admin_status, mtu,  dhcp_rate_limit;
+            string admin_status, mtu, dhcp_rate_limit;
             std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
