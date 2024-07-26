@@ -304,8 +304,7 @@ class TestPort(object):
         transceiver_info_tbl.hdel("Ethernet0", "supported_max_tx_power")
         expected_fields = {"SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE":"false"}
         adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
-      
-    
+
     def test_PortPathTracing(self, dvs, testlog):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
