@@ -598,9 +598,6 @@ bool PortHelper::parsePortTpid(PortConfig &port, const std::string &field, const
     return true;
 }
 
-
-
-
 bool PortHelper::parsePortPfcAsym(PortConfig &port, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
