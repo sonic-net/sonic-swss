@@ -3,7 +3,7 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "vrrpmgr.h"
+#include "macvlanmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
 #include <swss/redisutility.h>
@@ -21,7 +21,7 @@ using namespace swss;
 #define VRRP_V4_MAC_PREFIX "00:00:5e:00:01:"
 #define VRRP_V6_MAC_PREFIX "00:00:5e:00:02:"
 
-VrrpMgr::VrrpMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames) : 
+MacvlanMgr::MacvlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames) : 
         Orch(cfgDb, tableNames),
         m_appPortTable(appDb, APP_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
@@ -30,7 +30,7 @@ VrrpMgr::VrrpMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
 }
 
-bool VrrpMgr::setIntfArpAccept(const std::string &intf_alias, const bool arp_accept)
+bool MacvlanMgr::setIntfArpAccept(const std::string &intf_alias, const bool arp_accept)
 {
     stringstream cmd;
     string res;
@@ -62,7 +62,7 @@ bool VrrpMgr::setIntfArpAccept(const std::string &intf_alias, const bool arp_acc
     return true;
 }
 
-bool VrrpMgr::setVrrpIntf(const std::string &intf_alias, const std::string &vrid, const bool is_ipv4, 
+bool MacvlanMgr::setVrrpIntf(const std::string &intf_alias, const std::string &vrid, const bool is_ipv4, 
     const std::set<IpPrefix> &vip_list, const std::string &admin_status)
 {
     VrrpIntfConf vrrp_conf;
@@ -165,7 +165,7 @@ bool VrrpMgr::setVrrpIntf(const std::string &intf_alias, const std::string &vrid
     return true;
 }
 
-bool VrrpMgr::removeVrrpIntf(const std::string &intf_alias, const std::string &vrid, const bool is_ipv4)
+bool MacvlanMgr::removeVrrpIntf(const std::string &intf_alias, const std::string &vrid, const bool is_ipv4)
 {
     auto it = m_vrrpList.find(vrid);
     if (it == m_vrrpList.end())
@@ -197,7 +197,7 @@ bool VrrpMgr::removeVrrpIntf(const std::string &intf_alias, const std::string &v
     return true;
 }
 
-bool VrrpMgr::addVirtualInterface(const std::string &intf_alias, const std::string &vrrp_name, const MacAddress &vrrp_mac, bool is_ipv4)
+bool MacvlanMgr::addVirtualInterface(const std::string &intf_alias, const std::string &vrrp_name, const MacAddress &vrrp_mac, bool is_ipv4)
 {
     stringstream cmd;
     string res;
@@ -224,7 +224,7 @@ bool VrrpMgr::addVirtualInterface(const std::string &intf_alias, const std::stri
     return true;
 }
 
-bool VrrpMgr::delVirtualInterface(const std::string &intf_alias, const std::string &vrrp_name)
+bool MacvlanMgr::delVirtualInterface(const std::string &intf_alias, const std::string &vrrp_name)
 {
     stringstream cmd;
     string res;
@@ -246,7 +246,7 @@ bool VrrpMgr::delVirtualInterface(const std::string &intf_alias, const std::stri
     return true;
 }
 
-bool swss::VrrpMgr::addVirtualInterfaceIp(const std::string &vrid, const IpPrefix &ip_addr)
+bool swss::MacvlanMgr::addVirtualInterfaceIp(const std::string &vrid, const IpPrefix &ip_addr)
 {
     stringstream cmd;
     string res;
@@ -271,7 +271,7 @@ bool swss::VrrpMgr::addVirtualInterfaceIp(const std::string &vrid, const IpPrefi
     return true;
 }
 
-bool swss::VrrpMgr::delVirtualInterfaceIp(const std::string &vrid, const IpPrefix &ip_addr)
+bool swss::MacvlanMgr::delVirtualInterfaceIp(const std::string &vrid, const IpPrefix &ip_addr)
 {
     stringstream cmd;
     string res;
@@ -296,7 +296,7 @@ bool swss::VrrpMgr::delVirtualInterfaceIp(const std::string &vrid, const IpPrefi
     return true;
 }
 
-bool VrrpMgr::setVirtualInterfaceAdminStatus(const std::string &vrrp_name, const std::string &admin_status)
+bool MacvlanMgr::setVirtualInterfaceAdminStatus(const std::string &vrrp_name, const std::string &admin_status)
 {
     stringstream cmd;
     string res;
@@ -318,7 +318,7 @@ bool VrrpMgr::setVirtualInterfaceAdminStatus(const std::string &vrrp_name, const
     return true;
 }
 
-bool VrrpMgr::isIntfStateOk(const std::string &intf_alias)
+bool MacvlanMgr::isIntfStateOk(const std::string &intf_alias)
 {
     /* check router intf initialization is complete */
     vector<FieldValueTuple> temp;
@@ -360,12 +360,12 @@ bool VrrpMgr::isIntfStateOk(const std::string &intf_alias)
     return false;
 }
 
-bool VrrpMgr::isVrrpOnIntf(const std::string &intf_alias)
+bool MacvlanMgr::isVrrpOnIntf(const std::string &intf_alias)
 {
     return find_if(m_vrrpList.begin(), m_vrrpList.end(), [intf_alias](const auto &pair){ return pair.second.alias == intf_alias; }) != m_vrrpList.end();
 }
 
-bool VrrpMgr::parseVrrpMac(const std::string &vrid, const bool is_ipv4, MacAddress &vrrp_mac)
+bool MacvlanMgr::parseVrrpMac(const std::string &vrid, const bool is_ipv4, MacAddress &vrrp_mac)
 {
     stringstream vmac;
     string hex_vrid;
@@ -400,7 +400,7 @@ bool VrrpMgr::parseVrrpMac(const std::string &vrid, const bool is_ipv4, MacAddre
     return true;
 }
 
-void VrrpMgr::doTask(Consumer &consumer)
+void MacvlanMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 

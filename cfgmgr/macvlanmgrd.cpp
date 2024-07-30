@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "exec.h"
-#include "vrrpmgr.h"
+#include "macvlanmgr.h"
 #include "schema.h"
 #include "select.h"
 
@@ -17,10 +17,10 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("vrrpmgrd");
+    Logger::linkToDbNative("macvlanmgrd");
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("--- Starting vrrpmgrd ---");
+    SWSS_LOG_NOTICE("--- Starting macvlanmgrd ---");
 
     try
     {
@@ -33,10 +33,10 @@ int main(int argc, char **argv)
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        VrrpMgr vrrpmgr(&cfgDb, &appDb, &stateDb, cfg_vrrp_tables);
+        MacvlanMgr macvlanmgr(&cfgDb, &appDb, &stateDb, cfg_vrrp_tables);
 
         // TODO: add tables in stateDB which interface depends on to monitor list
-        vector<Orch *> cfgOrchList = {&vrrpmgr};
+        vector<Orch *> cfgOrchList = {&macvlanmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -57,7 +57,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                vrrpmgr.doTask();
+                macvlanmgr.doTask();
                 continue;
             }
 

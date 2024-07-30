@@ -59,7 +59,7 @@ cfgmgr/sflowmgrd
 cfgmgr/macsecmgrd
 cfgmgr/coppmgrd
 cfgmgr/tunnelmgrd
-cfgmgr/vrrpmgrd
+cfgmgr/macvlanmgrd
 fpmsyncd/fpmsyncd
 gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
