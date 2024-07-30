@@ -731,8 +731,8 @@ void FabricPortsOrch::updateFabricDebugCounters()
                 clearCnt = true;
             }
 
-            SWSS_LOG_INFO("port %s about to clear counters.")
-            SWSS_LOG_INFO("origIsolated %d isolated %d cfgIsolated %d clearCnt %s", key.c_str(), origIsolated, isolated, cfgIsolated, clearCnt ? "true":"flase");
+            SWSS_LOG_INFO("port %s about to clear counters.", key.c_str());
+            SWSS_LOG_INFO("origIsolated %d isolated %d cfgIsolated %d clearCnt %s", origIsolated, isolated, cfgIsolated, clearCnt ? "true":"flase");
             clearFabricCnt(lane, clearCnt);
             updateStateDbTable(m_stateTable, key, "PORT_DOWN_COUNT_handled", lnkDownCnt);
             continue;
