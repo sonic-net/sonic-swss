@@ -95,35 +95,13 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
 
-    // The generated command is:
-    // /bin/echo 1 > /sys/class/net/Bridge/bridge/vlan_filtering
-    const std::string echo_cmd = std::string("")
-      + ECHO_CMD + " 1 > /sys/class/net/" + DOT1Q_BRIDGE_NAME + "/bridge/vlan_filtering";
+    // /sbin/ip link set Bridge type bridge vlan_filtering 1
+    const std::string vlan_filtering_cmd = std::string(IP_CMD) + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
+    EXEC_WITH_ERROR_THROW(vlan_filtering_cmd, res);
 
-    int ret = swss::exec(echo_cmd, res);
-    /* echo will fail in virtual switch since /sys directory is read-only.
-     * need to use ip command to setup the vlan_filtering which is not available in debian 8.
-     * Once we move sonic to debian 9, we can use IP command by default
-     * ip command available in Debian 9 to create a bridge with a vlan filtering:
-     * /sbin/ip link add Bridge up type bridge vlan_filtering 1 */
-    if (ret != 0)
-    {
-        const std::string echo_cmd_backup = std::string("")
-          + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
-
-        EXEC_WITH_ERROR_THROW(echo_cmd_backup, res);
-    }
-
-    // not learn from link-local frames
-    // /bin/echo 1 > /sys/class/net/Bridge/bridge/no_linklocal_learn
-    const std::string no_ll_learn_cmd = std::string("")
-      + ECHO_CMD + " 1 > /sys/class/net/" + DOT1Q_BRIDGE_NAME + "/bridge/no_linklocal_learn";
-
-    ret = swss::exec(no_ll_learn_cmd, res);
-    if (ret != 0) {
-        EXEC_WITH_ERROR_THROW(no_ll_learn_cmd, res);
-    }
-
+    // /sbin/ip link set Bridge type bridge no_linklocal_learn 1
+    const std::string no_ll_learn_cmd = std::string(IP_CMD) + " link set " + DOT1Q_BRIDGE_NAME + " type bridge no_linklocal_learn 1";
+    EXEC_WITH_ERROR_THROW(no_ll_learn_cmd, res);
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)

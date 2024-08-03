@@ -90,6 +90,7 @@ private:
     bool deleteVxlan(const VxlanInfo & info);
 
     void clearAllVxlanDevices();
+    void disableLearningForAllVxlanNetdevices();
 
     ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable,m_appEvpnNvoTable;
     Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable;
