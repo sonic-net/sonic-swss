@@ -320,7 +320,7 @@ class TestDash(object):
         fvs = dashobj.asic_inbound_routing_rule_table[inbound_routing_entries[0]]
         for fv in fvs.items():
             if fv[0] == "SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE"
+                assert fv[1] == "SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE"
         return dashobj
 
     def test_cleanup(self, dvs):
