@@ -950,8 +950,8 @@ void FabricPortsOrch::updateStateDbTable(
     stateTable->hset(key, field, valueStr.c_str());
 
     // Log the update
-    SWSS_LOG_NOTICE("%s updates %s to %s %d",
-                    key.c_str(), field.c_str(), valueStr.c_str(), value);
+    SWSS_LOG_INFO("%s updates %s to %s %d",
+                  key.c_str(), field.c_str(), valueStr.c_str(), value);
 }
 
 // Isolate/Unisolate a fabric link
