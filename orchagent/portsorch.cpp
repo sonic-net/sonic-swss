@@ -440,7 +440,12 @@ static bool isPathTracingSupported()
             }
         }
     }
-    else
+    else if (status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0)
+    {
+        SWSS_LOG_INFO("Querying OBJECT_TYPE_LIST is not supported on this platform");
+        return false;
+    }
+    else 
     {
         SWSS_LOG_ERROR(
             "Failed to get a list of supported switch capabilities. Error=%d", status

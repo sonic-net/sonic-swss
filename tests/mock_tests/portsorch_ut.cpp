@@ -27,6 +27,8 @@ namespace portsorch_test
 {
     using namespace std;
 
+    bool support_object_type_list = true;
+
     // SAI default ports
     std::map<std::string, std::vector<swss::FieldValueTuple>> defaultPortList;
 
@@ -197,6 +199,10 @@ namespace portsorch_test
         sai_status_t status;
         if (attr_count == 1 && attr_list[0].id == SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST)
         {
+            if (!support_object_type_list)
+            {
+                return SAI_STATUS_ATTR_NOT_IMPLEMENTED_0;
+            }
             uint32_t i;
             for (i = 0; i < attr_list[0].value.s32list.count && i < supported_sai_objects.size(); i++)
             {
@@ -1625,6 +1631,11 @@ namespace portsorch_test
 
         // Port count: 32 Data + 1 CPU
         ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Scenario 0: Query to fetch OBJECT_TYPE_LIST is not Implemented by the vendor
+        support_object_type_list = false;
+        ASSERT_FALSE(gPortsOrch->checkPathTracingCapability());
+        support_object_type_list = true;
 
         // Scenario 1: Path Tracing supported
         ASSERT_TRUE(gPortsOrch->checkPathTracingCapability());
