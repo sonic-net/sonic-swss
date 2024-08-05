@@ -30,7 +30,7 @@ class TestRouterInterface(object):
             dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") +\
                     " > /sys/class/net/" + interface + "/carrier'")
         time.sleep(1)
-
+    
     def create_vrf(self, vrf_name):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         initial_entries = set(tbl.getKeys())
@@ -116,6 +116,13 @@ class TestRouterInterface(object):
             tbl_name = "PORT"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def set_dhcp_rate_limit(self, interface, dhcp_rate_limit):
+        tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("dhcp_rate_limit", dhcp_rate_limit)])
         tbl.set(interface, fvs)
         time.sleep(1)
 
@@ -957,7 +964,7 @@ class TestRouterInterface(object):
 
         # configure MTU to interface
         self.set_mtu("PortChannel002", "8888")
-
+        
         # check ASIC router interface database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         intf_entries = tbl.getKeys()
