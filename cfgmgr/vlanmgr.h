@@ -26,7 +26,7 @@ private:
     std::set<std::string> m_vlanReplay;
     std::set<std::string> m_vlanMemberReplay;
     bool replayDone;
-    
+
     void doTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
@@ -43,6 +43,7 @@ private:
     bool isVlanStateOk(const std::string &alias);
     bool isVlanMacOk();
     bool isVlanMemberStateOk(const std::string &vlanMemberKey);
+    bool isVlanIfaceNameValid(const std::string &alias);
 };
 
 }
