@@ -2023,6 +2023,23 @@ bool AclRuleMirror::validate()
     return true;
 }
 
+bool AclRuleMirror::createCounter()
+{
+    SWSS_LOG_ENTER();
+
+    bool state = false;
+
+    m_pMirrorOrch->getSessionStatus(m_sessionName, state);
+
+    // If the mirror session is active, create the ACL counter
+    if(state)
+    {
+        return AclRule::createCounter();
+    }
+
+    return true;
+}
+
 bool AclRuleMirror::createRule()
 {
     SWSS_LOG_ENTER();
@@ -2152,7 +2169,11 @@ void AclRuleMirror::onUpdate(SubjectType type, void *cntx)
     if (update->active)
     {
         SWSS_LOG_INFO("Activating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
-        activate();
+        // During mirror session activation, the newly created counter needs to be registered to the FC.
+        if(activate() && hasCounter())
+        {
+            m_pAclOrch->registerFlexCounter(*this);
+        }
     }
     else
     {
