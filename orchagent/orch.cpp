@@ -13,9 +13,19 @@
 #include "zmqconsumerstatetable.h"
 #include "sai_serialize.h"
 
+#define PRINT_ALL 1
+#define VERBOSE true
+
 using namespace swss;
 
 int gBatchSize = 0;
+// no need for further pops if entries popped in the iteration fewer than gBatchSize divided by POPS_SCALE
+#define POPS_SCALE 10
+// if #entries popped exceeds LARGE_TRAFFIC, drain them immediately instead of waiting for more pops
+#define LARGE_TRAFFIC 10000
+
+OrchRing* Orch::gRingBuffer = nullptr;
+OrchRing* Executor::gRingBuffer = nullptr;
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
@@ -155,6 +165,10 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
     return entries.size();
 }
 
+size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries) {
+    return addToSync(*entries);
+}
+
 // TODO: Table should be const
 size_t ConsumerBase::refillToSync(Table* table)
 {
@@ -239,25 +253,88 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 
 void Consumer::execute()
 {
-    // ConsumerBase::execute_impl<swss::ConsumerTableBase>();
+    static swss::PerformanceTimer timer("POPS", PRINT_ALL, VERBOSE);
+
     SWSS_LOG_ENTER();
 
-    size_t update_size = 0;
-    auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        table->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
+    size_t popped_size = 0; // number of entries popped per iteration
+    swss::ConsumerTableBase *table = getConsumerTable();
 
-    drain();
+    size_t drain_size = 0; // number of entries popped, batched for a drain
+
+    do {
+
+        if (gRingBuffer && gRingBuffer->Serves(getName())) {
+            timer.start();
+        }
+
+        auto entries = std::make_shared<std::deque<KeyOpFieldsValuesTuple>>();
+        table->pops(*entries);
+
+        popped_size = entries->size();
+        drain_size += popped_size;
+
+        pushRingBuffer([=](){
+            addToSync(entries);
+        });
+
+        if (gRingBuffer && gRingBuffer->Serves(getName())) {
+            timer.stop();
+            timer.inc((int)popped_size);
+        }
+
+        if (drain_size >= LARGE_TRAFFIC) {
+            pushRingBuffer([=](){
+                drain();
+            });
+            drain_size = 0;
+        }
+
+    } while (gBatchSize && popped_size * POPS_SCALE > (size_t)gBatchSize);
+
+    pushRingBuffer([=](){
+        drain();
+    });
+}
+
+void Executor::pushRingBuffer(AnyTask&& func)
+{
+    if (!gRingBuffer || !gRingBuffer->Started) 
+    {
+        func();
+    }
+    else if (!gRingBuffer->Serves(getName()))
+    {
+        while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
+        }
+        func();
+    } else {
+        while (!gRingBuffer->push(func)) {
+            SWSS_LOG_WARN("fail to push..ring is full...");
+        }
+        gRingBuffer->cv.notify_one();
+    }
 }
 
 void Consumer::drain()
 {
-    if (!m_toSync.empty())
-        ((Orch *)m_orch)->doTask((Consumer&)*this);
+    if (m_toSync.empty())
+        return;
+
+    if (getName() == APP_ROUTE_TABLE_NAME) {
+        static swss::PerformanceTimer timer("DRAIN", PRINT_ALL, VERBOSE);
+        size_t before = m_toSync.size();
+        timer.start();
+        m_orch->doTask(*this);
+        timer.stop();
+        size_t after = m_toSync.size();
+        timer.inc(before - after);
+    }
+    else
+    {
+        m_orch->doTask(*this);
+    }
 }
 
 size_t Orch::addExistingData(const string& tableName)
@@ -538,6 +615,16 @@ void Orch::doTask()
 {
     for (auto &it : m_consumerMap)
     {
+        it.second->drain();
+    }
+}
+
+void Orch::doTask(const std::string &excluded_table)
+{
+    for (auto &it : m_consumerMap) {
+        if (gRingBuffer && it.second->getName() == excluded_table) {
+            continue;
+        }
         it.second->drain();
     }
 }
