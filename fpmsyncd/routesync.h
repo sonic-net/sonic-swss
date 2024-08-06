@@ -74,7 +74,9 @@ private:
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
-    ProducerStateTable  m_vnet_tunnelTable; 
+    ProducerStateTable  m_vnet_tunnelTable;
+    /* srv6 local sid table */
+    ProducerStateTable m_srv6LocalSidTable;
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
 
@@ -89,6 +91,17 @@ private:
 
     void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac);
 
+    void parseEncapSrv6SteerRoute(struct rtattr *tb, string &vpn_sid, string &src_addr);
+
+    void parseEncapSrv6LocalSid(struct rtattr *tb, string &block_len,
+                                string &node_len, string &func_len,
+                                string &arg_len, string &action, string &vrf,
+                                string &adj);
+
+    void parseEncapSrv6LocalSidFormat(struct rtattr *tb, string &block_len,
+                                      string &node_len, string &func_len,
+                                      string &arg_len);
+
     void parseRtAttrNested(struct rtattr **tb, int max,
                  struct rtattr *rta);
 
@@ -97,6 +110,12 @@ private:
 
     /* Handle prefix route */
     void onEvpnRouteMsg(struct nlmsghdr *h, int len);
+
+    /* Handle routes containing an SRv6 nexthop */
+    void onSrv6SteerRouteMsg(struct nlmsghdr *h, int len);
+
+    /* Handle routes containing an SRv6 Local SID nexthop */
+    void onSrv6LocalSidMsg(struct nlmsghdr *h, int len);
 
     /* Handle vnet route */
     void onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet);
@@ -119,6 +138,15 @@ private:
                         string& nexthops, string& vni_list, string& mac_list,
                         string& intf_list);
 
+    bool getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
+                        struct rtattr *tb[], string &vpn_sid, string &src_addr);
+
+    bool getSrv6LocalSidNextHop(struct nlmsghdr *h, int received_bytes,
+                                struct rtattr *tb[], string &block_len,
+                                string &node_len, string &func_len,
+                                string &arg_len, string &act, string &vrf,
+                                string &adj);
+
     /* Get next hop list */
     void getNextHopList(struct rtnl_route *route_obj, string& gw_list,
                         string& mpls_list, string& intf_list);
@@ -140,6 +168,11 @@ private:
 
     /* Sends FPM message with RTM_F_OFFLOAD flag set for all routes in the table */
     void sendOffloadReply(swss::DBConnector& db, const std::string& table);
+
+    /* Get encap type */
+    uint16_t getEncapType(struct nlmsghdr *h);
+
+    const char *localSidAction2Str(uint32_t action);
 };
 
 }

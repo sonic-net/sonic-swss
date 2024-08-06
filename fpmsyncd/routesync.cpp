@@ -23,6 +23,7 @@ using namespace swss;
 #define MGMT_VRF_PREFIX         "mgmt"
 
 #define NHG_DELIMITER ','
+#define MY_SID_KEY_DELIMITER ':'
 
 #ifndef ETH_ALEN
 #define ETH_ALEN 6
@@ -37,6 +38,8 @@ using namespace swss;
 #define VXLAN_RMAC            1
 #define NH_ENCAP_VXLAN      100
 
+#define NH_ENCAP_SRV6_ROUTE         101
+#define NH_ENCAP_SRV6_LOCAL_SID     102
 
 #define IPV4_MAX_BYTE       4
 #define IPV6_MAX_BYTE      16
@@ -44,6 +47,64 @@ using namespace swss;
 #define IPV6_MAX_BITLEN    128
 
 #define ETHER_ADDR_STRLEN (3*ETH_ALEN)
+
+#define DEFAULT_SRV6_LOCALSID_BLOCK_LEN "40"
+#define DEFAULT_SRV6_LOCALSID_NODE_LEN "24"
+#define DEFAULT_SRV6_LOCALSID_FUNC_LEN "16"
+#define DEFAULT_SRV6_LOCALSID_ARG_LEN "0"
+
+enum srv6_localsid_action {
+    SRV6_LOCALSID_ACTION_UNSPEC       = 0,
+    SRV6_LOCALSID_ACTION_END          = 1,
+    SRV6_LOCALSID_ACTION_END_X        = 2,
+    SRV6_LOCALSID_ACTION_END_T        = 3,
+    SRV6_LOCALSID_ACTION_END_DX2      = 4,
+    SRV6_LOCALSID_ACTION_END_DX6      = 5,
+    SRV6_LOCALSID_ACTION_END_DX4      = 6,
+    SRV6_LOCALSID_ACTION_END_DT6      = 7,
+    SRV6_LOCALSID_ACTION_END_DT4      = 8,
+    SRV6_LOCALSID_ACTION_END_B6       = 9,
+    SRV6_LOCALSID_ACTION_END_B6_ENCAP = 10,
+    SRV6_LOCALSID_ACTION_END_BM       = 11,
+    SRV6_LOCALSID_ACTION_END_S        = 12,
+    SRV6_LOCALSID_ACTION_END_AS       = 13,
+    SRV6_LOCALSID_ACTION_END_AM       = 14,
+    SRV6_LOCALSID_ACTION_END_BPF      = 15,
+    SRV6_LOCALSID_ACTION_END_DT46     = 16,
+    SRV6_LOCALSID_ACTION_UDT4         = 100,
+    SRV6_LOCALSID_ACTION_UDT6         = 101,
+    SRV6_LOCALSID_ACTION_UDT46        = 102,
+};
+
+enum {
+    SRV6_LOCALSID_UNSPEC         = 0,
+    SRV6_LOCALSID_ACTION         = 1,
+    SRV6_LOCALSID_SRH            = 2,
+    SRV6_LOCALSID_TABLE          = 3,
+    SRV6_LOCALSID_NH4            = 4,
+    SRV6_LOCALSID_NH6            = 5,
+    SRV6_LOCALSID_IIF            = 6,
+    SRV6_LOCALSID_OIF            = 7,
+    SRV6_LOCALSID_BPF            = 8,
+    SRV6_LOCALSID_VRFTABLE       = 9,
+    SRV6_LOCALSID_COUNTERS       = 10,
+    SRV6_LOCALSID_VRFNAME        = 100,
+    SRV6_LOCALSID_FORMAT         = 101,
+};
+
+enum {
+    SRV6_LOCALSID_FORMAT_UNSPEC         = 0,
+    SRV6_LOCALSID_FORMAT_BLOCK_LEN      = 1,
+    SRV6_LOCALSID_FORMAT_NODE_LEN       = 2,
+    SRV6_LOCALSID_FORMAT_FUNC_LEN       = 3,
+    SRV6_LOCALSID_FORMAT_ARG_LEN        = 4,
+};
+
+enum {
+    SRV6_ROUTE_UNSPEC            = 0,
+    SRV6_ROUTE_VPN_SID           = 1,
+    SRV6_ROUTE_ENCAP_SRC_ADDR    = 2,
+};
 
 /* Returns name of the protocol passed number represents */
 static string getProtocolString(int proto)
@@ -81,6 +142,7 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_srv6LocalSidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_nl_sock = nl_socket_alloc();
@@ -140,6 +202,208 @@ void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rma
     SWSS_LOG_INFO("Rx MAC %s VNI %d",
         prefixMac2Str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value);
     rmac = mac_val;
+
+    return;
+}
+
+/**
+ * @parseEncapSrv6SteerRoute() - Parses encapsulated SRv6 attributes
+ * @tb:         Pointer to rtattr to look for nested items in.
+ * @vpn_sid:    (output) VPN SID.
+ * @src_addr:   (output) source address for SRv6 encapsulation
+ *
+ * Return:      void.
+ */
+void RouteSync::parseEncapSrv6SteerRoute(struct rtattr *tb, string &vpn_sid,
+                               string &src_addr)
+{
+    struct rtattr *tb_encap[256] = {};
+    char vpn_sid_buf[MAX_ADDR_SIZE + 1] = {0};
+    char src_addr_buf[MAX_ADDR_SIZE + 1] = {0};
+
+    parseRtAttrNested(tb_encap, 256, tb);
+
+    if (tb_encap[SRV6_ROUTE_VPN_SID])
+    {
+        vpn_sid += inet_ntop(AF_INET6, RTA_DATA(tb_encap[SRV6_ROUTE_VPN_SID]),
+                             vpn_sid_buf, MAX_ADDR_SIZE);
+    }
+
+    if (tb_encap[SRV6_ROUTE_ENCAP_SRC_ADDR])
+    {
+        src_addr +=
+            inet_ntop(AF_INET6, RTA_DATA(tb_encap[SRV6_ROUTE_ENCAP_SRC_ADDR]),
+                      src_addr_buf, MAX_ADDR_SIZE);
+    }
+
+    SWSS_LOG_INFO("Rx vpn_sid:%s src_addr:%s ", vpn_sid.c_str(),
+                  src_addr.c_str());
+
+    return;
+}
+
+const char *RouteSync::localSidAction2Str(uint32_t action)
+{
+    switch (action)
+    {
+        case SRV6_LOCALSID_ACTION_UNSPEC:
+            return "unspec";
+        case SRV6_LOCALSID_ACTION_END:
+            return "end";
+        case SRV6_LOCALSID_ACTION_END_X:
+            return "end.x";
+        case SRV6_LOCALSID_ACTION_END_T:
+            return "end.t";
+        case SRV6_LOCALSID_ACTION_END_DX4:
+            return "end.dx4";
+        case SRV6_LOCALSID_ACTION_END_DT6:
+            return "end.dt6";
+        case SRV6_LOCALSID_ACTION_END_DT4:
+            return "end.dt4";
+        case SRV6_LOCALSID_ACTION_END_DT46:
+            return "end.dt46";
+        case SRV6_LOCALSID_ACTION_UDT6:
+            return "udt6";
+        case SRV6_LOCALSID_ACTION_UDT4:
+            return "udt4";
+        case SRV6_LOCALSID_ACTION_UDT46:
+            return "udt46";
+        default:
+            return "unknown";
+    }
+}
+
+/**
+ * @parseEncapSrv6LocalSidFormat() - Parses encapsulated localsid format
+ * @tb:         Pointer to rtattr to look for nested items in.
+ * @block_len:  (output) locator block length
+ * @node_len:   (output) locator node length
+ * @func_len:   (output) function length
+ * @arg_len:    (output) argument length
+ *
+ * Return:      void.
+ */
+void RouteSync::parseEncapSrv6LocalSidFormat(struct rtattr *tb,
+                                             string &block_len,
+                                             string &node_len, string &func_len,
+                                             string &arg_len)
+{
+    struct rtattr *tb_localsid_format[256] = {};
+    uint8_t block_len_buf, node_len_buf, func_len_buf, arg_len_buf;
+
+    parseRtAttrNested(tb_localsid_format, 4, tb);
+
+    if (tb_localsid_format[SRV6_LOCALSID_FORMAT_BLOCK_LEN])
+    {
+        block_len_buf = *(uint8_t *)RTA_DATA(
+            tb_localsid_format[SRV6_LOCALSID_FORMAT_BLOCK_LEN]);
+        block_len += to_string(block_len_buf);
+    }
+    else
+    {
+        block_len += DEFAULT_SRV6_LOCALSID_BLOCK_LEN;
+    }
+
+    if (tb_localsid_format[SRV6_LOCALSID_FORMAT_NODE_LEN])
+    {
+        node_len_buf = *(uint8_t *)RTA_DATA(
+            tb_localsid_format[SRV6_LOCALSID_FORMAT_NODE_LEN]);
+        node_len += to_string(node_len_buf);
+    }
+    else
+    {
+        node_len += DEFAULT_SRV6_LOCALSID_NODE_LEN;
+    }
+
+    if (tb_localsid_format[SRV6_LOCALSID_FORMAT_FUNC_LEN])
+    {
+        func_len_buf = *(uint8_t *)RTA_DATA(
+            tb_localsid_format[SRV6_LOCALSID_FORMAT_FUNC_LEN]);
+        func_len += to_string(func_len_buf);
+    }
+    else
+    {
+        func_len += DEFAULT_SRV6_LOCALSID_FUNC_LEN;
+    }
+
+    if (tb_localsid_format[SRV6_LOCALSID_FORMAT_ARG_LEN])
+    {
+        arg_len_buf = *(uint8_t *)RTA_DATA(
+            tb_localsid_format[SRV6_LOCALSID_FORMAT_ARG_LEN]);
+        arg_len += to_string(arg_len_buf);
+    }
+    else
+    {
+        arg_len += DEFAULT_SRV6_LOCALSID_ARG_LEN;
+    }
+
+    return;
+}
+
+/**
+ * @parseEncapSrv6LocalSid() - Parses encapsulated localsid attributes
+ * @tb:         Pointer to rtattr to look for nested items in.
+ * @block_len:  (output) locator block length
+ * @node_len:   (output) locator node length
+ * @func_len:   (output) function length
+ * @arg_len:    (output) argument length
+ * @action:     (output) behavior defined for the local SID.
+ * @vrf:        (output) VRF name.
+ * @adj:        (output) adjacency.
+ *
+ * Return:      void.
+ */
+void RouteSync::parseEncapSrv6LocalSid(struct rtattr *tb, string &block_len,
+                                       string &node_len, string &func_len,
+                                       string &arg_len, string &action,
+                                       string &vrf, string &adj)
+{
+    struct rtattr *tb_encap[256] = {};
+    uint32_t action_buf = SRV6_LOCALSID_ACTION_UNSPEC;
+    char vrf_buf[IFNAMSIZ + 1] = {0};
+    char adj_buf[MAX_ADDR_SIZE + 1] = {0};
+
+    parseRtAttrNested(tb_encap, 256, tb);
+
+    if (tb_encap[SRV6_LOCALSID_FORMAT])
+        parseEncapSrv6LocalSidFormat(tb_encap[SRV6_LOCALSID_FORMAT], block_len,
+                                     node_len, func_len, arg_len);
+
+    if (tb_encap[SRV6_LOCALSID_ACTION])
+    {
+        action_buf = *(uint32_t *)RTA_DATA(tb_encap[SRV6_LOCALSID_ACTION]);
+    }
+
+    if (tb_encap[SRV6_LOCALSID_NH6])
+    {
+        struct in6_addr *nh6 =
+            (struct in6_addr *)RTA_DATA(tb_encap[SRV6_LOCALSID_NH6]);
+
+        inet_ntop(AF_INET6, nh6, adj_buf, MAX_ADDR_SIZE);
+    }
+
+    if (tb_encap[SRV6_LOCALSID_NH4])
+    {
+        struct in_addr *nh4 =
+            (struct in_addr *)RTA_DATA(tb_encap[SRV6_LOCALSID_NH4]);
+
+        inet_ntop(AF_INET, nh4, adj_buf, MAX_ADDR_SIZE);
+    }
+
+    if (tb_encap[SRV6_LOCALSID_VRFNAME])
+    {
+        memcpy(vrf_buf, (char *)RTA_DATA(tb_encap[SRV6_LOCALSID_VRFNAME]),
+               strlen((char *)RTA_DATA(tb_encap[SRV6_LOCALSID_VRFNAME])));
+    }
+
+    action = localSidAction2Str(action_buf);
+    vrf = vrf_buf;
+    adj = adj_buf;
+
+    SWSS_LOG_INFO("Rx block_len:%s node_len:%s func_len:%s arg_len:%s "
+                  "action:%s vrf:%s adj:%s",
+                  block_len.c_str(), node_len.c_str(), func_len.c_str(),
+                  arg_len.c_str(), action.c_str(), vrf.c_str(), adj.c_str());
 
     return;
 }
@@ -584,6 +848,590 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     return;
 }
 
+bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
+                               struct rtattr *tb[], string &vpn_sid,
+                               string &src_addr)
+{
+    uint16_t encap = 0;
+
+    if (h->nlmsg_type == RTM_NEWROUTE)
+    {
+        if (!tb[RTA_MULTIPATH])
+        {
+            if (tb[RTA_ENCAP_TYPE])
+            {
+                encap = *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
+            }
+
+            if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE] &&
+                *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) ==
+                    NH_ENCAP_SRV6_ROUTE)
+            {
+                parseEncapSrv6SteerRoute(tb[RTA_ENCAP], vpn_sid, src_addr);
+            }
+            SWSS_LOG_DEBUG("Rx MsgType:%d encap:%d vpn_sid:%s src_addr:%s",
+                           h->nlmsg_type, encap, vpn_sid.c_str(),
+                           src_addr.c_str());
+
+            if (vpn_sid.empty())
+            {
+                return false;
+            }
+        }
+        else
+        {
+            /* This is a multipath route */
+            SWSS_LOG_NOTICE("Multipath SRv6 routes aren't supported");
+            return false;
+        }
+    }
+    return true;
+}
+
+void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
+{
+    struct rtmsg *rtm;
+    struct rtattr *tb[RTA_MAX + 1];
+    void *dest = NULL;
+    char dstaddr[IPV6_MAX_BYTE] = {0};
+    int dst_len = 0;
+    char destipprefix[MAX_ADDR_SIZE + 1] = {0};
+    char routeTableKey[IFNAMSIZ + MAX_ADDR_SIZE + 2] = {0};
+    int nlmsg_type = h->nlmsg_type;
+    unsigned int vrf_index;
+
+    rtm = (struct rtmsg *)NLMSG_DATA(h);
+
+    /* Parse attributes and extract fields of interest. */
+    memset(tb, 0, sizeof(tb));
+    netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
+
+    if (!tb[RTA_DST])
+    {
+        SWSS_LOG_ERROR(
+            "Received an invalid SRv6 route: missing RTA_DST attribute");
+        return;
+    }
+
+    dest = RTA_DATA(tb[RTA_DST]);
+
+    if (rtm->rtm_family == AF_INET)
+    {
+        if (rtm->rtm_dst_len > IPV4_MAX_BITLEN)
+        {
+            SWSS_LOG_ERROR(
+                "Received an invalid SRv6 route: prefix len %d is out of range",
+                rtm->rtm_dst_len);
+            return;
+        }
+        memcpy(dstaddr, dest, IPV4_MAX_BYTE);
+        dst_len = rtm->rtm_dst_len;
+    }
+    else if (rtm->rtm_family == AF_INET6)
+    {
+        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN)
+        {
+            SWSS_LOG_ERROR(
+                "Received an invalid SRv6 route: prefix len %d is out of range",
+                rtm->rtm_dst_len);
+            return;
+        }
+        memcpy(dstaddr, dest, IPV6_MAX_BYTE);
+        dst_len = rtm->rtm_dst_len;
+    }
+    else
+    {
+        SWSS_LOG_ERROR(
+            "Received an invalid SRv6 route: invalid address family %d",
+            rtm->rtm_family);
+        return;
+    }
+
+    inet_ntop(rtm->rtm_family, dstaddr, destipprefix, MAX_ADDR_SIZE);
+
+    SWSS_LOG_DEBUG("Rx MsgType:%d Family:%d Prefix:%s/%d", nlmsg_type,
+                   rtm->rtm_family, destipprefix, dst_len);
+
+    /* Table corresponding to route. */
+    if (tb[RTA_TABLE])
+    {
+        vrf_index = *(int *)RTA_DATA(tb[RTA_TABLE]);
+    }
+    else
+    {
+        vrf_index = rtm->rtm_table;
+    }
+
+    if (vrf_index)
+    {
+        if (!getIfName(vrf_index, routeTableKey, IFNAMSIZ))
+        {
+            SWSS_LOG_ERROR("Fail to get the VRF name (ifindex %u)", vrf_index);
+            return;
+        }
+        /*
+         * Now vrf device name is required to start with VRF_PREFIX
+         */
+        if (memcmp(routeTableKey, VRF_PREFIX, strlen(VRF_PREFIX)))
+        {
+            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", routeTableKey,
+                           vrf_index);
+            return;
+        }
+        routeTableKey[strlen(routeTableKey)] = ':';
+    }
+
+    if ((rtm->rtm_family == AF_INET && dst_len == IPV4_MAX_BITLEN) ||
+        (rtm->rtm_family == AF_INET6 && dst_len == IPV6_MAX_BITLEN))
+    {
+        snprintf(routeTableKey + strlen(routeTableKey),
+                 sizeof(routeTableKey) - strlen(routeTableKey), "%s",
+                 destipprefix);
+    }
+    else
+    {
+        snprintf(routeTableKey + strlen(routeTableKey),
+                 sizeof(routeTableKey) - strlen(routeTableKey), "%s/%u",
+                 destipprefix, dst_len);
+    }
+
+    SWSS_LOG_INFO("Received route message dest ip prefix: %s Op:%s",
+                  destipprefix, nlmsg_type == RTM_NEWROUTE ? "add" : "del");
+
+    /*
+     * In the current FPM implementation, a RTM_DELROUTE message need not be
+     * accompanied by any nexthops, therefore we expect all RTM_DELROUTE
+     * messages to be processed by onMsg() using the rtnl api.
+     */
+    if (nlmsg_type == RTM_DELROUTE)
+    {
+        SWSS_LOG_ERROR("RTM_DELROUTE message-type not expected (%s)",
+                       destipprefix);
+        return;
+    }
+    else if (nlmsg_type != RTM_NEWROUTE)
+    {
+        SWSS_LOG_ERROR("Unknown message-type: %d for %s", nlmsg_type,
+                       destipprefix);
+        return;
+    }
+
+    switch (rtm->rtm_type)
+    {
+        case RTN_BLACKHOLE:
+        case RTN_UNREACHABLE:
+        case RTN_PROHIBIT:
+            SWSS_LOG_ERROR(
+                "RTN_BLACKHOLE route not expected (%s)", destipprefix);
+            return;
+        case RTN_UNICAST:
+            break;
+
+        case RTN_MULTICAST:
+        case RTN_BROADCAST:
+        case RTN_LOCAL:
+            SWSS_LOG_NOTICE(
+                "BUM routes aren't supported yet (%s)", destipprefix);
+            return;
+
+        default:
+            return;
+    }
+
+    /* Get nexthop lists */
+    string vpn_sid_str;
+    string src_addr_str;
+    bool ret;
+
+    ret = getSrv6SteerRouteNextHop(h, len, tb, vpn_sid_str, src_addr_str);
+    if (ret == false)
+    {
+        SWSS_LOG_NOTICE(
+            "SRv6 Route issue with RouteTable msg: %s vpn_sid:%s src_addr:%s",
+            destipprefix, vpn_sid_str.c_str(), src_addr_str.c_str());
+        return;
+    }
+
+    if (vpn_sid_str.empty())
+    {
+        SWSS_LOG_NOTICE("SRv6 IP Prefix: %s vpn_sid is empty", destipprefix);
+        return;
+    }
+
+    vector<FieldValueTuple> fvVectorRoute;
+
+    FieldValueTuple vpn_sid("vpn_sid", vpn_sid_str);
+    fvVectorRoute.push_back(vpn_sid);
+
+    if (!src_addr_str.empty())
+    {
+        FieldValueTuple seg_src("seg_src", src_addr_str);
+        fvVectorRoute.push_back(seg_src);
+    }
+
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+
+    if (!warmRestartInProgress)
+    {
+        m_routeTable.set(routeTableKey, fvVectorRoute);
+        SWSS_LOG_DEBUG("RouteTable set msg: %s vpn_sid: %s src_addr:%s",
+                       routeTableKey, vpn_sid_str.c_str(),
+                       src_addr_str.c_str());
+    }
+
+    /*
+     * During routing-stack restarting scenarios route-updates will be
+     * temporarily put on hold by warm-reboot logic.
+     */
+    else
+    {
+        SWSS_LOG_INFO(
+            "Warm-Restart mode: RouteTable set msg: %s vpn_sid:%s src_addr:%s",
+            routeTableKey, vpn_sid_str.c_str(), src_addr_str.c_str());
+
+        const KeyOpFieldsValuesTuple kfv =
+            std::make_tuple(routeTableKey, SET_COMMAND, fvVectorRoute);
+        m_warmStartHelper.insertRefreshMap(kfv);
+    }
+    return;
+}
+
+bool RouteSync::getSrv6LocalSidNextHop(struct nlmsghdr *h, int received_bytes,
+                                       struct rtattr *tb[], string &block_len,
+                                       string &node_len, string &func_len,
+                                       string &arg_len, string &act,
+                                       string &vrf, string &adj)
+{
+    uint16_t encap = 0;
+
+    if (h->nlmsg_type == RTM_NEWROUTE || h->nlmsg_type == RTM_DELROUTE)
+    {
+        if (!tb[RTA_MULTIPATH])
+        {
+            if (tb[RTA_ENCAP_TYPE])
+            {
+                encap = *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
+            }
+
+            if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE] &&
+                *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) ==
+                    NH_ENCAP_SRV6_LOCAL_SID)
+            {
+                parseEncapSrv6LocalSid(tb[RTA_ENCAP], block_len, node_len,
+                                       func_len, arg_len, act, vrf, adj);
+            }
+            SWSS_LOG_DEBUG("Rx MsgType:%d encap:%d act:%s vrf:%s adj:%s",
+                           h->nlmsg_type, encap, act.c_str(), vrf.c_str(),
+                           adj.c_str());
+        }
+        else
+        {
+            /* This is a multipath route */
+            SWSS_LOG_NOTICE("Multipath localsid routes aren't supported");
+            return false;
+        }
+    }
+    return true;
+}
+
+void RouteSync::onSrv6LocalSidMsg(struct nlmsghdr *h, int len)
+{
+    struct rtmsg *rtm;
+    struct rtattr *tb[RTA_MAX + 1];
+    void *dest = NULL;
+    char dstaddr[IPV6_MAX_BYTE] = {0};
+    int dst_len = 0;
+    char dstaddr_str[MAX_ADDR_SIZE];
+    int nlmsg_type = h->nlmsg_type;
+
+    rtm = (struct rtmsg *)NLMSG_DATA(h);
+
+    /* Parse attributes and extract fields of interest. */
+    memset(tb, 0, sizeof(tb));
+    netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
+
+    if (!tb[RTA_DST])
+    {
+        SWSS_LOG_ERROR(
+            "Received an invalid localsid route: missing RTA_DST attribute");
+        return;
+    }
+
+    dest = RTA_DATA(tb[RTA_DST]);
+
+    /*
+     * Only AF_INET6 is allowed for mylocalsid routes
+     */
+    if (rtm->rtm_family == AF_INET)
+    {
+        SWSS_LOG_ERROR(
+            "AF_INET address family is not allowed for localsid routes");
+        return;
+    }
+    else if (rtm->rtm_family == AF_INET6)
+    {
+        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN)
+        {
+            SWSS_LOG_ERROR("Received an invalid localsid route: prefix len %d "
+                           "is out of range",
+                           rtm->rtm_dst_len);
+            return;
+        }
+        memcpy(dstaddr, dest, IPV6_MAX_BYTE);
+        dst_len = rtm->rtm_dst_len;
+    }
+    else
+    {
+        SWSS_LOG_ERROR(
+            "Received an invalid localsid route: invalid address family %d",
+            rtm->rtm_family);
+        return;
+    }
+
+    inet_ntop(rtm->rtm_family, dstaddr, dstaddr_str, MAX_ADDR_SIZE);
+
+    SWSS_LOG_DEBUG("Rx MsgType:%d Family:%d DstAddress:%s/%d", h->nlmsg_type,
+                   rtm->rtm_family, dstaddr_str, dst_len);
+
+    SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s", dstaddr_str,
+                  nlmsg_type == RTM_NEWROUTE ? "add" : "del");
+
+    if (nlmsg_type != RTM_NEWROUTE && nlmsg_type != RTM_DELROUTE)
+    {
+        SWSS_LOG_ERROR("Unknown message-type: %d for %s", nlmsg_type,
+                       dstaddr_str);
+        return;
+    }
+
+    switch (rtm->rtm_type)
+    {
+        case RTN_BLACKHOLE:
+        case RTN_UNREACHABLE:
+        case RTN_PROHIBIT:
+        {
+            SWSS_LOG_ERROR(
+                "RTN_BLACKHOLE route not expected (%s)", dstaddr_str);
+            return;
+        }
+        case RTN_UNICAST:
+            break;
+
+        case RTN_MULTICAST:
+        case RTN_BROADCAST:
+        case RTN_LOCAL:
+            SWSS_LOG_NOTICE(
+                "BUM routes aren't supported yet (%s)", dstaddr_str);
+            return;
+
+        default:
+            return;
+    }
+
+    /* Get nexthop lists */
+    string block_len_str;
+    string node_len_str;
+    string func_len_str;
+    string arg_len_str;
+    string action_str;
+    string vrf_str;
+    string adj_str;
+    string my_sid_table_key;
+    bool ret;
+
+    ret = getSrv6LocalSidNextHop(h, len, tb, block_len_str, node_len_str,
+                                 func_len_str, arg_len_str, action_str, vrf_str,
+                                 adj_str);
+    if (ret == false)
+    {
+        SWSS_LOG_NOTICE("Localsid Route issue with RouteTable msg: %s action: "
+                        "%s vrf: %s adj: %s",
+                        dstaddr_str, action_str.c_str(), vrf_str.c_str(),
+                        adj_str.c_str());
+        return;
+    }
+
+    my_sid_table_key += block_len_str + MY_SID_KEY_DELIMITER;
+    my_sid_table_key += node_len_str + MY_SID_KEY_DELIMITER;
+    my_sid_table_key += func_len_str + MY_SID_KEY_DELIMITER;
+    my_sid_table_key += arg_len_str + MY_SID_KEY_DELIMITER;
+    my_sid_table_key += dstaddr_str;
+
+    if (nlmsg_type == RTM_DELROUTE)
+    {
+        m_srv6LocalSidTable.del(my_sid_table_key);
+        return;
+    }
+
+    if (action_str.empty() || !(action_str.compare("unspec")) ||
+        !(action_str.compare("unknown")))
+    {
+        SWSS_LOG_NOTICE("Localsid IP Prefix: %s act is empty or invalid",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("end.dt6")) && vrf_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid End.DT6 IP Prefix: %s vrf is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("end.dt4")) && vrf_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid End.DT4 IP Prefix: %s vrf is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("end.dt46")) && vrf_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid End.DT46 IP Prefix: %s vrf is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("udt6")) && vrf_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid uDT6 IP Prefix: %s vrf is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("udt4")) && vrf_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid uDT4 IP Prefix: %s vrf is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("udt46")) && vrf_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid uDT46 IP Prefix: %s vrf is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("end.t")) && vrf_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid End.T IP Prefix: %s vrf is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("end.x")) && adj_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid End.X IP Prefix: %s adj is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("end.dx6")) && adj_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid End.DX6 IP Prefix: %s adj is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    if (!(action_str.compare("end.dx4")) && adj_str.empty())
+    {
+        SWSS_LOG_NOTICE("Localsid End.DX4 IP Prefix: %s adj is empty",
+                        dstaddr_str);
+        return;
+    }
+
+    vector<FieldValueTuple> fvVector;
+    FieldValueTuple act("action", action_str);
+    fvVector.push_back(act);
+    if (!vrf_str.empty())
+    {
+        FieldValueTuple vrf("vrf", vrf_str);
+        fvVector.push_back(vrf);
+    }
+    if (!adj_str.empty())
+    {
+        FieldValueTuple adj("adj", adj_str);
+        fvVector.push_back(adj);
+    }
+
+    m_srv6LocalSidTable.set(my_sid_table_key, fvVector);
+
+    return;
+}
+
+uint16_t RouteSync::getEncapType(struct nlmsghdr *h)
+{
+    int len;
+    uint16_t encap_type = 0;
+    struct rtmsg *rtm;
+    struct rtattr *tb[RTA_MAX + 1];
+
+    rtm = (struct rtmsg *)NLMSG_DATA(h);
+
+    if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
+    {
+        return 0;
+    }
+
+    len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct rtmsg)));
+    if (len < 0)
+    {
+        return 0;
+    }
+
+    memset(tb, 0, sizeof(tb));
+    netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
+
+    if (!tb[RTA_MULTIPATH])
+    {
+        if (tb[RTA_ENCAP_TYPE])
+        {
+            encap_type = *(short *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
+        }
+    }
+    else
+    {
+        /* This is a multipath route */
+        int len;
+        struct rtnexthop *rtnh =
+            (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
+        len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
+        struct rtattr *subtb[RTA_MAX + 1];
+
+        for (;;)
+        {
+            if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
+            {
+                break;
+            }
+
+            if (rtnh->rtnh_len > sizeof(*rtnh))
+            {
+                memset(subtb, 0, sizeof(subtb));
+                netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
+                                     (int)(rtnh->rtnh_len - sizeof(*rtnh)));
+                if (subtb[RTA_ENCAP_TYPE])
+                {
+                    encap_type = *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]);
+                    break;
+                }
+            }
+
+            if (rtnh->rtnh_len == 0)
+            {
+                break;
+            }
+
+            len -= NLMSG_ALIGN(rtnh->rtnh_len);
+            rtnh = RTNH_NEXT(rtnh);
+        }
+    }
+
+    SWSS_LOG_INFO("Rx MsgType:%d Encap:%d", h->nlmsg_type, encap_type);
+
+    return encap_type;
+}
+
 void RouteSync::onMsgRaw(struct nlmsghdr *h)
 {
     int len;
@@ -600,7 +1448,28 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
             (size_t)NLMSG_LENGTH(sizeof(struct ndmsg)));
         return;
     }
-    onEvpnRouteMsg(h, len);
+
+    switch (getEncapType(h))
+    {
+        case NH_ENCAP_SRV6_ROUTE:
+            onSrv6SteerRouteMsg(h, len);
+            break;
+        case NH_ENCAP_SRV6_LOCAL_SID:
+            onSrv6LocalSidMsg(h, len);
+            break;
+        default:
+            /*
+             * Currently only SRv6 route, SRv6 Local SID, and EVPN
+             * encapsulation types are supported. If the encapsulation
+             * type is not SRv6 route or SRv6 Local SID, we fall back
+             * to EVPN. The onEvpnRouteMsg() handler will verify that the
+             * route is actually an EVPN route. If it is not, this handler
+             * will reject the route.
+             */
+            onEvpnRouteMsg(h, len);
+            break;
+    }
+
     return;
 }
 
