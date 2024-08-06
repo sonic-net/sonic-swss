@@ -63,6 +63,7 @@ struct FdbData
     /* Remote FDB related info */
     string remote_ip;
     string    esi;
+    uint32_t nhg_id;
     unsigned int vni;
     sai_fdb_entry_type_t sai_fdb_type;
 };

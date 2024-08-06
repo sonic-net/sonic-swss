@@ -72,6 +72,9 @@ public:
     // Set Isolation group members to the input. May involve adding or deleting members
     isolation_group_status_t setMembers(string ports);
 
+    // Get Isolation group members.
+    vector<string> getMembers();
+
     // Apply the Isolation group to all linked ports
     isolation_group_status_t bind(Port &port);
 
