@@ -1,5 +1,6 @@
 #include <iostream>
 #include <inttypes.h>
+#include <getopt.h>
 #include "logger.h"
 #include "select.h"
 #include "selectabletimer.h"
@@ -7,6 +8,7 @@
 #include "netlink.h"
 #include "notificationconsumer.h"
 #include "subscriberstatetable.h"
+#include "zmqclient.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
@@ -26,6 +28,11 @@ const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
 // Wait 3 seconds after detecting EOIU reached state
 // TODO: support eoiu hold interval config
 const uint32_t DEFAULT_EOIU_HOLD_INTERVAL = 3;
+
+struct Options
+{
+    int m_zmq_port = 0;
+};
 
 // Check if eoiu state reached by both ipv4 and ipv6
 static bool eoiuFlagsSet(Table &bgpStateTable)
@@ -48,9 +55,70 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
     return true;
 }
 
+void parseArguments(
+    int argc,
+    char** argv,
+    Options &options)
+{
+    // Parse argument with getopt https://man7.org/linux/man-pages/man3/getopt.3.html
+    const char* short_options = "z";
+    static struct option long_options[] = {
+       {"zmqport",     optional_argument, NULL,  'z' },
+       // The last element of the array has to be filled with zeros.
+       {0,          0,       0,  0 }
+    };
+    
+    // prevent getopt_long print "invalid option" message.
+    opterr = 0;
+    while(optind < argc)
+    {
+        int opt = getopt_long(argc, argv, short_options, long_options, NULL);
+        if (opt == -1)
+        {
+            continue;
+        }
+
+        switch (opt) {
+            case 'z':
+                if (optind < argc)
+                {
+                    options.m_zmq_port = atoi(argv[optind]);
+                    optind++;
+                }
+                else
+                {
+                    throw invalid_argument("zmq port value is missing.");
+                }
+                break;
+
+            default:
+                // argv contains unknown argument
+                throw invalid_argument("Unknown argument:" + string(argv[optind]));
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
+
+    // parse parameter
+    Options options;
+    try
+    {
+        parseArguments(argc, argv, options);
+    }
+    catch (invalid_argument const& e)
+    {
+        cerr << "Paramet: " << e.what() << endl;
+        return -1;
+    }
+    catch (logic_error const& e)
+    {
+        // getopt_long throw logic_error when found a unknown option without value.
+        cerr << "Unknown option without value: "  << e.what() << endl;
+        return -1;
+    }
 
     const auto routeResponseChannelName = std::string("APPL_DB_") + APP_ROUTE_TABLE_NAME + "_RESPONSE_CHANNEL";
 
@@ -61,8 +129,18 @@ int main(int argc, char **argv)
     DBConnector applStateDb("APPL_STATE_DB", 0);
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
+    std::shared_ptr<ZmqClient> zmqClient = nullptr;
+    if (options.m_zmq_port != 0)
+    {
+        char address[100];
+        snprintf(address, sizeof(address), "tcp://127.0.0.1:%d", options.m_zmq_port);
+        SWSS_LOG_NOTICE("fpmsyncd start with ZMQ enabled, zmq address: %s", address);
+        zmqClient = std::make_shared<ZmqClient>(address);
+    }
+
     RedisPipeline pipeline(&db);
-    RouteSync sync(&pipeline);
+    RouteSync sync(&pipeline, zmqClient);
+
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
@@ -119,11 +197,11 @@ int main(int argc, char **argv)
             }
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
-            bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
+            bool warmStartEnabled = sync.m_warmStartHelper->checkAndStart();
             if (warmStartEnabled)
             {
                 /* Obtain warm-restart timer defined for routing application */
-                time_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
+                time_t warmRestartIval = sync.m_warmStartHelper->getRestartTimer();
                 if (!warmRestartIval)
                 {
                     warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
@@ -134,7 +212,7 @@ int main(int argc, char **argv)
                 }
 
                 /* Execute restoration instruction and kick off warm-restart timer */
-                if (sync.m_warmStartHelper.runRestoration())
+                if (sync.m_warmStartHelper->runRestoration())
                 {
                     warmStartTimer.start();
                     s.addSelectable(&warmStartTimer);
@@ -149,7 +227,7 @@ int main(int argc, char **argv)
             }
             else
             {
-                sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
+                sync.m_warmStartHelper->setState(WarmStart::WSDISABLED);
             }
 
             while (true)
@@ -185,7 +263,7 @@ int main(int argc, char **argv)
                 }
                 else if (temps == &eoiuCheckTimer)
                 {
-                    if (sync.m_warmStartHelper.inProgress())
+                    if (sync.m_warmStartHelper->inProgress())
                     {
                         if (eoiuFlagsSet(bgpStateTable))
                         {
@@ -284,7 +362,7 @@ int main(int argc, char **argv)
                         sync.onRouteResponse(key, fieldValues);
                     }
                 }
-                else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
+                else if (!warmStartEnabled || sync.m_warmStartHelper->isReconciled())
                 {
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");

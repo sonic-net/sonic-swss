@@ -7,7 +7,9 @@
 #include "linkcache.h"
 #include "fpminterface.h"
 #include "warmRestartHelper.h"
+#include "zmqclient.h"
 #include <string.h>
+#include <memory.h>
 #include <bits/stdc++.h>
 
 #include <netlink/route/route.h>
@@ -34,7 +36,7 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    RouteSync(RedisPipeline *pipeline);
+    RouteSync(RedisPipeline *pipeline, std::shared_ptr<ZmqClient> zmqClient = nullptr);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
@@ -64,13 +66,13 @@ public:
         m_fpmInterface = nullptr;
     }
 
-    WarmStartHelper  m_warmStartHelper;
+    unique_ptr<WarmStartHelper> m_warmStartHelper;
 
 private:
     /* regular route table */
-    ProducerStateTable  m_routeTable;
+    unique_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
-    ProducerStateTable  m_label_routeTable;
+    unique_ptr<ProducerStateTable> m_label_routeTable;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  

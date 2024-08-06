@@ -26,6 +26,7 @@ class ZmqOrch : public Orch
 {
 public:
     ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer);
+    ZmqOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqServer *zmqServer);
 
     virtual void doTask(ConsumerBase &consumer) { };
     void doTask(Consumer &consumer) override;
