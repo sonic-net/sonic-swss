@@ -1116,6 +1116,7 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
 
     auto statenumlist = info->statenum->values;
     auto statnumcount = (uint32_t)info->statenum->valuescount;
+    stat_list.reserve(statnumcount);
 
     for (uint32_t i = 0; i < statnumcount; i++)
     {
