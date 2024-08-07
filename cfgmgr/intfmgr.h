@@ -18,6 +18,7 @@ struct SubIntfInfo
 };
 
 typedef std::map<std::string, SubIntfInfo>             SubIntfMap;
+typedef std::map<std::string, bool>                    SagIntfMap;
 
 namespace swss {
 
@@ -28,12 +29,14 @@ public:
     using Orch::doTask;
 
 private:
-    ProducerStateTable m_appIntfTableProducer;
-    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable;
-    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
+    ProducerStateTable m_appIntfTableProducer, m_appSagTableProducer;
+    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable, m_cfgSagTable;
+    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable, m_appLagTable;
+
     Table m_neighTable;
 
     SubIntfMap m_subIntfList;
+    SagIntfMap m_sagIntfList;
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
     std::set<std::string> m_ipv6LinkLocalModeList;
@@ -43,9 +46,12 @@ private:
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
     bool setIntfMpls(const std::string &alias, const std::string &mpls);
+    void setIntfState(const std::string &alias, bool isUp);
+    void setSagFdbEntry(const std::string &op, const std::string &alias, const std::string &mac_str);
 
     bool doIntfGeneralTask(const std::vector<std::string>& keys, std::vector<FieldValueTuple> data, const std::string& op);
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
+    void doSagTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doTask(Consumer &consumer);
     void doPortTableTask(const std::string& key, std::vector<FieldValueTuple> data, std::string op);
 
@@ -75,6 +81,7 @@ private:
 
     void updateSubIntfAdminStatus(const std::string &alias, const std::string &admin);
     void updateSubIntfMtu(const std::string &alias, const std::string &mtu);
+    void updateSagMac(const std::string &macAddr);
     bool enableIpv6Flag(const std::string&);
 
     bool m_replayDone {false};

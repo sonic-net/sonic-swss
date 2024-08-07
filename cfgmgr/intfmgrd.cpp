@@ -16,6 +16,9 @@ using namespace swss;
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
+MacAddress gMacAddress;
+MacAddress gSagMacAddress;
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("intfmgrd");
@@ -32,6 +35,7 @@ int main(int argc, char **argv)
             CFG_LOOPBACK_INTERFACE_TABLE_NAME,
             CFG_VLAN_SUB_INTF_TABLE_NAME,
             CFG_VOQ_INBAND_INTERFACE_TABLE_NAME,
+            CFG_SAG_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
@@ -49,6 +53,16 @@ int main(int argc, char **argv)
         {
             s.addSelectables(o->getSelectables());
         }
+
+        Table table(&cfgDb, "DEVICE_METADATA");
+        string mac = "";
+        if (!table.hget("localhost", "mac", mac))
+        {
+            throw runtime_error("couldn't find MAC address of the device from config DB");
+        }
+
+        gMacAddress = MacAddress(mac);
+        gSagMacAddress = gMacAddress;
 
         SWSS_LOG_NOTICE("starting main loop");
         while (true)
