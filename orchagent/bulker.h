@@ -134,8 +134,10 @@ static inline bool operator==(const sai_pa_validation_entry_t& a, const sai_pa_v
 static inline bool operator==(const sai_outbound_routing_entry_t& a, const sai_outbound_routing_entry_t& b)
 {
     return a.switch_id == b.switch_id
-        && a.eni_id == b.eni_id
         && a.destination == b.destination
+#if 0 // enable it after sonic-sairedis/pull/1409 merged
+        && a.outbound_routing_group_id == b.outbound_routing_group_id
+#endif
         ;
 }
 
@@ -257,8 +259,10 @@ namespace std
         {
             size_t seed = 0;
             boost::hash_combine(seed, a.switch_id);
-            boost::hash_combine(seed, a.eni_id);
             boost::hash_combine(seed, a.destination);
+#if 0 // enable it after sonic-sairedis/pull/1409 merged
+            boost::hash_combine(seed, a.outbound_routing_group_id);
+#endif
             return seed;
         }
     };

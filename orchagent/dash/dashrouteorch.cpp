@@ -74,7 +74,9 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
 
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.eni_id = dash_orch_->getEni(ctxt.eni)->eni_id;
+#if 0 // enable it after sonic-sairedis/pull/1409 merged
+    outbound_routing_entry.outbound_routing_group_id = dash_orch_->getEni(ctxt.eni)->outbound_routing_group_id;
+#endif
     swss::copy(outbound_routing_entry.destination, ctxt.destination);
     sai_attribute_t outbound_routing_attr;
     vector<sai_attribute_t> outbound_routing_attrs;
@@ -153,7 +155,10 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
         }
     }
 
-    OutboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.destination, ctxt.metadata };
+    OutboundRoutingEntry entry = { ctxt.destination, ctxt.metadata };
+#if 0 // enable it after sonic-sairedis/pull/1409 merged
+    OutboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->outbound_routing_group_id, ctxt.destination, ctxt.metadata };
+#endif
     routing_entries_[key] = entry;
 
     gCrmOrch->incCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
@@ -178,7 +183,9 @@ bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulk
     OutboundRoutingEntry entry = routing_entries_[key];
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.eni_id = entry.eni;
+#if 0 // enable it after sonic-sairedis/pull/1409 merged
+    outbound_routing_entry.outbound_routing_group_id = entry.outbound_routing_group;
+#endif
     swss::copy(outbound_routing_entry.destination, entry.destination);
     object_statuses.emplace_back();
     outbound_routing_bulker_.remove_entry(&object_statuses.back(), &outbound_routing_entry);
