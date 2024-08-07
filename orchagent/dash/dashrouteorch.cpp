@@ -27,6 +27,7 @@
 using namespace std;
 using namespace swss;
 
+std::unordered_map<std::string, sai_object_id_t> gRouteGroupToOid;
 extern std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
 extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
 extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
@@ -61,9 +62,11 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         SWSS_LOG_WARN("Outbound routing entry already exists for %s", key.c_str());
         return true;
     }
-    if (!dash_orch_->getEni(ctxt.eni))
+
+    auto route_group_it = gRouteGroupToOid.find(ctxt.route_group);
+    if (route_group_it == gRouteGroupToOid.end())
     {
-        SWSS_LOG_INFO("Retry as ENI entry %s not found", ctxt.eni.c_str());
+        SWSS_LOG_INFO("Retry as route group %s not found", ctxt.route_group.c_str());
         return false;
     }
     if (ctxt.metadata.has_vnet() && gVnetNameToId.find(ctxt.metadata.vnet()) == gVnetNameToId.end())
@@ -74,7 +77,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
 
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.eni_id = dash_orch_->getEni(ctxt.eni)->eni_id;
+    outbound_routing_entry.outbound_routing_group_id = route_group_it->second;
     swss::copy(outbound_routing_entry.destination, ctxt.destination);
     sai_attribute_t outbound_routing_attr;
     vector<sai_attribute_t> outbound_routing_attrs;
@@ -153,7 +156,7 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
         }
     }
 
-    OutboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.destination, ctxt.metadata };
+    OutboundRoutingEntry entry = { gRouteGroupToOid[ctxt.route_group], ctxt.destination, ctxt.metadata };
     routing_entries_[key] = entry;
 
     gCrmOrch->incCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
@@ -178,7 +181,7 @@ bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulk
     OutboundRoutingEntry entry = routing_entries_[key];
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.eni_id = entry.eni;
+    outbound_routing_entry.outbound_routing_group_id = entry.route_group;
     swss::copy(outbound_routing_entry.destination, entry.destination);
     object_statuses.emplace_back();
     outbound_routing_bulker_.remove_entry(&object_statuses.back(), &outbound_routing_entry);
@@ -248,13 +251,13 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 ctxt.clear();
             }
 
-            string& eni = ctxt.eni;
+            string& route_group = ctxt.route_group;
             IpPrefix& destination = ctxt.destination;
 
             vector<string> keys = tokenize(key, ':');
-            eni = keys[0];
+            route_group = keys[0];
             string ip_str;
-            size_t pos = key.find(":", eni.length());
+            size_t pos = key.find(":", route_group.length());
             ip_str = key.substr(pos + 1);
             destination = IpPrefix(ip_str);
 
@@ -621,6 +624,105 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
     }
 }
 
+bool addRouteGroup(const string& route_group, const dash::route_group::RouteGroup& entry)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t route_group_oid;
+    sai_status_t status = sai_dash_outbound_routing_api->create_outbound_routing_group(&route_group_oid, gSwitchId, 0, NULL);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create route group %s", route_group.c_str());
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    gRouteGroupToOid[route_group] = route_group_oid;
+    SWSS_LOG_INFO("Route group %s added", route_group.c_str());
+
+    return true;
+}
+
+bool removeRouteGroup(const string& route_group)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = gRouteGroupToOid.find(route_group);
+    if (it == gRouteGroupToOid.end())
+    {
+        SWSS_LOG_INFO("Failed to find route group %s to remove", route_group.c_str());
+        return true;
+    }
+
+    sai_status_t status = sai_dash_outbound_routing_api->remove_outbound_routing_group(it->second);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove route group %s", route_group.c_str());
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    gRouteGroupToOid.erase(it);
+    SWSS_LOG_INFO("Route group %s removed", route_group.c_str());
+
+    return true;
+}
+
+void doTaskRouteGroupTable(ConsumerBase& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+
+    while (it != consumer.m_toSync.end())
+    {
+        auto t = it->second;
+        string route_group = kfvKey(t);
+        string op = kfvOp(t);
+        if (op == SET_COMMAND)
+        {
+            dash::route_group::RouteGroup entry;
+            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            {
+                SWSS_LOG_WARN("Requires protobuf at RouteGroup :%s", route_group.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (addRouteGroup(route_group, entry))
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (removeRouteGroup(route_group))
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
 void DashRouteOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
@@ -636,6 +738,10 @@ void DashRouteOrch::doTask(ConsumerBase& consumer)
     else if (tn == APP_DASH_ROUTE_RULE_TABLE_NAME)
     {
         doTaskRouteRuleTable(consumer);
+    }
+    else if (tn == APP_DASH_ROUTE_GROUP_TABLE_NAME)
+    {
+        doTaskRouteGroupTable(consumer);
     }
     else
     {

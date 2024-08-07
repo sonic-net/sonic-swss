@@ -22,6 +22,7 @@
 #include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"
 #include "dash_api/qos.pb.h"
+#include "dash_api/eni_route.pb.h"
 
 struct EniEntry
 {
@@ -33,6 +34,7 @@ typedef std::map<std::string, dash::appliance::Appliance> ApplianceTable;
 typedef std::map<dash::route_type::RoutingType, dash::route_type::RouteType> RoutingTypeTable;
 typedef std::map<std::string, EniEntry> EniTable;
 typedef std::map<std::string, dash::qos::Qos> QosTable;
+typedef std::map<std::string, dash::eni_route::EniRoute> EniRouteTable;
 
 class DashOrch : public ZmqOrch
 {
@@ -46,11 +48,13 @@ private:
     RoutingTypeTable routing_type_entries_;
     EniTable eni_entries_;
     QosTable qos_entries_;
+    EniRouteTable eni_route_entries_;
     void doTask(ConsumerBase &consumer);
     void doTaskApplianceTable(ConsumerBase &consumer);
     void doTaskRoutingTypeTable(ConsumerBase &consumer);
     void doTaskEniTable(ConsumerBase &consumer);
     void doTaskQosTable(ConsumerBase &consumer);
+    void doTaskEniRouteTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
     bool removeApplianceEntry(const std::string& appliance_id);
     bool addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry);
@@ -64,4 +68,6 @@ private:
     bool setEniAdminState(const std::string& eni, const EniEntry& entry);
     bool addQosEntry(const std::string& qos_name, const dash::qos::Qos &entry);
     bool removeQosEntry(const std::string& qos_name);
+    bool setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry);
+    bool removeEniRoute(const std::string& eni);
 };
