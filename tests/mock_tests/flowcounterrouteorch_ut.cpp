@@ -135,6 +135,7 @@ namespace flowcounterrouteorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            gDirectory.set(gPortsOrch);
 
             vector<string> vnet_tables = {
                 APP_VNET_RT_TABLE_NAME,
@@ -175,12 +176,18 @@ namespace flowcounterrouteorch_test
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
-            auto* tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            ASSERT_EQ(gTunneldecapOrch, nullptr);
+            vector<string> tunnel_tables = {
+                APP_TUNNEL_DECAP_TABLE_NAME,
+                APP_TUNNEL_DECAP_TERM_TABLE_NAME
+            };
+            gTunneldecapOrch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+
             vector<string> mux_tables = {
                 CFG_MUX_CABLE_TABLE_NAME,
                 CFG_PEER_SWITCH_TABLE_NAME
             };
-            auto* mux_orch = new MuxOrch(m_config_db.get(), mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
+            auto* mux_orch = new MuxOrch(m_config_db.get(), mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
             gDirectory.set(mux_orch);
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
@@ -304,6 +311,9 @@ namespace flowcounterrouteorch_test
 
             delete gNeighOrch;
             gNeighOrch = nullptr;
+
+            delete gTunneldecapOrch;
+            gTunneldecapOrch = nullptr;
 
             delete gFdbOrch;
             gFdbOrch = nullptr;

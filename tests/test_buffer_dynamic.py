@@ -865,3 +865,72 @@ class TestBufferMgrDyn(object):
             dvs.port_admin_set('Ethernet0', 'down')
 
         self.cleanup_db(dvs)
+
+
+    def test_bufferPoolInitWithSHP(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        try:
+            # 1. Enable the shared headroom pool
+            default_lossless_buffer_parameter = self.config_db.get_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
+            default_lossless_buffer_parameter['over_subscribe_ratio'] = '2'
+            self.config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_buffer_parameter)
+
+            # 2. Stop the orchagent
+            _, oa_pid = dvs.runcmd("pgrep orchagent")
+            dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
+
+            # 3. Remove the size from CONFIG_DB|BUFFER_POOL.ingress_lossless_pool
+            original_ingress_lossless_pool = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            try:
+                self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'size')
+                self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'xoff')
+            except Exception as e:
+                pass
+
+            # 4. Remove the ingress_lossless_pool from the APPL_DB
+            self.app_db.delete_entry('BUFFER_POOL_TABLE', 'ingress_lossless_pool')
+
+            # 5. Mock it by adding a "TABLE_SET" entry to trigger the fallback logic
+            self.app_db.update_entry("BUFFER_PG_TABLE_SET", "", {"NULL": "NULL"})
+
+            # 6. Invoke the lua plugin
+            _, output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            assert "ingress_lossless_pool:2048:1024" in output
+
+        finally:
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)
+            self.config_db.delete_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
+            self.app_db.delete_entry("BUFFER_PG_TABLE_SET", "")
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+
+    def test_bufferPoolPercentage(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        try:
+            self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'size')
+        except Exception as e:
+            pass
+
+        try:
+            percentage = 75
+            margin = 1
+
+            re_pool_size = "ingress_lossless_pool:([0-9]+)"
+            _, original_output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            original_size = int(re.match(re_pool_size, original_output).group(1))
+
+            original_ingress_lossless_pool = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            ingress_lossless_pool = original_ingress_lossless_pool
+            ingress_lossless_pool['percentage'] = str(percentage)
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', ingress_lossless_pool)
+
+            _, percentage_output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            percentage_size = int(re.match(re_pool_size, percentage_output).group(1))
+
+            real_percentage = percentage_size * 100 / original_size
+            assert abs(percentage - real_percentage) < margin
+        finally:
+            self.config_db.delete_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)

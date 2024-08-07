@@ -76,7 +76,7 @@ class TestDash(object):
         self.vnet_oid = vnets[0]
         enis = dash_db.asic_eni_table.get_keys()
         assert enis
-        self.eni_oid = enis[0];
+        self.eni_oid = enis[0]
         fvs = dash_db.asic_eni_table[enis[0]]
         for fv in fvs.items():
             if fv[0] == "SAI_ENI_ATTR_VNET_ID":
@@ -97,6 +97,18 @@ class TestDash(object):
         for fv in fvs.items():
             if fv[0] == "SAI_ENI_ETHER_ADDRESS_MAP_ENTRY_ATTR_ENI_ID":
                 assert fv[1] == str(self.eni_oid)
+
+        # test admin state update
+        pb.admin_state = State.STATE_DISABLED
+        dash_db.create_eni(self.mac_string, {"pb": pb.SerializeToString()})
+        time.sleep(3)
+        enis = dash_db.asic_eni_table.get_keys()
+        assert len(enis) == 1
+        assert enis[0] == self.eni_oid
+        eni_attrs = dash_db.asic_eni_table[self.eni_oid]
+        assert eni_attrs["SAI_ENI_ATTR_ADMIN_STATE"] == "false"
+
+        return dash_db 
 
     def test_vnet_map(self, dash_db):
         self.vnet = "Vnet1"
@@ -182,7 +194,7 @@ class TestDash(object):
         fvs = dash_db.asic_inbound_routing_rule_table[inbound_routing_entries[0]]
         for fv in fvs.items():
             if fv[0] == "SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE"
+                assert fv[1] == "SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE"
 
     def test_cleanup(self, dash_db):
         self.vnet = "Vnet1"

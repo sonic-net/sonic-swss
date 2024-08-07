@@ -19,6 +19,9 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
 
+#define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
+#define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
+
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS 10 * 1000
 
@@ -60,6 +63,7 @@ Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
+TunnelDecapOrch *gTunneldecapOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -115,10 +119,12 @@ bool OrchDaemon::init()
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
+    TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
         conf_asic_sensors,
+        conf_suppress_asic_sdk_health_categories,
         app_switch_table
     };
 
@@ -220,7 +226,13 @@ bool OrchDaemon::init()
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
     gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
-    TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
+
+    vector<string> tunnel_tables = {
+        APP_TUNNEL_DECAP_TABLE_NAME,
+        APP_TUNNEL_DECAP_TERM_TABLE_NAME
+    };
+    gTunneldecapOrch = new TunnelDecapOrch(m_applDb, m_stateDb, m_configDb, tunnel_tables);
+    gDirectory.set(gTunneldecapOrch);
 
     VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_stateDb, m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
@@ -376,7 +388,7 @@ bool OrchDaemon::init()
         CFG_MUX_CABLE_TABLE_NAME,
         CFG_PEER_SWITCH_TABLE_NAME
     };
-    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
+    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
     gDirectory.set(mux_orch);
 
     MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, m_stateDb, APP_MUX_CABLE_TABLE_NAME);
@@ -405,7 +417,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch, gMonitorOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch, gMonitorOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -513,8 +525,11 @@ bool OrchDaemon::init()
 
     if (m_fabricEnabled)
     {
+        // register APP_FABRIC_MONITOR_PORT_TABLE_NAME table
+        const int fabric_portsorch_base_pri = 30;
         vector<table_name_with_pri_t> fabric_port_tables = {
-           // empty for now
+           { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
+           { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
         };
         gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
         m_orchList.push_back(gFabricPortsOrch);
@@ -575,6 +590,7 @@ bool OrchDaemon::init()
     }
     else if ((platform == INVM_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
+             || (platform == MRVL_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
 
@@ -606,7 +622,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING))
+        if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING) || (platform == MRVL_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
@@ -660,7 +676,25 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        if(gSwitchOrch->checkPfcDlrInitEnable())
+        bool pfcDlrInit = gSwitchOrch->checkPfcDlrInitEnable();
+
+        // Override pfcDlrInit if needed, and this change is only for PFC tests.
+        if(getenv("PFC_DLR_INIT_ENABLE"))
+        {
+            string envPfcDlrInit = getenv("PFC_DLR_INIT_ENABLE");
+            if(envPfcDlrInit == "1")
+            {
+                pfcDlrInit = true;
+                SWSS_LOG_NOTICE("Override PfcDlrInitEnable to true");
+            }
+            else if(envPfcDlrInit == "0")
+            {
+                pfcDlrInit = false;
+                SWSS_LOG_NOTICE("Override PfcDlrInitEnable to false");
+            }
+        }
+
+        if(pfcDlrInit)
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
@@ -726,6 +760,11 @@ bool OrchDaemon::init()
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
     gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
+
+    TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
+    TableConnector stateDbTwampTable(m_stateDb, STATE_TWAMP_SESSION_TABLE_NAME);
+    TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
+    m_orchList.push_back(twamp_orch);
 
     if (WarmStart::isWarmStart())
     {
@@ -1067,8 +1106,10 @@ bool FabricOrchDaemon::init()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("FabricOrchDaemon init");
 
+    const int fabric_portsorch_base_pri = 30;
     vector<table_name_with_pri_t> fabric_port_tables = {
-        // empty for now, I don't consume anything yet
+        { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
+        { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
     };
     gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
     addOrchList(gFabricPortsOrch);

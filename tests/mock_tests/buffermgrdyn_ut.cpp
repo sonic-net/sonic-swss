@@ -823,6 +823,54 @@ namespace buffermgrdyn_test
         }
     }
 
+    TEST_F(BufferMgrDynTest, BufferMgrDynTestReclaimingBufferProfileList)
+    {
+        vector<FieldValueTuple> fieldValues;
+
+        SetUpReclaimingBuffer();
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profile = make_shared<vector<KeyOpFieldsValuesTuple>>(zeroProfile);
+
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        StartBufferManager(zero_profile);
+
+        stateBufferTable.set("Ethernet0",
+                             {
+                                 {"max_priority_groups", "8"},
+                                 {"max_queues", "16"}
+                             });
+        m_dynamicBuffer->addExistingData(&stateBufferTable);
+        static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+        statePortTable.set("Ethernet0",
+                           {
+                               {"supported_speeds", "100000,50000,40000,25000,10000,1000"}
+                           });
+        InitPort("Ethernet0", "down");
+
+        InitBufferPool();
+        InitDefaultBufferProfile();
+
+        InitBufferProfileList("Ethernet0", "ingress_lossless_profile", bufferIngProfileListTable);
+        InitBufferProfileList("Ethernet0", "egress_lossless_profile,egress_lossy_profile", bufferEgrProfileListTable);
+
+        // No profile lists in the database until buffer pools are ready
+        CheckProfileList("Ethernet0", true, "ingress_lossless_profile", false);
+        CheckProfileList("Ethernet0", false, "egress_lossless_profile,egress_lossy_profile", false);
+
+        // Make buffer pools ready
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        // Zero profile lists should be in the database
+        ASSERT_TRUE(appBufferIngProfileListTable.get("Ethernet0", fieldValues));
+        ASSERT_EQ(fvValue(fieldValues[0]), "ingress_lossless_zero_profile");
+        fieldValues.clear();
+        ASSERT_TRUE(appBufferEgrProfileListTable.get("Ethernet0", fieldValues));
+        ASSERT_EQ(fvValue(fieldValues[0]), "egress_lossless_zero_profile,egress_lossy_zero_profile");
+    }
+
     /*
      * Clear qos with reclaiming buffer
      *

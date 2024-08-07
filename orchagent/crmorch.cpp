@@ -64,6 +64,7 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, "DASH_IPV6_ACL_GROUP" },
     { CrmResourceType::CRM_DASH_IPV4_ACL_RULE, "DASH_IPV4_ACL_RULE" },
     { CrmResourceType::CRM_DASH_IPV6_ACL_RULE, "DASH_IPV6_ACL_RULE" },
+    { CrmResourceType::CRM_TWAMP_ENTRY, "TWAMP_ENTRY" }
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -84,6 +85,7 @@ const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
     { CrmResourceType::CRM_IPMC_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_IPMC_ENTRY},
     { CrmResourceType::CRM_SNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY },
     { CrmResourceType::CRM_DNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY },
+    { CrmResourceType::CRM_TWAMP_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_TWAMP_SESSION }
 };
 
 const map<CrmResourceType, sai_object_type_t> crmResSaiObjAttrMap =
@@ -125,6 +127,7 @@ const map<CrmResourceType, sai_object_type_t> crmResSaiObjAttrMap =
     { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_GROUP },
     { CrmResourceType::CRM_DASH_IPV4_ACL_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_RULE },
     { CrmResourceType::CRM_DASH_IPV6_ACL_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_RULE },
+    { CrmResourceType::CRM_TWAMP_ENTRY, SAI_OBJECT_TYPE_NULL }
 };
 
 const map<CrmResourceType, sai_attr_id_t> crmResAddrFamilyAttrMap =
@@ -185,7 +188,8 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "dash_ipv4_acl_group_threshold_type", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
     { "dash_ipv6_acl_group_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
-    { "dash_ipv6_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
+    { "dash_ipv6_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "twamp_entry_threshold_type", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -226,7 +230,8 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     { "dash_ipv4_acl_group_low_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
     { "dash_ipv6_acl_group_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
-    { "dash_ipv6_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
+    { "dash_ipv6_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "twamp_entry_low_threshold", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -267,7 +272,8 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     { "dash_ipv4_acl_group_high_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
     { "dash_ipv6_acl_group_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
-    { "dash_ipv6_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
+    { "dash_ipv6_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "twamp_entry_high_threshold", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -315,7 +321,8 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_dash_ipv4_acl_group_available", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
     { "crm_stats_dash_ipv6_acl_group_available", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "crm_stats_dash_ipv4_acl_rule_available", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
-    { "crm_stats_dash_ipv6_acl_rule_available", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
+    { "crm_stats_dash_ipv6_acl_rule_available", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "crm_stats_twamp_entry_available", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -356,7 +363,8 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_dash_ipv4_acl_group_used", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
     { "crm_stats_dash_ipv6_acl_group_used", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "crm_stats_dash_ipv4_acl_rule_used", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
-    { "crm_stats_dash_ipv6_acl_rule_used", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
+    { "crm_stats_dash_ipv6_acl_rule_used", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "crm_stats_twamp_entry_used", CrmResourceType::CRM_TWAMP_ENTRY },
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -877,6 +885,7 @@ void CrmOrch::getResAvailableCounters()
             case CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA:
             case CrmResourceType::CRM_DASH_IPV4_ACL_GROUP:
             case CrmResourceType::CRM_DASH_IPV6_ACL_GROUP:
+            case CrmResourceType::CRM_TWAMP_ENTRY:
             {
                 getResAvailability(res.first, res.second);
                 break;
