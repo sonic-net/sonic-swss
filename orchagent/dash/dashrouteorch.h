@@ -18,11 +18,12 @@
 
 #include "dash_api/route.pb.h"
 #include "dash_api/route_rule.pb.h"
+#include "dash_api/route_group.pb.h"
 
 
 struct OutboundRoutingEntry
 {
-    sai_object_id_t eni;
+    sai_object_id_t route_group;
     swss::IpPrefix destination;
     dash::route::Route metadata;
 };
@@ -41,7 +42,7 @@ typedef std::map<std::string, InboundRoutingEntry> RoutingRuleTable;
 
 struct OutboundRoutingBulkContext
 {
-    std::string eni;
+    std::string route_group;
     swss::IpPrefix destination;
     dash::route::Route metadata;
     std::deque<sai_status_t> object_statuses;
@@ -88,6 +89,7 @@ private:
     void doTask(ConsumerBase &consumer);
     void doTaskRouteTable(ConsumerBase &consumer);
     void doTaskRouteRuleTable(ConsumerBase &consumer);
+    void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);
     bool addOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
     bool removeOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);
@@ -96,4 +98,6 @@ private:
     bool addInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);
     bool removeInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt);
     bool removeInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);
+    bool addRouteGroup(const std::string& key, const dash::route_group::RouteGroup& entry);
+    bool removeRouteGroup(const std::string& key);
 };

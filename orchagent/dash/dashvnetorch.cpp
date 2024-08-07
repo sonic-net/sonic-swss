@@ -20,6 +20,7 @@
 #include "dashorch.h"
 #include "crmorch.h"
 #include "saihelper.h"
+#include "directory.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -34,6 +35,7 @@ extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
+extern Directory<Orch*> gDirectory;
 
 DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, ZmqServer *zmqServer) :
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
@@ -283,10 +285,58 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     auto& object_statuses = ctxt.outbound_ca_to_pa_object_statuses;
     sai_attribute_t outbound_ca_to_pa_attr;
     vector<sai_attribute_t> outbound_ca_to_pa_attrs;
+    
+    DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    dash::route_type::RouteType route_type_actions;
+    if (!dash_orch->getRouteTypeActions(ctxt.metadata.action_type(), route_type_actions))
+    {
+        SWSS_LOG_INFO("Failed to get route type actions for %s", key.c_str());
+    }
 
-    outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
-    to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
-    outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    for (auto action: route_type_actions.items())
+    {
+        if (action.action_type() == dash::route_type::ACTION_TYPE_STATICENCAP)
+        {
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION;
+            if (action.encap_type() == dash::route_type::ENCAP_TYPE_VXLAN)
+            {
+                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_VXLAN;
+            }
+            else if (action.encap_type() == dash::route_type::ENCAP_TYPE_NVGRE)
+            {
+                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_NVGRE;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
+                return;
+            }
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY;
+            outbound_ca_to_pa_attr.value.u32 = action.vni();
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        }
+    }
+
+    if (ctxt.metadata.action_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
+    {
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
+        outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING;
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
+        to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP;
+        to_sai(ctxt.metadata.overlay_dip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP;
+        to_sai(ctxt.metadata.overlay_sip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    }
 
     outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
     memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));

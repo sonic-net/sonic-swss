@@ -24,6 +24,7 @@
 using namespace std;
 using namespace swss;
 
+extern std::unordered_map<std::string, sai_object_id_t> gRouteGroupToOid;
 extern std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
 extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
@@ -35,6 +36,21 @@ extern CrmOrch *gCrmOrch;
 DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) : ZmqOrch(db, tableName, zmqServer)
 {
     SWSS_LOG_ENTER();
+}
+
+bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = routing_type_entries_.find(routing_type);
+    if (it == routing_type_entries_.end())
+    {
+        SWSS_LOG_WARN("Routing type %s not found", dash::route_type::RoutingType_Name(routing_type).c_str());
+        return false;
+    }
+
+    route_type = it->second;
+    return true;
 }
 
 bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::appliance::Appliance &entry)
@@ -191,34 +207,34 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
     }
 }
 
-bool DashOrch::addRoutingTypeEntry(const string& routing_type, const dash::route_type::RouteType &entry)
+bool DashOrch::addRoutingTypeEntry(const dash::route_type::RoutingType& routing_type, const dash::route_type::RouteType &entry)
 {
     SWSS_LOG_ENTER();
 
     if (routing_type_entries_.find(routing_type) != routing_type_entries_.end())
     {
-        SWSS_LOG_WARN("Routing type entry already exists for %s", routing_type.c_str());
+        SWSS_LOG_WARN("Routing type entry already exists for %s", dash::route_type::RoutingType_Name(routing_type).c_str());
         return true;
     }
 
     routing_type_entries_[routing_type] = entry;
-    SWSS_LOG_NOTICE("Routing type entry added %s", routing_type.c_str());
+    SWSS_LOG_NOTICE("Routing type entry added %s", dash::route_type::RoutingType_Name(routing_type).c_str());
 
     return true;
 }
 
-bool DashOrch::removeRoutingTypeEntry(const string& routing_type)
+bool DashOrch::removeRoutingTypeEntry(const dash::route_type::RoutingType& routing_type)
 {
     SWSS_LOG_ENTER();
 
     if (routing_type_entries_.find(routing_type) == routing_type_entries_.end())
     {
-        SWSS_LOG_WARN("Routing type entry does not exist for %s", routing_type.c_str());
+        SWSS_LOG_WARN("Routing type entry does not exist for %s", dash::route_type::RoutingType_Name(routing_type).c_str());
         return true;
     }
 
     routing_type_entries_.erase(routing_type);
-    SWSS_LOG_NOTICE("Routing type entry removed for %s", routing_type.c_str());
+    SWSS_LOG_NOTICE("Routing type entry removed for %s", dash::route_type::RoutingType_Name(routing_type).c_str());
 
     return true;
 }
@@ -231,8 +247,19 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-        string routing_type = kfvKey(t);
+        string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
+        dash::route_type::RoutingType routing_type;
+
+        std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
+        routing_type_str = "ROUTING_TYPE_" + routing_type_str;
+
+        if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
+        {
+            SWSS_LOG_WARN("Invalid routing type %s", routing_type_str.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         if (op == SET_COMMAND)
         {
@@ -240,7 +267,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
 
             if (!parsePbMessage(kfvFieldsValues(t), entry))
             {
-                SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type.c_str());
+                SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type_str.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -357,6 +384,34 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     auto app_entry = appliance_entries_.begin()->second;
     eni_attr.value.u32 = app_entry.vm_vni();
     eni_attrs.push_back(eni_attr);
+
+    if (entry.metadata.has_pl_sip_encoding())
+    {
+
+        eni_attr.id = SAI_ENI_ATTR_PL_SIP;
+        to_sai(entry.metadata.pl_sip_encoding().ip(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+
+        eni_attr.id = SAI_ENI_ATTR_PL_SIP_MASK;
+        to_sai(entry.metadata.pl_sip_encoding().mask(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+    }
+
+    if (entry.metadata.has_pl_underlay_sip())
+    {
+        eni_attr.id = SAI_ENI_ATTR_PL_UNDERLAY_SIP;
+        to_sai(entry.metadata.pl_underlay_sip(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+    }
+
+    auto eni_route_it = eni_route_entries_.find(eni);
+    if (eni_route_it != eni_route_entries_.end())
+    {
+        SWSS_LOG_INFO("ENI %s has route group %s", eni.c_str(), eni_route_it->second.group_id().c_str());
+        eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
+        eni_attr.value.oid = gRouteGroupToOid[eni_route_it->second.group_id()];
+        eni_attrs.push_back(eni_attr);
+    }
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
                                 (uint32_t)eni_attrs.size(), eni_attrs.data());
@@ -653,6 +708,142 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
     }
 }
 
+bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = gRouteGroupToOid.find(entry.group_id());
+    if (it == gRouteGroupToOid.end())
+    {
+        // Don't add entry if route group doesn't exist to avoid needing to check
+        // the existence of both ENI route and route group entries
+        SWSS_LOG_WARN("Route group not yet created, skipping route entry for ENI %s", entry.group_id().c_str());
+        return false;
+    }
+
+    if (eni_route_entries_.find(eni) == eni_route_entries_.end() ||
+        eni_route_entries_[eni].group_id() != entry.group_id())
+    {
+        eni_route_entries_[eni] = entry;
+        SWSS_LOG_INFO("Added ENI route entry for %s", eni.c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Duplicate ENI route entry already exists for %s", eni.c_str());
+        return true;
+    }
+
+    if (eni_entries_.find(eni) == eni_entries_.end())
+    {
+        SWSS_LOG_INFO("ENI %s not yet created, not programming ENI route entry", eni.c_str());
+        // We can treat this as a success since ENI creation will set the route group, no need to retry
+        return true;
+    } 
+
+    sai_attribute_t eni_attr;
+    eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
+    eni_attr.value.oid = it->second;
+
+    sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
+                                &eni_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set ENI route group for %s", eni.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Updated ENI route group for %s", eni.c_str());
+    return true;
+}
+
+bool DashOrch::removeEniRoute(const std::string& eni)
+{
+    SWSS_LOG_ENTER();
+
+    if (eni_route_entries_.find(eni) == eni_route_entries_.end())
+    {
+        SWSS_LOG_WARN("ENI route entry does not exist for %s", eni.c_str());
+        return true;
+    }
+
+    eni_route_entries_.erase(eni);
+
+    if (eni_entries_.find(eni) != eni_entries_.end())
+    {
+        sai_attribute_t eni_attr;
+        eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
+        eni_attr.value.oid = SAI_NULL_OBJECT_ID;
+
+        sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
+                                    &eni_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove ENI route for %s", eni.c_str());
+            task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
+    SWSS_LOG_NOTICE("Removed ENI route entry for %s", eni.c_str());
+
+    return true;
+}
+
+void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string eni = kfvKey(t);
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            dash::eni_route::EniRoute entry;
+
+            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            {
+                SWSS_LOG_WARN("Requires protobuf at ENI route:%s", eni.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (setEniRoute(eni, entry))
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (removeEniRoute(eni))
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
 void DashOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
@@ -676,6 +867,10 @@ void DashOrch::doTask(ConsumerBase& consumer)
     else if (tn == APP_DASH_QOS_TABLE_NAME)
     {
         doTaskQosTable(consumer);
+    }
+    else if (tn == APP_DASH_ENI_ROUTE_TABLE_NAME)
+    {
+        doTaskEniRouteTable(consumer);
     }
     else
     {
