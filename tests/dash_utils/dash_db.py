@@ -50,34 +50,41 @@ class DashDB(object):
             self.dvs.get_app_db().db_connection, "DASH_ROUTING_TYPE_TABLE")
         self.app_dash_appliance_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_APPLIANCE_TABLE")
-        self.asic_direction_lookup_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY")
-        self.asic_vip_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_VIP_ENTRY")
         self.app_dash_vnet_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_VNET_TABLE")
-        self.asic_dash_vnet_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_VNET")
         self.app_dash_eni_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_ENI_TABLE")
-        self.asic_eni_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ENI")
-        self.asic_eni_ether_addr_map_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY")
         self.app_dash_vnet_map_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_VNET_MAPPING_TABLE")
-        self.asic_dash_outbound_ca_to_pa_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY")
-        self.asic_pa_validation_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY")
         self.app_dash_route_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_ROUTE_TABLE")
         self.app_dash_route_rule_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_ROUTE_RULE_TABLE")
+        self.app_dash_eni_route_table = ProducerStateTable(
+            self.dvs.get_app_db().db_connection, "DASH_ENI_ROUTE_TABLE")
+        self.app_dash_route_group_table = ProducerStateTable(
+            self.dvs.get_app_db().db_connection, "DASH_ROUTE_GROUP_TABLE")
+
+        self.asic_direction_lookup_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY")
+        self.asic_vip_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_VIP_ENTRY")
+        self.asic_dash_vnet_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_VNET")
+        self.asic_eni_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ENI")
+        self.asic_eni_ether_addr_map_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY")
+        self.asic_dash_outbound_ca_to_pa_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY")
+        self.asic_pa_validation_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY")
         self.asic_outbound_routing_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY")
         self.asic_inbound_routing_rule_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY")
+        self.asic_outbound_routing_group_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP")
 
     def create_appliance(self, appliance_id, attr_maps: dict):
         self.app_dash_appliance_table[str(appliance_id)] = attr_maps
@@ -97,17 +104,29 @@ class DashDB(object):
     def remove_eni(self, eni):
         del self.app_dash_eni_table[str(eni)]
 
+    def create_eni_route(self, eni, attr_maps: dict):
+        self.app_dash_eni_route_table[str(eni)] = attr_maps
+    
+    def remove_eni_route(self, eni):
+        del self.app_dash_eni_route_table[str(eni)]
+
     def create_vnet_map(self, vnet, ip, attr_maps: dict):
         self.app_dash_vnet_map_table[str(vnet) + ":" + str(ip)] = attr_maps
 
     def remove_vnet_map(self, vnet, ip):
         del self.app_dash_vnet_map_table[str(vnet) + ":" + str(ip)]
 
-    def create_outbound_routing(self, mac_string, ip, attr_maps: dict):
-        self.app_dash_route_table[str(mac_string) + ":" + str(ip)] = attr_maps
+    def create_outbound_routing(self, route_group, ip, attr_maps: dict):
+        self.app_dash_route_table[str(route_group) + ":" + str(ip)] = attr_maps
 
-    def remove_outbound_routing(self, mac_string, ip):
-        del self.app_dash_route_table[str(mac_string) + ":" + str(ip)]
+    def remove_outbound_routing(self, route_group, ip):
+        del self.app_dash_route_table[str(route_group) + ":" + str(ip)]
+
+    def create_outbound_routing_group(self, route_group, attr_maps: dict):
+        self.app_dash_route_group_table[str(route_group)] = attr_maps
+
+    def remove_outbound_routing_group(self, route_group):
+        del self.app_dash_route_group_table[str(route_group)]
 
     def create_inbound_routing(self, mac_string, vni, ip, attr_maps: dict):
         self.app_dash_route_rule_table[str(mac_string) + ":" + str(vni) + ":" + str(ip)] = attr_maps
