@@ -116,16 +116,16 @@ class DashDB(object):
     def remove_vnet_map(self, vnet, ip):
         del self.app_dash_vnet_map_table[str(vnet) + ":" + str(ip)]
 
-    def create_outbound_routing(self, route_group, ip, attr_maps: dict):
+    def create_route(self, route_group, ip, attr_maps: dict):
         self.app_dash_route_table[str(route_group) + ":" + str(ip)] = attr_maps
 
-    def remove_outbound_routing(self, route_group, ip):
+    def remove_route(self, route_group, ip):
         del self.app_dash_route_table[str(route_group) + ":" + str(ip)]
 
-    def create_outbound_routing_group(self, route_group, attr_maps: dict):
+    def create_route_group(self, route_group, attr_maps: dict):
         self.app_dash_route_group_table[str(route_group)] = attr_maps
 
-    def remove_outbound_routing_group(self, route_group):
+    def remove_route_group(self, route_group):
         del self.app_dash_route_group_table[str(route_group)]
 
     def create_inbound_routing(self, mac_string, vni, ip, attr_maps: dict):

@@ -158,7 +158,7 @@ class TestDash(object):
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
         pb.vnet_direct.vnet = self.vnet
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
-        dash_db.create_outbound_routing(self.mac_string, self.ip, {"pb": pb.SerializeToString()})
+        dash_db.create_route(self.mac_string, self.ip, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         outbound_routing_entries = dash_db.asic_outbound_routing_table.get_keys()

@@ -32,6 +32,7 @@ PL_OVERLAY_DIP = "2603:10e1:100:2::3401:203"
 
 APPLIANCE_ID = "100"
 VM_VNI = "4321"
+ENCAP_VNI = 100
 VNET1 = "Vnet1"
 VNET1_VNI = "45654"
 VNET1_GUID = "559c6ce8-26ab-4193-b946-ccc6e8f930b2"
@@ -41,21 +42,21 @@ ENI_ID = "497f23d7-f0ac-4c99-a98f-59b470e8c7bd"
 ROUTE_GROUP1 = "RouteGroup1"
 ROUTE_GROUP1_GUID = "48af6ce8-26cc-4293-bfa6-0126e8fcdeb2"
 
-APPLIANCE = {
+APPLIANCE_CONFIG = {
     "sip": {
         "ipv4": socket.htonl(int(IP(SIP)))
     },
     "vm_vni": int(VM_VNI)
 }
 
-VNET = {
+VNET_CONFIG = {
     "vni": VNET1_VNI,
     "guid": {
         "value": base64.b64encode(bytes.fromhex(uuid.UUID(VNET1_GUID).hex))
     }
 }
 
-ENI = {
+ENI_CONFIG = {
     "vnet": VNET1,
     "underlay_ip": {
         "ipv4": socket.htonl(int(IP(UNDERLAY_IP)))
@@ -76,7 +77,7 @@ ENI = {
     }
 }
 
-VNET_MAPPING = {
+VNET_MAPPING_CONFIG = {
     "mac_address": bytes.fromhex(MAC_STRING),
     "action_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
     "underlay_ip": {
@@ -90,14 +91,12 @@ VNET_MAPPING = {
     },
 }
 
-ROUTE = {
+ROUTE_VNET_CONFIG = {
     "action_type": RoutingType.ROUTING_TYPE_VNET,
     "vnet": "Vnet1",
 }
 
-ENCAP_VNI = 100
-
-ROUTING_TYPE_VNET_ENCAP = {
+ROUTING_TYPE_VNET_ENCAP_CONFIG = {
     "items": [
         {
             "action_name": "action1",
@@ -105,7 +104,8 @@ ROUTING_TYPE_VNET_ENCAP = {
         },
     ]
 }
-ROUTING_TYPE_PL = {
+
+ROUTING_TYPE_PL_CONFIG = {
     "items": [
         {
             "action_name": "action1",
@@ -120,11 +120,11 @@ ROUTING_TYPE_PL = {
     ]
 }
 
-ROUTE_GROUP = {
+ROUTE_GROUP_CONFIG = {
     "guid": base64.b64encode(bytes.fromhex(uuid.UUID(ROUTE_GROUP1_GUID).hex)),
     "version": "rg_version"
 }
 
-ENI_ROUTE = {
+ENI_ROUTE_CONFIG = {
     "group_id": ROUTE_GROUP1, 
 }
