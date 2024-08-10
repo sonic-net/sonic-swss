@@ -266,6 +266,12 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
+                if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_UNSPECIFIED)
+                {
+                    // Route::action_type is deprecated in favor of Route::routing_type. For messages still using the old action_type field,
+                    // copy it to the new routing_type field. All subsequent operations will use the new field.
+                    ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
+                }
                 if (addOutboundRouting(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);

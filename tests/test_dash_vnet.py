@@ -282,17 +282,27 @@ class TestDash(object):
         pb.vnet_direct.vnet = self.vnet
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
         dashobj.create_outbound_routing(self.mac_string, self.ip, {"pb": pb.SerializeToString()})
+
+        route_prefix = "10.8.0.0/24"
+        pb = Route()
+        # action_type is deprecated in favor of routing_type. Test action_type for backward compatibility
+        pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
+        pb.vnet_direct.vnet = self.vnet
+        pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
+        dashobj.create_outbound_routing(self.mac_string, route_prefix, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         outbound_routing_entries = dashobj.asic_outbound_routing_table.get_keys()
         assert outbound_routing_entries
-        fvs = dashobj.asic_outbound_routing_table[outbound_routing_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT"
-            if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP":
-                assert fv[1] == "10.0.0.6"
-        assert "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID" in fvs
+        for entry in outbound_routing_entries:
+            fvs = dashobj.asic_outbound_routing_table[entry]
+            for fv in fvs.items():
+                if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION":
+                    assert fv[1] == "SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT"
+                if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP":
+                    assert fv[1] == "10.0.0.6"
+            assert "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID" in fvs
+
         return dashobj
 
     def test_inbound_routing(self, dvs):
