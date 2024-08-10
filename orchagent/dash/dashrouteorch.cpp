@@ -81,14 +81,14 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     auto& object_statuses = ctxt.object_statuses;
 
     outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    outbound_routing_attr.value.u32 = sOutboundAction[ctxt.metadata.action_type()];
+    outbound_routing_attr.value.u32 = sOutboundAction[ctxt.metadata.routing_type()];
     outbound_routing_attrs.push_back(outbound_routing_attr);
 
-    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
+    if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
     {
-        // Intentional empty line, To direct action type, don't need set extra attributes
+        // Intentional empty line, for direct routing, don't need set extra attributes
     }
-    else if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
+    else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
         && ctxt.metadata.has_vnet()
         && !ctxt.metadata.vnet().empty())
     {   
@@ -96,7 +96,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attr.value.oid = gVnetNameToId[ctxt.metadata.vnet()];
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
-    else if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
+    else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
         && ctxt.metadata.has_vnet_direct()
         && !ctxt.metadata.vnet_direct().vnet().empty()
         && (ctxt.metadata.vnet_direct().overlay_ip().has_ipv4() || ctxt.metadata.vnet_direct().overlay_ip().has_ipv6()))
