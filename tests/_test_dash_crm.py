@@ -272,7 +272,7 @@ class OutboundRouting(Resource):
             prefix = f"20.2.{i}.0/24"
             if self.addr_family == 'ipv6':
                 prefix = f'2002::{i}:1011/126'
-            self.route_table.add(f"eni1:{prefix}", {"routing_type":"vnet", "vnet":"vnet1"})
+            self.route_table.add(f"eni1:{prefix}", {"action_type":"vnet", "vnet":"vnet1"})
 
     def clear(self):
         self.route_table.remove_all()
