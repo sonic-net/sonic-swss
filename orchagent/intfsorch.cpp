@@ -1721,6 +1721,11 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     string port_alias;
     if(gPortsOrch->getPort(alias, port))
     {
+        //if route interface is not created no need sync the state
+        if(port.m_rif_id == 0)
+        {
+            return;
+        }
         if (port.m_type == Port::LAG)
         {
             if (port.m_system_lag_info.switch_id != gVoqMySwitchId)

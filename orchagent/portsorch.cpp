@@ -279,6 +279,11 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
 };
+static const vector<sai_queue_stat_t> voq_stat_ids =
+{
+    SAI_QUEUE_STAT_CREDIT_WD_DELETED_PACKETS
+};
+
 
 static const vector<sai_queue_stat_t> queueWatermarkStatIds =
 {
@@ -435,7 +440,12 @@ static bool isPathTracingSupported()
             }
         }
     }
-    else
+    else if (status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0)
+    {
+        SWSS_LOG_INFO("Querying OBJECT_TYPE_LIST is not supported on this platform");
+        return false;
+    }
+    else 
     {
         SWSS_LOG_ERROR(
             "Failed to get a list of supported switch capabilities. Error=%d", status
@@ -953,7 +963,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
             attr.value.booldata = false;
             attrList.push_back(attr);
         }
-        
+
         if (cit.pt_intf_id.is_set)
         {
             if (!m_isPathTracingSupported)
@@ -3171,6 +3181,49 @@ task_process_status PortsOrch::setPortLinkTraining(const Port &port, bool state)
     return task_success;
 }
 
+ReturnCode PortsOrch::setPortLinkEventDampingAlgorithm(Port &port,
+                                                       sai_redis_link_event_damping_algorithm_t &link_event_damping_algorithm)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    attr.id = SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGORITHM;
+    attr.value.s32 = link_event_damping_algorithm;
+
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_port_api->set_port_attribute(port.m_port_id, &attr),
+        "Failed to set link event damping algorithm (" << link_event_damping_algorithm << ") for port "
+                                                       << port.m_alias);
+
+    SWSS_LOG_INFO("Set link event damping algorithm %u for port %s", link_event_damping_algorithm, port.m_alias.c_str());
+    return ReturnCode();
+}
+
+ReturnCode PortsOrch::setPortLinkEventDampingAiedConfig(Port &port,
+                                                        sai_redis_link_event_damping_algo_aied_config_t &config) {
+
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    attr.id = SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGO_AIED_CONFIG;
+    attr.value.ptr = (void *) &config;
+
+    std::stringstream msg;
+    msg << "link event damping algorithm aied config for port " << port.m_alias << " - ";
+    msg << "max_suppress_time: " << config.max_suppress_time << ", ";
+    msg << "decay_half_life: " << config.decay_half_life << ", ";
+    msg << "suppress_threshold: " << config.suppress_threshold << ", ";
+    msg << "reuse_threshold: " << config.reuse_threshold << ", ";
+    msg << "flap_penalty: " << config.flap_penalty;
+
+    std::string msg_str = msg.str();
+
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_port_api->set_port_attribute(port.m_port_id, &attr), "Failed to set " + msg_str);
+
+    SWSS_LOG_INFO("Set %s", msg_str.c_str());
+
+    return ReturnCode();
+}
+
 bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
 {
     SWSS_LOG_ENTER();
@@ -3502,6 +3555,9 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
+
+    /* Remove the entry from buffer maximum parameter table*/
+    m_stateBufferMaximumValueTable->del(alias);
 
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
@@ -4031,6 +4087,86 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), m_portHlpr.getLinkTrainingStr(pCfg).c_str()
                         );
                     }
+                }
+
+                if (pCfg.link_event_damping_algorithm.is_set)
+                {
+                    if (p.m_link_event_damping_algorithm != pCfg.link_event_damping_algorithm.value)
+                    {
+                        auto status = setPortLinkEventDampingAlgorithm(p, pCfg.link_event_damping_algorithm.value);
+                        if (!status.ok())
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s link event damping algorithm to %s",
+                                p.m_alias.c_str(), m_portHlpr.getDampingAlgorithm(pCfg).c_str()
+                            );
+                            it = taskMap.erase(it);
+                            continue;
+                        }
+
+                         p.m_link_event_damping_algorithm = pCfg.link_event_damping_algorithm.value;
+                         m_portList[p.m_alias] = p;
+
+                         SWSS_LOG_NOTICE(
+                             "Set port %s link event damping algorithm to %s",
+                             p.m_alias.c_str(), m_portHlpr.getDampingAlgorithm(pCfg).c_str()
+                         );
+                    }
+                }
+
+                sai_redis_link_event_damping_algo_aied_config_t aied_config = {
+                    p.m_max_suppress_time,
+                    p.m_suppress_threshold,
+                    p.m_reuse_threshold,
+                    p.m_decay_half_life,
+                    p.m_flap_penalty,
+                };
+
+                if (pCfg.link_event_damping_config.max_suppress_time.is_set)
+                {
+                    aied_config.max_suppress_time = pCfg.link_event_damping_config.max_suppress_time.value;
+                }
+                if (pCfg.link_event_damping_config.decay_half_life.is_set)
+                {
+                    aied_config.decay_half_life = pCfg.link_event_damping_config.decay_half_life.value;
+                }
+                if (pCfg.link_event_damping_config.suppress_threshold.is_set)
+                {
+                    aied_config.suppress_threshold = pCfg.link_event_damping_config.suppress_threshold.value;
+                }
+                if (pCfg.link_event_damping_config.reuse_threshold.is_set)
+                {
+                    aied_config.reuse_threshold = pCfg.link_event_damping_config.reuse_threshold.value;
+                }
+                if (pCfg.link_event_damping_config.flap_penalty.is_set)
+                {
+                    aied_config.flap_penalty = pCfg.link_event_damping_config.flap_penalty.value;
+                }
+
+                bool config_changed = !(aied_config.max_suppress_time == p.m_max_suppress_time &&
+                                        aied_config.decay_half_life == p.m_decay_half_life &&
+                                        aied_config.suppress_threshold == p.m_suppress_threshold &&
+                                        aied_config.reuse_threshold == p.m_reuse_threshold &&
+                                        aied_config.flap_penalty == p.m_flap_penalty);
+
+                if (config_changed)
+                {
+                    auto status = setPortLinkEventDampingAiedConfig(p, aied_config);
+                    if (!status.ok())
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s link event damping config", p.m_alias.c_str());
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+
+                    p.m_max_suppress_time = aied_config.max_suppress_time;
+                    p.m_decay_half_life = aied_config.decay_half_life;
+                    p.m_suppress_threshold = aied_config.suppress_threshold;
+                    p.m_reuse_threshold = aied_config.reuse_threshold;
+                    p.m_flap_penalty = aied_config.flap_penalty;
+                    m_portList[p.m_alias] = p;
+
+                    SWSS_LOG_NOTICE("Set port %s link event damping config successfully", p.m_alias.c_str());
                 }
 
                 if (pCfg.speed.is_set)
@@ -4997,14 +5133,19 @@ bool PortsOrch::setSaiHostTxSignal(const Port &port, bool enable)
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
     attr.value.booldata = enable;
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
 
-    if (status != SAI_STATUS_SUCCESS)
+    if (saiOidToAlias.find(port.m_port_id) != saiOidToAlias.end())
     {
-        SWSS_LOG_ERROR("Could not setSAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE to port 0x%" PRIx64, port.m_port_id);
-        return false;
+        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Could not set SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE to port 0x%" PRIx64, port.m_port_id);
+            return false;
+        }
+        return true;
     }
 
+    SWSS_LOG_NOTICE("Could not set SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE - OID does not exist 0x%" PRIx64, port.m_port_id);
     return true;
 }
 
@@ -7292,6 +7433,10 @@ void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_
     }
     if (voq)
     {
+        for (const auto& voq_it: voq_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_queue_stat(voq_it));
+        }
         queue_ids = m_port_voq_ids[port.m_alias];
     }
     else
@@ -7987,7 +8132,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         }
     }
     SWSS_LOG_INFO("Updating the nexthop for port %s and operational status %s", port.m_alias.c_str(), isUp ? "up" : "down");
-    
+
     if (!gNeighOrch->ifChangeInformNextHop(port.m_alias, isUp))
     {
         SWSS_LOG_WARN("Inform nexthop operation failed for interface %s", port.m_alias.c_str());

@@ -20,7 +20,7 @@ public:
 private:
     Table m_cfgFabricMonitorTable;
     Table m_cfgFabricPortTable;
-    ProducerStateTable m_appFabricMonitorTable;
+    Table m_appFabricMonitorTable;
     ProducerStateTable m_appFabricPortTable;
 
     void doTask(Consumer &consumer);
