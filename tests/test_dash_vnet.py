@@ -1,13 +1,16 @@
 from dash_api.appliance_pb2 import *
 from dash_api.vnet_pb2 import *
 from dash_api.eni_pb2 import *
+from dash_api.eni_route_pb2 import *
 from dash_api.route_pb2 import *
+from dash_api.route_group_pb2 import *
 from dash_api.route_rule_pb2 import *
 from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
 
 from dash_utils.dash_db import dash_db
+from dash_utils.dash_configs import *
 
 import time
 import uuid
@@ -149,6 +152,14 @@ class TestDash(object):
                 assert fv[1] == "SAI_PA_VALIDATION_ENTRY_ACTION_PERMIT"
 
     def test_outbound_routing(self, dash_db):
+        pb = RouteGroup()
+        self.group_id = ROUTE_GROUP1
+        dash_db.create_route_group(self.group_id, {"pb": pb.SerializeToString()})
+
+        pb = EniRoute()
+        pb.group_id = self.group_id
+        dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
+
         self.vnet = "Vnet1"
         self.mac_string = "F4939FEFC47E"
         self.ip = "10.1.0.0/24"
@@ -158,8 +169,16 @@ class TestDash(object):
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
         pb.vnet_direct.vnet = self.vnet
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
-        dash_db.create_route(self.mac_string, self.ip, {"pb": pb.SerializeToString()})
+        dash_db.create_route(self.group_id, self.ip, {"pb": pb.SerializeToString()})
         time.sleep(3)
+
+        outbound_routing_group_entries = dash_db.asic_outbound_routing_group_table.get_keys()
+
+        eni_entries = dash_db.asic_eni_table.get_keys()
+        fvs = dash_db.asic_eni_table[eni_entries[0]]
+        for fv in fvs.items():
+            if fv[0] == "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID":
+                assert fv[1] == outbound_routing_group_entries[0]
 
         outbound_routing_entries = dash_db.asic_outbound_routing_table.get_keys()
         assert outbound_routing_entries
