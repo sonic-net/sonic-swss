@@ -288,7 +288,7 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
     dash::route_type::RouteType route_type_actions;
-    if (!dash_orch->getRouteTypeActions(ctxt.metadata.action_type(), route_type_actions))
+    if (!dash_orch->getRouteTypeActions(ctxt.metadata.routing_type(), route_type_actions))
     {
         SWSS_LOG_INFO("Failed to get route type actions for %s", key.c_str());
     }
@@ -319,7 +319,7 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         }
     }
 
-    if (ctxt.metadata.action_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
+    if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
     {
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
         outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING;
@@ -329,12 +329,12 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
 
-        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP;
-        to_sai(ctxt.metadata.overlay_dip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK;
+        to_sai(ctxt.metadata.overlay_dip_prefix(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
-        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP;
-        to_sai(ctxt.metadata.overlay_sip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK;
+        to_sai(ctxt.metadata.overlay_sip_prefix(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 

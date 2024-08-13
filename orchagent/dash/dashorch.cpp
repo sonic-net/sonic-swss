@@ -385,18 +385,6 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     eni_attr.value.u32 = app_entry.vm_vni();
     eni_attrs.push_back(eni_attr);
 
-    if (entry.metadata.has_pl_sip_encoding())
-    {
-
-        eni_attr.id = SAI_ENI_ATTR_PL_SIP;
-        to_sai(entry.metadata.pl_sip_encoding().ip(), eni_attr.value.ipaddr);
-        eni_attrs.push_back(eni_attr);
-
-        eni_attr.id = SAI_ENI_ATTR_PL_SIP_MASK;
-        to_sai(entry.metadata.pl_sip_encoding().mask(), eni_attr.value.ipaddr);
-        eni_attrs.push_back(eni_attr);
-    }
-
     if (entry.metadata.has_pl_underlay_sip())
     {
         eni_attr.id = SAI_ENI_ATTR_PL_UNDERLAY_SIP;
