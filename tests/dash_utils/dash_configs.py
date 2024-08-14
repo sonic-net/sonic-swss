@@ -26,7 +26,8 @@ OUTBOUND_ROUTE_PREFIX = "10.1.0.8/32"
 OVERLAY_IP = "10.0.0.6"
 PL_ENCODING_IP = "2001:0:20::"
 PL_ENCODING_MASK = "::ffff:ffff"
-PL_UNDERLAY_SIP = "55.1.2.3"
+PL_UNDERLAY_SIP1 = "55.1.2.3"
+PL_UNDERLAY_SIP2 = "55.2.3.4"
 PL_OVERLAY_SIP = "fd40:108:0:d204:0:200::0"
 PL_OVERLAY_DIP = "2603:10e1:100:2::3401:203"
 
@@ -65,7 +66,7 @@ ENI_CONFIG = {
     "eni_id": ENI_ID,
     "admin_state": State.STATE_ENABLED,
     "pl_underlay_sip": {
-        "ipv4": socket.htonl(int(IP(PL_UNDERLAY_SIP)))
+        "ipv4": socket.htonl(int(IP(PL_UNDERLAY_SIP1)))
     },
     "pl_sip_encoding": {
         "ip": {
@@ -94,6 +95,17 @@ VNET_MAPPING_CONFIG = {
 ROUTE_VNET_CONFIG = {
     "action_type": RoutingType.ROUTING_TYPE_VNET,
     "vnet": "Vnet1",
+}
+
+ROUTE_PL_CONFIG = {
+    "action_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+}
+
+ROUTE_PL_CONFIG_WITH_UNDERLAY_SIP = {
+    "action_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+    "underlay_sip": {
+        "ipv4": socket.htonl(int(IP(PL_UNDERLAY_SIP2)))
+    }
 }
 
 ROUTING_TYPE_VNET_ENCAP_CONFIG = {

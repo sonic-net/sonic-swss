@@ -24,6 +24,19 @@ from sai_attrs import *
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
+@pytest.fixture
+def apply_base_pl_route(dash_db):
+    create_route(dash_db, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_PL_CONFIG)
+    yield
+    remove_route(dash_db, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX)
+
+@pytest.fixture
+def apply_pl_route_with_underlay_sip(dash_db):
+    create_route(dash_db, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_PL_CONFIG_WITH_UNDERLAY_SIP)
+    yield
+    remove_route(dash_db, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX)
+
+
 @pytest.fixture(scope='module', autouse=True)
 def common_setup_teardown(dash_db):
     create_routing_type(dash_db, PRIVATELINK, ROUTING_TYPE_PRIVATELINK)
@@ -33,13 +46,11 @@ def common_setup_teardown(dash_db):
     create_vnet_mapping(dash_db, VNET1, VNET_MAP_IP1, VNET_MAPPING_CONFIG)
     create_route_group(dash_db, ROUTE_GROUP1, ROUTE_GROUP_CONFIG)
     create_eni_route(dash_db, ENI_ID, ENI_ROUTE_CONFIG)
-    create_route(dash_db, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_VNET_CONFIG)
 
     time.sleep(3)
 
     yield
 
-    remove_route(dash_db, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX)
     remove_eni_route(dash_db, ENI_ID)
     remove_route_group(dash_db, ROUTE_GROUP1)
     remove_vnet_mapping(dash_db, VNET1, VNET_MAP_IP1)
@@ -49,7 +60,7 @@ def common_setup_teardown(dash_db):
     remove_routing_type(dash_db, PRIVATELINK)
 
 
-def test_pl_eni_attrs(self, dash_db):
+def test_pl_eni_attrs(self, dash_db, apply_base_pl_route):
     enis = dash_db.asic_eni_table.get_keys()
     assert enis
     eni_attrs = dash_db.asic_eni_table[enis[0]]
@@ -59,7 +70,14 @@ def test_pl_eni_attrs(self, dash_db):
     actual_mask = IP(eni_attrs[SAI_ENI_ATTR_PL_SIP_MASK])
     assert actual_mask == IP(PL_ENCODING_MASK)
     assert SAI_ENI_ATTR_PL_UNDERLAY_SIP in eni_attrs
-    assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP
+    assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP1
+
+def test_pl_eni_override_underlay_sip(self, dash_db, apply_pl_route_with_underlay_sip):
+    enis = dash_db.asic_eni_table.get_keys()
+    assert enis
+    eni_attrs = dash_db.asic_eni_table[enis[0]]
+    assert SAI_ENI_ATTR_PL_UNDERLAY_SIP in eni_attrs
+    assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP2
 
 def test_pl_outbound_ca_to_pa_attrs(self, dash_db):
     outbound_ca_to_pa_keys = dash_db.asic_dash_outbound_ca_to_pa_table.get_keys()
