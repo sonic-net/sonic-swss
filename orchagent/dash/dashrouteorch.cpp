@@ -81,14 +81,14 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     auto& object_statuses = ctxt.object_statuses;
 
     outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    outbound_routing_attr.value.u32 = sOutboundAction[ctxt.metadata.action_type()];
+    outbound_routing_attr.value.u32 = sOutboundAction[ctxt.metadata.routing_type()];
     outbound_routing_attrs.push_back(outbound_routing_attr);
 
-    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
+    if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
     {
-        // Intentional empty line, To direct action type, don't need set extra attributes
+        // Intentional empty line, for direct routing, don't need set extra attributes
     }
-    else if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
+    else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
         && ctxt.metadata.has_vnet()
         && !ctxt.metadata.vnet().empty())
     {   
@@ -96,7 +96,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attr.value.oid = gVnetNameToId[ctxt.metadata.vnet()];
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
-    else if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
+    else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
         && ctxt.metadata.has_vnet_direct()
         && !ctxt.metadata.vnet_direct().vnet().empty()
         && (ctxt.metadata.vnet_direct().overlay_ip().has_ipv4() || ctxt.metadata.vnet_direct().overlay_ip().has_ipv6()))
@@ -265,6 +265,15 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                     SWSS_LOG_WARN("Requires protobuff at OutboundRouting :%s", key.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
+                }
+                if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_UNSPECIFIED)
+                {
+                    // Route::action_type is deprecated in favor of Route::routing_type. For messages still using the old action_type field,
+                    // copy it to the new routing_type field. All subsequent operations will use the new field.
+                    #pragma GCC diagnostic push
+                    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+                    ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
+                    #pragma GCC diagnostic pop
                 }
                 if (addOutboundRouting(key, ctxt))
                 {
