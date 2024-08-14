@@ -330,11 +330,11 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
 
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK;
-        to_sai(ctxt.metadata.overlay_dip_prefix(), outbound_ca_to_pa_attr.value.ipaddr);
+        to_sai(ctxt.metadata.overlay_dip_prefix(), outbound_ca_to_pa_attr.value.ipprefix);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK;
-        to_sai(ctxt.metadata.overlay_sip_prefix(), outbound_ca_to_pa_attr.value.ipaddr);
+        to_sai(ctxt.metadata.overlay_sip_prefix(), outbound_ca_to_pa_attr.value.ipprefix);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 
