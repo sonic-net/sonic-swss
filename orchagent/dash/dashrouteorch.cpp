@@ -633,7 +633,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
     }
 }
 
-bool addRouteGroup(const string& route_group, const dash::route_group::RouteGroup& entry)
+bool DashRouteOrch::addRouteGroup(const string& route_group, const dash::route_group::RouteGroup& entry)
 {
     SWSS_LOG_ENTER();
 
@@ -655,7 +655,7 @@ bool addRouteGroup(const string& route_group, const dash::route_group::RouteGrou
     return true;
 }
 
-bool removeRouteGroup(const string& route_group)
+bool DashRouteOrch::removeRouteGroup(const string& route_group)
 {
     SWSS_LOG_ENTER();
 
@@ -683,7 +683,7 @@ bool removeRouteGroup(const string& route_group)
     return true;
 }
 
-void doTaskRouteGroupTable(ConsumerBase& consumer)
+void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 

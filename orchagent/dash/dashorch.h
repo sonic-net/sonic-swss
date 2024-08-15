@@ -55,6 +55,7 @@ private:
     void doTaskEniTable(ConsumerBase &consumer);
     void doTaskQosTable(ConsumerBase &consumer);
     void doTaskEniRouteTable(ConsumerBase &consumer);
+    void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
     bool removeApplianceEntry(const std::string& appliance_id);
     bool addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry);
