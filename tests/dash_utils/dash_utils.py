@@ -18,7 +18,7 @@ import ipaddress
 import socket
 import pytest
 
-from dash_configs import *
+from dash_utils.dash_configs import *
 
 def create_appliance(dash_db, appliance_id, appliance_config):
     pb = ParseDict(appliance_config, Appliance())
