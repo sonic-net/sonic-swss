@@ -39,7 +39,7 @@ def apply_pl_route_with_underlay_sip(dash_db):
 
 @pytest.fixture(scope='module', autouse=True)
 def common_setup_teardown(dash_db):
-    create_routing_type(dash_db, PRIVATELINK, ROUTING_TYPE_PRIVATELINK)
+    create_routing_type(dash_db, PRIVATELINK, ROUTING_TYPE_PL_CONFIG)
     create_appliance(dash_db, APPLIANCE_ID, APPLIANCE_CONFIG)
     create_vnet(dash_db, VNET1, VNET_CONFIG)
     create_eni(dash_db, ENI_ID, ENI_CONFIG)
