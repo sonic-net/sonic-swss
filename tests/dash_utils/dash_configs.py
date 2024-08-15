@@ -112,7 +112,7 @@ ROUTING_TYPE_VNET_ENCAP_CONFIG = {
     "items": [
         {
             "action_name": "action1",
-            "action_type": ActionType.MAPROUTING
+            "action_type": ActionType.ACTION_TYPE_MAPROUTING
         },
     ]
 }
