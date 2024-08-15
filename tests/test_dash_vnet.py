@@ -158,13 +158,13 @@ class TestDash(object):
 
         pb = EniRoute()
         pb.group_id = self.group_id
+        self.mac_string = "F4939FEFC47E"
         dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
 
         self.vnet = "Vnet1"
-        self.mac_string = "F4939FEFC47E"
         self.ip = "10.1.0.0/24"
         self.action_type = "vnet_direct"
-        self.overlay_ip= "10.0.0.6"
+        self.overlay_ip = "10.0.0.6"
         pb = Route()
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
         pb.vnet_direct.vnet = self.vnet
@@ -218,12 +218,13 @@ class TestDash(object):
     def test_cleanup(self, dash_db):
         self.vnet = "Vnet1"
         self.mac_string = "F4939FEFC47E"
+        self.group_id = ROUTE_GROUP1
         self.vni = "3251"
         self.sip = "10.1.1.1"
         self.dip = "10.1.0.0/24"
         self.appliance_id = "100"
         dash_db.remove_inbound_routing(self.mac_string, self.vni, self.sip)
-        dash_db.remove_outbound_routing(self.mac_string, self.dip)
+        dash_db.remove_route(self.group_id, self.dip)
         dash_db.remove_eni(self.mac_string)
         dash_db.remove_vnet_map(self.vnet, self.sip)
         dash_db.remove_vnet(self.vnet)
