@@ -155,11 +155,21 @@ class TestDash(object):
         pb = RouteGroup()
         self.group_id = ROUTE_GROUP1
         dash_db.create_route_group(self.group_id, {"pb": pb.SerializeToString()})
+        time.sleep(3)
+        outbound_routing_group_entries = dash_db.asic_outbound_routing_group_table.get_keys()
+        assert outbound_routing_group_entries
 
         pb = EniRoute()
         pb.group_id = self.group_id
         self.mac_string = "F4939FEFC47E"
         dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
+        time.sleep(3)
+        eni_entries = dash_db.asic_eni_table.get_keys()
+        fvs = dash_db.asic_eni_table[eni_entries[0]]
+        for fv in fvs.items():
+            if fv[0] == "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID":
+                assert fv[1] == outbound_routing_group_entries[0]
+
 
         self.vnet = "Vnet1"
         self.ip = "10.1.0.0/24"
@@ -171,15 +181,6 @@ class TestDash(object):
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
         dash_db.create_route(self.group_id, self.ip, {"pb": pb.SerializeToString()})
         time.sleep(3)
-
-        outbound_routing_group_entries = dash_db.asic_outbound_routing_group_table.get_keys()
-
-        eni_entries = dash_db.asic_eni_table.get_keys()
-        fvs = dash_db.asic_eni_table[eni_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID":
-                assert fv[1] == outbound_routing_group_entries[0]
-
         outbound_routing_entries = dash_db.asic_outbound_routing_table.get_keys()
         assert outbound_routing_entries
         fvs = dash_db.asic_outbound_routing_table[outbound_routing_entries[0]]
