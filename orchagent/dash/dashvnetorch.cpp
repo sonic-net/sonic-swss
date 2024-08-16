@@ -720,7 +720,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                     // copy it to the new routing_type field. All subsequent operations will use the new field.
                     #pragma GCC diagnostic push
                     #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                    SWSS_LOG_WARN("VnetMapping::action_type is deprecated. Use VnetMapping::routing_type instead")
+                    SWSS_LOG_WARN("VnetMapping::action_type is deprecated. Use VnetMapping::routing_type instead");
                     ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
                     #pragma GCC diagnostic pop
                 }
