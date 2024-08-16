@@ -133,7 +133,7 @@ ROUTING_TYPE_PL_CONFIG = {
 }
 
 ROUTE_GROUP_CONFIG = {
-    "guid": base64.b64encode(bytes.fromhex(uuid.UUID(ROUTE_GROUP1_GUID).hex)),
+    "guid": ROUTE_GROUP1_GUID,
     "version": "rg_version"
 }
 
