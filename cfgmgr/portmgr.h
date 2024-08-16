@@ -39,7 +39,6 @@ private:
     bool setPortAdminStatus(const std::string &alias, const bool up);
     bool setPortDHCPMitigationRate(const std::string &alias, const std::string &dhcp_rate_limit);
     bool isPortStateOk(const std::string &alias);
-    bool containsDhcpRateLimit(const std::vector<FieldValueTuple>& field_values);
 };
 
 }

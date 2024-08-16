@@ -7,12 +7,10 @@ extern "C" {
 
 #include <cstdbool>
 #include <cstdint>
-
 #include <unordered_map>
 #include <set>
 #include <vector>
 #include <string>
-
 #include "../port.h"
 
 class PortConfig final
@@ -77,7 +75,6 @@ public:
         std::uint32_t value;
         bool is_set = false;
     } mtu; // Port MTU
-
 
     struct {
         std::uint16_t value;
