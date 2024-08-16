@@ -714,6 +714,16 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
+                if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_UNSPECIFIED)
+                {
+                    // VnetMapping::action_type is deprecated in favor of VnetMapping::routing_type. For messages still using the old action_type field,
+                    // copy it to the new routing_type field. All subsequent operations will use the new field.
+                    #pragma GCC diagnostic push
+                    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+                    SWSS_LOG_WARN("VnetMapping::action_type is deprecated. Use VnetMapping::routing_type instead")
+                    ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
+                    #pragma GCC diagnostic pop
+                }
                 if (addVnetMap(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
