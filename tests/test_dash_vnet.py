@@ -227,7 +227,7 @@ class TestDash(object):
         dash_db.remove_inbound_routing(self.mac_string, self.vni, self.sip)
         dash_db.remove_route(self.group_id, self.dip)
         dash_db.remove_eni(self.mac_string)
-        dash_db.remove_vnet_map(self.vnet, self.sip)
+        dash_db.remove_vnet_mapping(self.vnet, self.sip)
         dash_db.remove_vnet(self.vnet)
         dash_db.remove_appliance(self.appliance_id)
 
