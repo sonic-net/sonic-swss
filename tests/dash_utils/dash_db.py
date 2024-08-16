@@ -110,10 +110,10 @@ class DashDB(object):
     def remove_eni_route(self, eni):
         del self.app_dash_eni_route_table[str(eni)]
 
-    def create_vnet_map(self, vnet, ip, attr_maps: dict):
+    def create_vnet_mapping(self, vnet, ip, attr_maps: dict):
         self.app_dash_vnet_map_table[str(vnet) + ":" + str(ip)] = attr_maps
 
-    def remove_vnet_map(self, vnet, ip):
+    def remove_vnet_mapping(self, vnet, ip):
         del self.app_dash_vnet_map_table[str(vnet) + ":" + str(ip)]
 
     def create_route(self, route_group, ip, attr_maps: dict):

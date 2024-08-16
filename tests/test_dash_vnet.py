@@ -131,8 +131,8 @@ class TestDash(object):
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
         pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
 
-        dash_db.create_vnet_map(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
-        dash_db.create_vnet_map(self.vnet, self.ip2, {"pb": pb.SerializeToString()})
+        dash_db.create_vnet_mapping(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
+        dash_db.create_vnet_mapping(self.vnet, self.ip2, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         vnet_ca_to_pa_maps = dash_db.asic_dash_outbound_ca_to_pa_table.get_keys()
