@@ -62,9 +62,9 @@ def create_route_group(dash_db, route_group, route_group_config):
 def remove_route_group(dash_db, route_group):
     dash_db.remove_route_group(route_group)
 
-def create_eni_route(dash_db, eni, route_group, eni_route_config):
+def create_eni_route(dash_db, eni, eni_route_config):
     pb = ParseDict(eni_route_config, EniRoute())
-    dash_db.create_eni_route(eni, route_group, {"pb": pb.SerializeToString()})
+    dash_db.create_eni_route(eni, {"pb": pb.SerializeToString()})
 
 def remove_eni_route(dash_db, eni, route_group):
     dash_db.remove_eni_route(eni, route_group)
