@@ -43,7 +43,7 @@ def common_setup_teardown(dash_db):
     create_appliance(dash_db, APPLIANCE_ID, APPLIANCE_CONFIG)
     create_vnet(dash_db, VNET1, VNET_CONFIG)
     create_eni(dash_db, ENI_ID, ENI_CONFIG)
-    create_vnet_map(dash_db, VNET1, VNET_MAP_IP1, VNET_MAPPING_CONFIG)
+    create_vnet_mapping(dash_db, VNET1, VNET_MAP_IP1, VNET_MAPPING_CONFIG)
     create_route_group(dash_db, ROUTE_GROUP1, ROUTE_GROUP_CONFIG)
     create_eni_route(dash_db, ENI_ID, ENI_ROUTE_CONFIG)
 
@@ -53,7 +53,7 @@ def common_setup_teardown(dash_db):
 
     remove_eni_route(dash_db, ENI_ID)
     remove_route_group(dash_db, ROUTE_GROUP1)
-    remove_vnet_map(dash_db, VNET1, VNET_MAP_IP1)
+    remove_vnet_mapping(dash_db, VNET1, VNET_MAP_IP1)
     remove_eni(dash_db, ENI_ID)
     remove_vnet(dash_db, VNET1)
     remove_appliance(dash_db, APPLIANCE_ID)
