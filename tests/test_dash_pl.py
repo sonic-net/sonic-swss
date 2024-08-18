@@ -60,7 +60,7 @@ def common_setup_teardown(dash_db):
     remove_routing_type(dash_db, PRIVATELINK)
 
 
-def test_pl_eni_attrs(self, dash_db, apply_base_pl_route):
+def test_pl_eni_attrs(dash_db, apply_base_pl_route):
     enis = dash_db.asic_eni_table.get_keys()
     assert enis
     eni_attrs = dash_db.asic_eni_table[enis[0]]
@@ -72,14 +72,14 @@ def test_pl_eni_attrs(self, dash_db, apply_base_pl_route):
     assert SAI_ENI_ATTR_PL_UNDERLAY_SIP in eni_attrs
     assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP1
 
-def test_pl_eni_override_underlay_sip(self, dash_db, apply_pl_route_with_underlay_sip):
+def test_pl_eni_override_underlay_sip(dash_db, apply_pl_route_with_underlay_sip):
     enis = dash_db.asic_eni_table.get_keys()
     assert enis
     eni_attrs = dash_db.asic_eni_table[enis[0]]
     assert SAI_ENI_ATTR_PL_UNDERLAY_SIP in eni_attrs
     assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP2
 
-def test_pl_outbound_ca_to_pa_attrs(self, dash_db):
+def test_pl_outbound_ca_to_pa_attrs(dash_db):
     outbound_ca_to_pa_keys = dash_db.asic_dash_outbound_ca_to_pa_table.get_keys()
     assert outbound_ca_to_pa_keys
     outbound_attrs = dash_db.asic_dash_outbound_ca_to_pa_table[outbound_ca_to_pa_keys[0]]
