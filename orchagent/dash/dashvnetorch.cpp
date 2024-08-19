@@ -329,12 +329,21 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
 
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP;
+        to_sai(ctxt.metadata.overlay_dip_prefix().ip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK;
-        to_sai(ctxt.metadata.overlay_dip_prefix(), outbound_ca_to_pa_attr.value.ipprefix);
+        to_sai(ctxt.metadata.overlay_dip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP;
+        to_sai(ctxt.metadata.overlay_sip_prefix().ip(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK;
-        to_sai(ctxt.metadata.overlay_sip_prefix(), outbound_ca_to_pa_attr.value.ipprefix);
+        to_sai(ctxt.metadata.overlay_sip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 
