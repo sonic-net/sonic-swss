@@ -73,11 +73,11 @@ def test_pl_eni_attrs(dash_db, apply_base_pl_route):
     assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP1
 
 def test_pl_eni_override_underlay_sip(dash_db, apply_pl_route_with_underlay_sip):
-    enis = dash_db.asic_eni_table.get_keys()
-    assert enis
-    eni_attrs = dash_db.asic_eni_table[enis[0]]
-    assert SAI_ENI_ATTR_PL_UNDERLAY_SIP in eni_attrs
-    assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP2
+    outbound_routing_keys = dash_db.asic_outbound_routing_table.get_keys()
+    assert outbonud_routing_keys
+    outbound_routing_attrs = dash_db.asic_outbound_routing_table[outbound_routing_keys[0]]
+    assert SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP in outbound_routing_attrs
+    assert IP(outbound_routing_attrs[SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP]) == IP(PL_UNDERLAY_SIP2)
 
 def test_pl_outbound_ca_to_pa_attrs(dash_db):
     outbound_ca_to_pa_keys = dash_db.asic_dash_outbound_ca_to_pa_table.get_keys()
