@@ -28,8 +28,10 @@ PL_ENCODING_IP = "2001:0:20::"
 PL_ENCODING_MASK = "::ffff:ffff"
 PL_UNDERLAY_SIP1 = "55.1.2.3"
 PL_UNDERLAY_SIP2 = "55.2.3.4"
-PL_OVERLAY_SIP_PREFIX = "fd40:108:0:d204:0:200::0/96"
-PL_OVERLAY_DIP_PREFIX = "2603:10e1:100:2::3401:203/96"
+PL_OVERLAY_SIP = "fd40:108:0:d204:0:200::0"
+PL_OVERLAY_SIP_MASK = "ffff:ffff:ffff:ffff:ffff:ffff::"
+PL_OVERLAY_DIP = "2603:10e1:100:2::3401:203"
+PL_OVERLAY_DIP_MASK = "ffff:ffff:ffff:ffff:ffff:ffff::"
 
 APPLIANCE_ID = "100"
 VM_VNI = "4321"
@@ -85,10 +87,20 @@ VNET_MAPPING_CONFIG = {
         "ipv4": socket.htonl(int(IP(UNDERLAY_IP)))
     },
     "overlay_sip_prefix": {
-        "ipv6": base64.b64encode(IP(PL_OVERLAY_SIP_PREFIX).packed)
+        "ip": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_SIP).packed)
+        },
+        "mask": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_SIP_MASK).packed)
+        }
     },
     "overlay_dip_prefix": {
-        "ipv6": base64.b64encode(IP(PL_OVERLAY_DIP_PREFIX).packed)
+        "ip": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_DIP).packed)
+        },
+        "mask": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_DIP_MASK).packed)
+        }
     },
 }
 

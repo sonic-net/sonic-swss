@@ -86,12 +86,21 @@ def test_pl_outbound_ca_to_pa_attrs(dash_db):
 
     assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION in outbound_attrs
     assert outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION] == SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING
+
     assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK in outbound_attrs
-    actual_overlay_sip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK])
-    assert actual_overlay_sip == IP(PL_OVERLAY_SIP_PREFIX)
+    actual_overlay_sip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP])
+    assert actual_overlay_sip == IP(PL_OVERLAY_SIP)
+    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK in outbound_attrs
+    actual_overlay_sip_mask = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK])
+    assert actual_overlay_sip_mask == IP(PL_OVERLAY_SIP_MASK)
+
+    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP in outbound_attrs
+    actual_overlay_dip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP])
+    assert actual_overlay_dip == IP(PL_OVERLAY_DIP)
     assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP_MASK in outbound_attrs
-    actual_overlay_dip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP_MASK])
-    assert actual_overlay_dip == IP(PL_OVERLAY_DIP_PREFIX)
+    actual_overlay_dip_mask = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP_MASK])
+    assert actual_overlay_dip == IP(PL_OVERLAY_DIP_MASK)
+
     assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY in outbound_attrs
     assert int(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY]) == ENCAP_VNI
     assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION in outbound_attrs
