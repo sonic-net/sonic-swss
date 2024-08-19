@@ -115,6 +115,8 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         }
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
+    else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_PRIVATELINK
+        && ctxt.metadata.has_service_tunnel())
     else
     {
         SWSS_LOG_WARN("Attribute action for outbound routing entry %s", key.c_str());
