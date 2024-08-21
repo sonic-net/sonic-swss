@@ -88,9 +88,10 @@ namespace portsyncd_ut
         vec.emplace_back("index", "2");
         vec.emplace_back("lanes", "4,5,6,7");
         vec.emplace_back("mtu", "9100");
-        vec.emplace_back("dhcp_rate_limit","300");
         vec.emplace_back("speed", "10000");
         vec.emplace_back("alias", "etp1");
+
+
         tbl->set("Ethernet0", vec);
         vec.pop_back();
         vec.emplace_back("alias", "etp1");
@@ -173,9 +174,6 @@ namespace portsyncd_ut
         /* Set mtu */
         rtnl_link_set_mtu(nl_obj, mtu);
 
-        /* set dhcp_rate_limit*/
-        
-
         /* Set master_ifindex if any */
         if (master_ifindex){
             rtnl_link_set_master(nl_obj, master_ifindex);
@@ -240,7 +238,6 @@ namespace portsyncd_ut
         for (auto value : ovalues){
             if (fvField(value) == "state") {ASSERT_EQ(fvValue(value), "ok");}
             if (fvField(value) == "mtu") {ASSERT_EQ(fvValue(value), "9100");}
-            if (fvField(value) == "dhcp_rate_limit") {ASSERT_EQ(fvValue(value), "300");}
             if (fvField(value) == "netdev_oper_status") {ASSERT_EQ(fvValue(value), "up");}
             if (fvField(value) == "admin_status") {ASSERT_EQ(fvValue(value), "up");}
             if (fvField(value) == "speed") {ASSERT_EQ(fvValue(value), "10000");}
@@ -273,7 +270,7 @@ namespace portsyncd_ut
                                             "sx_netdev",
                                             "1c:34:da:1c:9f:00",
                                             142,
-                                            9100,                                            
+                                            9100,
                                             0);
         sync.onMsg(RTM_NEWLINK, msg);
 

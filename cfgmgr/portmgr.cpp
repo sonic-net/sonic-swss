@@ -7,6 +7,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include <swss/redisutility.h>
+#include <iostream>
 
 using namespace std;
 using namespace swss;
@@ -21,7 +22,6 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_appPortTable(appDb, APP_PORT_TABLE_NAME)
 {
 }
-
 
 bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 {
@@ -199,7 +199,7 @@ void PortMgr::doTask(Consumer &consumer)
              */
             bool portOk = isPortStateOk(alias);
 
-            string admin_status, mtu,  dhcp_rate_limit;
+            string admin_status, mtu, dhcp_rate_limit;
             std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
@@ -228,15 +228,16 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     mtu = fvValue(i);
                 }
-                else if (fvField(i) == "admin_status")
-                {
-                    admin_status = fvValue(i);
-                }
                 else if (fvField(i) == "dhcp_rate_limit")
                 {
                     dhcp_rate_limit = fvValue(i);
 
-                }              
+                }
+                else if (fvField(i) == "admin_status")
+                {
+                    admin_status = fvValue(i);
+                }
+               
                 else
                 {
                     field_values.emplace_back(i);
@@ -263,6 +264,7 @@ void PortMgr::doTask(Consumer &consumer)
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
                 field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+
 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;

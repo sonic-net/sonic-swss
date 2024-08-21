@@ -31,7 +31,6 @@ static const std::uint32_t maxPortSpeed = 800000;
 static const std::uint32_t minPortMtu = 68;
 static const std::uint32_t maxPortMtu = 9216;
 
-
 static const std::unordered_map<std::string, bool> portModeMap =
 {
     { PORT_MODE_ON,  true  },
@@ -575,8 +574,6 @@ bool PortHelper::parsePortMtu(PortConfig &port, const std::string &field, const 
     return true;
 }
 
-
-
 bool PortHelper::parsePortTpid(PortConfig &port, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
@@ -669,6 +666,7 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
 
     return true;
 }
+
 
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
@@ -1169,6 +1167,10 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+
+
+        
+
         else if (field == PORT_SUBPORT)
         {
             if (!this->parsePortSubport(port, field, value))
@@ -1190,6 +1192,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+
         else if (field == PORT_DAMPING_ALGO)
         {
             if (!this->parsePortLinkEventDampingAlgorithm(port, field, value))
@@ -1232,6 +1235,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
