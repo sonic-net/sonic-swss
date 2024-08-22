@@ -530,6 +530,9 @@ bool DashOrch::removeEniObject(const string& eni)
     SWSS_LOG_ENTER();
 
     EniEntry entry = eni_entries_[eni];
+
+    removeEniFromFC(entry.eni_id, eni);
+
     sai_status_t status = sai_dash_eni_api->remove_eni(entry.eni_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -545,8 +548,6 @@ bool DashOrch::removeEniObject(const string& eni)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    removeEniFromFC(entry.eni_id, eni);
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);
 
