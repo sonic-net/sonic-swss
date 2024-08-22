@@ -517,15 +517,18 @@ def check_remove_state_db_routes(dvs, vnet, prefix):
 
 def check_routes_advertisement(dvs, prefix, profile=""):
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    tbl =  swsscommon.Table(state_db, "ADVERTISE_NETWORK_TABLE")
+    tbl =  swsscommon.Table(state_db, "VNET_ROUTE_ADVERTISE_TABLE")
     keys = tbl.getKeys()
 
     assert prefix in keys
+    status, fvs = tbl.get(prefix)
+
+    assert status, "Got an error when get a key"
+
+    fvs = dict(fvs)
+    assert fvs['disable_downstream_adv'] == 'true'
 
     if profile:
-        status, fvs = tbl.get(prefix)
-        assert status, "Got an error when get a key"
-        fvs = dict(fvs)
         assert fvs['profile'] == profile
 
 

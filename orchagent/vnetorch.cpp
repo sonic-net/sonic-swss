@@ -731,7 +731,7 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     app_db_ = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
 
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
-    state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));
+    state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_ADVERTISE_TABLE));
     monitor_session_producer_ = unique_ptr<Table>(new Table(app_db_.get(), APP_VNET_MONITOR_TABLE_NAME));
 
     gBfdOrch->attach(this);
@@ -2159,6 +2159,7 @@ void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix, string& profile)
 {
     const string key = ipPrefix.to_string();
     vector<FieldValueTuple> fvs;
+    fvs.push_back(FieldValueTuple("disable_downstream_adv", "true"));
     if (profile.empty())
     {
         fvs.push_back(FieldValueTuple("", ""));
