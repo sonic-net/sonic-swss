@@ -411,7 +411,7 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
 
     if (WarmStart::isWarmStart()) {
-        /* Warmboot case, Set initial state to "init" 
+        /* Warmboot case, Set initial state to "init"
          * State will be updated to previous value upon APP DB sync
          */
         state_ = MuxState::MUX_STATE_INIT;
@@ -1652,8 +1652,22 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
     handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
     handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
 
+    // Let's try to create the mux cables first
+    tryInitMuxCable();
+
     neigh_orch_->attach(this);
     fdb_orch_->attach(this);
+}
+
+void MuxOrch::tryInitMuxCable()
+{
+    auto peer_switch_consumer = dynamic_cast<Consumer *>(getExecutor(CFG_PEER_SWITCH_TABLE_NAME));
+    peer_switch_consumer->execute();
+    if (!mux_peer_switch_.isZero())
+    {
+        auto mux_cable_consumer = dynamic_cast<Consumer *>(getExecutor(CFG_MUX_CABLE_TABLE_NAME));
+        mux_cable_consumer->execute();
+    }
 }
 
 bool MuxOrch::handleMuxCfg(const Request& request)

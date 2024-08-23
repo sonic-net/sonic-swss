@@ -237,6 +237,8 @@ public:
     void updateRoute(const IpPrefix &pfx, bool add);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
+    void tryInitMuxCable();
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
