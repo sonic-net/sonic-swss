@@ -107,6 +107,8 @@ private:
 
     bool macCheckSrcDB(struct m_fdb_info *info);
 
+    bool macCheckMclagDB(struct m_fdb_info *info);
+
     void updateLocalMac(struct m_fdb_info *info);
 
     void updateAllLocalMac();
