@@ -10,6 +10,7 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "exec.h"
+#include "schema.h"
 
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
@@ -20,6 +21,7 @@
 #include <set>
 #include <sstream>
 #include <iomanip>
+#include <regex>
 
 using namespace std;
 using namespace swss;
@@ -28,7 +30,6 @@ using namespace swss;
 #define TEAM_DRV_NAME   "team"
 
 const string MGMT_PREFIX = "eth";
-const string INTFS_PREFIX = "Ethernet";
 const string LAG_PREFIX = "PortChannel";
 
 extern set<string> g_portSet;
@@ -130,7 +131,7 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             string key = idx_p->if_name;
 
             /* Skip all non-frontpanel ports */
-            if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+            if (!regex_match(key, regex(FRONT_PANEL_PORT_PREFIX_REGEX)))
             {
                 continue;
             }
@@ -167,7 +168,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     struct rtnl_link *link = (struct rtnl_link *)obj;
     string key = rtnl_link_get_name(link);
 
-    if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX) &&
+    if (!regex_search(key, regex(FRONT_PANEL_PORT_PREFIX_REGEX)) &&
         key.compare(0, LAG_PREFIX.length(), LAG_PREFIX) &&
         key.compare(0, MGMT_PREFIX.length(), MGMT_PREFIX))
     {
