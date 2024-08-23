@@ -3169,8 +3169,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
 
 
-    //check switch capabiltiy of Metadata attribute, action and range.
-    //SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE
+    //check switch capability of Metadata attribute, action and range.
+    //SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE support and range values.
     //SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA 
     //SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META
 
@@ -3180,7 +3180,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Could not query ACL_USER_META_DATA_RANGE %d", status);
-        // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
         m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "false";
     }
     else
@@ -3194,7 +3193,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_WARN("Could not get range for ACL_USER_META_DATA_RANGE %d", status);
-                // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
                 m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = "-1";
                 m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = "-1";
             }
@@ -3217,7 +3215,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Could not query ACL_ENTRY_ATTR_FIELD_ACL_USER_META %d", status);
-        // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
         m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "false";
     }
     else
@@ -3237,7 +3234,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Could not query ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA %d", status);
-        // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
         m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "false";
     }
     else
