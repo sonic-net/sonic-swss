@@ -239,6 +239,18 @@ class DVSDatabase:
                 fv_pairs,
             )
 
+        # Log the current status of the port
+        current_fv_pairs = self.get_entry(table_name, key)
+        print(f"Initial status of {key}: {current_fv_pairs}")
+
+        # Manually bring up the port if it's down
+        if current_fv_pairs.get('admin_status') != 'up':
+            print(f"Setting admin_status of {key} to 'up'")
+            self.set_entry(table_name, key, {'admin_status': 'up'})
+
+        # Re-log the status after attempting to bring up the port
+        updated_fv_pairs = self.get_entry(table_name, key)
+        print(f"Updated status of {key}: {updated_fv_pairs}")
         status, result = wait_for_result(
             access_function, self._disable_strict_polling(polling_config)
         )
