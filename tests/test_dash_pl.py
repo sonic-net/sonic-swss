@@ -74,7 +74,7 @@ def test_pl_eni_attrs(dash_db, apply_base_pl_route):
 
 def test_pl_eni_override_underlay_sip(dash_db, apply_pl_route_with_underlay_sip):
     outbound_routing_keys = dash_db.asic_outbound_routing_table.get_keys()
-    assert outbonud_routing_keys
+    assert outbound_routing_keys 
     outbound_routing_attrs = dash_db.asic_outbound_routing_table[outbound_routing_keys[0]]
     assert SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP in outbound_routing_attrs
     assert IP(outbound_routing_attrs[SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP]) == IP(PL_UNDERLAY_SIP2)
@@ -94,11 +94,11 @@ def test_pl_outbound_ca_to_pa_attrs(dash_db):
     actual_overlay_sip_mask = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK])
     assert actual_overlay_sip_mask == IP(PL_OVERLAY_SIP_MASK)
 
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP in outbound_attrs
-    actual_overlay_dip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP])
+    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP in outbound_attrs
+    actual_overlay_dip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP])
     assert actual_overlay_dip == IP(PL_OVERLAY_DIP)
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP_MASK in outbound_attrs
-    actual_overlay_dip_mask = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTRY_OVERLAY_DIP_MASK])
+    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK in outbound_attrs
+    actual_overlay_dip_mask = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK])
     assert actual_overlay_dip == IP(PL_OVERLAY_DIP_MASK)
 
     assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY in outbound_attrs
