@@ -325,12 +325,12 @@ class TestPortAutoNeg(object):
         fvs = swsscommon.FieldValuePairs([("autoneg", "off")])
         ctbl.set("Ethernet0", fvs)
 
-        time.sleep(10)
+        time.sleep(1)
         fvs = swsscommon.FieldValuePairs([("adv_speeds", "100,1000"),
                                           ("adv_interface_types", "CR2,CR4")])
         ctbl.set("Ethernet0", fvs)
 
-        time.sleep(10)
+        time.sleep(1)
 
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
@@ -343,7 +343,7 @@ class TestPortAutoNeg(object):
         assert "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE" in [fv[0] for fv in fvs]
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_AUTO_NEG_MODE":
-                assert fv[1] == "True"
+                assert fv[1] == "true"
             elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_SPEED":
                 assert fv[1] == "2:100,1000"
             elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE":
