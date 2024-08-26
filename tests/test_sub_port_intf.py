@@ -76,6 +76,15 @@ class TestSubPortIntf(object):
     VNET_UNDER_TEST = "Vnet1000"
     VNI_UNDER_TEST = "1000"
 
+    def get_oids(self, table):
+        return self.asic_db.get_keys(table)
+
+    def get_default_vrf_oid(self):
+        oids = self.get_oids(ASIC_VIRTUAL_ROUTER_TABLE)
+        assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
+        print(f"    oid     :       {oid}       oid[0]      :       {oid[0]}")
+        return oids[0]
+        
     def connect_dbs(self, dvs):
         self.app_db = dvs.get_app_db()
         self.asic_db = dvs.get_asic_db()
@@ -380,18 +389,12 @@ class TestSubPortIntf(object):
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_ROUTE_TABLE_NAME)
         tbl._del(vrf_name + APPL_DB_SEPARATOR + ip_prefix if vrf_name else ip_prefix)
 
-    def get_oids(self, table):
-        return self.asic_db.get_keys(table)
+    
 
     def get_newly_created_oid(self, table, old_oids):
         new_oids = self.asic_db.wait_for_n_keys(table, len(old_oids) + 1)
         oid = [ids for ids in new_oids if ids not in old_oids]
         return oid[0]
-
-    def get_default_vrf_oid(self):
-        oids = self.get_oids(ASIC_VIRTUAL_ROUTER_TABLE)
-        assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
-        return oids[0]
 
     def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None):
         if vrf_oid is None:

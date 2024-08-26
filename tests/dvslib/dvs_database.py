@@ -162,7 +162,7 @@ class DVSDatabase:
 
         message = failure_message or f'Entry not found: key="{key}", table="{table_name}"'
         _, result = wait_for_result(access_function, polling_config, message)
-
+        
         return result
 
     def wait_for_fields(

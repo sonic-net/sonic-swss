@@ -775,6 +775,7 @@ class TestFineGrainedNextHopGroup(object):
             startup_link(dvs, app_db, i)
             dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
 
+        print(f" asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg============={ asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg}")
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)
 
         # Program the route
