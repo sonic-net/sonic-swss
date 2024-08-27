@@ -212,9 +212,6 @@ def shutdown_link(dvs, db, port):
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "down"})
 
 def startup_link(dvs, db, port):
-    def startup_link(dvs, db, port):
-    ...
-
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
     print(f"Port status before wait: {db.get_entry('PORT_TABLE', 'Ethernet%d' % (port * 4))}")
 
