@@ -1,6 +1,32 @@
 from swsscommon import swsscommon
+from dvslib.dvs_common import  wait_for_result
 import typing
 import pytest
+
+from dash_api.appliance_pb2 import *
+from dash_api.vnet_pb2 import *
+from dash_api.eni_pb2 import *
+from dash_api.eni_route_pb2 import *
+from dash_api.route_pb2 import *
+from dash_api.route_group_pb2 import *
+from dash_api.route_rule_pb2 import *
+from dash_api.vnet_mapping_pb2 import *
+from dash_api.route_type_pb2 import *
+from dash_api.types_pb2 import *
+from google.protobuf.json_format import ParseDict
+from google.protobuf.message import Message
+
+APP_DB_TO_PROTOBUF_MAP = {
+    swsscommon.APP_DASH_APPLIANCE_TABLE_NAME: Appliance,
+    swsscommon.APP_DASH_VNET_TABLE_NAME: Vnet,
+    swsscommon.APP_DASH_ENI_TABLE_NAME: Eni,
+    swsscommon.APP_DASH_VNET_MAPPING_TABLE_NAME: VnetMapping,
+    swsscommon.APP_DASH_ROUTE_TABLE_NAME: Route,
+    swsscommon.APP_DASH_ROUTE_RULE_TABLE_NAME: RouteRule,
+    swsscommon.APP_DASH_ENI_ROUTE_TABLE_NAME: EniRoute,
+    swsscommon.APP_DASH_ROUTING_TYPE_TABLE_NAME: RouteType,
+    swsscommon.APP_DASH_ROUTE_GROUP_TABLE_NAME: RouteGroup
+}
 
 @pytest.fixture(scope='module')
 def dash_db(dvs):
@@ -44,6 +70,53 @@ class Table(swsscommon.Table):
 
 
 class DashDB(object):
+
+    def parse_key_value(self, arglist):
+        if len(arglist) < 2:
+            raise ValueError("Invalid number of arguments")
+        # elif len(arglist) == 1:
+            # handle case where no value is passed (e.g. in remove_app_db_entry)
+            # key = arglist[0]
+            # value = None
+        else:
+            # concat all parts of the key, assume last arg to be the value
+            key = ":".join(arglist[:-1])
+            value = arglist[-1]
+        return key, value
+
+    def set_app_db_entry(self, table_name, *args):
+        key, value = self.parse_key_value(args)
+        if isinstance(value, dict):
+            pb = ParseDict(value, APP_DB_TO_PROTOBUF_MAP[table_name]())
+            pb_string = pb.SerializeToString()
+        elif isinstance(value, Message):
+            pb_string = value.SerializeToString()
+        else:
+            pb_string = value
+
+        table = ProducerStateTable(self.dvs.get_app_db().db_connection, table_name)
+        table[key] = {'pb': pb_string}
+
+    def remove_app_db_entry(self, table_name, *key_parts):
+        # key, _ = self.parse_key_value(args) 
+        key = ":".join(key_parts)
+        table = ProducerStateTable(self.dvs.get_app_db().db_connection, table_name)
+        del table[key]
+
+    def get_asic_db_entry(self, table_name, key):
+        table = Table(self.dvs.get_asic_db().db_connection, table_name)
+        return table[key]
+
+    def wait_for_asic_db_keys(self, table_name):
+
+        def polling_function():
+            table = Table(self.dvs.get_asic_db().db_connection, table_name)
+            keys = table.get_keys()
+            return bool(keys), keys
+
+        _, keys = wait_for_result(polling_function)
+        return keys
+
     def __init__(self, dvs):
         self.dvs = dvs
         self.app_dash_routing_type_table = ProducerStateTable(
