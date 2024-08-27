@@ -111,8 +111,6 @@ class TestDash(object):
         eni_attrs = dash_db.asic_eni_table[self.eni_oid]
         assert eni_attrs["SAI_ENI_ATTR_ADMIN_STATE"] == "false"
 
-        return dash_db 
-
     def test_vnet_map(self, dash_db):
         self.vnet = "Vnet1"
         self.ip1 = "10.1.1.1"
