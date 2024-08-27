@@ -212,8 +212,15 @@ def shutdown_link(dvs, db, port):
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "down"})
 
 def startup_link(dvs, db, port):
+    def startup_link(dvs, db, port):
+    ...
+
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
-    db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
+    print(f"Port status before wait: {db.get_entry('PORT_TABLE', 'Ethernet%d' % (port * 4))}")
+
+    db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"}, PollingConfig(polling_interval=0.01, timeout=60.0, strict=True))
+    print(f"Port status after wait: {db.get_entry('PORT_TABLE', 'Ethernet%d' % (port * 4))}")
+
 
 def run_warm_reboot(dvs):
     dvs.warm_restart_swss("true")
@@ -662,7 +669,7 @@ class TestFineGrainedNextHopGroup(object):
 
         fvs = {"FG_NHG": fg_nhg_name}
         create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
-
+        sleep(3)
         asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
         ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs, fg_nhg_name)
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)

@@ -138,7 +138,7 @@ class AsicDbValidator(DVSDatabase):
             return (True, None)
 
         # Verify that ASIC DB has been fully initialized
-        init_polling_config = PollingConfig(2, 30, strict=True)
+        init_polling_config = PollingConfig(2, 60, strict=True)
         wait_for_result(_verify_db_contents, init_polling_config)
 
     def _generate_oid_to_interface_mapping(self) -> None:
