@@ -1,11 +1,6 @@
-import base64
-import socket
 import pytest
-import time
-import uuid
 
 from ipaddress import ip_address as IP
-from dvslib.dvs_common import wait_for_result
 
 from dash_api.appliance_pb2 import *
 from dash_api.vnet_pb2 import *
@@ -15,7 +10,6 @@ from dash_api.route_rule_pb2 import *
 from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
-from google.protobuf.json_format import ParseDict, MessageToDict
 
 from dash_utils.dash_db import dash_db, DashDB
 from dash_utils.dash_utils import *
