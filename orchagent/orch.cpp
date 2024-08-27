@@ -248,6 +248,10 @@ void Consumer::execute()
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
         table->pops(entries);
+
+        // add to sync
+        SWSS_LOG_ERROR("Table: %s pops: %d", table->getTableName().c_str(), (int)(entries.size()));
+
         update_size = addToSync(entries);
     } while (update_size != 0);
 
