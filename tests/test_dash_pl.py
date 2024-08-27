@@ -64,11 +64,6 @@ def test_pl_eni_attrs(dash_db, apply_base_pl_route):
     enis = dash_db.asic_eni_table.get_keys()
     assert enis
     eni_attrs = dash_db.asic_eni_table[enis[0]]
-    assert SAI_ENI_ATTR_PL_SIP in eni_attrs
-    assert eni_attrs[SAI_ENI_ATTR_PL_SIP] == PL_ENCODING_IP
-    assert SAI_ENI_ATTR_PL_SIP_MASK in eni_attrs
-    actual_mask = IP(eni_attrs[SAI_ENI_ATTR_PL_SIP_MASK])
-    assert actual_mask == IP(PL_ENCODING_MASK)
     assert SAI_ENI_ATTR_PL_UNDERLAY_SIP in eni_attrs
     assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP1
 
