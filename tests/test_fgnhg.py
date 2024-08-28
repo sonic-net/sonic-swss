@@ -668,7 +668,7 @@ class TestFineGrainedNextHopGroup(object):
         fvs = {"FG_NHG": fg_nhg_name}
         create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
         asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
-        ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, 12, fg_nhg_name)
+        ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, 24, fg_nhg_name)
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)
 
         # Program the route
