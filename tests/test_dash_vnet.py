@@ -157,18 +157,6 @@ class TestDash(object):
         outbound_routing_group_entries = dash_db.asic_outbound_routing_group_table.get_keys()
         assert outbound_routing_group_entries
 
-        pb = EniRoute()
-        pb.group_id = self.group_id
-        self.mac_string = "F4939FEFC47E"
-        dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
-        time.sleep(3)
-        eni_entries = dash_db.asic_eni_table.get_keys()
-        fvs = dash_db.asic_eni_table[eni_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID":
-                assert fv[1] == outbound_routing_group_entries[0]
-
-
         self.vnet = "Vnet1"
         self.ip = "10.1.0.0/24"
         self.action_type = "vnet_direct"
@@ -188,6 +176,17 @@ class TestDash(object):
             if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP":
                 assert fv[1] == "10.0.0.6"
         assert "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID" in fvs
+
+        pb = EniRoute()
+        pb.group_id = self.group_id
+        self.mac_string = "F4939FEFC47E"
+        dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
+        time.sleep(3)
+        eni_entries = dash_db.asic_eni_table.get_keys()
+        fvs = dash_db.asic_eni_table[eni_entries[0]]
+        for fv in fvs.items():
+            if fv[0] == "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID":
+                assert fv[1] == outbound_routing_group_entries[0]
 
     def test_inbound_routing(self, dash_db):
         self.mac_string = "F4939FEFC47E"
@@ -221,11 +220,17 @@ class TestDash(object):
         self.vni = "3251"
         self.sip = "10.1.1.1"
         self.dip = "10.1.0.0/24"
+        self.ip2 = "10.1.1.2"
         self.appliance_id = "100"
+        self.routing_type = "vnet_encap"
         dash_db.remove_inbound_routing(self.mac_string, self.vni, self.sip)
+        dash_db.remove_eni_route(self.mac_string)
         dash_db.remove_route(self.group_id, self.dip)
-        dash_db.remove_eni(self.mac_string)
+        dash_db.remove_route_group(self.group_id)
         dash_db.remove_vnet_mapping(self.vnet, self.sip)
+        dash_db.remove_vnet_mapping(self.vnet, self.ip2)
+        dash_db.remove_routing_type(self.routing_type)
+        dash_db.remove_eni(self.mac_string)
         dash_db.remove_vnet(self.vnet)
         dash_db.remove_appliance(self.appliance_id)
 

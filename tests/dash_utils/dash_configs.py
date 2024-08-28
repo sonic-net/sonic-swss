@@ -105,16 +105,16 @@ VNET_MAPPING_CONFIG = {
 }
 
 ROUTE_VNET_CONFIG = {
-    "action_type": RoutingType.ROUTING_TYPE_VNET,
+    "routing_type": RoutingType.ROUTING_TYPE_VNET,
     "vnet": "Vnet1",
 }
 
 ROUTE_PL_CONFIG = {
-    "action_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+    "routing_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
 }
 
 ROUTE_PL_CONFIG_WITH_UNDERLAY_SIP = {
-    "action_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+    "routing_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
     "underlay_sip": {
         "ipv4": socket.htonl(int(IP(PL_UNDERLAY_SIP2)))
     }
