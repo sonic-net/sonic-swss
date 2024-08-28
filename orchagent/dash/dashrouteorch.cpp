@@ -755,6 +755,10 @@ void DashRouteOrch::unbindRouteGroup(const std::string& route_group)
 bool DashRouteOrch::isRouteGroupBound(const std::string& route_group) const
 {
     auto it = route_group_bind_count_.find(route_group);
+    if (it == route_group_bind_count_.end())
+    {
+        return false;
+    }
     return it->second > 0;
 }
 
