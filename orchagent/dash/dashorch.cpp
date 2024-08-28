@@ -394,15 +394,15 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         eni_attrs.push_back(eni_attr);
     }
 
-    auto eni_route_it = eni_route_entries_.find(eni);
-    if (eni_route_it != eni_route_entries_.end())
-    {
-        SWSS_LOG_INFO("ENI %s has route group %s", eni.c_str(), eni_route_it->second.group_id().c_str());
-        DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
-        eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
-        eni_attr.value.oid = dash_route_orch->getRouteGroupOid(eni_route_it->second.group_id());
-        eni_attrs.push_back(eni_attr);
-    }
+    // auto eni_route_it = eni_route_entries_.find(eni);
+    // if (eni_route_it != eni_route_entries_.end())
+    // {
+        // SWSS_LOG_INFO("ENI %s has route group %s", eni.c_str(), eni_route_it->second.group_id().c_str());
+        // DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
+        // eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
+        // eni_attr.value.oid = dash_route_orch->getRouteGroupOid(eni_route_it->second.group_id());
+        // eni_attrs.push_back(eni_attr);
+    // }
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
                                 (uint32_t)eni_attrs.size(), eni_attrs.data());
@@ -703,34 +703,33 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
 {
     SWSS_LOG_ENTER();
 
-    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
-    sai_object_id_t route_group_oid = dash_route_orch->getRouteGroupOid(entry.group_id());
-    if (route_group_oid == SAI_NULL_OBJECT_ID)
-    {
-        // Don't add entry if route group doesn't exist to avoid needing to check
-        // the existence of both ENI route and route group entries
-        SWSS_LOG_WARN("Route group not yet created, skipping route entry for ENI %s", entry.group_id().c_str());
-        return false;
-    }
-
-    if (eni_route_entries_.find(eni) == eni_route_entries_.end() ||
-        eni_route_entries_[eni].group_id() != entry.group_id())
-    {
-        eni_route_entries_[eni] = entry;
-        SWSS_LOG_INFO("Added ENI route entry for %s", eni.c_str());
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("Duplicate ENI route entry already exists for %s", eni.c_str());
-        return true;
-    }
 
     if (eni_entries_.find(eni) == eni_entries_.end())
     {
         SWSS_LOG_INFO("ENI %s not yet created, not programming ENI route entry", eni.c_str());
-        // We can treat this as a success since ENI creation will set the route group, no need to retry
-        return true;
-    } 
+        return false;
+    }
+
+    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
+    sai_object_id_t route_group_oid = dash_route_orch->getRouteGroupOid(entry.group_id());
+    if (route_group_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Route group not yet created, skipping route entry for ENI %s", entry.group_id().c_str());
+        return false;
+    }
+
+    if (eni_route_entries_.find(eni) != eni_route_entries_.end())
+    {
+        if (eni_route_entries_[eni].group_id() != entry.group_id())
+        {
+            SWSS_LOG_INFO("Updating route entry from %s to %s for ENI %s", eni_route_entries_[eni].group_id().c_str(), entry.group_id().c_str(), eni.c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("Duplicate ENI route entry already exists for %s", eni.c_str());
+            return true;
+        }
+    }
 
     sai_attribute_t eni_attr;
     eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
@@ -748,8 +747,10 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+    eni_route_entries_[eni] = entry;
+    dash_route_orch->bindRouteGroup(entry.group_id());
 
-    SWSS_LOG_NOTICE("Updated ENI route group for %s", eni.c_str());
+    SWSS_LOG_NOTICE("Updated ENI route group for %s to route group %s", eni.c_str(), entry.group_id().c_str());
     return true;
 }
 
@@ -762,8 +763,6 @@ bool DashOrch::removeEniRoute(const std::string& eni)
         SWSS_LOG_WARN("ENI route entry does not exist for %s", eni.c_str());
         return true;
     }
-
-    eni_route_entries_.erase(eni);
 
     if (eni_entries_.find(eni) != eni_entries_.end())
     {
@@ -783,6 +782,11 @@ bool DashOrch::removeEniRoute(const std::string& eni)
             }
         }
     }
+
+    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
+    dash_route_orch->unbindRouteGroup(eni_route_entries_[eni].group_id());
+    eni_route_entries_.erase(eni);
+
     SWSS_LOG_NOTICE("Removed ENI route entry for %s", eni.c_str());
 
     return true;

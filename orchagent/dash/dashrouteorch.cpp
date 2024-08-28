@@ -62,6 +62,11 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         return true;
     }
 
+    if (isRouteGroupBound(ctxt.route_group))
+    {
+        SWSS_LOG_WARN("Cannot add new route to route group %s as it is already bound", ctxt.route_group.c_str());
+        return true;
+    }
     sai_object_id_t route_group_oid = this->getRouteGroupOid(ctxt.route_group);
     if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
@@ -675,6 +680,12 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
 {
     SWSS_LOG_ENTER();
 
+    if (isRouteGroupBound(route_group))
+    {
+        SWSS_LOG_WARN("Cannot remove bound route group %s", route_group.c_str());
+        return true;
+    }
+
     sai_object_id_t route_group_oid = this->getRouteGroupOid(route_group);
     if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
@@ -682,7 +693,7 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
         return true;
     }
 
-    sai_status_t status = sai_dash_outbound_routing_api->remove_outbound_routing_group(it->second);
+    sai_status_t status = sai_dash_outbound_routing_api->remove_outbound_routing_group(route_group_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove route group %s", route_group.c_str());
@@ -693,7 +704,7 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
         }
     }
 
-    route_group_oid_map_.erase(it);
+    route_group_oid_map_.erase(route_group);
     SWSS_LOG_INFO("Route group %s removed", route_group.c_str());
 
     return true;
@@ -710,6 +721,41 @@ sai_object_id_t DashRouteOrch::getRouteGroupOid(const string& route_group) const
     }
 
     return it->second;
+}
+
+void DashRouteOrch::bindRouteGroup(const std::string& route_group)
+{
+    auto it = route_group_bind_count_.find(route_group);
+
+    if (it == route_group_bind_count_.end())
+    {
+        route_group_bind_count_[route_group] = 0;
+    }
+    it->second++;
+}
+
+void DashRouteOrch::unbindRouteGroup(const std::string& route_group)
+{
+    auto it = route_group_bind_count_.find(route_group);
+
+    if (it == route_group_bind_count_.end())
+    {
+        SWSS_LOG_WARN("Cannot unbind route group %s since it is not bound to any ENIs", route_group.c_str());
+        return;
+    }
+    it->second--;
+
+    if (it->second == 0)
+    {
+        SWSS_LOG_INFO("Route group %s completely unbound", route_group.c_str());
+        route_group_bind_count_.erase(it);
+    }
+}
+
+bool DashRouteOrch::isRouteGroupBound(const std::string& route_group) const
+{
+    auto it = route_group_bind_count_.find(route_group);
+    return it->second > 0;
 }
 
 void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
