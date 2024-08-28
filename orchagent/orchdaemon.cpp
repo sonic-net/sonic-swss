@@ -11,6 +11,7 @@
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "voqstatsorch.h"
 
 using namespace std;
 using namespace swss;
@@ -194,6 +195,16 @@ bool OrchDaemon::init()
     };
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
+
+    VoqStatsOrch* voqStatsOrch;
+    // Initialize voqstatsorch in case of chassis
+    if (gMySwitchType=="voq")
+    {
+        voqStatsOrch = new VoqStatsOrch(new DBConnector("COUNTERS_DB", 0),
+                                    new DBConnector("CHASSIS_COUNTERS_DB", 0, true),
+                                    vector<string>());
+        gDirectory.set(voqStatsOrch);
+    }
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
@@ -493,6 +504,11 @@ bool OrchDaemon::init()
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
+
+    if (gMySwitchType=="voq")
+    {
+        m_orchList.push_back(voqStatsOrch);
+    }
 
     if (vxlan_tunnel_orch->isDipTunnelsSupported())
     {

@@ -7335,6 +7335,11 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
             // flexcounter orch logic. Always enabled voq counters.
             addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, true);
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_system_port_oid));
+
+            // Reverse map from oid to VOQ name
+            // id -> oid:0x15000000000582
+            // name -> Linecard|asic|EthernetXXX:VoqIdx
+            m_voq_name_map[id] = name.str();
         }
         else
         {
@@ -9890,5 +9895,10 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
     {
         m_port_state_poller->stop();
     }
+}
+
+string PortsOrch::getVoqName(string voq)
+{
+    return m_voq_name_map[voq];
 }
 

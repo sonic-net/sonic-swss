@@ -246,6 +246,8 @@ public:
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
 
+    string getVoqName(string);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterSysPortTable;
@@ -323,6 +325,9 @@ private:
     map<string, Port> m_pluggedModulesPort;
     map<string, vlan_members_t> m_portVlanMember;
     map<string, std::vector<sai_object_id_t>> m_port_voq_ids;
+
+    map<string, string> m_voq_name_map;
+
     /* mapping from SAI object ID to Name for faster
      * retrieval of Port/VLAN from object ID for events
      * coming from SAI
