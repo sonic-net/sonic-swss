@@ -17,14 +17,16 @@
 #include "tokenize.h"
 #include "crmorch.h"
 #include "saihelper.h"
+#include "directory.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
+#include "dashrouteorch.h"
 
 using namespace std;
 using namespace swss;
 
-extern std::unordered_map<std::string, sai_object_id_t> gRouteGroupToOid;
+extern Directory<Orch*> gDirectory;
 extern std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
 extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
@@ -396,8 +398,9 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     if (eni_route_it != eni_route_entries_.end())
     {
         SWSS_LOG_INFO("ENI %s has route group %s", eni.c_str(), eni_route_it->second.group_id().c_str());
+        DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
         eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
-        eni_attr.value.oid = gRouteGroupToOid[eni_route_it->second.group_id()];
+        eni_attr.value.oid = dash_route_orch->getRouteGroupOid(eni_route_it->second.group_id());
         eni_attrs.push_back(eni_attr);
     }
 
@@ -700,8 +703,9 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
 {
     SWSS_LOG_ENTER();
 
-    auto it = gRouteGroupToOid.find(entry.group_id());
-    if (it == gRouteGroupToOid.end())
+    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
+    sai_object_id_t route_group_oid = dash_route_orch->getRouteGroupOid(entry.group_id());
+    if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
         // Don't add entry if route group doesn't exist to avoid needing to check
         // the existence of both ENI route and route group entries
@@ -730,7 +734,7 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
 
     sai_attribute_t eni_attr;
     eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
-    eni_attr.value.oid = it->second;
+    eni_attr.value.oid = route_group_oid;
 
     sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
                                 &eni_attr);

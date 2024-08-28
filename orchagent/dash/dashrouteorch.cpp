@@ -27,7 +27,6 @@
 using namespace std;
 using namespace swss;
 
-std::unordered_map<std::string, sai_object_id_t> gRouteGroupToOid;
 extern std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
 extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
 extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
@@ -63,8 +62,8 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         return true;
     }
 
-    auto route_group_it = gRouteGroupToOid.find(ctxt.route_group);
-    if (route_group_it == gRouteGroupToOid.end())
+    sai_object_id_t route_group_oid = this->getRouteGroupOid(ctxt.route_group);
+    if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_INFO("Retry as route group %s not found", ctxt.route_group.c_str());
         return false;
@@ -77,7 +76,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
 
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.outbound_routing_group_id = route_group_it->second;
+    outbound_routing_entry.outbound_routing_group_id = route_group_oid;
     swss::copy(outbound_routing_entry.destination, ctxt.destination);
     sai_attribute_t outbound_routing_attr;
     vector<sai_attribute_t> outbound_routing_attrs;
@@ -167,7 +166,7 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
         }
     }
 
-    OutboundRoutingEntry entry = { gRouteGroupToOid[ctxt.route_group], ctxt.destination, ctxt.metadata };
+    OutboundRoutingEntry entry = { this->getRouteGroupOid(ctxt.route_group), ctxt.destination, ctxt.metadata };
     routing_entries_[key] = entry;
 
     gCrmOrch->incCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
@@ -648,7 +647,13 @@ bool DashRouteOrch::addRouteGroup(const string& route_group, const dash::route_g
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t route_group_oid;
+    sai_object_id_t route_group_oid = this->getRouteGroupOid(route_group);
+    if (route_group_oid != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Route group %s already exists", route_group.c_str());
+        return true;
+    }
+
     sai_status_t status = sai_dash_outbound_routing_api->create_outbound_routing_group(&route_group_oid, gSwitchId, 0, NULL);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -660,7 +665,7 @@ bool DashRouteOrch::addRouteGroup(const string& route_group, const dash::route_g
         }
     }
 
-    gRouteGroupToOid[route_group] = route_group_oid;
+    route_group_oid_map_[route_group] = route_group_oid;
     SWSS_LOG_INFO("Route group %s added", route_group.c_str());
 
     return true;
@@ -670,8 +675,8 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
 {
     SWSS_LOG_ENTER();
 
-    auto it = gRouteGroupToOid.find(route_group);
-    if (it == gRouteGroupToOid.end())
+    sai_object_id_t route_group_oid = this->getRouteGroupOid(route_group);
+    if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_INFO("Failed to find route group %s to remove", route_group.c_str());
         return true;
@@ -688,10 +693,23 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
         }
     }
 
-    gRouteGroupToOid.erase(it);
+    route_group_oid_map_.erase(it);
     SWSS_LOG_INFO("Route group %s removed", route_group.c_str());
 
     return true;
+}
+
+sai_object_id_t DashRouteOrch::getRouteGroupOid(const string& route_group) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = route_group_oid_map_.find(route_group);
+    if (it == route_group_oid_map_.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return it->second;
 }
 
 void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
