@@ -729,7 +729,8 @@ void DashRouteOrch::bindRouteGroup(const std::string& route_group)
 
     if (it == route_group_bind_count_.end())
     {
-        route_group_bind_count_[route_group] = 0;
+        route_group_bind_count_[route_group] = 1;
+        return;
     }
     it->second++;
 }
