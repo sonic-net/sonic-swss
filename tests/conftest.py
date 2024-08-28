@@ -1856,7 +1856,7 @@ def manage_dvs(request) -> str:
             dvs.destroy_servers()
             dvs.create_servers()
             dvs.restart()
-            sleep(60)
+            time.sleep(60)
 
         return dvs
 
