@@ -110,11 +110,13 @@ ROUTE_VNET_CONFIG = {
 }
 
 ROUTE_PL_CONFIG = {
-    "routing_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+    "routing_type": RoutingType.ROUTING_TYPE_VNET,
+    "vnet": VNET1,
 }
 
 ROUTE_PL_CONFIG_WITH_UNDERLAY_SIP = {
-    "routing_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+    "routing_type": RoutingType.ROUTING_TYPE_VNET,
+    "vnet": VNET1,
     "underlay_sip": {
         "ipv4": socket.htonl(int(IP(PL_UNDERLAY_SIP2)))
     }
