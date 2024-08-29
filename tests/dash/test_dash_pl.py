@@ -11,8 +11,8 @@ from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
 
-from dash_utils.dash_db import dash_db, DashDB
-from dash_utils.dash_configs import *
+from dash_db import dash_db, DashDB
+from dash_configs import *
 from sai_attrs import *
 from swsscommon.swsscommon import APP_DASH_APPLIANCE_TABLE_NAME, APP_DASH_ENI_TABLE_NAME, APP_DASH_VNET_TABLE_NAME, APP_DASH_VNET_MAPPING_TABLE_NAME, APP_DASH_ROUTE_TABLE_NAME, APP_DASH_ROUTE_RULE_TABLE_NAME, APP_DASH_ENI_ROUTE_TABLE_NAME, APP_DASH_ROUTING_TYPE_TABLE_NAME, APP_DASH_ROUTE_GROUP_TABLE_NAME
 

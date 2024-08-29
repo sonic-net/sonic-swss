@@ -9,8 +9,8 @@ from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
 
-from dash_utils.dash_db import dash_db
-from dash_utils.dash_configs import *
+from dash_db import dash_db
+from dash_configs import *
 
 import time
 import uuid
