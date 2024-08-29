@@ -91,7 +91,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     if (it == sOutboundAction.end())
     {
         std::string routing_type_str = dash::route_type::RoutingType_Name(ctxt.metadata.routing_type());
-        SWSS_LOG_WARN("Routing type %d for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
+        SWSS_LOG_WARN("Routing type %s for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
         return false;
     }
 
