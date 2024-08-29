@@ -1,6 +1,5 @@
 import pytest
 
-from ipaddress import ip_address as IP
 from utils.sai_utils import assert_sai_attribute_exists
 
 from dash_api.appliance_pb2 import *
@@ -15,7 +14,16 @@ from dash_api.types_pb2 import *
 from dash_db import dash_db, DashDB
 from dash_configs import *
 from sai_attrs import *
-from swsscommon.swsscommon import APP_DASH_APPLIANCE_TABLE_NAME, APP_DASH_ENI_TABLE_NAME, APP_DASH_VNET_TABLE_NAME, APP_DASH_VNET_MAPPING_TABLE_NAME, APP_DASH_ROUTE_TABLE_NAME, APP_DASH_ROUTE_RULE_TABLE_NAME, APP_DASH_ENI_ROUTE_TABLE_NAME, APP_DASH_ROUTING_TYPE_TABLE_NAME, APP_DASH_ROUTE_GROUP_TABLE_NAME
+from swsscommon.swsscommon import (
+    APP_DASH_APPLIANCE_TABLE_NAME,
+    APP_DASH_ENI_TABLE_NAME,
+    APP_DASH_VNET_TABLE_NAME,
+    APP_DASH_VNET_MAPPING_TABLE_NAME,
+    APP_DASH_ROUTE_TABLE_NAME,
+    APP_DASH_ENI_ROUTE_TABLE_NAME,
+    APP_DASH_ROUTING_TYPE_TABLE_NAME,
+    APP_DASH_ROUTE_GROUP_TABLE_NAME,
+)
 
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
