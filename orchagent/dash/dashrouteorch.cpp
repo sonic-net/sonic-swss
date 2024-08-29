@@ -87,8 +87,16 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     vector<sai_attribute_t> outbound_routing_attrs;
     auto& object_statuses = ctxt.object_statuses;
 
+    auto it = sOutboundAction.find(ctxt.metadata.routing_type());
+    if (it == sOutboundAction.end())
+    {
+        std::string routing_type_str = dash::route_type::RoutingType_Name(ctxt.metadata.routing_type());
+        SWSS_LOG_WARN("Routing type %d for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
+        return false;
+    }
+
     outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    outbound_routing_attr.value.u32 = sOutboundAction[ctxt.metadata.routing_type()];
+    outbound_routing_attr.value.u32 = it->second;
     outbound_routing_attrs.push_back(outbound_routing_attr);
 
     if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
