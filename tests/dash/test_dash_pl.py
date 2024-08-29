@@ -1,6 +1,7 @@
 import pytest
 
 from ipaddress import ip_address as IP
+from utils.sai_utils import assert_sai_attribute_exists
 
 from dash_api.appliance_pb2 import *
 from dash_api.vnet_pb2 import *
@@ -60,39 +61,23 @@ def test_pl_eni_attrs(dash_db: DashDB, apply_base_pl_route):
     enis= dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_ENI")
     assert enis
     eni_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_ENI", enis[0])
-    assert SAI_ENI_ATTR_PL_UNDERLAY_SIP in eni_attrs
-    assert eni_attrs[SAI_ENI_ATTR_PL_UNDERLAY_SIP] == PL_UNDERLAY_SIP1
+    assert_sai_attribute_exists(SAI_ENI_ATTR_PL_UNDERLAY_SIP, eni_attrs, PL_UNDERLAY_SIP1)
 
 def test_pl_eni_override_underlay_sip(dash_db: DashDB, apply_pl_route_with_underlay_sip):
     outbound_routing_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY")
     assert outbound_routing_keys
     outbound_routing_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY", outbound_routing_keys[0])
-    assert SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP in outbound_routing_attrs
-    assert IP(outbound_routing_attrs[SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP]) == IP(PL_UNDERLAY_SIP2)
+    assert_sai_attribute_exists(SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP, outbound_routing_attrs, PL_UNDERLAY_SIP2)
 
 def test_pl_outbound_ca_to_pa_attrs(dash_db: DashDB):
     outbound_ca_to_pa_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY")
     assert outbound_ca_to_pa_keys
     outbound_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY", outbound_ca_to_pa_keys[0])
 
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION in outbound_attrs
-    assert outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION] == SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING
-
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP in outbound_attrs
-    actual_overlay_sip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP])
-    assert actual_overlay_sip == IP(PL_OVERLAY_SIP)
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK in outbound_attrs
-    actual_overlay_sip_mask = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK])
-    assert actual_overlay_sip_mask == IP(PL_OVERLAY_SIP_MASK)
-
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP in outbound_attrs
-    actual_overlay_dip = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP])
-    assert actual_overlay_dip == IP(PL_OVERLAY_DIP)
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK in outbound_attrs
-    actual_overlay_dip_mask = IP(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK])
-    assert actual_overlay_dip_mask == IP(PL_OVERLAY_DIP_MASK)
-
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY in outbound_attrs
-    assert int(outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY]) == ENCAP_VNI
-    assert SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION in outbound_attrs
-    assert outbound_attrs[SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION] == SAI_DASH_ENCAPSULATION_NVGRE
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION, outbound_attrs, SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP, outbound_attrs, PL_OVERLAY_SIP)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK, outbound_attrs, PL_OVERLAY_SIP_MASK)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP, outbound_attrs, PL_OVERLAY_DIP)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK, outbound_attrs, PL_OVERLAY_DIP_MASK)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY, outbound_attrs, ENCAP_VNI)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION, outbound_attrs, SAI_DASH_ENCAPSULATION_NVGRE)
