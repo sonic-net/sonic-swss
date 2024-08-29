@@ -110,18 +110,6 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID;
         outbound_routing_attr.value.oid = gVnetNameToId[ctxt.metadata.vnet()];
         outbound_routing_attrs.push_back(outbound_routing_attr);
-
-        if (ctxt.metadata.has_underlay_sip()
-        && ctxt.metadata.underlay_sip().has_ipv4())
-        {
-            outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP;
-            if (!to_sai(ctxt.metadata.underlay_sip(), outbound_routing_attr.value.ipaddr))
-            {
-                return false;
-            }
-            outbound_routing_attrs.push_back(outbound_routing_attr);
-        }
-
     }
     else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
         && ctxt.metadata.has_vnet_direct()
@@ -141,8 +129,19 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     }
     else
     {
-        SWSS_LOG_WARN("Attribute action for outbound routing entry %s", key.c_str());
+        SWSS_LOG_WARN("Routing type %s for outbound routing entry %s either invalid or missing required attributes",
+                        dash::route_type::RoutingType_Name(ctxt.metadata.routing_type()).c_str(), key.c_str());
         return false;
+    }
+
+    if (ctxt.metadata.has_underlay_sip() && ctxt.metadata.underlay_sip().has_ipv4())
+    {
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP;
+        if (!to_sai(ctxt.metadata.underlay_sip(), outbound_routing_attr.value.ipaddr))
+        {
+            return false;
+        }
+        outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 
     object_statuses.emplace_back();
