@@ -24,6 +24,7 @@ ASIC_RIF = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
 
 def create_entry(db, table, key, pairs):
     db.create_entry(table, key, pairs)
+
     programmed_table = db.wait_for_entry(table,key)
     assert programmed_table != {}
 
@@ -286,8 +287,10 @@ def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         create_entry(config_db, IF_TB, if_name_key, fvs_nul)
         create_entry(config_db, IF_TB, ip_pref_key, fvs_nul)
         dvs.port_admin_set(if_name_key, "up")
+        time.sleep(5)
         shutdown_link(dvs, app_db, i)
         startup_link(dvs, app_db, i)
+        time.sleep(5)
         bank = 1
         if i >= (nh_range_end - nh_range_start)/2:
             bank = 0
@@ -668,7 +671,7 @@ class TestFineGrainedNextHopGroup(object):
         fvs = {"FG_NHG": fg_nhg_name}
         create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
         asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
-        ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, 24, fg_nhg_name)
+        ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs, fg_nhg_name)
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)
 
         # Program the route
