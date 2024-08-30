@@ -718,10 +718,12 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
         return false;
     }
 
+    std::string old_group_id;
     if (eni_route_entries_.find(eni) != eni_route_entries_.end())
     {
         if (eni_route_entries_[eni].group_id() != entry.group_id())
         {
+            old_group_id = eni_route_entries_[eni].group_id();
             SWSS_LOG_INFO("Updating route entry from %s to %s for ENI %s", eni_route_entries_[eni].group_id().c_str(), entry.group_id().c_str(), eni.c_str());
         }
         else
@@ -749,6 +751,11 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
     }
     eni_route_entries_[eni] = entry;
     dash_route_orch->bindRouteGroup(entry.group_id());
+
+    if (!old_group_id.empty())
+    {
+        dash_route_orch->unbindRouteGroup(old_group_id);
+    }
 
     SWSS_LOG_NOTICE("Updated ENI route group for %s to route group %s", eni.c_str(), entry.group_id().c_str());
     return true;
