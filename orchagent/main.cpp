@@ -63,6 +63,7 @@ extern bool gIsNatSupported;
 #define RESPONSE_PUBLISHER_RECORD_ENABLE (0x1 << 2)
 
 string gMySwitchType = "";
+string gMySwitchSubType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
@@ -160,7 +161,7 @@ void init_gearbox_phys(DBConnector *applDb)
     delete tmpGearboxTable;
 }
 
-void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
+void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_sub_type)
 {
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
 
@@ -184,6 +185,16 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
     	//If configured switch type is none of the supported, assume regular switch
         switch_type = "switch";
     }
+
+    try
+    {
+        cfgDeviceMetaDataTable.hget("localhost", "subtype", switch_sub_type);
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
+    }
+
 }
 
 bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
@@ -503,7 +514,7 @@ int main(int argc, char **argv)
     }
 
     // Get switch_type
-    getCfgSwitchType(&config_db, gMySwitchType);
+    getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;

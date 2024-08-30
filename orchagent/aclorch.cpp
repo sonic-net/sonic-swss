@@ -49,6 +49,8 @@ extern string gMySwitchType;
 
 const int TCP_PROTOCOL_NUM = 6; // TCP protocol number
 
+#define MAC_EXACT_MATCH "ff:ff:ff:ff:ff:ff"
+
 acl_rule_attr_lookup_t aclMatchLookup =
 {
     { MATCH_IN_PORTS,          SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS },
@@ -77,6 +79,8 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_TUNNEL_VNI,        SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI },
     { MATCH_INNER_ETHER_TYPE,  SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE },
     { MATCH_INNER_IP_PROTOCOL, SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
+    { MATCH_INNER_SRC_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_MAC },
+    { MATCH_INNER_DST_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_MAC },
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
     { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
@@ -617,6 +621,7 @@ bool AclTableRangeMatch::validateAclRuleMatch(const AclRule& rule) const
     return true;
 }
 
+
 string AclTableType::getName() const
 {
     return m_name;
@@ -876,6 +881,13 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         else if (attr_name == MATCH_TUNNEL_TERM)
         {
             matchData.data.booldata = (attr_name == "true");
+        }
+        else if (attr_name == MATCH_INNER_DST_MAC || attr_name == MATCH_INNER_SRC_MAC)
+        {
+            swss::MacAddress mac(attr_value);
+            swss::MacAddress mask(MAC_EXACT_MATCH);
+            memcpy(matchData.data.mac, mac.getMac(), sizeof(sai_mac_t));
+            memcpy(matchData.mask.mac, mask.getMac(), sizeof(sai_mac_t));
         }
         else if (attr_name == MATCH_IN_PORTS)
         {
