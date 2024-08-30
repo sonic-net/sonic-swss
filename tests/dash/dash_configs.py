@@ -80,7 +80,15 @@ ENI_CONFIG = {
     }
 }
 
-VNET_MAPPING_CONFIG = {
+VNET_MAPPING_CONFIG_VNET_ENCAP = {
+    "mac_address": bytes.fromhex(MAC_STRING),
+    "action_type": RoutingType.ROUTING_TYPE_VNET_ENCAP,
+    "underlay_ip": {
+        "ipv4": socket.htonl(int(IP(UNDERLAY_IP)))
+    },
+}
+
+VNET_MAPPING_CONFIG_PRIVATELINK = {
     "mac_address": bytes.fromhex(MAC_STRING),
     "action_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
     "underlay_ip": {
@@ -109,12 +117,7 @@ ROUTE_VNET_CONFIG = {
     "vnet": "Vnet1",
 }
 
-ROUTE_PL_CONFIG = {
-    "routing_type": RoutingType.ROUTING_TYPE_VNET,
-    "vnet": VNET1,
-}
-
-ROUTE_PL_CONFIG_WITH_UNDERLAY_SIP = {
+ROUTE_VNET_CONFIG_UNDERLAY_SIP = {
     "routing_type": RoutingType.ROUTING_TYPE_VNET,
     "vnet": VNET1,
     "underlay_sip": {
