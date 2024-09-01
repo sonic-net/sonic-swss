@@ -81,6 +81,8 @@ end
 
 local kb_on_tile = 0
 if asic_keys[1]:sub(-1) == '4' or asic_keys[1]:sub(-1) == '5' then
+    # Calculate kB on tile for Spectrum-4 and Spectrum-5
+    # The last digit of ASIC table key (with the name convention of "MELLANOX-SPECTRUM-N") represents the generation of the ASIC.
     kb_on_tile = port_speed / 1000 * 120 / 8 
 end
 
