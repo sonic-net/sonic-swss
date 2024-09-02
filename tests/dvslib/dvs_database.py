@@ -234,9 +234,9 @@ class DVSDatabase:
 
         def access_function():
             fv_pairs = self.get_entry(table_name, key)
+            print(f"fv_pairs is given as {fv_pairs}")
             return (
                 all(fv_pairs.get(k) == v for k, v in expected_fields.items()),
-                print(f'    from dvs.database.py   access_function  line 239    fv_pairs        =           {fv_pairs}')
                 fv_pairs,
             )
 

@@ -1142,7 +1142,7 @@ class DockerVirtualSwitch:
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("dhcp_rate_limit", dhcp_rate_limit)])
         tbl.set(interface, fvs)
-        time.sleep(1)
+        time.sleep(20)
 
 
     # deps: acl, mirror_port_erspan
@@ -1873,7 +1873,7 @@ def manage_dvs(request) -> str:
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
-        sleep(60)
+        time.sleep(60)
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
