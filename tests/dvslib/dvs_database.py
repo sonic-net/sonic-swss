@@ -236,6 +236,7 @@ class DVSDatabase:
             fv_pairs = self.get_entry(table_name, key)
             return (
                 all(fv_pairs.get(k) == v for k, v in expected_fields.items()),
+                print(f'    from dvs.database.py   access_function  line 239    fv_pairs        =           {fv_pairs}')
                 fv_pairs,
             )
 
