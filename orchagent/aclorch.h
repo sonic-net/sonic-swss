@@ -102,6 +102,12 @@
 
 #define ACL_COUNTER_FLEX_COUNTER_GROUP "ACL_STAT_COUNTER"
 
+#define TABLE_ACL_USER_META_DATA_RANGE_CAPABLE       "ACL_USER_META_DATA_RANGE_CAPABLE"
+#define TABLE_ACL_USER_META_DATA_MIN                 "ACL_USER_META_DATA_MIN"
+#define TABLE_ACL_USER_META_DATA_MAX                 "ACL_USER_META_DATA_MAX"
+#define TABLE_ACL_ENTRY_ATTR_META_CAPABLE            "ACL_ENTRY_ATTR_META_CAPABLE"
+#define TABLE_ACL_ENTRY_ACTION_META_CAPABLE          "ACL_ENTRY_ACTION_META_CAPABLE"
+
 enum AclObjectStatus
 {
     ACTIVE = 0,
@@ -514,7 +520,8 @@ public:
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
     map<acl_stage_type_t, bool> m_L3V4V6Capability;
-
+    map<string, string> m_switchMetaDataCapabilities;
+    
     void registerFlexCounter(const AclRule& rule);
     void deregisterFlexCounter(const AclRule& rule);
 
