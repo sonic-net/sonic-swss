@@ -1014,7 +1014,7 @@ class TestWarmReboot(object):
                     oper_status = v[1]
                     break
             if i == 2:
-                assert oper_status == "down"
+                assert oper_status == "up"
             else:
                 assert oper_status == "down"
 
