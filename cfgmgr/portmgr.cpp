@@ -101,7 +101,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
-        SWSS_LOG_INFO("     Value of RET in portmgr.cpp file line 104    ==          %d",ret.c_str())
     }
     if (!ret)
     {
