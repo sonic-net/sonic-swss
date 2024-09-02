@@ -7,6 +7,7 @@
 #include "directory.h"
 #include "subintf.h"
 #include "notifications.h"
+#include "stporch.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -62,6 +63,7 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 extern event_handle_t g_events_handle;
+extern StpOrch *gStpOrch;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -6179,6 +6181,8 @@ bool PortsOrch::removeBridgePort(Port &port)
         return false;
     }
 
+    gStpOrch->removeStpPorts(port);
+
     //Flush the FDB entires corresponding to the port
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
@@ -6318,6 +6322,12 @@ bool PortsOrch::removeVlan(Port vlan)
     {
         SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
         return false;
+    }
+    
+    /* If STP instance is associated with VLAN remove VLAN from STP before deletion */
+    if(vlan.m_stp_id != -1)
+    {
+        gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
     }
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
