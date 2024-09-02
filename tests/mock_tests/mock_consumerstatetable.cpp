@@ -1,6 +1,5 @@
-
 #include "consumerstatetable.h"
-#include <iostream>
+
 namespace swss
 {
     ConsumerStateTable::ConsumerStateTable(DBConnector *db, const std::string &tableName, int popBatchSize, int pri) :
