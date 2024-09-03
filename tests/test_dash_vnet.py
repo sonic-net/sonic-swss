@@ -306,7 +306,6 @@ class TestDash(object):
         self.priority = "1"
         self.protocol = "0"
         pb = RouteRule()
-# pb.action_type = RoutingType.ROUTING_TYPE_DECAP
         pb.pa_validation = True
         pb.priority = int(self.priority)
         pb.protocol = int(self.protocol)
