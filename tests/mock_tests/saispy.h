@@ -9,7 +9,7 @@
 // Internal using static `spy` function pointer to invoke std::function `fake`
 // To make sure the convert work for multiple function in the same or different API table.
 // The caller shall passing <n/objtype> to create unique SaiSpyFunction class.
-//
+// Change for test.
 // Almost use cases will like the follow, pass n=0 and objecttype/offset to use.
 //     auto x = SpyOn<0, SAI_OBJECT_TYPE_ACL_TABLE>(&acl_api_1.get()->create_acl_table);
 //     auto y = SpyOn<0, SAI_OBJECT_TYPE_ACL_ENTRY>(&acl_api_1.get()->create_acl_entry);
