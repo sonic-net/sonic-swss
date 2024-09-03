@@ -157,7 +157,7 @@ for pg_key, profile in pairs(all_pgs) do
         if xon ~= nil then
             local xoff = tonumber(redis.call('HGET', buffer_profile_table_name .. profile, 'xoff'))
             if current_profile_size < xon + xoff then
-                accumulative_shared_headroom = accumulative_shared_headroom + xon + xoff + current_profile_size
+                accumulative_shared_headroom = accumulative_shared_headroom + (xon + xoff - current_profile_size) * get_number_of_pgs(pg_key)
             end
         end
     end
