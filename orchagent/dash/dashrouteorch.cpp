@@ -691,7 +691,7 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
     if (isRouteGroupBound(route_group))
     {
         SWSS_LOG_WARN("Cannot remove bound route group %s", route_group.c_str());
-        return true;
+        return false;
     }
 
     sai_object_id_t route_group_oid = this->getRouteGroupOid(route_group);
