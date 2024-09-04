@@ -94,6 +94,12 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
             << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
+        SWSS_LOG_WARN("ret Value in setPortDHCPMitigationRate is  ret:%d,", ret);
+
+        if (!ret)
+        {   SWSS_LOG_INFO("writing dhcp_rate_limit to appl_db")
+            return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit));
+        }
     }
     else
     {
@@ -102,11 +108,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
     }
-    if (!ret)
-    {
-
-    }
-    else if (!isPortStateOk(alias))
+    if (!isPortStateOk(alias))
     {
         // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
         SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
@@ -255,7 +257,7 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                //writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
 
 
