@@ -34,6 +34,9 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
+/* How many entry in m_toSync in every doTask */
+#define DEFAULT_TASK_ENTRY_COUNT        128
+
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
@@ -483,9 +486,18 @@ void RouteOrch::doTask(Consumer& consumer)
     }
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
+    long entry_count = 0;
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        entry_count++;
+        if (entry_count > DEFAULT_TASK_ENTRY_COUNT)
+        {
+            // To prevent high priority notification been blocked by massive route notification
+            // limit every doTask only process DEFAULT_TASK_ENTRY_COUNT route notifications
+            break;
+        }
+
         // Route bulk results will be stored in a map
         std::map<
                 std::pair<
