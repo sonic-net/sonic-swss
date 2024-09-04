@@ -1,6 +1,6 @@
 import pytest
 
-from utils.sai_utils import assert_sai_attribute_exists
+from dvslib.sai_utils import assert_sai_attribute_exists
 
 from dash_api.appliance_pb2 import *
 from dash_api.vnet_pb2 import *

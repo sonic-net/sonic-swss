@@ -1,5 +1,5 @@
 from swsscommon import swsscommon
-from dvslib.dvs_common import  wait_for_result
+from dvslib.dvs_common import wait_for_result
 import typing
 import pytest
 
