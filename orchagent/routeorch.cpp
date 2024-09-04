@@ -486,18 +486,11 @@ void RouteOrch::doTask(Consumer& consumer)
     }
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
-    long entry_count = 0;
+    long processed_entries = 0;
+    bool stop = false;
     auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
+    while (!stop && it != consumer.m_toSync.end())
     {
-        entry_count++;
-        if (entry_count > DEFAULT_TASK_ENTRY_COUNT)
-        {
-            // To prevent high priority notification been blocked by massive route notification
-            // limit every doTask only process DEFAULT_TASK_ENTRY_COUNT route notifications
-            break;
-        }
-
         // Route bulk results will be stored in a map
         std::map<
                 std::pair<
@@ -510,6 +503,14 @@ void RouteOrch::doTask(Consumer& consumer)
         // Add or remove routes with a route bulker
         while (it != consumer.m_toSync.end())
         {
+            if (processed_entries++ > DEFAULT_TASK_ENTRY_COUNT)
+            {
+                // To prevent high priority notification been blocked by massive route notification
+                // limit every doTask only process DEFAULT_TASK_ENTRY_COUNT route notifications
+                stop = true;
+                break;
+            }
+
             KeyOpFieldsValuesTuple t = it->second;
 
             string key = kfvKey(t);
