@@ -52,11 +52,11 @@ namespace mock_orch_test
         VxlanTunnelOrch *m_VxlanTunnelOrch;
         DashOrch *m_DashOrch;
 
-        virtual void ApplyInitialConfigs();
+        void ApplyInitialConfigs();
         void PrepareSai();
-        virtual void PostSetUp();
+        void PostSetUp();
         void SetUp() override;
-        virtual void PreTearDown();
+        void PreTearDown();
         void TearDown() override;
     };
 }

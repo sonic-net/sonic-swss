@@ -20,14 +20,7 @@ EXTERN_MOCK_FNS
 namespace dashorch_test
 {
     using namespace mock_orch_test;
-    class DashOrchTest : public MockOrchTest
-    {
-        protected:
-            bool GetRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type)
-            {
-                return m_DashOrch->getRouteTypeActions(routing_type, route_type);
-            }
-    };
+    class DashOrchTest : public MockOrchTest {};
 
     TEST_F(DashOrchTest, GetNonExistRoutingType)
     {   
