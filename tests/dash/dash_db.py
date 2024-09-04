@@ -107,15 +107,38 @@ class DashDB(object):
         table = Table(self.dvs.get_asic_db().db_connection, table_name)
         return table[key]
 
-    def wait_for_asic_db_keys(self, table_name):
+    def wait_for_asic_db_keys(self, table_name, min_keys=1):
 
         def polling_function():
             table = Table(self.dvs.get_asic_db().db_connection, table_name)
             keys = table.get_keys()
-            return bool(keys), keys
+            return len(keys) >= min_keys, keys
 
-        _, keys = wait_for_result(polling_function)
+        _, keys = wait_for_result(polling_function, failure_message=f"Found fewer than {min_keys} keys in ASIC_DB table {table_name}")
         return keys
+
+    def wait_for_asic_db_field(self, table_name, key, field, expected_value=None):
+
+        def polling_function():
+            table = Table(self.dvs.get_asic_db().db_connection, table_name)
+            attrs = table[key]
+            if attrs is None or field not in attrs:
+                return False, None
+
+            if expected_value is not None:
+                return attrs[field] == expected_value, attrs[field]
+            else:
+                return True, attrs[field]
+        
+        if expected_value is not None:
+            failure_message = f"Field {field} in ASIC_DB table {table_name} not equal to {expected_value}"
+        else:
+            failure_message = f"Field {field} not found in ASIC_DB table {table_name}"
+        success, value = wait_for_result(polling_function, failure_message=failure_message)
+        if success:
+            return value
+        else:
+            return None
 
     def __init__(self, dvs):
         self.dvs = dvs

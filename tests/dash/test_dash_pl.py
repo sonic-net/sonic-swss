@@ -35,7 +35,7 @@ def common_setup_teardown(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1, VNET_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID, ENI_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP1, VNET_MAPPING_CONFIG_PRIVATELINK)
-    dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP_CONFIG)
+    dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP1_CONFIG)
     # Don't set DASH_ROUTE_TABLE and DASH_ENI_ROUTE_TABLE entries here for flexibility, test cases will set them as needed
 
     yield
@@ -52,25 +52,22 @@ def common_setup_teardown(dash_db: DashDB):
 
 def test_pl_eni_attrs(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_VNET_CONFIG)
-    dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_CONFIG)
+    dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
 
     enis = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_ENI")
-    assert enis
     eni_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_ENI", enis[0])
     assert_sai_attribute_exists(SAI_ENI_ATTR_PL_UNDERLAY_SIP, eni_attrs, PL_UNDERLAY_SIP1)
 
 def test_pl_eni_override_underlay_sip(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_VNET_CONFIG_UNDERLAY_SIP)
-    dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_CONFIG)
+    dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
 
     outbound_routing_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY")
-    assert outbound_routing_keys
     outbound_routing_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY", outbound_routing_keys[0])
     assert_sai_attribute_exists(SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP, outbound_routing_attrs, PL_UNDERLAY_SIP2)
 
 def test_pl_outbound_ca_to_pa_attrs(dash_db: DashDB):
     outbound_ca_to_pa_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY")
-    assert outbound_ca_to_pa_keys
     outbound_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY", outbound_ca_to_pa_keys[0])
 
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION, outbound_attrs, SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING)

@@ -43,7 +43,9 @@ MAC_STRING = "F4939FEFC47E"
 MAC_ADDRESS = "F4:93:9F:EF:C4:7E"
 ENI_ID = "497f23d7-f0ac-4c99-a98f-59b470e8c7bd"
 ROUTE_GROUP1 = "RouteGroup1"
+ROUTE_GROUP2 = "RouteGroup2"
 ROUTE_GROUP1_GUID = "48af6ce8-26cc-4293-bfa6-0126e8fcdeb2"
+ROUTE_GROUP2_GUID = "58cf62e0-22cc-4693-baa6-012358fcdec9"
 
 APPLIANCE_CONFIG = {
     "sip": {
@@ -114,7 +116,7 @@ VNET_MAPPING_CONFIG_PRIVATELINK = {
 
 ROUTE_VNET_CONFIG = {
     "routing_type": RoutingType.ROUTING_TYPE_VNET,
-    "vnet": "Vnet1",
+    "vnet": VNET1,
 }
 
 ROUTE_VNET_CONFIG_UNDERLAY_SIP = {
@@ -149,11 +151,20 @@ ROUTING_TYPE_PL_CONFIG = {
     ]
 }
 
-ROUTE_GROUP_CONFIG = {
+ROUTE_GROUP1_CONFIG = {
     "guid": ROUTE_GROUP1_GUID,
     "version": "rg_version"
 }
 
-ENI_ROUTE_CONFIG = {
+ROUTE_GROUP2_CONFIG = {
+    "guid": ROUTE_GROUP2_GUID,
+    "version": "rg_version"
+}
+
+ENI_ROUTE_GROUP1_CONFIG = {
     "group_id": ROUTE_GROUP1, 
+}
+
+ENI_ROUTE_GROUP2_CONFIG = {
+    "group_id": ROUTE_GROUP2, 
 }
