@@ -55,8 +55,8 @@ namespace mock_orch_test
         void ApplyInitialConfigs();
         void PrepareSai();
         void PostSetUp();
-        void SetUp() override;
+        void SetUp();
         void PreTearDown();
-        void TearDown() override;
+        void TearDown();
     };
 }
