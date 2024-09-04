@@ -53,3 +53,14 @@ def test_rebind_eni_route_group(dash_db: DashDB):
 
     dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP2_CONFIG)
     dash_db.wait_for_asic_db_field("ASIC_STATE:SAI_OBJECT_TYPE_ENI", eni_key, SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID, rg2_oid)
+
+def test_duplicate_eni_route_group(dash_db: DashDB):
+    dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP1_CONFIG)
+    dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_VNET_CONFIG)
+    rg1_oid = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP")[0]
+
+    dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
+
+    eni_key = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_ENI")[0]
+    dash_db.wait_for_asic_db_field("ASIC_STATE:SAI_OBJECT_TYPE_ENI", eni_key, SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID, rg1_oid)
+
