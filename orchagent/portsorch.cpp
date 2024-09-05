@@ -449,7 +449,7 @@ static bool isPathTracingSupported()
     else 
     {
         SWSS_LOG_ERROR(
-            "Failed to get a list of supported switch capabilities. Error= 0x%x", status
+            "Failed to get a list of supported switch capabilities. Error=%d", status
         );
         return false;
     }
