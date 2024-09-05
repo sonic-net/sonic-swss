@@ -190,6 +190,11 @@ std::string RouteOrch::getLinkLocalEui64Addr(void)
 
 bool RouteOrch::checkHighPriorityNotification(int pri)
 {
+    if (m_select == nullptr)
+    {
+        return false;
+    }
+
     static long count = 0;
     count++;
     if (count <= 128)
