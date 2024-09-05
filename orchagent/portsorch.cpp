@@ -424,7 +424,7 @@ static bool isPathTracingSupported()
     attr.value.s32list.list = switchCapabilities.data();
 
     bool is_tam_supported = false;
-    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    auto status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status == SAI_STATUS_SUCCESS)
     {
         for (std::uint32_t i = 0; i < attr.value.s32list.count; i++)
