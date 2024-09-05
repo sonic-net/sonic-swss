@@ -768,7 +768,7 @@ class TestFineGrainedNextHopGroup(object):
         create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
 
         asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
-        ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, 12, fg_nhg_name)
+        ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs, fg_nhg_name)
 
         # Create 2 more interface + IPs for non-fine grained ECMP validation
         for i in range(NUM_NHs, NUM_NHs + NUM_NHs_non_fgnhg):
