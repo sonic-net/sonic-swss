@@ -77,6 +77,11 @@ public:
     } mtu; // Port MTU
 
     struct {
+        std::uint32_t value;
+        bool is_set = false;
+    } dhcp_rate_limit; // Port dhcp_rate_limit
+
+    struct {
         std::uint16_t value;
         bool is_set = false;
     } tpid; // Port TPID
