@@ -124,6 +124,8 @@ public:
         return m_name;
     }
 
+    // Get the underlying selectable
+    swss::Selectable *getSelectable() const { return m_selectable; }
 protected:
     swss::Selectable *m_selectable;
     Orch *m_orch;
@@ -131,8 +133,6 @@ protected:
     // Name for Executor
     std::string m_name;
 
-    // Get the underlying selectable
-    swss::Selectable *getSelectable() const { return m_selectable; }
 };
 
 class ConsumerBase : public Executor {
