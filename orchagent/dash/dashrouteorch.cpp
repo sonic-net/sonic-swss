@@ -200,6 +200,12 @@ bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulk
         return true;
     }
 
+    if (isRouteGroupBound(ctxt.route_group))
+    {
+        SWSS_LOG_WARN("Cannot remove route from route group %s as it is already bound", ctxt.route_group.c_str());
+        return true;
+    }
+
     auto& object_statuses = ctxt.object_statuses;
     OutboundRoutingEntry entry = routing_entries_[key];
     sai_outbound_routing_entry_t outbound_routing_entry;
