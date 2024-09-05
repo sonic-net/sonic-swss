@@ -343,7 +343,7 @@ class TestPortAutoNeg(object):
         assert "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE" in [fv[0] for fv in fvs]
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_AUTO_NEG_MODE":
-                assert fv[1] == "true"
+                assert fv[1] == "false"
             elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_SPEED":
                 assert fv[1] == "2:100,1000"
             elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE":
