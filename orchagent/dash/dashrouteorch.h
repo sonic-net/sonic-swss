@@ -22,7 +22,9 @@
 
 struct OutboundRoutingEntry
 {
-    sai_object_id_t eni;
+#if 0 // enable it after sonic-sairedis/pull/1409 merged
+    sai_object_id_t outbound_routing_group;
+#endif
     swss::IpPrefix destination;
     dash::route::Route metadata;
 };
