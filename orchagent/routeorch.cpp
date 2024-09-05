@@ -34,10 +34,7 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-/* How many entry in m_toSync in every doTask */
-#define DEFAULT_TASK_ENTRY_COUNT        128
-
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, Select *select) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
@@ -50,7 +47,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_nextHopGroupCount(0),
         m_srv6Orch(srv6Orch),
         m_resync(false),
-        m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
+        m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME),
+        m_select(select)
 {
     SWSS_LOG_ENTER();
 
@@ -188,6 +186,32 @@ std::string RouteOrch::getLinkLocalEui64Addr(void)
     ip_prefix = string(ipv6_ll_addr);
 
     return ip_prefix;
+}
+
+bool RouteOrch::checkHighPriorityNotification(int pri)
+{
+    static long count = 0;
+    count++;
+    if (count <= 128)
+    {
+        return false;
+    }
+
+    count = 0;
+    Selectable *s;
+    int ret;
+    ret = m_select->select(&s, 0);
+    if (ret == Select::ERROR)
+    {
+        return false;
+    }
+
+    if (ret == Select::TIMEOUT)
+    {
+        return false;
+    }
+
+    return s->getPri() >= pri;
 }
 
 void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix)
@@ -486,10 +510,10 @@ void RouteOrch::doTask(Consumer& consumer)
     }
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
-    long processed_entries = 0;
-    bool stop = false;
     auto it = consumer.m_toSync.begin();
-    while (!stop && it != consumer.m_toSync.end())
+    bool hasHighPriNotification = false;
+    int currentPri = consumer.getSelectable()->getPri();
+    while (!hasHighPriNotification && it != consumer.m_toSync.end())
     {
         // Route bulk results will be stored in a map
         std::map<
@@ -503,11 +527,9 @@ void RouteOrch::doTask(Consumer& consumer)
         // Add or remove routes with a route bulker
         while (it != consumer.m_toSync.end())
         {
-            if (processed_entries++ > DEFAULT_TASK_ENTRY_COUNT)
+            hasHighPriNotification = checkHighPriorityNotification(currentPri);
+            if (hasHighPriNotification)
             {
-                // To prevent high priority notification been blocked by massive route notification
-                // limit every doTask only process DEFAULT_TASK_ENTRY_COUNT route notifications
-                stop = true;
                 break;
             }
 
