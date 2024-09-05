@@ -41,7 +41,7 @@ def common_setup_teardown(dash_db: DashDB):
     yield
 
     dash_db.remove_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID)
-    dash_db.remove_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX)
+    dash_db.remove_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1)
     dash_db.remove_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1)
     dash_db.remove_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP1)
     dash_db.remove_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID)
@@ -51,7 +51,7 @@ def common_setup_teardown(dash_db: DashDB):
 
 
 def test_pl_eni_attrs(dash_db: DashDB):
-    dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_VNET_CONFIG)
+    dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1, ROUTE_VNET_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
 
     enis = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_ENI")
@@ -59,7 +59,7 @@ def test_pl_eni_attrs(dash_db: DashDB):
     assert_sai_attribute_exists(SAI_ENI_ATTR_PL_UNDERLAY_SIP, eni_attrs, PL_UNDERLAY_SIP1)
 
 def test_pl_eni_override_underlay_sip(dash_db: DashDB):
-    dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX, ROUTE_VNET_CONFIG_UNDERLAY_SIP)
+    dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1, ROUTE_VNET_CONFIG_UNDERLAY_SIP)
     dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
 
     outbound_routing_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY")

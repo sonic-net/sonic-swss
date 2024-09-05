@@ -29,9 +29,27 @@ namespace dashorch_test
         EXPECT_FALSE(success);
     }
 
+    TEST_F(DashOrchTest, DuplicateRoutingTypeEntry)
+    {
+        dash::route_type::RouteType route_type1;
+        dash::route_type::RouteTypeItem *item1 = route_type1.add_items();
+        item1->set_action_type(dash::route_type::ActionType::ACTION_TYPE_STATICENCAP);
+        bool success = m_DashOrch->addRoutingTypeEntry(dash::route_type::RoutingType::ROUTING_TYPE_VNET, route_type1);
+        EXPECT_TRUE(success);
+        EXPECT_EQ(m_DashOrch->routing_type_entries_.size(), 1);
+        EXPECT_EQ(m_DashOrch->routing_type_entries_[dash::route_type::RoutingType::ROUTING_TYPE_VNET].items()[0].action_type(), item1->action_type());
+
+        dash::route_type::RouteType route_type2;
+        dash::route_type::RouteTypeItem *item2 = route_type2.add_items();
+        item2->set_action_type(dash::route_type::ActionType::ACTION_TYPE_DECAP);
+        success = m_DashOrch->addRoutingTypeEntry(dash::route_type::RoutingType::ROUTING_TYPE_VNET, route_type2);
+        EXPECT_TRUE(success);
+        EXPECT_EQ(m_DashOrch->routing_type_entries_[dash::route_type::RoutingType::ROUTING_TYPE_VNET].items()[0].action_type(), item1->action_type());
+    }
+
     TEST_F(DashOrchTest, RemoveNonExistRoutingType)
     {
-        bool success = m_DashOrch->removeRoutingTypeEntry(dash::route_type::RoutingType::ROUTING_TYPE_VNET);
+        bool success = m_DashOrch->removeRoutingTypeEntry(dash::route_type::RoutingType::ROUTING_TYPE_DROP);
         EXPECT_TRUE(success);
     }
 }
