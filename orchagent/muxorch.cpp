@@ -411,7 +411,7 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
 
     if (WarmStart::isWarmStart()) {
-        /* Warmboot case, Set initial state to "init"
+        /* Warmboot case, Set initial state to "init" 
          * State will be updated to previous value upon APP DB sync
          */
         state_ = MuxState::MUX_STATE_INIT;
