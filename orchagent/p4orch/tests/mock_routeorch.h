@@ -5,7 +5,6 @@
 #include "observer.h"
 #include "switchorch.h"
 #include "intfsorch.h"
-#include "neighorch.h"
 #include "vxlanorch.h"
 #include "srv6orch.h"
 
@@ -23,7 +22,6 @@
 #define EUI64_INTF_ID_LEN 8
 
 #define LOOPBACK_PREFIX     "Loopback"
-#define VLAN_PREFIX         "Vlan"
 
 struct NextHopGroupMemberEntry
 {
@@ -184,7 +182,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -230,7 +228,6 @@ public:
 
 private:
     SwitchOrch *m_switchOrch;
-    NeighOrch *m_neighOrch;
     IntfsOrch *m_intfsOrch;
     VRFOrch *m_vrfOrch;
     FgNhgOrch *m_fgNhgOrch;
@@ -250,9 +247,6 @@ private:
 
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
-
-    std::set<IpPrefix> m_SubnetDecapTermsCreated;
-    ProducerStateTable m_appTunnelDecapTermProducer;
 
     NextHopObserverTable m_nextHopObservers;
 
@@ -282,10 +276,6 @@ private:
     void decNhgRefCount(const std::string& nhg_index);
 
     void publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status = ReturnCode(SAI_STATUS_SUCCESS));
-
-    bool isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
-    void createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
-    void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

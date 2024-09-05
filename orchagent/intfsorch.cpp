@@ -37,9 +37,10 @@ extern bool gIsNatSupported;
 extern NeighOrch *gNeighOrch;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
+extern RouteOrch *gRouteOrch;
 extern bool gTraditionalFlexCounter;
 
-const int intfsorch_pri = 35;
+const int IntfsOrch::intfsorch_pri = 35;
 
 #define UPDATE_MAPS_SEC 1
 
@@ -57,8 +58,8 @@ static const vector<sai_router_interface_stat_t> rifStatIds =
     SAI_ROUTER_INTERFACE_STAT_OUT_ERROR_OCTETS,
 };
 
-IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb) :
-        Orch(db, tableName, intfsorch_pri), m_vrfOrch(vrf_orch)
+IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, VRFOrch *vrf_orch, DBConnector *chassisAppDb) :
+        Orch(db, tableNames), m_vrfOrch(vrf_orch)
 {
     SWSS_LOG_ENTER();
 
@@ -101,7 +102,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
     if(gMySwitchType == "voq")
     {
         //Add subscriber to process VOQ system interface
-        tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
+        string tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
         Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
         m_tableVoqSystemInterfaceTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME));
     }
@@ -499,6 +500,17 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             intfs_entry.ref_count = 0;
             intfs_entry.proxy_arp = false;
             intfs_entry.vrf_id = vrf_id;
+            intfs_entry.sag_enabled = false;
+            // use the configured MAC address for setting router interface's attribute via SAI api
+            // or use the system's MAC address instead
+            if (port.m_mac)
+            {
+                intfs_entry.mac = port.m_mac;
+            }
+            else
+            {
+                intfs_entry.mac = gMacAddress;
+            }
             m_syncdIntfses[alias] = intfs_entry;
             m_vrfOrch->increaseVrfRefCount(vrf_id);
         }
@@ -635,6 +647,14 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
         if (m_syncdIntfses[alias].ip_addresses.size() == 0 && removeRouterIntfs(port))
         {
             gPortsOrch->decreasePortRefCount(alias);
+
+            if (m_syncdIntfses[alias].sag_enabled)
+            {
+                removeLinkLocalRouteToMeSag(vrf_id);
+                SWSS_LOG_NOTICE("Remove Interface %s vrf %s -- removed link local",
+                                alias.c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+            }
+
             m_syncdIntfses.erase(alias);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
 
@@ -692,7 +712,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             ip_prefix_in_key = true;
         }
 
-        if(table_name == CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME)
+        if (table_name == CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME)
         {
             if(isLocalSystemPortIntf(alias))
             {
@@ -700,6 +720,17 @@ void IntfsOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
+        }
+
+        //TODO: consider to refactor for different private function
+        if (table_name == APP_SAG_TABLE_NAME)
+        {
+            const vector<FieldValueTuple>& data = kfvFieldsValues(t);
+            string op = kfvOp(t);
+            doSagTask(data, op);
+
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
 
         const vector<FieldValueTuple>& data = kfvFieldsValues(t);
@@ -715,11 +746,26 @@ void IntfsOrch::doTask(Consumer &consumer)
         bool mpls = false;
         string vlan = "";
         string loopbackAction = "";
+
+        bool sag_enabled = false;
+        bool sagChanged = false;
+
         string oper_status ="";
         for (auto idx : data)
         {
             const auto &field = fvField(idx);
             const auto &value = fvValue(idx);
+            string op = kfvOp(t);
+
+            if (field == "static_anycast_gateway")
+            {
+                if (value == "true")
+                {
+                    sag_enabled = true;
+                }
+                sagChanged = true;
+            }
+
             if (field == "vrf_name")
             {
                 vrf_name = value;
@@ -954,6 +1000,25 @@ void IntfsOrch::doTask(Consumer &consumer)
                     continue;
                 }
 
+                if (!ip_prefix_in_key && sagChanged) {
+                    SWSS_LOG_NOTICE("SAG changed to %u from %u for %s", sag_enabled,
+                                    m_syncdIntfses[alias].sag_enabled, alias.c_str());
+                    m_syncdIntfses[alias].sag_enabled = sag_enabled;
+
+                    if (sag_enabled)
+                    {
+                        addLinkLocalRouteToMeSag(m_syncdIntfses[alias].vrf_id);
+                        SWSS_LOG_NOTICE("SAG Added %s vrf %s -- adding link local",
+                                        alias.c_str(), m_vrfOrch->getVRFname(port.m_vr_id).c_str());
+                    }
+                    else
+                    {
+                        removeLinkLocalRouteToMeSag(m_syncdIntfses[alias].vrf_id);
+                        SWSS_LOG_NOTICE("SAG Removed %s vrf %s -- removing link local",
+                                        alias.c_str(), m_vrfOrch->getVRFname(port.m_vr_id).c_str());
+                    }
+                }
+
                 if (gPortsOrch->getPort(alias, port))
                 {
                     /* Set nat zone id */
@@ -989,37 +1054,47 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
 
-            if (mac)
+            if (!mac)
             {
-                /* Get mac information and update mac of the interface*/
-                sai_attribute_t attr;
-                attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
-                memcpy(attr.value.mac, mac.getMac(), sizeof(sai_mac_t));
+                mac = gMacAddress;
+            }
 
-                /*port.m_rif_id is set in setIntf(), need get port again*/
-                if (gPortsOrch->getPort(alias, port))
+            // update mac if it is changed
+            if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+            {
+                if ((!ip_prefix_in_key) && (m_syncdIntfses[alias].mac != mac))
                 {
-                    sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
-                    if (status != SAI_STATUS_SUCCESS)
+                    // port.m_rif_id is set in setIntf(), need to get port again
+                    if (gPortsOrch->getPort(alias, port))
                     {
-                        SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
-                                                     mac.to_string().c_str(), port.m_alias.c_str(), status);
-                        if (handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                        sai_attribute_t attr;
+                        attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+
+                        memcpy(attr.value.mac, mac.getMac(), sizeof(sai_mac_t));
+                        sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+
+                        if (status != SAI_STATUS_SUCCESS)
                         {
-                            it++;
-                            continue;
+                            SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
+                                                        mac.to_string().c_str(), port.m_alias.c_str(), status);
+                            if (handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                            {
+                                it++;
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Set router interface mac %s for port %s success",
+                                                        mac.to_string().c_str(), alias.c_str());
+                            m_syncdIntfses[alias].mac = mac;
                         }
                     }
                     else
                     {
-                        SWSS_LOG_NOTICE("Set router interface mac %s for port %s success",
-                                                      mac.to_string().c_str(), port.m_alias.c_str());
+                        SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, get port fail",
+                                                        mac.to_string().c_str(), alias.c_str());
                     }
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, getPort fail",
-                                                     mac.to_string().c_str(), alias.c_str());
                 }
             }
 
@@ -1126,6 +1201,121 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
         }
+    }
+}
+
+void IntfsOrch::doSagTask(vector<FieldValueTuple> data, const string& op)
+{
+    if (op == SET_COMMAND)
+    {
+        for (auto idx : data)
+        {
+            string sag_mac_str = "";
+            const auto &field = fvField(idx);
+            const auto &value = fvValue(idx);
+            SWSS_LOG_NOTICE("process key %s, value %s", field.c_str(), value.c_str());
+            if (field == "gateway_mac")
+            {
+                sag_mac_str = value;
+            }
+
+            if (!sag_mac_str.empty())
+            {
+                MacAddress sag_mac;
+                try
+                {
+                    sag_mac = MacAddress(sag_mac_str);
+                }
+                catch (const std::invalid_argument &e)
+                {
+                    SWSS_LOG_ERROR("Invalid mac argument %s to %s()", sag_mac_str.c_str(), e.what());
+                    return;
+                }
+
+                m_sagMac = sag_mac;
+            }
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        for (auto sag_vrf_table : SagVrfRefTable)
+        {
+            IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr(m_sagMac);
+            sai_object_id_t vrf_id = sag_vrf_table.first;
+
+            // remove link local route for this vrf
+            gRouteOrch->delLinkLocalRouteToMe(vrf_id, linklocal_prefix);
+            SWSS_LOG_NOTICE("Removed link local ipv6 route %s to cpu in VRF %s",
+                            linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+
+        }
+
+        SagVrfRefTable.clear();
+        m_sagMac = MacAddress();
+    }
+}
+
+void IntfsOrch::addLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
+{
+    if (!m_sagMac)
+    {
+        SWSS_LOG_NOTICE("SAG MAC not set, doing nothing in VRF %s in add", m_vrfOrch->getVRFname(vrf_id).c_str());
+        return;
+    }
+
+    IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr(m_sagMac);
+
+    auto it = SagVrfRefTable.find(vrf_id);
+    if (it == SagVrfRefTable.end())
+    {
+        SagVrfRefTable[vrf_id] = 1;
+
+        SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s",
+                        linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+        // add link local route for this vrf
+        gRouteOrch->addLinkLocalRouteToMe(vrf_id, linklocal_prefix);
+
+        SWSS_LOG_NOTICE("Ref count (%u) for link local ipv6 route %s to cpu in VRF %s",
+                        SagVrfRefTable[vrf_id], linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+    }
+    else
+    {
+        it->second++;
+        SWSS_LOG_NOTICE("Ref count (%u) for link local ipv6 route %s to cpu in VRF %s",
+                        it->second, linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+    }
+}
+
+void IntfsOrch::removeLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
+{
+    if (!m_sagMac)
+    {
+        SWSS_LOG_NOTICE("SAG MAC not set, doing nothing in vrf %s in remove", m_vrfOrch->getVRFname(vrf_id).c_str());
+        return;
+    }
+
+    IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr(m_sagMac);
+
+    auto it = SagVrfRefTable.find(vrf_id);
+    if (it != SagVrfRefTable.end())
+    {
+        if (--(it->second) == 0)
+        {
+            SWSS_LOG_NOTICE("Removed link local ipv6 route %s to cpu in VRF %s",
+                            linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+
+            // remove link local route for this vrf
+            gRouteOrch->delLinkLocalRouteToMe(vrf_id, linklocal_prefix);
+
+            SagVrfRefTable.erase(vrf_id);
+        }
+        SWSS_LOG_NOTICE("Ref count (%u) for link local ipv6 route %s to cpu in VRF %s",
+                        it->second, linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+    }
+    else
+    {
+       SWSS_LOG_NOTICE("Unable to find entry for link local ipv6 route %s to cpu in VRF %s",
+                        linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
     }
 }
 

@@ -88,6 +88,17 @@ public:
         }
     }
 
+    std::vector<sai_object_id_t> getVRFids(void) const
+    {
+        std::vector<sai_object_id_t> vrf_ids;
+        for (auto kv: vrf_id_table_)
+        {
+            vrf_ids.push_back(kv.first);
+        }
+
+        return vrf_ids;
+    }
+
     void increaseVrfRefCount(const std::string& name)
     {
         if (vrf_table_.find(name) != std::end(vrf_table_))

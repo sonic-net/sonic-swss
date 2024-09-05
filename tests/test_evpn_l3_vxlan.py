@@ -154,6 +154,7 @@ class TestL3Vxlan(object):
         print ("\tTesting Tunnel Vrf Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
 
+        vxlan_obj.fetch_exist_entries(dvs)
         print ("\tTesting VLAN 100 interface creation")
         vxlan_obj.create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vrf-RED", "100.100.3.1/24")
         vxlan_obj.check_router_interface(dvs, 'Vrf-RED', vlan_oid, 2)
@@ -249,6 +250,7 @@ class TestL3Vxlan(object):
         print ("\tTesting Tunnel Vrf Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
 
+        vxlan_obj.fetch_exist_entries(dvs)
         print ("\tTesting VLAN 100 interface creation")
         vxlan_obj.create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vrf-RED", "100.100.3.1/24")
         vxlan_obj.check_router_interface(dvs, 'Vrf-RED', vxlan_obj.vlan_id_map['100'], 2)
