@@ -1,12 +1,16 @@
 -- KEYS - port name
 -- ARGV[1] - profile name
 -- ARGV[2] - new size
--- ARGV[3] - pg to add
+-- ARGV[3] - new xon
+-- ARGV[4] - new xoff
+-- ARGV[5] - pg to add
 
 local port = KEYS[1]
 local input_profile_name = ARGV[1]
 local input_profile_size = tonumber(ARGV[2])
-local new_pg = ARGV[3]
+local input_profile_xon = tonumber(ARGV[3])
+local input_profile_xoff = tonumber(ARGV[4])
+local new_pg = ARGV[5]
 
 local function is_port_with_8lanes(lanes)
     -- On Spectrum 3, ports with 8 lanes have doubled pipeline latency
@@ -136,6 +140,8 @@ end
 table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
 for pg_key, profile in pairs(all_pgs) do
     local current_profile_size
+    local current_profile_xon
+    local current_profile_xoff
     local buffer_profile_table_name = 'BUFFER_PROFILE_TABLE:'
     if profile ~= input_profile_name then
         local referenced_profile_size = redis.call('HGET', buffer_profile_table_name .. profile, 'size')
@@ -145,20 +151,21 @@ for pg_key, profile in pairs(all_pgs) do
             table.insert(debuginfo, 'debug:pending profile: ' .. profile)
         end
         current_profile_size = tonumber(referenced_profile_size)
+        current_profile_xon = tonumber(redis.call('HGET', buffer_profile_table_name .. profile, 'xon'))
+        current_profile_xoff = tonumber(redis.call('HGET', buffer_profile_table_name .. profile, 'xoff'))
     else
         current_profile_size = input_profile_size
+        current_profile_xon = input_profile_xon
+        current_profile_xoff = input_profile_xoff
     end
     if current_profile_size == 0 then
         current_profile_size = lossy_pg_size
     end
     accumulative_size = accumulative_size + current_profile_size * get_number_of_pgs(pg_key)
-    if is_shp_enabled then
-        local xon = tonumber(redis.call('HGET', buffer_profile_table_name .. profile, 'xon'))
-        if xon ~= nil then
-            local xoff = tonumber(redis.call('HGET', buffer_profile_table_name .. profile, 'xoff'))
-            if current_profile_size < xon + xoff then
-                accumulative_shared_headroom = accumulative_shared_headroom + (xon + xoff - current_profile_size) * get_number_of_pgs(pg_key)
-            end
+
+    if is_shp_enabled and current_profile_xon and current_profile_xoff then
+        if current_profile_size < current_profile_xon + current_profile_xoff then
+            accumulative_shared_headroom = accumulative_shared_headroom + (current_profile_xon + current_profile_xoff - current_profile_size) * get_number_of_pgs(pg_key)
         end
     end
     table.insert(debuginfo, 'debug:' .. pg_key .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_key) .. ':accu:' .. accumulative_size .. ':accu_shp:' .. accumulative_shared_headroom)
