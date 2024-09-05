@@ -100,6 +100,12 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         {   SWSS_LOG_INFO("writing dhcp_rate_limit to appl_db");
             return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
         }
+        else if (!isPortStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+        SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
     }
     else
     {
@@ -107,12 +113,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
-    }
-    if (!isPortStateOk(alias))
-    {
-        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
-        SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-        return false;
     }
     else
     {
