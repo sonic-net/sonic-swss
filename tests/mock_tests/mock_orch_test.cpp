@@ -5,6 +5,10 @@ using namespace std;
 namespace mock_orch_test
 {
 
+void MockOrchTest::ApplyInitialConfigs() {}
+void MockOrchTest::PostSetUp() {}
+void MockOrchTest::PreTearDown() {}
+
 void MockOrchTest::PrepareSai()
 {
     sai_attribute_t attr;
