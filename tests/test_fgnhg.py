@@ -215,6 +215,8 @@ def shutdown_link(dvs, db, port):
 def startup_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
+    time.sleep(5)
+
     
 def run_warm_reboot(dvs):
     dvs.warm_restart_swss("true")
@@ -284,6 +286,7 @@ def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         dvs.port_admin_set(if_name_key, "up")
         shutdown_link(dvs, app_db, i)
         startup_link(dvs, app_db, i)
+        time.sleep(5)
         bank = 1
         if i >= (nh_range_end - nh_range_start)/2:
             bank = 0

@@ -124,7 +124,7 @@ class TestRouterInterface(object):
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("dhcp_rate_limit", dhcp_rate_limit)])
         tbl.set(interface, fvs)
-        time.sleep(1)
+        time.sleep(20)
 
     def test_PortInterfaceAddRemoveIpv6Address(self, dvs, testlog):
         self.setup_db(dvs)
