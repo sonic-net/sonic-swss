@@ -127,12 +127,9 @@ jobs:
       project: ${{ parameters.sairedis_artifact_project }}
       pipeline: ${{ parameters.sairedis_artifact_pipeline }}
       artifact: ${{ parameters.sairedis_artifact_name }}
-      runVersion: 'specific'
-      pipelineId: 613643
-      # runVersion: 'latestFromBranch'
-      # runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
       allowPartiallySucceededBuilds: true
-      allowFailedBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
       patterns: |
         ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
