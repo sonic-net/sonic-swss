@@ -671,8 +671,6 @@ class TestDropCounters(object):
             This test verifies that debug counters are removed when we remove a port 
             and debug counters are added each time we add ports (if debug counter is enabled)
         """
-        time.sleep(3)  # Ensure the system has time to remove the counters
-
         self.setup_db(dvs)
          
         # save port info

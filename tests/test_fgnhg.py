@@ -214,12 +214,8 @@ def shutdown_link(dvs, db, port):
 
 def startup_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
-    print(f"Port status before wait: {db.get_entry('PORT_TABLE', 'Ethernet%d' % (port * 4))}")
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
-    time.sleep(5)
-    print(f"Port status after wait: {db.get_entry('PORT_TABLE', 'Ethernet%d' % (port * 4))}")
-
-
+    
 def run_warm_reboot(dvs):
     dvs.warm_restart_swss("true")
 
@@ -286,10 +282,8 @@ def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         create_entry(config_db, IF_TB, if_name_key, fvs_nul)
         create_entry(config_db, IF_TB, ip_pref_key, fvs_nul)
         dvs.port_admin_set(if_name_key, "up")
-        time.sleep(5)
         shutdown_link(dvs, app_db, i)
         startup_link(dvs, app_db, i)
-        time.sleep(5)
         bank = 1
         if i >= (nh_range_end - nh_range_start)/2:
             bank = 0
@@ -780,10 +774,7 @@ class TestFineGrainedNextHopGroup(object):
             shutdown_link(dvs, app_db, i)
             startup_link(dvs, app_db, i)
             dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
-
-        print(f" asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg============={ asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg}")
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)
-
         # Program the route
         ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.5"),

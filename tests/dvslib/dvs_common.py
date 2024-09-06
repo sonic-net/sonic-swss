@@ -17,7 +17,7 @@ class PollingConfig:
     """
 
     polling_interval: float = 0.01
-    timeout: float = 30.00
+    timeout: float = 20.00
     strict: bool = True
 
     def iterations(self) -> int:
@@ -57,7 +57,6 @@ def wait_for_result(
         
         
     if polling_config.strict:
-        print("polling_config.strict not status  by function [status, result = polling_function()]")
         message = failure_message or f"Operation timed out after {polling_config.timeout} seconds with result {result}"
         assert False, message
 
