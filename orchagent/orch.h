@@ -132,6 +132,7 @@ protected:
     std::string m_name;
 
     // Get the underlying selectable
+    friend class RouteOrch;
     swss::Selectable *getSelectable() const { return m_selectable; }
 };
 

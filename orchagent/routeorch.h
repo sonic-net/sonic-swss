@@ -16,6 +16,7 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
+#include "select.h"
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
@@ -184,7 +185,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, Select *select=nullptr));
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -227,6 +228,7 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    bool checkHighPriorityNotification(int pri);
 
 private:
     SwitchOrch *m_switchOrch;
@@ -235,6 +237,7 @@ private:
     VRFOrch *m_vrfOrch;
     FgNhgOrch *m_fgNhgOrch;
     Srv6Orch *m_srv6Orch;
+    Select *m_select;
 
     unsigned int m_nextHopGroupCount;
     unsigned int m_maxNextHopGroupCount;
