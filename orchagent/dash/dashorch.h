@@ -30,7 +30,13 @@ struct EniEntry
     dash::eni::Eni metadata;
 };
 
-typedef std::map<std::string, dash::appliance::Appliance> ApplianceTable;
+struct ApplianceEntry
+{
+    sai_object_id_t appliance_id;
+    dash::appliance::Appliance metadata;
+};
+
+typedef std::map<std::string, ApplianceEntry> ApplianceTable;
 typedef std::map<dash::route_type::RoutingType, dash::route_type::RouteType> RoutingTypeTable;
 typedef std::map<std::string, EniEntry> EniTable;
 typedef std::map<std::string, dash::qos::Qos> QosTable;

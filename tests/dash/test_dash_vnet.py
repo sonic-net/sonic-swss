@@ -27,6 +27,7 @@ class TestDash(object):
         self.appliance_id = "100"
         self.sip = "10.0.0.1"
         self.vm_vni = "4321"
+        self.local_region_id = "10"
         pb = Appliance()
         pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
         pb.vm_vni = int(self.vm_vni)
