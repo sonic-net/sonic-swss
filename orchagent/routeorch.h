@@ -185,7 +185,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, Select *select=nullptr));
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, Select *select=nullptr);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
