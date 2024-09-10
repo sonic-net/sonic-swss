@@ -26,7 +26,7 @@ public:
     std::string getLearnModeStr(const PortConfig &port) const;
     std::string getLinkTrainingStr(const PortConfig &port) const;
     std::string getAdminStatusStr(const PortConfig &port) const;
-    std::string getDhcpRateLimitStr(const PortConfig &port) const;
+   // std::string getDhcpRateLimitStr(const PortConfig &port) const;
     std::string getPtTimestampTemplateStr(const PortConfig &port) const;
     std::string getDampingAlgorithm(const PortConfig &port) const;
 
@@ -59,7 +59,7 @@ private:
     bool parsePortLinkTraining(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortRole(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdminStatus(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortDhcpRateLimitStatus(PortConfig &port, const std::string &field, const std::string &value) const;
+   // bool parsePortDhcpRateLimitStatus(PortConfig &port, const std::string &field, const std::string &value) const;
 
 
     bool parsePortDescription(PortConfig &port, const std::string &field, const std::string &value) const;
