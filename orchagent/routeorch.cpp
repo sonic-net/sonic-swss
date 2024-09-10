@@ -218,8 +218,8 @@ bool RouteOrch::checkHighPriorityNotification(int pri)
         return false;
     }
 
-    SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification pri %d\n", (int)(s->getPri()));
-    return s->getPri() >= pri;
+    SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification pri %d, current pri: %d\n", (int)(s->getPri()), (int)(pri));
+    return s->getPri() > pri;
 }
 
 void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix)
