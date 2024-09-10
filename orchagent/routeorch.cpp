@@ -192,7 +192,7 @@ bool RouteOrch::checkHighPriorityNotification(int pri)
 {
     if (m_select == nullptr)
     {
-        SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification nullptr\n")
+        SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification nullptr\n");
         return false;
     }
 
@@ -200,6 +200,7 @@ bool RouteOrch::checkHighPriorityNotification(int pri)
     count++;
     if (count <= 128)
     {
+        // check every 128 entries
         return false;
     }
 
@@ -217,7 +218,7 @@ bool RouteOrch::checkHighPriorityNotification(int pri)
         return false;
     }
 
-    SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification pri %d\n", (int)(s->getPri()))
+    SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification pri %d\n", (int)(s->getPri()));
     return s->getPri() >= pri;
 }
 
@@ -537,7 +538,7 @@ void RouteOrch::doTask(Consumer& consumer)
             hasHighPriNotification = checkHighPriorityNotification(currentPri);
             if (hasHighPriNotification)
             {
-                SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification true\n")
+                SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification true\n");
                 break;
             }
 
