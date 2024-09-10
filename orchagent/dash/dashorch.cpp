@@ -394,15 +394,16 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         eni_attrs.push_back(eni_attr);
     }
 
-    // auto eni_route_it = eni_route_entries_.find(eni);
-    // if (eni_route_it != eni_route_entries_.end())
-    // {
-        // SWSS_LOG_INFO("ENI %s has route group %s", eni.c_str(), eni_route_it->second.group_id().c_str());
-        // DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
-        // eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
-        // eni_attr.value.oid = dash_route_orch->getRouteGroupOid(eni_route_it->second.group_id());
-        // eni_attrs.push_back(eni_attr);
-    // }
+    if (entry.metadata.has_pl_sip_encoding())
+    {
+        eni_attr.id = SAI_ENI_ATTR_PL_SIP;
+        to_sai(entry.metadata.pl_sip_encoding().ip(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+
+        eni_attr.id = SAI_ENI_ATTR_PL_SIP_MASK;
+        to_sai(entry.metadata.pl_sip_encoding().mask(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+    }
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
                                 (uint32_t)eni_attrs.size(), eni_attrs.data());

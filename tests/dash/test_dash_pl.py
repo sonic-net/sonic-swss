@@ -57,6 +57,8 @@ def test_pl_eni_attrs(dash_db: DashDB):
     enis = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_ENI")
     eni_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_ENI", enis[0])
     assert_sai_attribute_exists(SAI_ENI_ATTR_PL_UNDERLAY_SIP, eni_attrs, PL_UNDERLAY_SIP1)
+    assert_sai_attribute_exists(SAI_ENI_ATTR_PL_SIP, eni_attrs, PL_ENCODING_IP)
+    assert_sai_attribute_exists(SAI_ENI_ATTR_PL_SIP_MASK, eni_attrs, PL_ENCODING_MASK)
 
 def test_pl_eni_override_underlay_sip(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1, ROUTE_VNET_CONFIG_UNDERLAY_SIP)
