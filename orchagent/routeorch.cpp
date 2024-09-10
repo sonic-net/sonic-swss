@@ -34,7 +34,7 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, Select *select) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
@@ -47,8 +47,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_nextHopGroupCount(0),
         m_srv6Orch(srv6Orch),
         m_resync(false),
-        m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME),
-        m_select(select)
+        m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -186,40 +185,6 @@ std::string RouteOrch::getLinkLocalEui64Addr(void)
     ip_prefix = string(ipv6_ll_addr);
 
     return ip_prefix;
-}
-
-bool RouteOrch::checkHighPriorityNotification(int pri)
-{
-    if (m_select == nullptr)
-    {
-        SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification nullptr\n");
-        return false;
-    }
-
-    static long count = 0;
-    count++;
-    if (count <= 128)
-    {
-        // check every 128 entries
-        return false;
-    }
-
-    count = 0;
-    Selectable *s;
-    int ret;
-    ret = m_select->select(&s, 0);
-    if (ret == Select::ERROR)
-    {
-        return false;
-    }
-
-    if (ret == Select::TIMEOUT)
-    {
-        return false;
-    }
-
-    SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification pri %d, current pri: %d\n", (int)(s->getPri()), (int)(pri));
-    return s->getPri() > pri;
 }
 
 void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix)
@@ -519,9 +484,9 @@ void RouteOrch::doTask(Consumer& consumer)
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
     auto it = consumer.m_toSync.begin();
-    bool hasHighPriNotification = false;
-    int currentPri = consumer.getSelectable()->getPri();
-    while (!hasHighPriNotification && it != consumer.m_toSync.end())
+    bool exitLoop = false;
+    long exitentryCount = 0;
+    while (!exitLoop && it != consumer.m_toSync.end())
     {
         // Route bulk results will be stored in a map
         std::map<
@@ -535,10 +500,10 @@ void RouteOrch::doTask(Consumer& consumer)
         // Add or remove routes with a route bulker
         while (it != consumer.m_toSync.end())
         {
-            hasHighPriNotification = checkHighPriorityNotification(currentPri);
-            if (hasHighPriNotification)
+            exitentryCount++;
+            if (exitentryCount >= 1280)
             {
-                SWSS_LOG_ERROR("[HUA] checkHighPriorityNotification true\n");
+                exitLoop = true;
                 break;
             }
 
