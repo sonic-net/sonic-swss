@@ -9,7 +9,7 @@ from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
 
-from dash_db import dash_db
+from dash_db import *
 from dash_configs import *
 
 import time
@@ -17,11 +17,13 @@ import uuid
 import ipaddress
 import socket
 
+from dvslib.sai_utils import assert_sai_attribute_exists
+
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
 class TestDash(object):
-    def test_appliance(self, dash_db):
+    def test_appliance(self, dash_db: DashDB):
         self.appliance_id = "100"
         self.sip = "10.0.0.1"
         self.vm_vni = "4321"
@@ -29,22 +31,16 @@ class TestDash(object):
         pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
         pb.vm_vni = int(self.vm_vni)
         dash_db.create_appliance(self.appliance_id, {"pb": pb.SerializeToString()})
-        time.sleep(3)
 
-        direction_entries = dash_db.asic_direction_lookup_table.get_keys()
-        assert direction_entries
-        fvs = dash_db.asic_direction_lookup_table[direction_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION"
-        vip_entries = dash_db.asic_vip_table.get_keys()
-        assert vip_entries
-        fvs = dash_db.asic_vip_table[vip_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_VIP_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_VIP_ENTRY_ACTION_ACCEPT"
+        direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
+        dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION")
 
-    def test_vnet(self, dash_db):
+        vip_keys = dash_db.wait_for_asic_db_keys(ASIC_VIP_TABLE)
+        vip_attrs = dash_db.get_asic_db_entry(ASIC_VIP_TABLE, vip_keys[0])
+        assert_sai_attribute_exists("SAI_VIP_ENTRY_ATTR_ACTION", vip_attrs, "SAI_VIP_ENTRY_ACTION_ACCEPT")
+
+    def test_vnet(self, dash_db: DashDB):
         self.vnet = "Vnet1"
         self.vni = "45654"
         self.guid = "559c6ce8-26ab-4193-b946-ccc6e8f930b2"
@@ -52,14 +48,13 @@ class TestDash(object):
         pb.vni = int(self.vni)
         pb.guid.value = bytes.fromhex(uuid.UUID(self.guid).hex)
         dash_db.create_vnet(self.vnet, {"pb": pb.SerializeToString()})
-        time.sleep(3)
-        vnets = dash_db.asic_dash_vnet_table.get_keys()
-        assert vnets
-        self.vnet_oid = vnets[0]
-        vnet_attr = dash_db.asic_dash_vnet_table[self.vnet_oid]
-        assert vnet_attr["SAI_VNET_ATTR_VNI"] == "45654"
 
-    def test_eni(self, dash_db):
+        vnet_keys = dash_db.wait_for_asic_db_keys(ASIC_VNET_TABLE)
+        self.vnet_oid = vnet_keys[0]
+        vnet_attr = dash_db.get_asic_db_entry(ASIC_VNET_TABLE, self.vnet_oid)
+        assert_sai_attribute_exists("SAI_VNET_ATTR_VNI", vnet_attr, self.vni)
+
+    def test_eni(self, dash_db: DashDB):
         self.vnet = "Vnet1"
         self.mac_string = "F4939FEFC47E"
         self.mac_address = "F4:93:9F:EF:C4:7E"
@@ -73,45 +68,26 @@ class TestDash(object):
         pb.admin_state = State.STATE_ENABLED
         pb.vnet = self.vnet
         dash_db.create_eni(self.mac_string, {"pb": pb.SerializeToString()})
-        time.sleep(3)
-        vnets = dash_db.asic_dash_vnet_table.get_keys()
-        assert vnets
+        
+        vnets = dash_db.wait_for_asic_db_keys(ASIC_VNET_TABLE)
         self.vnet_oid = vnets[0]
-        enis = dash_db.asic_eni_table.get_keys()
-        assert enis
+        enis = dash_db.wait_for_asic_db_keys(ASIC_ENI_TABLE)
         self.eni_oid = enis[0]
-        fvs = dash_db.asic_eni_table[enis[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_ENI_ATTR_VNET_ID":
-                assert fv[1] == str(self.vnet_oid)
-            if fv[0] == "SAI_ENI_ATTR_PPS":
-                assert fv[1] == 0
-            if fv[0] == "SAI_ENI_ATTR_CPS":
-                assert fv[1] == 0
-            if fv[0] == "SAI_ENI_ATTR_FLOWS":
-                assert fv[1] == 0
-            if fv[0] == "SAI_ENI_ATTR_ADMIN_STATE":
-                assert fv[1] == "true"
+        attrs = dash_db.get_asic_db_entry(ASIC_ENI_TABLE, self.eni_oid)
 
-        time.sleep(3)
-        eni_addr_maps = dash_db.asic_eni_ether_addr_map_table.get_keys()
-        assert eni_addr_maps
-        fvs = dash_db.asic_eni_ether_addr_map_table[eni_addr_maps[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_ENI_ETHER_ADDRESS_MAP_ENTRY_ATTR_ENI_ID":
-                assert fv[1] == str(self.eni_oid)
+        assert_sai_attribute_exists("SAI_ENI_ATTR_VNET_ID", attrs, str(self.vnet_oid))
+        assert_sai_attribute_exists("SAI_ENI_ATTR_ADMIN_STATE", attrs, "true")
+
+        eni_addr_maps = dash_db.wait_for_asic_db_keys(ASIC_ENI_ETHER_ADDR_MAP_TABLE)
+        attrs = dash_db.get_asic_db_entry(ASIC_ENI_ETHER_ADDR_MAP_TABLE, eni_addr_maps[0])
+        assert_sai_attribute_exists("SAI_ENI_ETHER_ADDRESS_MAP_ENTRY_ATTR_ENI_ID", attrs, str(self.eni_oid))
 
         # test admin state update
         pb.admin_state = State.STATE_DISABLED
         dash_db.create_eni(self.mac_string, {"pb": pb.SerializeToString()})
-        time.sleep(3)
-        enis = dash_db.asic_eni_table.get_keys()
-        assert len(enis) == 1
-        assert enis[0] == self.eni_oid
-        eni_attrs = dash_db.asic_eni_table[self.eni_oid]
-        assert eni_attrs["SAI_ENI_ATTR_ADMIN_STATE"] == "false"
+        dash_db.wait_for_asic_db_field(ASIC_ENI_TABLE, self.eni_oid, "SAI_ENI_ATTR_ADMIN_STATE", "false")
 
-    def test_vnet_map(self, dash_db):
+    def test_vnet_map(self, dash_db: DashDB):
         self.vnet = "Vnet1"
         self.ip1 = "10.1.1.1"
         self.ip2 = "10.1.1.2"
@@ -121,7 +97,8 @@ class TestDash(object):
         route_type_msg = RouteType()
         route_action = RouteTypeItem()
         route_action.action_name = "action1"
-        route_action.action_type = ACTION_TYPE_MAPROUTING
+        route_action.action_type = ACTION_TYPE_STATICENCAP
+        route_action.encap_type = ENCAP_TYPE_NVGRE
         route_type_msg.items.append(route_action)
         dash_db.create_routing_type(self.routing_type, {"pb": route_type_msg.SerializeToString()})
         pb = VnetMapping()
@@ -131,31 +108,23 @@ class TestDash(object):
 
         dash_db.create_vnet_mapping(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
         dash_db.create_vnet_mapping(self.vnet, self.ip2, {"pb": pb.SerializeToString()})
-        time.sleep(3)
 
-        vnet_ca_to_pa_maps = dash_db.asic_dash_outbound_ca_to_pa_table.get_keys()
-        assert len(vnet_ca_to_pa_maps) >= 2
-        fvs = dash_db.asic_dash_outbound_ca_to_pa_table[vnet_ca_to_pa_maps[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP":
-                assert fv[1] == "101.1.2.3"
-            if fv[0] == "SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC":
-                assert fv[1] == "F4:93:9F:EF:C4:7E"
+        vnet_ca_to_pa_maps = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_CA_TO_PA_TABLE, min_keys=2)
+        attrs = dash_db.get_asic_db_entry(ASIC_OUTBOUND_CA_TO_PA_TABLE, vnet_ca_to_pa_maps[0])
+        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP", attrs, self.underlay_ip)
+        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC", attrs, self.mac_address)
+        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION", attrs, "SAI_DASH_ENCAPSULATION_NVGRE")
 
-        vnet_pa_validation_maps = dash_db.asic_pa_validation_table.get_keys()
-        assert vnet_pa_validation_maps
-        fvs = dash_db.asic_pa_validation_table[vnet_pa_validation_maps[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_PA_VALIDATION_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_PA_VALIDATION_ENTRY_ACTION_PERMIT"
+        vnet_pa_validation_maps = dash_db.wait_for_asic_db_keys(ASIC_PA_VALIDATION_TABLE)
+        pa_validation_attrs = dash_db.get_asic_db_entry(ASIC_PA_VALIDATION_TABLE, vnet_pa_validation_maps[0])
+        assert_sai_attribute_exists("SAI_PA_VALIDATION_ENTRY_ATTR_ACTION", pa_validation_attrs, "SAI_PA_VALIDATION_ENTRY_ACTION_PERMIT")
 
-    def test_outbound_routing(self, dash_db):
+    def test_outbound_routing(self, dash_db: DashDB):
         pb = RouteGroup()
         self.group_id = ROUTE_GROUP1
         dash_db.create_route_group(self.group_id, {"pb": pb.SerializeToString()})
-        time.sleep(3)
-        outbound_routing_group_entries = dash_db.asic_outbound_routing_group_table.get_keys()
-        assert outbound_routing_group_entries
+
+        outbound_routing_group_entries = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_ROUTING_GROUP_TABLE)
 
         self.vnet = "Vnet1"
         self.ip = "10.1.0.0/24"
@@ -166,29 +135,22 @@ class TestDash(object):
         pb.vnet_direct.vnet = self.vnet
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
         dash_db.create_route(self.group_id, self.ip, {"pb": pb.SerializeToString()})
-        time.sleep(3)
-        outbound_routing_entries = dash_db.asic_outbound_routing_table.get_keys()
-        assert outbound_routing_entries
-        fvs = dash_db.asic_outbound_routing_table[outbound_routing_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT"
-            if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP":
-                assert fv[1] == "10.0.0.6"
-        assert "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID" in fvs
+
+        outbound_routing_entries = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_ROUTING_TABLE)
+        routing_attrs = dash_db.get_asic_db_entry(ASIC_OUTBOUND_ROUTING_TABLE, outbound_routing_entries[0])
+        assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION", routing_attrs, "SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT")
+        assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP", routing_attrs, self.overlay_ip)
+        assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID", routing_attrs)
 
         pb = EniRoute()
         pb.group_id = self.group_id
         self.mac_string = "F4939FEFC47E"
         dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
-        time.sleep(3)
-        eni_entries = dash_db.asic_eni_table.get_keys()
-        fvs = dash_db.asic_eni_table[eni_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID":
-                assert fv[1] == outbound_routing_group_entries[0]
 
-    def test_inbound_routing(self, dash_db):
+        enis = dash_db.wait_for_asic_db_keys(ASIC_ENI_TABLE)
+        dash_db.wait_for_asic_db_field(ASIC_ENI_TABLE, enis[0], "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID", outbound_routing_group_entries[0])
+
+    def test_inbound_routing(self, dash_db: DashDB):
         self.mac_string = "F4939FEFC47E"
         self.vnet = "Vnet1"
         self.vni = "3251"
@@ -204,16 +166,12 @@ class TestDash(object):
         pb.vnet = self.vnet
 
         dash_db.create_inbound_routing(self.mac_string, self.vni, self.ip, {"pb": pb.SerializeToString()})
-        time.sleep(3)
 
-        inbound_routing_entries = dash_db.asic_inbound_routing_rule_table.get_keys()
-        assert inbound_routing_entries
-        fvs = dash_db.asic_inbound_routing_rule_table[inbound_routing_entries[0]]
-        for fv in fvs.items():
-            if fv[0] == "SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION":
-                assert fv[1] == "SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE"
+        inbound_routing_entries = dash_db.wait_for_asic_db_keys(ASIC_INBOUND_ROUTING_TABLE)
+        attrs = dash_db.get_asic_db_entry(ASIC_INBOUND_ROUTING_TABLE, inbound_routing_entries[0])
+        assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION", attrs, "SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE")
 
-    def test_cleanup(self, dash_db):
+    def test_cleanup(self, dash_db: DashDB):
         self.vnet = "Vnet1"
         self.mac_string = "F4939FEFC47E"
         self.group_id = ROUTE_GROUP1
