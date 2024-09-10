@@ -248,11 +248,6 @@ std::string PortHelper::getAdminStatusStr(const PortConfig &port) const
     return this->getFieldValueStr(port, PORT_ADMIN_STATUS);
 }
 
-// std::string PortHelper::getDhcpRateLimitStr(const PortConfig &port) const
-// {
-//     return this->getFieldValueStr(port, PORT_DHCP_RATE_LIMIT);
-// }
-
 std::string PortHelper::getPtTimestampTemplateStr(const PortConfig &port) const
 {
     return this->getFieldValueStr(port, PORT_PT_TIMESTAMP_TEMPLATE);
@@ -770,32 +765,6 @@ bool PortHelper::parsePortAdminStatus(PortConfig &port, const std::string &field
     return true;
 }
 
-// bool PortHelper::parsePortDhcpRateLimitStatus(PortConfig &port, const std::string &field, const std::string &value) const
-// {
-//     SWSS_LOG_ENTER();
-
-//     if (value.empty())
-//     {
-//         SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
-//         return false;
-//     }
-
-//     // Assuming dhcp_rate_limit is an integer value, validate if the string can be converted to a valid number.
-//     try
-//     {
-//         port.dhcp_rate_limit.value = std::stoi(value);  // Convert the string value to an integer
-//         port.dhcp_rate_limit.is_set = true;
-//     }
-//     catch (const std::exception &e)
-//     {
-//         SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s) - %s", field.c_str(), value.c_str(), e.what());
-//         return false;
-//     }
-
-//     return true;
-// }
-
-
 bool PortHelper::parsePortDescription(PortConfig &port, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
@@ -1191,23 +1160,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-        // else if (field == PORT_DHCP_RATE_LIMIT)
-        // {
-        //     if (!this->parsePortDhcpRateLimitStatus(port, field, value))
-        //     {
-        //         return false;
-        //     }
-        // }
-        // else if (field == PORT_DESCRIPTION)
-        // {
-        //     if (!this->parsePortDescription(port, field, value))
-        //     {
-        //         return false;
-        //     }
-        // }
-
-
-        
+       
 
         else if (field == PORT_SUBPORT)
         {
@@ -1312,19 +1265,5 @@ bool PortHelper::validatePortConfig(PortConfig &port) const
 
         port.fieldValueMap[PORT_ADMIN_STATUS] = PORT_STATUS_DOWN;
     }
-    // if (!port.dhcp_rate_limit.is_set)
-    // {
-    //     SWSS_LOG_INFO(
-    //         "Missing non mandatory field(%s): setting default value(%s)",
-    //         PORT_DHCP_RATE_LIMIT,
-    //         PORT_STATUS_DOWN
-    //     );
-
-    //     port.dhcp_rate_limit.value = false;
-    //     port.dhcp_rate_limit.is_set = true;
-
-    //     port.fieldValueMap[PORT_DHCP_RATE_LIMIT] = PORT_STATUS_DOWN;
-    // }
-
     return true;
 }
