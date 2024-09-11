@@ -16,7 +16,6 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
-#include "select.h"
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
