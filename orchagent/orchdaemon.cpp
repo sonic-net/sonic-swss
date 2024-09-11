@@ -211,7 +211,8 @@ bool OrchDaemon::init()
 
     vector<string> srv6_tables = {
         APP_SRV6_SID_LIST_TABLE_NAME,
-        APP_SRV6_MY_SID_TABLE_NAME
+        APP_SRV6_MY_SID_TABLE_NAME,
+        APP_PIC_CONTEXT_TABLE_NAME
     };
     gSrv6Orch = new Srv6Orch(m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
