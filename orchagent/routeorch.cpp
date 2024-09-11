@@ -501,7 +501,7 @@ void RouteOrch::doTask(Consumer& consumer)
         while (it != consumer.m_toSync.end())
         {
             exitentryCount++;
-            if (exitentryCount >= 1280)
+            if (exitentryCount >= 5120)
             {
                 exitLoop = true;
                 break;
