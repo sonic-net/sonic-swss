@@ -73,12 +73,14 @@ swssconfig/swssconfig
 swssconfig/swssplayer
 tlm_teamd/tlm_teamd
 teamsyncd/teamsyncd
+dashoffloadmanager/dashoffloadmanager
 tests/tests
 tests/mock_tests/tests_response_publisher
 tests/mock_tests/tests_fpmsyncd
 tests/mock_tests/tests_intfmgrd
 tests/mock_tests/tests_teammgrd
 tests/mock_tests/tests_portsyncd
+tests/mock_tests/tests_dashoffloadmanager
 
 
 # Test Files #
