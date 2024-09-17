@@ -1,6 +1,7 @@
 FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
+DASH_ORCH_DIR = $(top_srcdir)/orchagent/dash
 DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
 
 CFLAGS_SAI = -I /usr/include/sai
@@ -22,7 +23,7 @@ LDADD_GTEST = -L/usr/src/gtest
 
 ## Orchagent Unit Tests
 
-tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(top_srcdir)/warmrestart
+tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(DASH_ORCH_DIR) -I$(top_srcdir)/warmrestart
 
 tests_SOURCES = aclorch_ut.cpp \
                 portsorch_ut.cpp \
@@ -60,8 +61,10 @@ tests_SOURCES = aclorch_ut.cpp \
                 switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
+                dashorch_ut.cpp \
                 twamporch_ut.cpp \
                 flexcounter_ut.cpp \
+                mock_orch_test.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \

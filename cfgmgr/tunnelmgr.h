@@ -33,6 +33,7 @@ private:
     void finalizeWarmReboot();
 
     ProducerStateTable m_appIpInIpTunnelTable;
+    ProducerStateTable m_appIpInIpTunnelDecapTermTable;
     Table m_cfgPeerTable;
     Table m_cfgTunnelTable;
 

@@ -21,6 +21,7 @@
 #include "neighorch.h"
 #include "crmorch.h"
 #include "routeorch.h"
+#include "tunneldecaporch.h"
 #include "flowcounterrouteorch.h"
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
@@ -43,6 +44,7 @@ extern RouteOrch *gRouteOrch;
 extern MacAddress gVxlanMacAddress;
 extern BfdOrch *gBfdOrch;
 extern SwitchOrch *gSwitchOrch;
+extern TunnelDecapOrch *gTunneldecapOrch;
 /*
  * VRF Modeling and VNetVrf class definitions
  */
@@ -334,7 +336,7 @@ VNetVrfObject::~VNetVrfObject()
     set<sai_object_id_t> vr_ent = getVRids();
     for (auto it : vr_ent)
     {
-        if (it != gVirtualRouterId) 
+        if (it != gVirtualRouterId)
         {
             sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
             if (status != SAI_STATUS_SUCCESS)
@@ -717,7 +719,8 @@ static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_obj
 }
 
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
-                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), bfd_session_producer_(db, APP_BFD_SESSION_TABLE_NAME)
+                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), bfd_session_producer_(db, APP_BFD_SESSION_TABLE_NAME),
+                                    app_tunnel_decap_term_producer_(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -1432,6 +1435,39 @@ bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
     return true;
 }
 
+inline void VNetRouteOrch::createSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    if (!config.enable || subnet_decap_terms_created_.find(ipPrefix) != subnet_decap_terms_created_.end())
+    {
+        return;
+    }
+    SWSS_LOG_NOTICE("Add subnet decap term for %s", ipPrefix.to_string().c_str());
+    static const vector<FieldValueTuple> data = {
+        {"term_type", "MP2MP"},
+        {"subnet_type", "vip"}
+    };
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    app_tunnel_decap_term_producer_.set(key, data);
+    subnet_decap_terms_created_.insert(ipPrefix);
+}
+
+inline void VNetRouteOrch::removeSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    auto it = subnet_decap_terms_created_.find(ipPrefix);
+    if (it == subnet_decap_terms_created_.end())
+    {
+        return;
+    }
+    SWSS_LOG_NOTICE("Remove subnet decap term for %s", ipPrefix.to_string().c_str());
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    app_tunnel_decap_term_producer_.del(key);
+    subnet_decap_terms_created_.erase(it);
+}
+
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
                                                nextHop& nh, string& op)
@@ -2088,6 +2124,14 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
             removeRouteAdvertisement(prefix_to_use);
         }
     }
+    if (route_state == "active")
+    {
+        createSubnetDecapTerm(prefix_to_use);
+    }
+    else if (route_state == "inactive")
+    {
+        removeSubnetDecapTerm(prefix_to_use);
+    }
 }
 
 void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
@@ -2101,11 +2145,13 @@ void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
         if(adv_prefix_refcount_[adv_pfx] == 1)
         {
             removeRouteAdvertisement(adv_pfx);
+            removeSubnetDecapTerm(adv_pfx);
         }
     }
     else
     {
         removeRouteAdvertisement(ipPrefix);
+        removeSubnetDecapTerm(ipPrefix);
     }
 }
 

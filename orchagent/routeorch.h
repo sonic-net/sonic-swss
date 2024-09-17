@@ -23,6 +23,7 @@
 #define EUI64_INTF_ID_LEN 8
 
 #define LOOPBACK_PREFIX     "Loopback"
+#define VLAN_PREFIX         "Vlan"
 
 struct NextHopGroupMemberEntry
 {
@@ -250,6 +251,9 @@ private:
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
 
+    std::set<IpPrefix> m_SubnetDecapTermsCreated;
+    ProducerStateTable m_appTunnelDecapTermProducer;
+
     NextHopObserverTable m_nextHopObservers;
 
     EntityBulker<sai_route_api_t>           gRouteBulker;
@@ -278,6 +282,10 @@ private:
     void decNhgRefCount(const std::string& nhg_index);
 
     void publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status = ReturnCode(SAI_STATUS_SUCCESS));
+
+    bool isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
+    void createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
+    void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

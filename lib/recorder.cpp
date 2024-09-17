@@ -93,12 +93,12 @@ void RecWriter::record(const std::string& val)
     {
         return ;
     }
-    record_ofs << swss::getTimestamp() << "|" << val << std::endl;
     if (isRotate())
     {
         setRotate(false);
         logfileReopen();
     }
+    record_ofs << swss::getTimestamp() << "|" << val << std::endl;
 }
 
 

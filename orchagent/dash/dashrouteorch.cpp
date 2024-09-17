@@ -61,9 +61,16 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         SWSS_LOG_WARN("Outbound routing entry already exists for %s", key.c_str());
         return true;
     }
-    if (!dash_orch_->getEni(ctxt.eni))
+
+    if (isRouteGroupBound(ctxt.route_group))
     {
-        SWSS_LOG_INFO("Retry as ENI entry %s not found", ctxt.eni.c_str());
+        SWSS_LOG_WARN("Cannot add new route to route group %s as it is already bound", ctxt.route_group.c_str());
+        return true;
+    }
+    sai_object_id_t route_group_oid = this->getRouteGroupOid(ctxt.route_group);
+    if (route_group_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Retry as route group %s not found", ctxt.route_group.c_str());
         return false;
     }
     if (ctxt.metadata.has_vnet() && gVnetNameToId.find(ctxt.metadata.vnet()) == gVnetNameToId.end())
@@ -74,21 +81,29 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
 
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.eni_id = dash_orch_->getEni(ctxt.eni)->eni_id;
+    outbound_routing_entry.outbound_routing_group_id = route_group_oid;
     swss::copy(outbound_routing_entry.destination, ctxt.destination);
     sai_attribute_t outbound_routing_attr;
     vector<sai_attribute_t> outbound_routing_attrs;
     auto& object_statuses = ctxt.object_statuses;
 
+    auto it = sOutboundAction.find(ctxt.metadata.routing_type());
+    if (it == sOutboundAction.end())
+    {
+        std::string routing_type_str = dash::route_type::RoutingType_Name(ctxt.metadata.routing_type());
+        SWSS_LOG_WARN("Routing type %s for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
+        return false;
+    }
+
     outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    outbound_routing_attr.value.u32 = sOutboundAction[ctxt.metadata.action_type()];
+    outbound_routing_attr.value.u32 = it->second;
     outbound_routing_attrs.push_back(outbound_routing_attr);
 
-    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
+    if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
     {
-        // Intentional empty line, To direct action type, don't need set extra attributes
+        // Intentional empty line, for direct routing, don't need set extra attributes
     }
-    else if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
+    else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
         && ctxt.metadata.has_vnet()
         && !ctxt.metadata.vnet().empty())
     {   
@@ -96,7 +111,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attr.value.oid = gVnetNameToId[ctxt.metadata.vnet()];
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
-    else if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
+    else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
         && ctxt.metadata.has_vnet_direct()
         && !ctxt.metadata.vnet_direct().vnet().empty()
         && (ctxt.metadata.vnet_direct().overlay_ip().has_ipv4() || ctxt.metadata.vnet_direct().overlay_ip().has_ipv6()))
@@ -114,8 +129,19 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     }
     else
     {
-        SWSS_LOG_WARN("Attribute action for outbound routing entry %s", key.c_str());
+        SWSS_LOG_WARN("Routing type %s for outbound routing entry %s either invalid or missing required attributes",
+                        dash::route_type::RoutingType_Name(ctxt.metadata.routing_type()).c_str(), key.c_str());
         return false;
+    }
+
+    if (ctxt.metadata.has_underlay_sip() && ctxt.metadata.underlay_sip().has_ipv4())
+    {
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP;
+        if (!to_sai(ctxt.metadata.underlay_sip(), outbound_routing_attr.value.ipaddr))
+        {
+            return false;
+        }
+        outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 
     object_statuses.emplace_back();
@@ -153,7 +179,7 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
         }
     }
 
-    OutboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.destination, ctxt.metadata };
+    OutboundRoutingEntry entry = { this->getRouteGroupOid(ctxt.route_group), ctxt.destination, ctxt.metadata };
     routing_entries_[key] = entry;
 
     gCrmOrch->incCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
@@ -174,11 +200,17 @@ bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulk
         return true;
     }
 
+    if (isRouteGroupBound(ctxt.route_group))
+    {
+        SWSS_LOG_WARN("Cannot remove route from route group %s as it is already bound", ctxt.route_group.c_str());
+        return true;
+    }
+
     auto& object_statuses = ctxt.object_statuses;
     OutboundRoutingEntry entry = routing_entries_[key];
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.eni_id = entry.eni;
+    outbound_routing_entry.outbound_routing_group_id = entry.route_group;
     swss::copy(outbound_routing_entry.destination, entry.destination);
     object_statuses.emplace_back();
     outbound_routing_bulker_.remove_entry(&object_statuses.back(), &outbound_routing_entry);
@@ -248,13 +280,13 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 ctxt.clear();
             }
 
-            string& eni = ctxt.eni;
+            string& route_group = ctxt.route_group;
             IpPrefix& destination = ctxt.destination;
 
             vector<string> keys = tokenize(key, ':');
-            eni = keys[0];
+            route_group = keys[0];
             string ip_str;
-            size_t pos = key.find(":", eni.length());
+            size_t pos = key.find(":", route_group.length());
             ip_str = key.substr(pos + 1);
             destination = IpPrefix(ip_str);
 
@@ -265,6 +297,15 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                     SWSS_LOG_WARN("Requires protobuff at OutboundRouting :%s", key.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
+                }
+                if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_UNSPECIFIED)
+                {
+                    // Route::action_type is deprecated in favor of Route::routing_type. For messages still using the old action_type field,
+                    // copy it to the new routing_type field. All subsequent operations will use the new field.
+                    #pragma GCC diagnostic push
+                    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+                    ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
+                    #pragma GCC diagnostic pop
                 }
                 if (addOutboundRouting(key, ctxt))
                 {
@@ -377,7 +418,7 @@ bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkConte
     vector<sai_attribute_t> inbound_routing_attrs;
 
     inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    inbound_routing_attr.value.u32 = ctxt.metadata.pa_validation() ? SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE : SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP;
+    inbound_routing_attr.value.u32 = ctxt.metadata.pa_validation() ? SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE : SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP;
     inbound_routing_attrs.push_back(inbound_routing_attr);
 
     if (ctxt.metadata.has_vnet())
@@ -621,6 +662,170 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
     }
 }
 
+bool DashRouteOrch::addRouteGroup(const string& route_group, const dash::route_group::RouteGroup& entry)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t route_group_oid = this->getRouteGroupOid(route_group);
+    if (route_group_oid != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Route group %s already exists", route_group.c_str());
+        return true;
+    }
+
+    sai_status_t status = sai_dash_outbound_routing_api->create_outbound_routing_group(&route_group_oid, gSwitchId, 0, NULL);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create route group %s", route_group.c_str());
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    route_group_oid_map_[route_group] = route_group_oid;
+    SWSS_LOG_INFO("Route group %s added", route_group.c_str());
+
+    return true;
+}
+
+bool DashRouteOrch::removeRouteGroup(const string& route_group)
+{
+    SWSS_LOG_ENTER();
+
+    if (isRouteGroupBound(route_group))
+    {
+        SWSS_LOG_WARN("Cannot remove bound route group %s", route_group.c_str());
+        return false;
+    }
+
+    sai_object_id_t route_group_oid = this->getRouteGroupOid(route_group);
+    if (route_group_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Failed to find route group %s to remove", route_group.c_str());
+        return true;
+    }
+
+    sai_status_t status = sai_dash_outbound_routing_api->remove_outbound_routing_group(route_group_oid);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove route group %s", route_group.c_str());
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    route_group_oid_map_.erase(route_group);
+    SWSS_LOG_INFO("Route group %s removed", route_group.c_str());
+
+    return true;
+}
+
+sai_object_id_t DashRouteOrch::getRouteGroupOid(const string& route_group) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = route_group_oid_map_.find(route_group);
+    if (it == route_group_oid_map_.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return it->second;
+}
+
+void DashRouteOrch::bindRouteGroup(const std::string& route_group)
+{
+    auto it = route_group_bind_count_.find(route_group);
+
+    if (it == route_group_bind_count_.end())
+    {
+        route_group_bind_count_[route_group] = 1;
+        return;
+    }
+    it->second++;
+}
+
+void DashRouteOrch::unbindRouteGroup(const std::string& route_group)
+{
+    auto it = route_group_bind_count_.find(route_group);
+
+    if (it == route_group_bind_count_.end())
+    {
+        SWSS_LOG_WARN("Cannot unbind route group %s since it is not bound to any ENIs", route_group.c_str());
+        return;
+    }
+    it->second--;
+
+    if (it->second == 0)
+    {
+        SWSS_LOG_INFO("Route group %s completely unbound", route_group.c_str());
+        route_group_bind_count_.erase(it);
+    }
+}
+
+bool DashRouteOrch::isRouteGroupBound(const std::string& route_group) const
+{
+    auto it = route_group_bind_count_.find(route_group);
+    if (it == route_group_bind_count_.end())
+    {
+        return false;
+    }
+    return it->second > 0;
+}
+
+void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+
+    while (it != consumer.m_toSync.end())
+    {
+        auto t = it->second;
+        string route_group = kfvKey(t);
+        string op = kfvOp(t);
+        if (op == SET_COMMAND)
+        {
+            dash::route_group::RouteGroup entry;
+            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            {
+                SWSS_LOG_WARN("Requires protobuf at RouteGroup :%s", route_group.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (addRouteGroup(route_group, entry))
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (removeRouteGroup(route_group))
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
 void DashRouteOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
@@ -636,6 +841,10 @@ void DashRouteOrch::doTask(ConsumerBase& consumer)
     else if (tn == APP_DASH_ROUTE_RULE_TABLE_NAME)
     {
         doTaskRouteRuleTable(consumer);
+    }
+    else if (tn == APP_DASH_ROUTE_GROUP_TABLE_NAME)
+    {
+        doTaskRouteGroupTable(consumer);
     }
     else
     {

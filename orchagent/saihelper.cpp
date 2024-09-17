@@ -84,6 +84,7 @@ sai_dash_eni_api_t*                 sai_dash_eni_api;
 sai_dash_vip_api_t*                 sai_dash_vip_api;
 sai_dash_direction_lookup_api_t*    sai_dash_direction_lookup_api;
 sai_twamp_api_t*                    sai_twamp_api;
+sai_tam_api_t*                      sai_tam_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -230,6 +231,7 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
+    sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -270,6 +272,7 @@ void initSaiApi()
     sai_log_set(SAI_API_MY_MAC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_GENERIC_PROGRAMMABLE,   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TWAMP,                  SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_TAM,                    SAI_LOG_LEVEL_NOTICE);
 }
 
 void initFlexCounterTables()

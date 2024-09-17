@@ -243,6 +243,9 @@ public:
     bool isMACsecPort(sai_object_id_t port_id) const;
     vector<sai_object_id_t> getPortVoQIds(Port& port);
 
+    bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
+    bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterSysPortTable;
@@ -459,6 +462,11 @@ private:
     task_process_status setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types);
     task_process_status setPortLinkTraining(const Port& port, bool state);
 
+    ReturnCode setPortLinkEventDampingAlgorithm(Port &port,
+                                                sai_redis_link_event_damping_algorithm_t &link_event_damping_algorithm);
+    ReturnCode setPortLinkEventDampingAiedConfig(Port &port,
+                                                 sai_redis_link_event_damping_algo_aied_config_t &config);
+
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
@@ -514,6 +522,9 @@ private:
     std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
     map<sai_object_id_t, struct queueInfo> m_queueInfo;
 
+    /* Protoypes for Path tracing */
+    bool setPortPtTam(const Port& port, sai_object_id_t tam_id);
+
 private:
     void initializeCpuPort();
     void initializePorts();
@@ -523,6 +534,20 @@ private:
 
     bool addPortBulk(const std::vector<PortConfig> &portList);
     bool removePortBulk(const std::vector<sai_object_id_t> &portList);
+
+    /* Prototypes for Path Tracing */
+    bool checkPathTracingCapability();
+    bool createPtTam();
+    bool removePtTam(sai_object_id_t tam_id);
+    bool createAndSetPortPtTam(const Port &p);
+    bool unsetPortPtTam(const Port &p);
+    sai_object_id_t m_ptTamReport = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_ptTamInt = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_ptTam = SAI_NULL_OBJECT_ID;
+    uint32_t m_ptTamRefCount = 0;
+    map<string, sai_object_id_t> m_portPtTam;
+    // Define whether the switch supports or not Path Tracing
+    bool m_isPathTracingSupported = false;
 
 private:
     // Port config aggregator

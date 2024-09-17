@@ -8,7 +8,7 @@ parameters:
 - name: pool
   type: string
   values:
-  - sonicbld
+  - sonicbld-1es
   - default
   default: default
 

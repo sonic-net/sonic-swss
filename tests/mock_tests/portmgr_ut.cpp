@@ -123,4 +123,82 @@ namespace portmgr_ut
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
     }
+
+    TEST_F(PortMgrTest, ConfigurePortPTDefaultTimestampTemplate)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+        // Port is not ready, verify that doTask does not handle port configuration
+
+        cfg_port_table.set("Ethernet0", {
+            {"speed", "100000"},
+            {"index", "1"},
+            {"pt_interface_id", "129"}
+        });
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty());
+        std::vector<FieldValueTuple> values;
+        app_port_table.get("Ethernet0", values);
+        auto value_opt = swss::fvsGetValue(values, "mtu", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "admin_status", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "speed", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("100000", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "index", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("1", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "pt_interface_id", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("129", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "pt_timestamp_template", true);
+        ASSERT_FALSE(value_opt);
+    }
+
+    TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+        // Port is not ready, verify that doTask does not handle port configuration
+
+        cfg_port_table.set("Ethernet0", {
+            {"speed", "100000"},
+            {"index", "1"},
+            {"pt_interface_id", "129"},
+            {"pt_timestamp_template", "template2"}
+        });
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty());
+        std::vector<FieldValueTuple> values;
+        app_port_table.get("Ethernet0", values);
+        auto value_opt = swss::fvsGetValue(values, "mtu", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "admin_status", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "speed", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("100000", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "index", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("1", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "pt_interface_id", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("129", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "pt_timestamp_template", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("template2", value_opt.get());
+    }
 }

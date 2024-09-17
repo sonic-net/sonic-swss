@@ -3,6 +3,7 @@
 #include <algorithm>
 #include "routeorch.h"
 #include "nhgorch.h"
+#include "tunneldecaporch.h"
 #include "cbf/cbfnhgorch.h"
 #include "logger.h"
 #include "flowcounterrouteorch.h"
@@ -25,6 +26,7 @@ extern Directory<Orch*> gDirectory;
 extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+extern TunnelDecapOrch *gTunneldecapOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -44,7 +46,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_fgNhgOrch(fgNhgOrch),
         m_nextHopGroupCount(0),
         m_srv6Orch(srv6Orch),
-        m_resync(false)
+        m_resync(false),
+        m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -2337,6 +2340,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
+    /* add subnet decap term for VIP route */
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    if (config.enable && isVipRoute(ipPrefix, nextHops))
+    {
+        createVipRouteSubnetDecapTerm(ipPrefix);
+    }
+
     // update routes to reflect mux state
     if (mux_orch->isMuxNexthops(nextHops))
     {
@@ -2567,6 +2577,10 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     /* Publish removal status, removes route entry from APPL STATE DB */
     publishRouteState(ctx);
 
+    /* Remove the VIP route subnet decap term */
+    removeVipRouteSubnetDecapTerm(ipPrefix);
+
+
     if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         it_route_table->second[ipPrefix] = RouteNhg();
@@ -2740,4 +2754,53 @@ void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode&
     const bool replace = false;
 
     m_publisher.publish(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
+}
+
+inline bool RouteOrch::isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+{
+    bool res = true;
+    /* Ensure all next hops are vlan devices */
+    for (const auto &nextHop : nextHops.getNextHops())
+    {
+        res &= (!nextHop.alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX));
+    }
+    /* Ensure the prefix is non-local */
+    if (nextHops.getSize() == 1)
+    {
+        res &= (!m_intfsOrch->isPrefixSubnet(ipPrefix, nextHops.getNextHops().begin()->alias));
+    }
+    return res;
+}
+
+inline void RouteOrch::createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    if (!config.enable || m_SubnetDecapTermsCreated.find(ipPrefix) != m_SubnetDecapTermsCreated.end())
+    {
+        return;
+    }
+    SWSS_LOG_NOTICE("Add subnet decap term for %s", ipPrefix.to_string().c_str());
+    static const vector<FieldValueTuple> data = {
+        {"term_type", "MP2MP"},
+        {"subnet_type", "vip"}
+    };
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    m_appTunnelDecapTermProducer.set(key, data);
+    m_SubnetDecapTermsCreated.insert(ipPrefix);
+}
+
+inline void RouteOrch::removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    auto it = m_SubnetDecapTermsCreated.find(ipPrefix);
+    if (it == m_SubnetDecapTermsCreated.end())
+    {
+        return;
+    }
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    SWSS_LOG_NOTICE("Remove subnet decap term for %s", ipPrefix.to_string().c_str());
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    m_appTunnelDecapTermProducer.del(key);
+    m_SubnetDecapTermsCreated.erase(it);
 }
