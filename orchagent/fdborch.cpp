@@ -5,6 +5,7 @@
 #include <utility>
 #include <inttypes.h>
 
+#include <sairedis.h>
 #include "logger.h"
 #include "tokenize.h"
 #include "fdborch.h"
@@ -1044,6 +1045,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
 
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
+        handle_meta_fdb_event(count, fdbevent);
 
         for (uint32_t i = 0; i < count; ++i)
         {
