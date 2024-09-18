@@ -1637,7 +1637,6 @@ class TestVnetOrch(object):
     '''
     Test 4 - IPv6 Vxlan tunnel test
     '''
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_vnet_orch_4(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -1736,7 +1735,7 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet3004')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3004')
 
-        delete_vnet_routes(dvs, "100.100.2.1/24", 'Vnet3002')
+        delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet3002')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet3002')
         check_remove_state_db_routes(dvs, 'Vnet3002', "100.100.2.1/24")
         check_remove_routes_advertisement(dvs, "100.100.2.1/24")
