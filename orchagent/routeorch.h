@@ -125,7 +125,6 @@ struct RouteBulkContext
     bool                                excp_intfs_flag;
     // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
     bool                                using_temp_nhg;
-    bool                                blackhole_flag;
     std::vector<string>                 ipv;
     std::vector<string>                 alsv;
     std::vector<string>                 vni_labelv;
@@ -137,7 +136,9 @@ struct RouteBulkContext
     bool                                is_set;    // True if set operation
 
     RouteBulkContext(const std::string& key, bool is_set)
-        : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set), blackhole_flag(false)
+        : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set)
+    {
+    }
 
     // Disable any copy constructors
     RouteBulkContext(const RouteBulkContext&) = delete;
@@ -151,7 +152,6 @@ struct RouteBulkContext
         ipv.clear();
         vrf_id = SAI_NULL_OBJECT_ID;
         excp_intfs_flag = false;
-        blackhole_flag = false;
         using_temp_nhg = false;
         key.clear();
         protocol.clear();
