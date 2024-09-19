@@ -90,8 +90,6 @@ namespace portsyncd_ut
         vec.emplace_back("mtu", "9100");
         vec.emplace_back("speed", "10000");
         vec.emplace_back("alias", "etp1");
-
-
         tbl->set("Ethernet0", vec);
         vec.pop_back();
         vec.emplace_back("alias", "etp1");

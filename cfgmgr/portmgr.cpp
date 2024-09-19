@@ -77,7 +77,6 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     return true;
 }
 
-
 bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate_limit)
 {
     stringstream cmd;
@@ -118,8 +117,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 
     return true;
 }
-
-
 
 bool PortMgr::isPortStateOk(const string &alias)
 {
@@ -258,14 +255,11 @@ void PortMgr::doTask(Consumer &consumer)
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
-
-
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
                 field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
-
 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
@@ -288,7 +282,6 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
-
             }
         }
         else if (op == DEL_COMMAND)

@@ -353,8 +353,6 @@ class TestPortAutoNeg(object):
         cfvs = swsscommon.FieldValuePairs([("admin_status", "up")])
         ctbl.set("Ethernet0", cfvs)
 
-        
-
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

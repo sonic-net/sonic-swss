@@ -1144,7 +1144,6 @@ class DockerVirtualSwitch:
         tbl.set(interface, fvs)
         time.sleep(20)
 
-
     # deps: acl, mirror_port_erspan
     def add_neighbor(self, interface, ip, mac):
         tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
@@ -1864,8 +1863,7 @@ def manage_dvs(request) -> str:
 
     if graceful_stop:
         dvs.stop_swss()
-        dvs.stop_syncd()
-        
+        dvs.stop_syncd()     
 
     dvs.get_logs()
     dvs.destroy()
@@ -1874,7 +1872,6 @@ def manage_dvs(request) -> str:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
         time.sleep(60)
-
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:

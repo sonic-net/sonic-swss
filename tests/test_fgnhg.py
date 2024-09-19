@@ -24,7 +24,6 @@ ASIC_RIF = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
 
 def create_entry(db, table, key, pairs):
     db.create_entry(table, key, pairs)
-
     programmed_table = db.wait_for_entry(table,key)
     assert programmed_table != {}
 
@@ -217,7 +216,6 @@ def startup_link(dvs, db, port):
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
     time.sleep(5)
 
-    
 def run_warm_reboot(dvs):
     dvs.warm_restart_swss("true")
 
@@ -666,6 +664,7 @@ class TestFineGrainedNextHopGroup(object):
 
         fvs = {"FG_NHG": fg_nhg_name}
         create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
+
         asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
         ip_to_if_map = create_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs, fg_nhg_name)
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)
@@ -777,7 +776,9 @@ class TestFineGrainedNextHopGroup(object):
             shutdown_link(dvs, app_db, i)
             startup_link(dvs, app_db, i)
             dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
+
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)
+        
         # Program the route
         ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.5"),

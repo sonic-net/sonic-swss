@@ -968,8 +968,6 @@ class TestWarmReboot(object):
 
     def test_swss_port_state_syncup(self, dvs, testlog):
     
-
-
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
