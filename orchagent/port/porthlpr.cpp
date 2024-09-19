@@ -1187,7 +1187,6 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-
         else if (field == PORT_DAMPING_ALGO)
         {
             if (!this->parsePortLinkEventDampingAlgorithm(port, field, value))
@@ -1230,7 +1229,6 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
@@ -1268,6 +1266,8 @@ bool PortHelper::validatePortConfig(PortConfig &port) const
         port.admin_status.is_set = true;
 
         port.fieldValueMap[PORT_ADMIN_STATUS] = PORT_STATUS_DOWN;
+
     }
+    
     return true;
 }

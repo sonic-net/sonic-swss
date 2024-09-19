@@ -1863,7 +1863,7 @@ def manage_dvs(request) -> str:
 
     if graceful_stop:
         dvs.stop_swss()
-        dvs.stop_syncd()     
+        dvs.stop_syncd()
 
     dvs.get_logs()
     dvs.destroy()
