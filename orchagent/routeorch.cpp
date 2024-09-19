@@ -609,39 +609,39 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 for (auto i : kfvFieldsValues(t))
                 {
-                    if (fvField(i) == "nexthop" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "nexthop")
                         ips = fvValue(i);
 
-                    if (fvField(i) == "ifname" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "ifname")
                         aliases = fvValue(i);
 
-                    if (fvField(i) == "mpls_nh" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "mpls_nh")
                         mpls_nhs = fvValue(i);
 
-                    if (fvField(i) == "vni_label" && fvValue(i) != "" && fvValue(i).find("na") == string::npos) {
+                    if (fvField(i) == "vni_label") {
                         vni_labels = fvValue(i);
                         overlay_nh = true;
                     }
 
-                    if (fvField(i) == "router_mac" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "router_mac")
                         remote_macs = fvValue(i);
 
-                    if (fvField(i) == "blackhole" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "blackhole")
                         blackhole = fvValue(i) == "true";
 
-                    if (fvField(i) == "weight" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "weight")
                         weights = fvValue(i);
 
-                    if (fvField(i) == "nexthop_group" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "nexthop_group")
                         nhg_index = fvValue(i);
 
-                    if (fvField(i) == "segment" && fvValue(i) != "" && fvValue(i).find("na") == string::npos) {
+                    if (fvField(i) == "segment") {
                         srv6_segments = fvValue(i);
                         srv6_seg = true;
                         srv6_nh = true;
                     }
 
-                    if (fvField(i) == "seg_src" && fvValue(i) != "" && fvValue(i).find("na") == string::npos) {
+                    if (fvField(i) == "seg_src") {
                         srv6_source = fvValue(i);
                         srv6_nh = true;
                     }
@@ -651,14 +651,13 @@ void RouteOrch::doTask(Consumer& consumer)
                         ctx.protocol = fvValue(i);
                     }
 
-                    
-                    if (fvField(i) == "vpn_sid" && fvValue(i) != "" && fvValue(i).find("na") == string::npos) {
+                    if (fvField(i) == "vpn_sid") {
                         srv6_vpn_sids = fvValue(i);
                         srv6_nh = true;
                         srv6_vpn = true;
                     }
 
-                    if (fvField(i) == "pic_context_id" && fvValue(i) != "" && fvValue(i).find("na") == string::npos)
+                    if (fvField(i) == "pic_context_id")
                     {
                         context_index = fvValue(i);
                         srv6_vpn = true;
