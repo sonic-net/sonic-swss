@@ -889,6 +889,13 @@ namespace aclorch_test
                         return false;
                     }
                 }
+                else if (attr_value == PACKET_ACTION_COPY)
+                {
+                    if (it->second.getSaiAttr().value.aclaction.parameter.s32 != SAI_PACKET_ACTION_COPY)
+                    {
+                        return false;
+                    }
+                }
                 else
                 {
                     // unknown attr_value
