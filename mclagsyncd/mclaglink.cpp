@@ -193,7 +193,8 @@ void MclagLink::setPortIsolate(char *msg)
         BRCM_PLATFORM_SUBSTRING,
         BFN_PLATFORM_SUBSTRING,
         CTC_PLATFORM_SUBSTRING,
-        MRVL_PLATFORM_SUBSTRING
+        MRVL_PLATFORM_SUBSTRING,
+        INVM_PLATFORM_SUBSTRING
     };
 
     const char *platform = getenv("platform");

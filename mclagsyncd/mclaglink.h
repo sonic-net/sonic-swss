@@ -55,6 +55,7 @@
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
 #define CTC_PLATFORM_SUBSTRING  "centec"
 #define MRVL_PLATFORM_SUBSTRING "marvell"
+#define INVM_PLATFORM_SUBSTRING "innovium"
 
 using namespace std;
 
