@@ -55,7 +55,7 @@ void VoqStatsOrch::updateChassisCountersDb(const string & key, const std::vector
 {
     SWSS_LOG_ENTER();
     string voqName = gPortsOrch->getVoqName(key);
-    // if it wasn't a VOQ counter that fired the reactor then early return
+    // if it wasn't a VOQ counter that triggered the call then early return
     if (voqName=="")
     {
         return;
