@@ -1,7 +1,8 @@
 #include "p4orch/acl_util.h"
 
+#include <nlohmann/json.hpp>
+
 #include "converter.h"
-#include "json.hpp"
 #include "logger.h"
 #include "sai_serialize.h"
 #include "table.h"

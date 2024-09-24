@@ -23,6 +23,7 @@
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
+#define MATCH_OUT_PORT          "OUT_PORT"
 #define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
@@ -71,6 +72,7 @@
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
+#define PACKET_ACTION_COPY        "COPY"
 #define PACKET_ACTION_REDIRECT    "REDIRECT"
 #define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
 
@@ -86,9 +88,9 @@
 #define IP_TYPE_IP              "IP"
 #define IP_TYPE_NON_IP          "NON_IP"
 #define IP_TYPE_IPv4ANY         "IPV4ANY"
-#define IP_TYPE_NON_IPv4        "NON_IPv4"
+#define IP_TYPE_NON_IPv4        "NON_IPV4"
 #define IP_TYPE_IPv6ANY         "IPV6ANY"
-#define IP_TYPE_NON_IPv6        "NON_IPv6"
+#define IP_TYPE_NON_IPv6        "NON_IPV6"
 #define IP_TYPE_ARP             "ARP"
 #define IP_TYPE_ARP_REQUEST     "ARP_REQUEST"
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
@@ -342,6 +344,7 @@ public:
     AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool createCounter();
     bool createRule();
     bool removeRule();
     void onUpdate(SubjectType, void *) override;
@@ -451,6 +454,9 @@ public:
     // Set to store the not configured ACL table port alias
     set<string> pendingPortSet;
 
+    // Is the ACL table bound to switch?
+    bool bindToSwitch = false;
+
 private:
     sai_object_id_t m_oid = SAI_NULL_OBJECT_ID;
     AclOrch *m_pAclOrch = nullptr;
@@ -530,7 +536,7 @@ private:
     void doAclRuleTask(Consumer &consumer);
     void doAclTableTypeTask(Consumer &consumer);
     void init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
-    void initDefaultTableTypes();
+    void initDefaultTableTypes(const string& platform, const string& sub_platform);
 
     void queryMirrorTableCapability();
     void queryAclActionCapability();

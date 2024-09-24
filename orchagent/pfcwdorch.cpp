@@ -238,11 +238,11 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                 {
                     if(gSwitchOrch->checkPfcDlrInitEnable())
                     {
-                        if(getPfcDlrPacketAction() == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
+                        if(m_pfcwd_ports.empty())
                         {
                             sai_attribute_t attr;
                             attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
-                            attr.value.u32 = (sai_uint32_t)action;
+                            attr.value.u32 = packet_action_map.at(value);
 
                             sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                             if(status != SAI_STATUS_SUCCESS)
@@ -307,6 +307,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
     }
 
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
+    m_pfcwd_ports.insert(port.m_alias);
     return task_process_status::task_success;
 }
 
@@ -325,6 +326,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
     }
 
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
+    m_pfcwd_ports.erase(port.m_alias);
     return task_process_status::task_success;
 }
 
@@ -343,9 +345,7 @@ task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const 
 
             if (field == POLL_INTERVAL_FIELD)
             {
-                vector<FieldValueTuple> fieldValues;
-                fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
-                m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
+                setFlexCounterGroupPollInterval(PFC_WD_FLEX_COUNTER_GROUP, value);
             }
             else if (field == BIG_RED_SWITCH_FIELD)
             {
@@ -549,13 +549,10 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     if (!c_portStatIds.empty())
     {
         string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
-        vector<FieldValueTuple> fieldValues;
-        // Only register lossless tc counters in database.
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
         string filteredStr = filterPfcCounters(str, losslessTc);
-        fieldValues.emplace_back(PORT_COUNTER_ID_LIST, filteredStr);
 
-        m_flexCounterTable->set(key, fieldValues);
+        startFlexCounterPolling(gSwitchId, key, filteredStr, PORT_COUNTER_ID_LIST);
     }
 
     for (auto i : losslessTc)
@@ -576,25 +573,22 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         this->getCountersTable()->set(queueIdStr, countersFieldValues);
 
         // We register our queues in PFC_WD table so that syncd will know that it must poll them
-        vector<FieldValueTuple> queueFieldValues;
+        string key = getFlexCounterTableKey(queueIdStr);
 
         if (!c_queueStatIds.empty())
         {
             string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-            queueFieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, str);
+            startFlexCounterPolling(gSwitchId, key, str, QUEUE_COUNTER_ID_LIST);
         }
 
         if (!c_queueAttrIds.empty())
         {
             string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-            queueFieldValues.emplace_back(QUEUE_ATTR_ID_LIST, str);
+            startFlexCounterPolling(gSwitchId, key, str, QUEUE_ATTR_ID_LIST);
         }
 
         // Create internal entry
         m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
-
-        string key = getFlexCounterTableKey(queueIdStr);
-        m_flexCounterTable->set(key, queueFieldValues);
 
         // Initialize PFC WD related counters
         PfcWdActionHandler::initWdCounters(
@@ -656,15 +650,15 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
     SWSS_LOG_ENTER();
 
     string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
-    m_flexCounterTable->del(key);
+    stopFlexCounterPolling(gSwitchId, key);
 
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
-        string key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
+        key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
 
         // Unregister in syncd
-        m_flexCounterTable->del(key);
+        stopFlexCounterPolling(gSwitchId, key);
 
         auto entry = m_entryMap.find(queueId);
         if (entry != m_entryMap.end() && entry->second.handler != nullptr)
@@ -690,9 +684,6 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
-    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     c_portStatIds(portStatIds),
     c_queueStatIds(queueStatIds),
     c_queueAttrIds(queueAttrIds),
@@ -705,6 +696,8 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + this->m_platform + ".lua";
     string restorePluginName;
+    string pollIntervalStr = to_string(m_pollInterval);
+    string plugins;
     if (this->m_platform == CISCO_8000_PLATFORM_SUBSTRING) {
         restorePluginName = "pfc_restore_" + this->m_platform + ".lua";
     } else {
@@ -722,17 +715,18 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         restoreSha = swss::loadRedisScript(
                 this->getCountersDb().get(),
                 restoreLuaScript);
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, detectSha + "," + restoreSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, to_string(m_pollInterval));
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
+        plugins = detectSha + "," + restoreSha;
     }
     catch (...)
     {
         SWSS_LOG_WARN("Lua scripts and polling interval for PFC watchdog were not set successfully");
     }
+
+    setFlexCounterGroupParameter(PFC_WD_FLEX_COUNTER_GROUP,
+                                 pollIntervalStr,
+                                 STATS_MODE_READ,
+                                 QUEUE_PLUGIN_FIELD,
+                                 plugins);
 
     auto consumer = new swss::NotificationConsumer(
             this->getCountersDb().get(),
@@ -756,7 +750,7 @@ template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 {
     SWSS_LOG_ENTER();
-    m_flexCounterGroupTable->del(PFC_WD_FLEX_COUNTER_GROUP);
+    delFlexCounterGroup(PFC_WD_FLEX_COUNTER_GROUP);
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -911,10 +905,20 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
 
     wdNotification.pop(queueIdStr, event, values);
 
+    string info;
+    for (auto &fv : values)
+    {
+        info += fvField(fv) + ":" + fvValue(fv) + "|";
+    }
+    if (!info.empty())
+    {
+        info.pop_back();
+    }
+
     sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
     sai_deserialize_object_id(queueIdStr, queueId);
 
-    if (!startWdActionOnQueue(event, queueId))
+    if (!startWdActionOnQueue(event, queueId, info))
     {
         SWSS_LOG_ERROR("Failed to start PFC watchdog %s event action on queue %s", event.c_str(), queueIdStr.c_str());
     }
@@ -937,7 +941,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
 
 template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(
-        sai_object_id_t id, const PfcWdQueueEntry *entry)
+        sai_object_id_t id, const PfcWdQueueEntry *entry, const string &info)
 {
     event_params_t params = {
         { "ifname", entry->portAlias },
@@ -945,18 +949,32 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(
         { "queue_id", to_string(id) },
         { "port_id", to_string(entry->portId) }};
 
-    SWSS_LOG_NOTICE(
-            "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
+    if (info.empty())
+    {
+        SWSS_LOG_NOTICE(
+            "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64,
             entry->portAlias.c_str(),
             entry->index,
             id,
             entry->portId);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE(
+            "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ", additional info: %s.",
+            entry->portAlias.c_str(),
+            entry->index,
+            id,
+            entry->portId,
+            info.c_str());
+        params["additional_info"] = info;
+    }
 
     event_publish(g_events_handle, "pfc-storm", &params);
 }
 
 template <typename DropHandler, typename ForwardHandler>
-bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string &event, sai_object_id_t queueId)
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info)
 {
     auto entry = m_entryMap.find(queueId);
     if (entry == m_entryMap.end())
@@ -977,7 +995,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                report_pfc_storm(entry->first, &entry->second);
+                report_pfc_storm(entry->first, &entry->second, info);
 
                 entry->second.handler = make_shared<PfcWdActionHandler>(
                         entry->second.portId,
@@ -994,7 +1012,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                report_pfc_storm(entry->first, &entry->second);
+                report_pfc_storm(entry->first, &entry->second, info);
 
                 entry->second.handler = make_shared<DropHandler>(
                         entry->second.portId,
@@ -1011,7 +1029,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                report_pfc_storm(entry->first, &entry->second);
+                report_pfc_storm(entry->first, &entry->second, info);
 
                 entry->second.handler = make_shared<ForwardHandler>(
                         entry->second.portId,
@@ -1104,5 +1122,5 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
-template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>;
 template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>;

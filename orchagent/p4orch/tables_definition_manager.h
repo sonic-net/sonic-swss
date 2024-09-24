@@ -1,12 +1,12 @@
 #pragma once
 
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "macaddress.h"
-#include "json.hpp"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
 #include "p4orch/p4oidmapper.h"
@@ -23,8 +23,8 @@ extern "C"
  */
 struct TablesInfo
 {
-    std::string     context;
-    nlohmann::json  info;
+    std::string context;
+    nlohmann::json info;
     std::unordered_map<std::string, std::string> m_tableIdNameMap;
     std::unordered_map<std::string, TableInfo> m_tableInfoMap;
     std::map<int, std::string> m_tablePrecedenceMap;
@@ -59,11 +59,12 @@ class TablesDefnManager : public ObjectManagerInterface
     void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
-    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key) override;
+    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                            std::string &object_key) override;
 
   private:
-    ReturnCodeOr<TablesInfoAppDbEntry> deserializeTablesInfoEntry(
-        const std::string &key, const std::vector<swss::FieldValueTuple> &attributes);
+    ReturnCodeOr<TablesInfoAppDbEntry> deserializeTablesInfoEntry(const std::string &key,
+                                                                  const std::vector<swss::FieldValueTuple> &attributes);
     TablesInfo *getTablesInfoEntry(const std::string &context_key);
     ReturnCode createTablesInfo(const std::string &context_key, TablesInfo &tablesinfo_entry);
     ReturnCode removeTablesInfo(const std::string &context_key);

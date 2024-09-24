@@ -10,6 +10,8 @@ extern "C" {
 #include "sai.h"
 }
 
+const std::string createAllAvailableBuffersStr = "create_all_available_buffers";
+
 class FlexCounterQueueStates
 {
 public:
@@ -53,10 +55,6 @@ public:
     bool bake() override;
 
 private:
-    std::shared_ptr<swss::DBConnector> m_flexCounterDb = nullptr;
-    std::shared_ptr<swss::ProducerTable> m_flexCounterGroupTable = nullptr;
-    std::shared_ptr<swss::DBConnector> m_gbflexCounterDb = nullptr;
-    std::shared_ptr<ProducerTable> m_gbflexCounterGroupTable = nullptr;
     bool m_port_counter_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
     bool m_queue_enabled = false;
@@ -68,6 +66,7 @@ private:
     Table m_flexCounterConfigTable;
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
+    Table m_deviceMetadataConfigTable;
 };
 
 #endif

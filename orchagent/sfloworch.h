@@ -10,6 +10,7 @@
 struct SflowPortInfo
 {
     bool            admin_state;
+    string          m_sample_dir;
     sai_object_id_t m_sample_id;
 };
 
@@ -38,11 +39,12 @@ private:
     virtual void doTask(Consumer& consumer);
     bool sflowCreateSession(uint32_t rate, SflowSession &session);
     bool sflowDestroySession(SflowSession &session);
-    bool sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id);
-    bool sflowDelPort(sai_object_id_t port_id);
+    bool sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id, string direction);
+    bool sflowDelPort(sai_object_id_t port_id, string direction);
     void sflowStatusSet(Consumer &consumer);
     bool sflowUpdateRate(sai_object_id_t port_id, uint32_t rate);
+    bool sflowUpdateSampleDirection(sai_object_id_t port_id, string old_dir, string new_dir);
     uint32_t sflowSessionGetRate(sai_object_id_t sample_id);
     bool handleSflowSessionDel(sai_object_id_t port_id);
-    void sflowExtractInfo(std::vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate);
+    void sflowExtractInfo(std::vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir);
 };

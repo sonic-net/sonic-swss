@@ -4,11 +4,11 @@
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 
 #include "ipaddress.h"
-#include "json.hpp"
 #include "mock_response_publisher.h"
 #include "mock_sai_router_interface.h"
 #include "mock_sai_serialize.h"

@@ -82,12 +82,25 @@ local function get_number_of_pgs(keyname)
     return size
 end
 
+-- Fetch all the pending removing PGs
+local pending_remove_pg_keys = redis.call('SMEMBERS', 'BUFFER_PG_TABLE_DEL_SET')
+local pending_remove_pg_set = {}
+for i = 1, #pending_remove_pg_keys do
+    pending_remove_pg_set['BUFFER_PG_TABLE:' .. pending_remove_pg_keys[i]] = true
+    table.insert(debuginfo, 'debug:pending remove entry found: ' .. 'BUFFER_PG_TABLE:' .. pending_remove_pg_keys[i])
+end
+
 -- Fetch all the PGs in APPL_DB, and store them into a hash table
+-- But skip the items that are in pending_remove_pg_set
 local pg_keys = redis.call('KEYS', 'BUFFER_PG_TABLE:' .. port .. ':*')
 local all_pgs = {}
 for i = 1, #pg_keys do
-    local profile = redis.call('HGET', pg_keys[i], 'profile')
-    all_pgs[pg_keys[i]] = profile
+    if not pending_remove_pg_set[pg_keys[i]] then
+        local profile = redis.call('HGET', pg_keys[i], 'profile')
+        all_pgs[pg_keys[i]] = profile
+    else
+        table.insert(debuginfo, 'debug:pending remove entry skipped: ' .. pg_keys[i])
+    end
 end
 
 -- Fetch all the pending PGs, and store them into the hash table

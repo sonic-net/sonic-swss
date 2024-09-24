@@ -20,9 +20,8 @@ extern PortsOrch *gPortsOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_object_id_t gSwitchId;
 extern string gMySwitchType;
-
-#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
-
+extern string gMyHostName;
+extern string gMyAsicName;
 
 static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 {
@@ -31,12 +30,12 @@ static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 };
 
 type_map BufferOrch::m_buffer_type_maps = {
-    {APP_BUFFER_POOL_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PROFILE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_QUEUE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PG_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_reference_map()}
+    {APP_BUFFER_POOL_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PROFILE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_QUEUE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PG_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()}
 };
 
 map<string, string> buffer_to_ref_table_map = {
@@ -50,9 +49,6 @@ std::map<string, std::map<size_t, string>> queue_port_flags;
 
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
-    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
@@ -60,7 +56,11 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     initTableHandlers();
     initBufferReadyLists(applDb, confDb);
     initFlexCounterGroupTable();
-    initBufferConstants();
+
+    if (gMySwitchType != "dpu")
+    {
+        initBufferConstants();
+    }
 };
 
 void BufferOrch::initTableHandlers()
@@ -223,22 +223,23 @@ void BufferOrch::initBufferConstants()
 void BufferOrch::initFlexCounterGroupTable(void)
 {
     string bufferPoolWmPluginName = "watermark_bufferpool.lua";
+    string bufferPoolWmSha;
 
     try
     {
         string bufferPoolLuaScript = swss::loadLuaScript(bufferPoolWmPluginName);
-        string bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
-
-        vector<FieldValueTuple> fvTuples;
-        fvTuples.emplace_back(BUFFER_POOL_PLUGIN_FIELD, bufferPoolWmSha);
-        fvTuples.emplace_back(POLL_INTERVAL_FIELD, BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
-
-        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvTuples);
+        bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Buffer pool watermark lua script and/or flex counter group not set successfully. Runtime error: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 "", // do not touch stats_mode
+                                 BUFFER_POOL_PLUGIN_FIELD,
+                                 bufferPoolWmSha);
 }
 
 bool BufferOrch::isPortReady(const std::string& port_name) const
@@ -269,7 +270,7 @@ void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t obj
     if (m_isBufferPoolWatermarkCounterIdListGenerated)
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
-        m_flexCounterTable->del(key);
+        stopFlexCounterPolling(gSwitchId, key);
     }
 }
 
@@ -320,37 +321,32 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 
     if (!noWmClrCapability)
     {
-        vector<FieldValueTuple> fvs;
-
-        fvs.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
+        setFlexCounterGroupStatsMode(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                     STATS_MODE_READ_AND_CLEAR);
     }
 
     // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
-    vector<FieldValueTuple> fvTuples;
-    fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
+    string stats_mode;
+
     bitMask = 1;
+
     for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
 
+        stats_mode = "";
+
         if (noWmClrCapability)
         {
-            string stats_mode = STATS_MODE_READ_AND_CLEAR;
             if (noWmClrCapability & bitMask)
             {
                 stats_mode = STATS_MODE_READ;
             }
-            fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
 
-            m_flexCounterTable->set(key, fvTuples);
-            fvTuples.pop_back();
             bitMask <<= 1;
         }
-        else
-        {
-            m_flexCounterTable->set(key, fvTuples);
-        }
+
+        startFlexCounterPolling(gSwitchId, key, statList, BUFFER_POOL_COUNTER_ID_LIST, stats_mode);
     }
 
     m_isBufferPoolWatermarkCounterIdListGenerated = true;
@@ -698,6 +694,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            vector<sai_attribute_t> attribs_to_retry;
             SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             for (auto &attribute : attribs)
             {
@@ -709,7 +706,18 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
                 else if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
+                    SWSS_LOG_NOTICE("Unable to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry one more time", object_name.c_str(), sai_object, sai_status);
+                    attribs_to_retry.push_back(attribute);
+                }
+            }
+
+            for (auto &attribute : attribs)
+            {
+                sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    // A retried attribute can not be "not implemented"
+                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry once", object_name.c_str(), sai_object, sai_status);
                     task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
                     if (handle_status != task_process_status::task_success)
                     {
@@ -788,6 +796,8 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     vector<string> tokens;
     sai_uint32_t range_low, range_high;
     bool need_update_sai = true;
+    bool local_port = false;
+    string local_port_name;
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
     tokens = tokenize(key, delimiter);
@@ -805,6 +815,13 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         if (!parseIndexRange(tokens[3], range_low, range_high))
         {
             return task_process_status::task_invalid_entry;
+        }
+
+        if((tokens[0] == gMyHostName) && (tokens[1] == gMyAsicName))
+        {
+           local_port = true;
+           local_port_name = tokens[2];
+           SWSS_LOG_INFO("System port %s is local port %d local port name %s", port_names[0].c_str(), local_port, local_port_name.c_str());
         }
     }
     else 
@@ -884,6 +901,12 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
+
+        if(local_port == true)
+        {
+            port_name = local_port_name;
+        }
+
         if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
@@ -933,8 +956,10 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                         return handle_status;
                     }
                 }
-                // create/remove a port queue counter for the queue buffer
-                else
+                // create/remove a port queue counter for the queue buffer.
+                // For VOQ chassis, flexcounterorch adds the Queue Counters for all egress and VOQ queues of all front panel and system ports
+                // to  the FLEX_COUNTER_DB irrespective of BUFFER_QUEUE configuration. So Port Queue counter needs to be updated only for non VOQ switch.
+                else if (gMySwitchType != "voq")
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                     auto queues = tokens[1];
@@ -1001,8 +1026,17 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         // set order is detected.
         for (const auto &port_name : port_names)
         {
-            if (gPortsOrch->isPortAdminUp(port_name)) {
-                SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            if(local_port == true)
+            {
+                if (gPortsOrch->isPortAdminUp(local_port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
+            }
+            else
+            {
+                if (gPortsOrch->isPortAdminUp(port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
             }
         }
     }

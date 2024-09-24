@@ -6,6 +6,7 @@ FIXME:
 """
 from typing import Dict, List
 from swsscommon import swsscommon
+from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
@@ -21,6 +22,12 @@ class DVSDatabase:
                 redis (e.g. UNIX socket, TCP socket, etc.).
         """
         self.db_connection = swsscommon.DBConnector(db_id, connector, 0)
+        self._separator = SonicDBConfig.getSeparator(self.db_connection)
+
+    @property
+    def separator(self) -> str:
+        """Get DB separator."""
+        return self._separator
 
     def create_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Add the mapping {`key` -> `entry`} to the specified table.
@@ -102,7 +109,19 @@ class DVSDatabase:
         """
         table = swsscommon.Table(self.db_connection, table_name)
         table.hdel(key, field)
-        
+
+    def set_field(self, table_name: str, key: str, field: str, value: str) -> None:
+        """Add/Update a field in an entry stored at `key` in the specified table.
+
+        Args:
+            table_name: The name of the table where the entry is being removed.
+            key: The key that maps to the entry being added/updated.
+            field: The field that needs to be added/updated.
+            value: The value that is set for the field.
+        """
+        table = swsscommon.Table(self.db_connection, table_name)
+        table.hset(key, field, value)
+
     def get_keys(self, table_name: str) -> List[str]:
         """Get all of the keys stored in the specified table.
 

@@ -19,8 +19,6 @@ extern "C" {
 #include <string.h>
 
 #include <sys/time.h>
-#include "timestamp.h"
-
 #include <sairedis.h>
 #include <logger.h>
 
@@ -52,23 +50,13 @@ MacAddress gVxlanMacAddress;
 extern size_t gMaxBulkSize;
 
 #define DEFAULT_BATCH_SIZE  128
-int gBatchSize = DEFAULT_BATCH_SIZE;
+extern int gBatchSize;
 
-bool gSairedisRecord = true;
-bool gSwssRecord = true;
-bool gResponsePublisherRecord = false;
-bool gLogRotate = false;
-bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
 extern bool gIsNatSupported;
-
-ofstream gRecordOfs;
-string gRecordFile;
-ofstream gResponsePublisherRecordOfs;
-string gResponsePublisherRecordFile;
 
 #define SAIREDIS_RECORD_ENABLE 0x1
 #define SWSS_RECORD_ENABLE (0x1 << 1)
@@ -80,10 +68,11 @@ int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
+bool gTraditionalFlexCounter = false;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -101,6 +90,8 @@ void usage()
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
+    cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
+    cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
 }
 
 void sighup_handler(int signo)
@@ -108,9 +99,9 @@ void sighup_handler(int signo)
     /*
      * Don't do any logging since they are using mutexes.
      */
-    gLogRotate = true;
-    gSaiRedisLogRotate = true;
-    gResponsePublisherLogRotate = true;
+    Recorder::Instance().swss.setRotate(true);
+    Recorder::Instance().sairedis.setRotate(true);
+    Recorder::Instance().respub.setRotate(true);
 }
 
 void syncd_apply_view()
@@ -184,7 +175,7 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
         switch_type = "switch";
     }
 
-    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "chassis-packet" && switch_type != "switch")
+    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "chassis-packet" && switch_type != "switch" && switch_type != "dpu")
     {
         SWSS_LOG_ERROR("Invalid switch type %s configured", switch_type.c_str());
     	//If configured switch type is none of the supported, assume regular switch
@@ -346,13 +337,16 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    string record_location = ".";
-    string swss_rec_filename = "swss.rec";
-    string sairedis_rec_filename = "sairedis.rec";
-    string responsepublisher_rec_filename = "responsepublisher.rec";
+    gBatchSize = DEFAULT_BATCH_SIZE;
+    string record_location = Recorder::DEFAULT_DIR;
+    string swss_rec_filename = Recorder::SWSS_FNAME;
+    string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
+    string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
+    bool   enable_zmq = false;
+    string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:")) != -1)
     {
         switch (opt)
         {
@@ -403,6 +397,12 @@ int main(int argc, char **argv)
         case 'z':
             sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
             break;
+        case 'c':
+            if (optarg == string("traditional"))
+            {
+                gTraditionalFlexCounter = true;
+            }
+            break;
         case 'f':
 
             if (optarg)
@@ -430,6 +430,13 @@ int main(int argc, char **argv)
                 }
             }
             break;
+        case 'q':
+            if (optarg)
+            {
+                zmq_server_address = optarg;
+                enable_zmq = true;
+            }
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -437,8 +444,53 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
 
+    /* Initialize sairedis recording parameters */
+    Recorder::Instance().sairedis.setRecord(
+        (record_type & SAIREDIS_RECORD_ENABLE) == SAIREDIS_RECORD_ENABLE
+    );
+    Recorder::Instance().sairedis.setLocation(record_location);
+    Recorder::Instance().sairedis.setFileName(sairedis_rec_filename);
+
+    /* Initialize sairedis */
     initSaiApi();
-    initSaiRedis(record_location, sairedis_rec_filename);
+    initSaiRedis();
+    initFlexCounterTables();
+
+    /* Initialize remaining recorder parameters  */
+    Recorder::Instance().swss.setRecord(
+        (record_type & SWSS_RECORD_ENABLE) == SWSS_RECORD_ENABLE
+    );
+    Recorder::Instance().swss.setLocation(record_location);
+    Recorder::Instance().swss.setFileName(swss_rec_filename);
+    Recorder::Instance().swss.startRec(true);
+
+    Recorder::Instance().respub.setRecord(
+        (record_type & RESPONSE_PUBLISHER_RECORD_ENABLE) ==
+        RESPONSE_PUBLISHER_RECORD_ENABLE
+    );
+    Recorder::Instance().respub.setLocation(record_location);
+    Recorder::Instance().respub.setFileName(responsepublisher_rec_filename);
+    Recorder::Instance().respub.startRec(false);
+
+    // Instantiate database connectors
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector config_db("CONFIG_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
+
+    // Instantiate ZMQ server
+    shared_ptr<ZmqServer> zmq_server = nullptr;
+    if (enable_zmq)
+    {
+        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s", zmq_server_address.c_str());
+        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("ZMQ disabled");
+    }
+
+    // Get switch_type
+    getCfgSwitchType(&config_db, gMySwitchType);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -446,47 +498,12 @@ int main(int argc, char **argv)
     attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
     attr.value.booldata = true;
     attrs.push_back(attr);
-    attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
-    attr.value.ptr = (void *)on_fdb_event;
-    attrs.push_back(attr);
 
-    // Initialize recording parameters.
-    gSairedisRecord =
-        (record_type & SAIREDIS_RECORD_ENABLE) == SAIREDIS_RECORD_ENABLE;
-    gSwssRecord = (record_type & SWSS_RECORD_ENABLE) == SWSS_RECORD_ENABLE;
-    gResponsePublisherRecord =
-        (record_type & RESPONSE_PUBLISHER_RECORD_ENABLE) ==
-        RESPONSE_PUBLISHER_RECORD_ENABLE;
-
-    /* Disable/enable SwSS recording */
-    if (gSwssRecord)
+    if (gMySwitchType != "dpu")
     {
-        gRecordFile = record_location + "/" + swss_rec_filename;
-        gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
-        if (!gRecordOfs.is_open())
-        {
-            SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
-            exit(EXIT_FAILURE);
-        }
-        gRecordOfs << getTimestamp() << "|recording started" << endl;
-    }
-
-    // Disable/Enable response publisher recording.
-    if (gResponsePublisherRecord) 
-    {
-        gResponsePublisherRecordFile = record_location + "/" + responsepublisher_rec_filename;
-        gResponsePublisherRecordOfs.open(gResponsePublisherRecordFile, std::ofstream::out | std::ofstream::app);
-        if (!gResponsePublisherRecordOfs.is_open())
-        {
-            SWSS_LOG_ERROR("Failed to open Response Publisher recording file %s",
-                    gResponsePublisherRecordFile.c_str());
-            gResponsePublisherRecord = false;
-        } 
-        else 
-        {
-            gResponsePublisherRecordOfs << getTimestamp() << "|recording started"
-                << endl;
-        }
+        attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+        attr.value.ptr = (void *)on_fdb_event;
+        attrs.push_back(attr);
     }
 
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
@@ -496,14 +513,6 @@ int main(int argc, char **argv)
     attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
-
-    // Instantiate database connectors
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector config_db("CONFIG_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
-
-    // Get switch_type
-    getCfgSwitchType(&config_db, gMySwitchType);
 
     if (gMySwitchType != "fabric" && gMacAddress)
     {
@@ -578,6 +587,32 @@ int main(int argc, char **argv)
         attr.id = SAI_SWITCH_ATTR_TYPE;
         attr.value.u32 = SAI_SWITCH_TYPE_FABRIC;
         attrs.push_back(attr);
+
+        //Read switch_id from config_db.
+        Table cfgDeviceMetaDataTable(&config_db, CFG_DEVICE_METADATA_TABLE_NAME);
+        string value;
+        if (cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+        {
+            if (value.size())
+            {
+                gVoqMySwitchId = stoi(value);
+            }
+
+            if (gVoqMySwitchId < 0)
+            {
+                SWSS_LOG_ERROR("Invalid fabric switch id %d configured", gVoqMySwitchId);
+                exit(EXIT_FAILURE);
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Fabric switch id is not configured");
+            exit(EXIT_FAILURE);
+        }
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
+        attr.value.u32 = gVoqMySwitchId;
+        attrs.push_back(attr);
     }
 
     /* Must be last Attribute */
@@ -585,7 +620,16 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
+    auto delay_factor = 1;
+    bool asan_enabled = false;
+
+    if (getenv("ASAN_OPTIONS"))
+    {
+        asan_enabled = true;
+        delay_factor = 2;
+    }
+
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu" || asan_enabled)
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -593,7 +637,7 @@ int main(int argc, char **argv)
          * and systems ports to initialize
          */
 
-        if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet")
+        if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
         {
             attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
@@ -601,7 +645,12 @@ int main(int argc, char **argv)
         {
             attr.value.u64 = (10 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
+        else
+        {
+            attr.value.u64 = SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        }
 
+        attr.value.u64 = attr.value.u64*delay_factor;
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
         status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
@@ -623,7 +672,7 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
     {
         /* Set syncd response timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
@@ -720,18 +769,17 @@ int main(int argc, char **argv)
     shared_ptr<OrchDaemon> orchDaemon;
     if (gMySwitchType != "fabric")
     {
-        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
+        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
-            // SAI doesn't fully support counters for non fabric asics
-            orchDaemon->setFabricPortStatEnabled(false);
+            orchDaemon->setFabricPortStatEnabled(true);
             orchDaemon->setFabricQueueStatEnabled(false);
         }
     }
     else
     {
-        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
+        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
     }
 
     if (!orchDaemon->init())

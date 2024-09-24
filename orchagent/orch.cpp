@@ -1,7 +1,4 @@
-#include <fstream>
-#include <iostream>
 #include <inttypes.h>
-#include <sstream>
 #include <stdexcept>
 #include <sys/time.h>
 #include "timestamp.h"
@@ -12,16 +9,13 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "zmqserver.h"
+#include "zmqconsumerstatetable.h"
 #include "sai_serialize.h"
 
 using namespace swss;
 
-extern int gBatchSize;
-
-extern bool gSwssRecord;
-extern ofstream gRecordOfs;
-extern bool gLogRotate;
-extern string gRecordFile;
+int gBatchSize = 0;
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
@@ -66,12 +60,8 @@ Orch::Orch(const vector<TableConnector>& tables)
     }
 }
 
-Orch::~Orch()
+Orch::Orch()
 {
-    if (gRecordOfs.is_open())
-    {
-        gRecordOfs.close();
-    }
 }
 
 vector<Selectable *> Orch::getSelectables()
@@ -88,15 +78,11 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
 
-
     string key = kfvKey(entry);
     string op  = kfvOp(entry);
 
     /* Record incoming tasks */
-    if (gSwssRecord)
-    {
-        Orch::recordTuple(*this, entry);
-    }
+    Recorder::Instance().swss.record(dumpTuple(entry));
 
     /*
     * m_toSync is a multimap which will allow one key with multiple values,
@@ -184,7 +170,7 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
 }
 
 // TODO: Table should be const
-size_t Consumer::refillToSync(Table* table)
+size_t ConsumerBase::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -206,7 +192,7 @@ size_t Consumer::refillToSync(Table* table)
     return addToSync(entries);
 }
 
-size_t Consumer::refillToSync()
+size_t ConsumerBase::refillToSync()
 {
     auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
     if (subTable != NULL)
@@ -222,14 +208,23 @@ size_t Consumer::refillToSync()
         } while (update_size != 0);
         return total_size;
     }
-    else
+    string tableName = getTableName();
+    auto consumerTable = dynamic_cast<ConsumerTableBase *>(getSelectable());
+    if (consumerTable != NULL)
     {
         // consumerTable is either ConsumerStateTable or ConsumerTable
-        auto db = getDbConnector();
-        string tableName = getTableName();
+        auto db = consumerTable->getDbConnector();
         auto table = Table(db, tableName);
         return refillToSync(&table);
     }
+    auto zmqTable = dynamic_cast<ZmqConsumerStateTable *>(getSelectable());
+    if (zmqTable != NULL)
+    {
+        auto db = zmqTable->getDbConnector();
+        auto table = Table(db, tableName);
+        return refillToSync(&table);
+    }
+    return 0;
 }
 
 string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
@@ -258,6 +253,7 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 
 void Consumer::execute()
 {
+    // ConsumerBase::execute_impl<swss::ConsumerTableBase>();
     SWSS_LOG_ENTER();
 
     size_t update_size = 0;
@@ -275,12 +271,12 @@ void Consumer::execute()
 void Consumer::drain()
 {
     if (!m_toSync.empty())
-        m_orch->doTask(*this);
+        ((Orch *)m_orch)->doTask((Consumer&)*this);
 }
 
 size_t Orch::addExistingData(const string& tableName)
 {
-    auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    auto consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -294,7 +290,7 @@ size_t Orch::addExistingData(const string& tableName)
 size_t Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
-    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -312,7 +308,7 @@ bool Orch::bake()
     {
         string executorName = it.first;
         auto executor = it.second;
-        auto consumer = dynamic_cast<Consumer *>(executor.get());
+        auto consumer = dynamic_cast<ConsumerBase *>(executor.get());
         if (consumer == NULL)
         {
             continue;
@@ -564,7 +560,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &it : m_consumerMap)
     {
-        Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
+        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
         if (consumer == NULL)
         {
             SWSS_LOG_DEBUG("Executor is not a Consumer");
@@ -578,45 +574,6 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 void Orch::flushResponses()
 {
     m_publisher.flush();
-}
-
-void Orch::logfileReopen()
-{
-    gRecordOfs.close();
-
-    /*
-     * On log rotate we will use the same file name, we are assuming that
-     * logrotate daemon move filename to filename.1 and we will create new
-     * empty file here.
-     */
-
-    gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
-
-    if (!gRecordOfs.is_open())
-    {
-        SWSS_LOG_ERROR("failed to open gRecordOfs file %s: %s", gRecordFile.c_str(), strerror(errno));
-        return;
-    }
-}
-
-void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
-{
-    string s = consumer.dumpTuple(tuple);
-
-    gRecordOfs << getTimestamp() << "|" << s << endl;
-
-    if (gLogRotate)
-    {
-        gLogRotate = false;
-
-        logfileReopen();
-    }
-}
-
-string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
-{
-    string s = consumer.dumpTuple(tuple);
-    return s;
 }
 
 ref_resolve_status Orch::resolveFieldRefArray(
@@ -754,7 +711,7 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
 {
     unsigned long currentIdMask = 1;
     bool started = false, needGenerateMap = false;
-    sai_uint32_t lower, upper;
+    sai_uint32_t lower = 0, upper = 0;
     set<string> idStringList;
     for (sai_uint32_t id = 0; id <= maxId; id ++)
     {
