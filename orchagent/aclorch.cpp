@@ -3151,7 +3151,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             m_L3V4V6Capability[ACL_STAGE_INGRESS] ? "yes" : "no",
             m_L3V4V6Capability[ACL_STAGE_EGRESS] ? "yes" : "no");
 
-
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     // In Broadcom DNX platform also, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
@@ -3167,86 +3166,90 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_isCombinedMirrorV6Table = true;
     }
 
-
-
-    // check switch capability of Metadata attribute, action and range.
-    // SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE support and range values.
-    // SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA
-    // SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META
-
-    sai_status_t status = SAI_STATUS_SUCCESS;
-    sai_attr_capability_t capability;
-    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE, &capability);
-    if (status != SAI_STATUS_SUCCESS)
+    if (platform == VS_PLATFORM_SUBSTRING)
     {
-        SWSS_LOG_WARN("Could not query ACL_USER_META_DATA_RANGE %d", status);
+        // For testing on VS the following values will be used.
+        m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "true";
+        m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = "1";
+        m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = "7";
+        m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "true";
+        m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "true";
+        m_metaDataMgr.populateRange(1,7);
+    }
+    else
+    {
+        // check switch capability of Metadata attribute, action and range.
+        // SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE support and range values.
+        // SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA
+        // SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META
+
+        sai_status_t status = SAI_STATUS_SUCCESS;
+        sai_attr_capability_t capability;
+        uint16_t metadataMin = 0;
+        uint16_t metadataMax = 0;
+        m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = "0";
+        m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = "0";
         m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "false";
-    }
-    else
-    {
-        if (capability.get_implemented)
-        {
-            m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "true";
-            sai_attribute_t attrs[1];
-            attrs[0].id = SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE;
-            sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 2, attrs);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_WARN("Could not get range for ACL_USER_META_DATA_RANGE %d", status);
-                m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = "-1";
-                m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = "-1";
-            }
-            else
-            {
-                SWSS_LOG_NOTICE("ACL_USER_META_DATA_RANGE, min: %u, max: %u", attrs[0].value.u32range.min, attrs[0].value.u32range.max);
-                m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = std::to_string(attrs[0].value.u32range.min);
-                m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = std::to_string(attrs[0].value.u32range.max);
-            }
-
-        }
-        else
-        {
-            m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "false";
-        }
-        SWSS_LOG_NOTICE("ACL_USER_META_DATA_RANGE capability %d", capability.get_implemented);
-    }
-
-    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_ENTRY, SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META, &capability);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_WARN("Could not query ACL_ENTRY_ATTR_FIELD_ACL_USER_META %d", status);
         m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "false";
-    }
-    else
-    {
-        if (capability.set_implemented)
-        {
-            m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "true";
-        }
-        else
-        {
-            m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "false";
-        }
-        SWSS_LOG_NOTICE("ACL_ENTRY_ATTR_FIELD_ACL_USER_META capability %d", capability.set_implemented);
-    }
-
-    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_ENTRY, SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA, &capability);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_WARN("Could not query ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA %d", status);
-        m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "false";
-    }
-    else
-    {
-        if (capability.set_implemented)
-        {
-            m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "true";
-        }
-        else
-        {
             m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "false";
+
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query ACL_USER_META_DATA_RANGE %d", status);
         }
-        SWSS_LOG_NOTICE("ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA capability %d", capability.set_implemented);
+        else
+        {
+            if (capability.get_implemented)
+            {
+                sai_attribute_t attrs[1];
+                attrs[0].id = SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE;
+                sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 2, attrs);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_WARN("Could not get range for ACL_USER_META_DATA_RANGE %d", status);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("ACL_USER_META_DATA_RANGE, min: %u, max: %u", attrs[0].value.u32range.min, attrs[0].value.u32range.max);
+                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "true";
+                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = std::to_string(attrs[0].value.u32range.min);
+                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = std::to_string(attrs[0].value.u32range.max);
+                    metadataMin = uint16_t(attrs[0].value.u32range.min);
+                    metadataMax = uint16_t(attrs[0].value.u32range.max);
+                }
+
+            }
+            SWSS_LOG_NOTICE("ACL_USER_META_DATA_RANGE capability %d", capability.get_implemented);
+        }
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_ENTRY, SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query ACL_ENTRY_ATTR_FIELD_ACL_USER_META %d", status);
+        }
+        else
+        {
+            if (capability.set_implemented)
+            {
+                m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "true";
+            }
+            SWSS_LOG_NOTICE("ACL_ENTRY_ATTR_FIELD_ACL_USER_META capability %d", capability.set_implemented);
+        }
+
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_ENTRY, SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA %d", status);
+        }
+        else
+        {
+            if (capability.set_implemented)
+            {
+                m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "true";
+            }
+            SWSS_LOG_NOTICE("ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA capability %d", capability.set_implemented);
+        }
+        m_metaDataMgr.populateRange(metadataMin, metadataMax);
     }
 
     // Store the capabilities in state database
