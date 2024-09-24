@@ -87,6 +87,12 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
+    // Stop the ring thread before delete orch pointers
+    if (gRingBuffer) {
+        ring_thread_exited = true;
+        ring_thread.detach();
+    }
+
     /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
@@ -103,6 +109,38 @@ OrchDaemon::~OrchDaemon()
     delete m_select;
 
     events_deinit_publisher(g_events_handle);
+}
+
+void OrchDaemon::popRingBuffer()
+{
+    if (!gRingBuffer || gRingBuffer->Started)
+        return;
+    SWSS_LOG_ENTER();
+    gRingBuffer->Started = true;
+    SWSS_LOG_NOTICE("OrchDaemon starts the popRingBuffer thread!");
+    while (!ring_thread_exited)
+    {
+        std::unique_lock<std::mutex> lock(gRingBuffer->mtx);
+        gRingBuffer->cv.wait(lock, [&](){ return !gRingBuffer->IsEmpty(); });
+        gRingBuffer->Idle = false;
+        AnyTask func;
+        while (gRingBuffer->pop(func)) {
+            func();
+        }
+        gRingBuffer->doTask();
+        gRingBuffer->Idle = true;
+    }
+}
+/**
+ * This function initializes gRingBuffer for the OrchDaemon instance,
+ * (otherwise gRingBuffer is nullptr, which indicates ring mode is not enabled)
+ * then syncs this gRingBuffer with Executor and Orch.
+ * Hence the whole program shares this single global RingBuffer.
+ */
+void OrchDaemon::enableRingBuffer() {
+    gRingBuffer = OrchRing::Get();
+    Executor::gRingBuffer = gRingBuffer;
+    Orch::gRingBuffer = gRingBuffer;
 }
 
 bool OrchDaemon::init()
@@ -820,6 +858,8 @@ void OrchDaemon::start()
 
     Recorder::Instance().sairedis.setRotate(false);
 
+    ring_thread = std::thread(&OrchDaemon::popRingBuffer, this);
+
     for (Orch *o : m_orchList)
     {
         m_select->addSelectables(o->getSelectables());
@@ -878,9 +918,13 @@ void OrchDaemon::start()
          * execute all the remaining tasks that need to be retried. */
 
         /* TODO: Abstract Orch class to have a specific todo list */
-        for (Orch *o : m_orchList)
-            o->doTask();
-
+        for (Orch *o : m_orchList) {
+            if (c->getName() == APP_ROUTE_TABLE_NAME) {
+                o->doTask(APP_ROUTE_TABLE_NAME);
+            } else {
+                o->doTask();
+            }
+        }
         /*
          * Asked to check warm restart readiness.
          * Not doing this under Select::TIMEOUT condition because of
@@ -908,8 +952,8 @@ void OrchDaemon::start()
                         }
                     }
 
-                    // Flush sairedis's redis pipeline
-                    flush();
+                    // Flush sairedis's redis pipeline after the ring becomes empty
+                    while (gRingBuffer && !gRingBuffer->IsEmpty()) {std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));}
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
                     freezeAndHeartBeat(UINT_MAX);
