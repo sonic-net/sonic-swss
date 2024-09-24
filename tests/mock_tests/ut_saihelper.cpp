@@ -91,6 +91,9 @@ namespace ut_helper
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
         sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
         sai_api_query(SAI_API_TAM, (void**)&sai_tam_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_VIP, (void**)&sai_dash_vip_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP, (void**)&sai_dash_direction_lookup_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_ENI, (void**)&sai_dash_eni_api);
 
         return SAI_STATUS_SUCCESS;
     }
@@ -122,6 +125,9 @@ namespace ut_helper
         sai_counter_api = nullptr;
         sai_twamp_api = nullptr;
         sai_tam_api = nullptr;
+        sai_dash_vip_api = nullptr;
+        sai_dash_direction_lookup_api = nullptr;
+        sai_dash_eni_api = nullptr;
 
         return SAI_STATUS_SUCCESS;
     }

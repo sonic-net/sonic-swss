@@ -241,7 +241,8 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S12,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S13,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
-    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15,
+    SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -440,7 +441,8 @@ static bool isPathTracingSupported()
             }
         }
     }
-    else if (status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0)
+    else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
+             || status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
     {
         SWSS_LOG_INFO("Querying OBJECT_TYPE_LIST is not supported on this platform");
         return false;
