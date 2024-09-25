@@ -91,6 +91,7 @@ void usage()
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
+    cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
 }
 
@@ -342,11 +343,12 @@ int main(int argc, char **argv)
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
     string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
+    string vrf;
     bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:v:c:")) != -1)
     {
         switch (opt)
         {
@@ -437,6 +439,12 @@ int main(int argc, char **argv)
                 enable_zmq = true;
             }
             break;
+        case 'v':
+            if (optarg)
+            {
+                vrf = optarg;
+            }
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -481,8 +489,8 @@ int main(int argc, char **argv)
     shared_ptr<ZmqServer> zmq_server = nullptr;
     if (enable_zmq)
     {
-        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s", zmq_server_address.c_str());
-        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str());
+        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
     }
     else
     {
