@@ -903,7 +903,7 @@ void OrchDaemon::start()
                         {
                             auto& port = pair.second;
                             // TODO: how to support 1D bridge?
-                            if (port.m_type != Port::PHY && port.m_type != Port::LAG)
+                            if (port.m_type != Port::PHY)
                             {
                                 continue;
                             }
