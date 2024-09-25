@@ -250,12 +250,17 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
+    DashPaValidationOrch *dash_pa_validation_orch = new DashPaValidationOrch(m_applDb, m_zmqServer);
+    gDirectory.set(dash_pa_validation_orch);
+
 	vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
-    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_zmqServer);
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_zmqServer, dash_pa_validation_orch);
     gDirectory.set(dash_vnet_orch);
+
+    dash_pa_validation_orch->setVnetOrch(dash_vnet_orch);
 
     vector<string> dash_tables = {
         APP_DASH_APPLIANCE_TABLE_NAME,
@@ -524,6 +529,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(dash_vnet_orch);
     m_orchList.push_back(dash_route_orch);
     m_orchList.push_back(dash_orch);
+    m_orchList.push_back(dash_pa_validation_orch);
 
     if (m_fabricEnabled)
     {

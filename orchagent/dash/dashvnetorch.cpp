@@ -37,13 +37,25 @@ extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 
-DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, ZmqServer *zmqServer) :
+DashVnetOrch::DashVnetOrch(DBConnector *db, const vector<string> &tables, ZmqServer *zmqServer, DashPaValidationOrch *pa_validation_orch) :
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
     outbound_ca_to_pa_bulker_(sai_dash_outbound_ca_to_pa_api, gMaxBulkSize),
-    pa_validation_bulker_(sai_dash_pa_validation_api, gMaxBulkSize),
-    ZmqOrch(db, tables, zmqServer)
+    ZmqOrch(db, tables, zmqServer),
+    pa_validation_orch_(pa_validation_orch)
 {
     SWSS_LOG_ENTER();
+}
+
+bool DashVnetOrch::getVnetByVni(uint32_t vni, sai_object_id_t& vnet_oid) const
+{
+    auto vnet = vni_vnet_oid_table_.find(vni);
+    if (vnet == vni_vnet_oid_table_.end())
+    {
+        return false;
+    }
+
+    vnet_oid = vnet->second;
+    return true;
 }
 
 bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
@@ -89,6 +101,7 @@ bool DashVnetOrch::addVnetPost(const string& vnet_name, const DashVnetBulkContex
     VnetEntry entry = { id, ctxt.metadata };
     vnet_table_[vnet_name] = entry;
     gVnetNameToId[vnet_name] = id;
+    vni_vnet_oid_table_[ctxt.metadata.vni()] = id;
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_VNET);
 
@@ -112,6 +125,7 @@ bool DashVnetOrch::removeVnet(const string& vnet_name, DashVnetBulkContext& ctxt
     sai_object_id_t vni;
     VnetEntry entry = vnet_table_[vnet_name];
     vni = entry.vni;
+    ctxt.metadata = entry.metadata;
     object_statuses.emplace_back();
     vnet_bulker_.remove_entry(&object_statuses.back(), vni);
 
@@ -150,6 +164,7 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
 
     vnet_table_.erase(vnet_name);
     gVnetNameToId.erase(vnet_name);
+    vni_vnet_oid_table_.erase(ctxt.metadata.vni());
     SWSS_LOG_INFO("Vnet entry removed for %s", vnet_name.c_str());
 
     return true;
@@ -367,40 +382,19 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
-    auto& object_statuses = ctxt.pa_validation_object_statuses;
-    string underlay_ip_str = to_string(ctxt.metadata.underlay_ip());
-    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip_str;
-    auto it = pa_refcount_table_.find(pa_ref_key);
-    if (it != pa_refcount_table_.end())
+    auto vnet = vnet_table_.find(ctxt.vnet_name);
+    if (vnet == vnet_table_.end())
     {
-        /*
-         * PA validation entry already exisits. Just increment refcount and add
-         * a dummy success status to satisfy postop
-         */
-        object_statuses.emplace_back(SAI_STATUS_SUCCESS);
-        pa_refcount_table_[pa_ref_key]++;
-        SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
-                        pa_refcount_table_[pa_ref_key],
-                        underlay_ip_str.c_str());
-        return true;
+        SWSS_LOG_ERROR("VNET %s is removed or not created yet", ctxt.vnet_name.c_str());
+        return false;
     }
 
-    uint32_t attr_count = 1;
-    sai_pa_validation_entry_t pa_validation_entry;
-    pa_validation_entry.vnet_id = gVnetNameToId[ctxt.vnet_name];
-    pa_validation_entry.switch_id = gSwitchId;
-    to_sai(ctxt.metadata.underlay_ip(), pa_validation_entry.sip);
-    sai_attribute_t pa_validation_attr;
+    PaValidationEntry entry;
+    entry.vnet_oid = vnet->second.vni;
+    entry.vni = vnet->second.metadata.vni();
+    entry.address = IpAddress(to_swss(ctxt.metadata.underlay_ip()));
+    ctxt.pa_validation_entries.push_back(entry);
 
-    pa_validation_attr.id = SAI_PA_VALIDATION_ENTRY_ATTR_ACTION;
-    pa_validation_attr.value.u32 = SAI_PA_VALIDATION_ENTRY_ACTION_PERMIT;
-
-    object_statuses.emplace_back();
-    pa_validation_bulker_.create_entry(&object_statuses.back(), &pa_validation_entry,
-            attr_count, &pa_validation_attr);
-    pa_refcount_table_[pa_ref_key] = 1;
-    SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
-                    underlay_ip_str.c_str());
     return false;
 }
 
@@ -466,35 +460,12 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
 {
     SWSS_LOG_ENTER();
 
-    const auto& object_statuses = ctxt.pa_validation_object_statuses;
-    if (object_statuses.empty())
+    auto task_status = pa_validation_orch_->addPaValidationEntries(ctxt.pa_validation_entries);
+    if (task_status != task_success)
     {
-        return false;
-    }
-
-    auto it_status = object_statuses.begin();
-    string underlay_ip_str = to_string(ctxt.metadata.underlay_ip());
-    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip_str;
-    sai_status_t status = *it_status++;
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        /* PA validation entry add failed. Remove PA refcount entry */
-        pa_refcount_table_.erase(pa_ref_key);
-        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-        {
-            // Retry if item exists in the bulker
-            return false;
-        }
-
         SWSS_LOG_ERROR("Failed to create PA validation entry for %s", key.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return parseHandleSaiStatusFailure(task_status);
     }
-
-    gCrmOrch->incCrmResUsedCounter(ctxt.metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
 
     SWSS_LOG_INFO("PA validation entry for %s added", key.c_str());
 
@@ -538,42 +509,19 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
 {
     SWSS_LOG_ENTER();
 
-    auto& object_statuses = ctxt.pa_validation_object_statuses;
-    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
-    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
-    auto it = pa_refcount_table_.find(pa_ref_key);
-    if (it == pa_refcount_table_.end())
+    auto vnet = vnet_table_.find(ctxt.vnet_name);
+    if (vnet == vnet_table_.end())
     {
+        SWSS_LOG_ERROR("VNET %s is removed or not created yet", ctxt.vnet_name.c_str());
         return;
     }
-    else
-    {
-        if (--pa_refcount_table_[pa_ref_key] > 0)
-        {
-            /*
-             * PA validation entry already exisits. Just decrement refcount and add
-             * a dummy success status to satisfy postop
-             */
-            object_statuses.emplace_back(SAI_STATUS_SUCCESS);
-            SWSS_LOG_INFO("Decrement PA refcount to %u for PA IP %s",
-                            pa_refcount_table_[pa_ref_key],
-                            underlay_ip.c_str());
-            return;
-        }
-        else
-        {
-            sai_pa_validation_entry_t pa_validation_entry;
-            pa_validation_entry.vnet_id = vnet_map_table_[key].dst_vnet_id;
-            pa_validation_entry.switch_id = gSwitchId;
-            to_sai(vnet_map_table_[key].metadata.underlay_ip(), pa_validation_entry.sip);
 
-            object_statuses.emplace_back();
-            pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
-            SWSS_LOG_INFO("PA refcount refcount is zero for PA IP %s, removing refcount table entry",
-                            underlay_ip.c_str());
-            pa_refcount_table_.erase(pa_ref_key);
-        }
-    }
+    PaValidationEntry entry;
+    entry.vnet_oid = vnet->second.vni;
+    entry.vni = vnet->second.metadata.vni();
+    entry.address = IpAddress(to_swss(vnet_map_table_[key].metadata.underlay_ip()));
+
+    ctxt.pa_validation_entries.push_back(entry);
 }
 
 bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -632,33 +580,12 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
 {
     SWSS_LOG_ENTER();
 
-    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
-    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
-    const auto& object_statuses = ctxt.pa_validation_object_statuses;
-    if (object_statuses.empty())
+    auto task_status = pa_validation_orch_->removePaValidationEntries(ctxt.pa_validation_entries);
+    if (task_status != task_success)
     {
-        return false;
-    }
-
-    auto it_status = object_statuses.begin();
-    sai_status_t status = *it_status++;
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        // Retry later if object has non-zero reference to it
-        if (status == SAI_STATUS_NOT_EXECUTED)
-        {
-            return false;
-        }
-
         SWSS_LOG_ERROR("Failed to remove PA validation entry for %s", key.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return parseHandleSaiStatusFailure(task_status);
     }
-
-    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
 
     SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
 
@@ -762,7 +689,6 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
         }
 
         outbound_ca_to_pa_bulker_.flush();
-        pa_validation_bulker_.flush();
 
         auto it_prev = consumer.m_toSync.begin();
         while (it_prev != it)
@@ -779,8 +705,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
 
             const auto& ctxt = found->second;
             const auto& outbound_ca_to_pa_object_statuses = ctxt.outbound_ca_to_pa_object_statuses;
-            const auto& pa_validation_object_statuses = ctxt.pa_validation_object_statuses;
-            if (outbound_ca_to_pa_object_statuses.empty() || pa_validation_object_statuses.empty())
+            if (outbound_ca_to_pa_object_statuses.empty())
             {
                 it_prev++;
                 continue;
