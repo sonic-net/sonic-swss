@@ -261,6 +261,7 @@ bool OrchDaemon::init()
         APP_DASH_APPLIANCE_TABLE_NAME,
         APP_DASH_ROUTING_TYPE_TABLE_NAME,
         APP_DASH_ENI_TABLE_NAME,
+        APP_DASH_ENI_ROUTE_TABLE_NAME,
         APP_DASH_QOS_TABLE_NAME
     };
 
@@ -269,7 +270,8 @@ bool OrchDaemon::init()
 
     vector<string> dash_route_tables = {
         APP_DASH_ROUTE_TABLE_NAME,
-        APP_DASH_ROUTE_RULE_TABLE_NAME
+        APP_DASH_ROUTE_RULE_TABLE_NAME,
+        APP_DASH_ROUTE_GROUP_TABLE_NAME
     };
 
     DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_zmqServer);
