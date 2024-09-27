@@ -246,6 +246,9 @@ void Consumer::execute()
     std::deque<KeyOpFieldsValuesTuple> entries;
     table->pops(entries);
 
+    // debug log
+    SWSS_LOG_WARN("[HUA] Consumer::execute %s pops %d", table->getTableName().c_str(), (int)(entries.size()));
+
     // add to sync
     addToSync(entries);
 
