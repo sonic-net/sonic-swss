@@ -183,10 +183,18 @@ void PortMgr::doTask(Consumer &consumer)
                 if (fvField(i) == "mtu")
                 {
                     mtu = fvValue(i);
+                    if (!portOk)
+                    {
+                        field_values.emplace_back(i);
+                    }
                 }
                 else if (fvField(i) == "admin_status")
                 {
                     admin_status = fvValue(i);
+                    if (!portOk)
+                    {
+                        field_values.emplace_back(i);
+                    }
                 }
                 else
                 {
@@ -203,8 +211,6 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 SWSS_LOG_WARN("Port %s is not ready, pending...", alias.c_str());
 
-                writeConfigToAppDb(alias, "mtu", mtu);
-                writeConfigToAppDb(alias, "admin_status", admin_status);
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
