@@ -183,23 +183,21 @@ void PortMgr::doTask(Consumer &consumer)
                 if (fvField(i) == "mtu")
                 {
                     mtu = fvValue(i);
-                    if (!portOk)
-                    {
-                        field_values.emplace_back(i);
-                    }
                 }
                 else if (fvField(i) == "admin_status")
                 {
                     admin_status = fvValue(i);
-                    if (!portOk)
-                    {
-                        field_values.emplace_back(i);
-                    }
                 }
                 else
                 {
                     field_values.emplace_back(i);
                 }
+            }
+
+            if (!portOk)
+            {
+                field_values.emplace_back("mtu", mtu);
+                field_values.emplace_back("admin_status", admin_status);
             }
 
             if (field_values.size())
