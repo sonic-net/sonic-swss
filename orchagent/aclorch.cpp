@@ -3196,7 +3196,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = "7";
         m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "true";
         m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "true";
-        m_metaDataMgr.populateRange(1,7);
     }
     else
     {
@@ -3271,7 +3270,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             }
             SWSS_LOG_NOTICE("ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA capability %d", capability.set_implemented);
         }
-        m_metaDataMgr.populateRange(metadataMin, metadataMax);
     }
 
     // Store the capabilities in state database
