@@ -87,10 +87,12 @@ class ProduceStateTable(object):
             pairs_str.append((to_string(k), to_string(v)))
         self.table.set(key, pairs_str)
         self.keys.add(key)
+        time.sleep(3)
 
     def __delitem__(self, key: str):
         self.table.delete(str(key))
         self.keys.discard(key)
+        time.sleep(3)
 
     def get_keys(self):
         return self.keys
