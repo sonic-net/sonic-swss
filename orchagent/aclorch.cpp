@@ -3270,6 +3270,9 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             }
             SWSS_LOG_NOTICE("ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA capability %d", capability.set_implemented);
         }
+	// The following lines would be replaced in the next PR where these values would beused to initialze the metadataMgr.
+	(void)metadataMin;
+	(void)metadataMax;
     }
 
     // Store the capabilities in state database
