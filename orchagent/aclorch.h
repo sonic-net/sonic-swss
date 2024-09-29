@@ -344,6 +344,7 @@ public:
     AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool createCounter();
     bool createRule();
     bool removeRule();
     void onUpdate(SubjectType, void *) override;

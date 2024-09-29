@@ -16,14 +16,14 @@
 #define CRM_EXCEEDED_MSG_MAX 10
 #define CRM_ACL_RESOURCE_COUNT 256
 
+using namespace std;
+using namespace swss;
+
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
 extern event_handle_t g_events_handle;
-
-using namespace std;
-using namespace swss;
-
+extern string gMySwitchType;
 
 const map<CrmResourceType, string> crmResTypeNameMap =
 {
@@ -808,6 +808,12 @@ bool CrmOrch::getResAvailability(CrmResourceType type, CrmResourceEntry &res)
 
 bool CrmOrch::getDashAclGroupResAvailability(CrmResourceType type, CrmResourceEntry &res)
 {
+    if (gMySwitchType != "dpu")
+    {
+        res.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+        return false;
+    }
+
     sai_object_type_t objType = crmResSaiObjAttrMap.at(type);
 
     for (auto &cnt : res.countersMap)
@@ -872,6 +878,12 @@ void CrmOrch::getResAvailableCounters()
             case CrmResourceType::CRM_SRV6_MY_SID_ENTRY:
             case CrmResourceType::CRM_MPLS_NEXTHOP:
             case CrmResourceType::CRM_SRV6_NEXTHOP:
+            case CrmResourceType::CRM_TWAMP_ENTRY:
+            {
+                getResAvailability(res.first, res.second);
+                break;
+            }
+
             case CrmResourceType::CRM_DASH_VNET:
             case CrmResourceType::CRM_DASH_ENI:
             case CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP:
@@ -885,8 +897,13 @@ void CrmOrch::getResAvailableCounters()
             case CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA:
             case CrmResourceType::CRM_DASH_IPV4_ACL_GROUP:
             case CrmResourceType::CRM_DASH_IPV6_ACL_GROUP:
-            case CrmResourceType::CRM_TWAMP_ENTRY:
             {
+                if (gMySwitchType != "dpu")
+                {
+                    res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                    break;
+                }
+
                 getResAvailability(res.first, res.second);
                 break;
             }

@@ -28,3 +28,10 @@
 # Chassis
 /orchagent/fabricportsorch* @abdosi @judyjoseph
 /tests/test_virtual_chassis.py @abdosi @judyjoseph
+
+# Vnet Orch
+/orchagent/vnet*       @siqbal1986
+
+# Acl Orch
+/orchagent/acl*        @siqbal1986
+
