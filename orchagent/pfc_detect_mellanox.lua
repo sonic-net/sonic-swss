@@ -25,6 +25,9 @@ if timestamp_last ~= false then
     redis.call('HSET', 'TIMESTAMP', 'effective_pfcwd_poll_time_last', effective_poll_time)
 end
 
+local debug_storm_global = redis.call('HGET', 'DEBUG_STORM', 'enabled') == 'true'
+local debug_storm_threshold = tonumber(redis.call('HGET', 'DEBUG_STORM', 'threshold'))
+
 -- Iterate through each queue
 local n = table.getn(KEYS)
 for i = n, 1, -1 do
@@ -62,6 +65,10 @@ for i = n, 1, -1 do
                 local pfc_rx_packets = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key)
                 local pfc_duration = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_duration_key)
 
+                if debug_storm_global then
+                    redis.call('PUBLISH', 'PFC_WD_DEBUG', 'Port ID ' .. port_id .. ' Queue index ' .. queue_index .. ' occupancy ' .. occupancy_bytes .. ' packets ' .. packets .. ' pfc rx ' .. pfc_rx_packets .. ' pfc duration ' .. pfc_duration .. ' effective poll time ' .. tostring(effective_poll_time))
+                end
+
                 if occupancy_bytes and packets and pfc_rx_packets and pfc_duration then
                     occupancy_bytes = tonumber(occupancy_bytes)
                     packets = tonumber(packets)
@@ -81,6 +88,10 @@ for i = n, 1, -1 do
                         pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
                         pfc_duration_last = tonumber(pfc_duration_last)
                         local storm_condition = (pfc_duration - pfc_duration_last) > (effective_poll_time * 0.99)
+
+                        if debug_storm_threshold ~= nil and (pfc_duration - pfc_duration_last) > (effective_poll_time * debug_storm_threshold / 100) then
+                            redis.call('PUBLISH', 'PFC_WD_DEBUG', 'Port ID ' .. port_id .. ' Queue index ' .. queue_index .. ' occupancy ' .. occupancy_bytes .. ' packets ' .. packets .. ' pfc rx ' .. pfc_rx_packets .. ' pfc duration ' .. pfc_duration .. ' effective poll time ' .. tostring(effective_poll_time) .. ', triggered by threshold ' .. debug_storm_threshold .. '%')
+                        end 
 
                         -- Check actual condition of queue being in PFC storm
                         if (occupancy_bytes > 0 and packets - packets_last == 0 and storm_condition) or
