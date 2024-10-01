@@ -79,3 +79,4 @@ def test_pl_outbound_ca_to_pa_attrs(dash_db: DashDB):
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK, outbound_attrs, PL_OVERLAY_DIP_MASK)
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY, outbound_attrs, ENCAP_VNI)
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION, outbound_attrs, SAI_DASH_ENCAPSULATION_NVGRE)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP, outbound_attrs, UNDERLAY_IP)
