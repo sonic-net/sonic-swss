@@ -40,42 +40,45 @@ if op == "add" then
         -- If proposed lagid is not available, lpop the first availabe ID
         local index = redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(plagid))
         if index == false then
+            if redis.call("llen", "SYSTEM_LAG_IDS_FREE_LIST") <= 0 then
+                return -1
+            end
             local lagid = redis.call("lpop", "SYSTEM_LAG_IDS_FREE_LIST")
             redis.call("hset", "SYSTEM_LAG_ID_TABLE", pcname, lagid)
             redis.call("sadd", "SYSTEM_LAG_ID_SET", lagid)
             if dblagid then
-               redis.call("srem", "SYSTEM_LAG_ID_SET", tostring(dblagid))
-               if redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid)) == false then
-                  redis.call("rpush", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid))
-               end
+                redis.call("srem", "SYSTEM_LAG_ID_SET", tostring(dblagid))
+                if redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid)) == false then
+                    redis.call("rpush", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid))
+                end
             end
             return tonumber(lagid)
         else
-           redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 1, tostring(plagid))
-           redis.call("hset", "SYSTEM_LAG_ID_TABLE", pcname, tostring(plagid))
-           redis.call("sadd", "SYSTEM_LAG_ID_SET", tostring(plagid))
-           if dblagid then
-              redis.call("srem", "SYSTEM_LAG_ID_SET", tostring(dblagid))
-              if redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid)) == false then
-                 redis.call("rpush", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid))
-              end
-           end
-           return plagid
+            redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 1, tostring(plagid))
+            redis.call("hset", "SYSTEM_LAG_ID_TABLE", pcname, tostring(plagid))
+            redis.call("sadd", "SYSTEM_LAG_ID_SET", tostring(plagid))
+            if dblagid then
+                redis.call("srem", "SYSTEM_LAG_ID_SET", tostring(dblagid))
+                if redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid)) == false then
+                    redis.call("rpush", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid))
+               end
+            end
+            return plagid
         end
     else
+        if redis.call("llen", "SYSTEM_LAG_IDS_FREE_LIST") <= 0 then
+            return -1
+        end
         local lagid = redis.call("lpop", "SYSTEM_LAG_IDS_FREE_LIST")
         redis.call("hset", "SYSTEM_LAG_ID_TABLE", pcname, lagid)
         redis.call("sadd", "SYSTEM_LAG_ID_SET", lagid)
         if dblagid then
-           if redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid)) == false then
-              redis.call("rpush", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid))
-           end
+            if redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid)) == false then
+                redis.call("rpush", "SYSTEM_LAG_IDS_FREE_LIST", tostring(dblagid))
+            end
         end
         return tonumber(lagid) 
     end
-
-    return -1
-
 end
 
 if op == "del" then
