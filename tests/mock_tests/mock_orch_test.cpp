@@ -65,6 +65,8 @@ void MockOrchTest::SetUp()
     m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
     m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
     m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+    m_dpu_app_db = make_shared<swss::DBConnector>("DPU_APPL_DB", 0);
+    m_dpu_app_state_db = make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
     m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
 
     PrepareSai();
@@ -218,7 +220,7 @@ void MockOrchTest::SetUp()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    m_DashOrch = new DashOrch(m_app_db.get(), dash_tables, nullptr);
+    m_DashOrch = new DashOrch(m_app_db.get(), dash_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashOrch);
     ut_orch_list.push_back((Orch **)&m_DashOrch);
 
