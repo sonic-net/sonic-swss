@@ -372,12 +372,14 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                     result = 1;
                     it_prev++;
                 }
+                writeResultToDB(dash_route_result_table_, key, result);
             }
             else if (op == DEL_COMMAND)
             {
                 if (removeOutboundRoutingPost(key, ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
+                    removeResultFromDB(dash_route_result_table_, key);
                 }
                 else
                 {
@@ -655,12 +657,14 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                     result = 1;
                     it_prev++;
                 }
+                writeResultToDB(dash_route_rule_result_table_, key, result);
             }
             else if (op == DEL_COMMAND)
             {
                 if (removeInboundRoutingPost(key, ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
+                    removeResultFromDB(dash_route_rule_result_table_, key);
                 }
                 else
                 {
@@ -819,12 +823,14 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
+            writeResultToDB(dash_route_group_result_table_, route_group, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeRouteGroup(route_group))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_route_group_result_table_, route_group);
             }
             else
             {

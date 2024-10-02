@@ -1148,10 +1148,29 @@ void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& ke
 {
     SWSS_LOG_ENTER();
 
+    if (!table)
+    {
+        SWSS_LOG_WARN("Table passed in is NULL");
+        return;
+    }
+
     std::vector<FieldValueTuple> fvList = {
         makeResultDbEntry(res)
     };
 
     table->set(key, fvList);
     SWSS_LOG_NOTICE("Wrote result to DB for key %s", key.c_str());
+}
+
+void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
+{
+    SWSS_LOG_ENTER();
+
+    if (!table)
+    {
+        SWSS_LOG_WARN("Table passed in is NULL");
+        return;
+    }
+
+    table_->del(key);
 }

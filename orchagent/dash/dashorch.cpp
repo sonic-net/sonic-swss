@@ -279,12 +279,14 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
+            writeResultToDB(dash_appliance_result_table_, appliance_id, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeApplianceEntry(appliance_id))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_appliance_result_table_, appliance_id);
             }
             else
             {
@@ -376,12 +378,14 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
+            writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeRoutingTypeEntry(routing_type))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_routing_type_result_table_, routing_type_str);
             }
             else
             {
@@ -704,12 +708,14 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
+            writeResultToDB(dash_eni_result_table_, eni, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeEni(eni))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_eni_result_table_, eni);
             }
             else
             {
@@ -785,12 +791,14 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
+            writeResultToDB(dash_eni_qos_table_, qos_name, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeQosEntry(qos_name))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_eni_qos_table_, qos_name);
             }
             else
             {
@@ -937,12 +945,14 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
+            writeResultToDB(dash_eni_route_result_table_, eni, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeEniRoute(eni))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_eni_route_result_table_, eni);
             }
             else
             {
