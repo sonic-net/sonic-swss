@@ -30,12 +30,12 @@ NUM_PORTS = 2
 
 @pytest.fixture(autouse=True)
 def common_setup_teardown(dash_db: DashDB):
-    dash_db.set_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK, ROUTING_TYPE_PL_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID, APPLIANCE_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1, VNET_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID, ENI_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP1, VNET_MAPPING_CONFIG_PRIVATELINK)
     dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP1_CONFIG)
+    dash_db.set_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK, ROUTING_TYPE_PL_CONFIG)
     # Don't set DASH_ROUTE_TABLE and DASH_ENI_ROUTE_TABLE entries here for flexibility, test cases will set them as needed
 
     yield
