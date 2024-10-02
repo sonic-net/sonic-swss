@@ -49,6 +49,11 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqSer
     m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_ENI_NAME_MAP));
+    dash_eni_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ENI_TABLE_NAME));
+    dash_eni_route_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ENI_ROUTE_TABLE_NAME));
+    dash_qos_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_QOS_TABLE_NAME));
+    dash_appliance_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_APPLIANCE_TABLE_NAME));
+    dash_routing_type_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ROUTING_TYPE_TABLE_NAME));
 
     if (gTraditionalFlexCounter)
     {
@@ -242,6 +247,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string appliance_id = kfvKey(t);
         string op = kfvOp(t);
+        uint32_t result = 0;
 
         if (op == SET_COMMAND)
         {
@@ -260,6 +266,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -271,6 +278,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -279,6 +287,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
+        writeResultToDB(dash_appliance_result_table_, appliance_id, result);
     }
 }
 
@@ -325,6 +334,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
         string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
         dash::route_type::RoutingType routing_type;
+        uint32_t result = 0;
 
         std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
         routing_type_str = "ROUTING_TYPE_" + routing_type_str;
@@ -353,6 +363,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -364,6 +375,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -372,6 +384,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
+        writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
     }
 }
 
@@ -654,14 +667,13 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const auto& tn = consumer.getTableName();
-
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         auto t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
+        uint32_t result = 0;
         if (op == SET_COMMAND)
         {
             EniEntry entry;
@@ -679,6 +691,7 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -690,6 +703,7 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -698,6 +712,7 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
+        writeResultToDB(dash_eni_result_table_, eni, result);
     }
 }
 
@@ -738,6 +753,7 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string qos_name = kfvKey(t);
         string op = kfvOp(t);
+        uint32_t result = 0;
 
         if (op == SET_COMMAND)
         {
@@ -756,6 +772,7 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -767,6 +784,7 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -775,6 +793,7 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
+        writeResultToDB(dash_eni_qos_table_, qos_name, result);
     }
 }
 
@@ -886,6 +905,7 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
+        uint32_t result = 0;
 
         if (op == SET_COMMAND)
         {
@@ -904,6 +924,7 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -915,6 +936,7 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
             }
             else
             {
+                result = 1;
                 it++;
             }
         }
@@ -923,6 +945,7 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
+        writeResultToDB(dash_eni_route_result_table_, eni, result);
     }
 }
 

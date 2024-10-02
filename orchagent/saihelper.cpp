@@ -1135,3 +1135,23 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
     }
     return stat_list;
 }
+
+FieldValueTuple makeResultDbEntry(uint32_t res)
+{
+    auto field = "result";
+    auto value = std::to_string(res);
+
+    return FieldValueTuple(field, value);
+}
+
+void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key, uint32_t res)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvList = {
+        makeResultDbEntry(res)
+    };
+
+    table_->set(key, fvList);
+    SWSS_LOG_NOTICE("Wrote result to DB for key %s", key.c_str());
+}

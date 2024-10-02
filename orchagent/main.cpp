@@ -648,6 +648,10 @@ int main(int argc, char **argv)
         attr.value.u32 = gVoqMySwitchId;
         attrs.push_back(attr);
     }
+    else if (gMySwitchType == "dpu")
+    {
+        app_state_db = make_shared<DBConnector>("DPU_APPL_STATE_DB", 0, true);
+    }
 
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
@@ -806,9 +810,16 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
-    if (gMySwitchType != "fabric")
+    if (gMySwitchType == "dpu")
     {
-        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        shared_ptr<DBConnector> dpu_app_db;
+        dpu_app_db = make_shared<DBConnector>("DPU_APPL_DB", 0, true);
+        orchDaemon = make_shared<DpuOrchDaemon>(&appl_db, &config_db, &state_db, dpu_app_db.get(), chassis_app_db.get(), zmq_server.get());
+    }
+
+    else if (gMySwitchType != "fabric")
+    {
+        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), app_state_db.get(), zmq_server.get());
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
