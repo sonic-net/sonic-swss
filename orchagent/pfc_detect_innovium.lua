@@ -79,7 +79,7 @@ for i = n, 1, -1 do
                         --     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'K7_debug_3', 'YES')
 
 
-                        if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
+                        if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0 and (pfc_duration - pfc_duration_last) > poll_time * 0.8) or
                             -- DEBUG CODE START. Uncomment to enable
                             (debug_storm == "enabled") or
                             -- DEBUG CODE END.

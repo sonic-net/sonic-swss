@@ -27,11 +27,6 @@
             "separator": ":",
             "instance" : "redis"
         },
-        "LOGLEVEL_DB" : {
-            "id" : 3,
-            "separator": ":",
-            "instance" : "redis"
-        },
         "CONFIG_DB" : {
             "id" : 4,
             "separator": "|",
@@ -55,6 +50,21 @@
         "SNMP_OVERLAY_DB" : {
             "id" : 7,
             "separator": "|",
+            "instance" : "redis"
+        },
+        "GB_ASIC_DB" : {
+            "id" : 9,
+            "separator": ":",
+            "instance" : "redis"
+        },
+        "GB_COUNTERS_DB" : {
+            "id" : 10,
+            "separator": ":",
+            "instance" : "redis"
+        },
+        "GB_FLEX_COUNTER_DB" : {
+            "id" : 11,
+            "separator": ":",
             "instance" : "redis"
         },
         "CHASSIS_APP_DB" : {

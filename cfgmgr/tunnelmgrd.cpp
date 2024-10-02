@@ -11,32 +11,13 @@
 #include "exec.h"
 #include "schema.h"
 #include "tunnelmgr.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
 
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
-
-/*
- * Following global variables are defined here for the purpose of
- * using existing Orch class which is to be refactored soon to
- * eliminate the direct exposure of the global variables.
- *
- * Once Orch class refactoring is done, these global variables
- * should be removed from here.
- */
-int gBatchSize = 0;
-bool gSwssRecord = false;
-bool gLogRotate = false;
-ofstream gRecordOfs;
-string gRecordFile;
-bool gResponsePublisherRecord = false;
-bool gResponsePublisherLogRotate = false;
-ofstream gResponsePublisherRecordOfs;
-string gResponsePublisherRecordFile;
-/* Global database mutex */
-mutex gDbMutex;
 
 int main(int argc, char **argv)
 {
@@ -53,6 +34,9 @@ int main(int argc, char **argv)
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
+
+        WarmStart::initialize("tunnelmgrd", "swss");
+        WarmStart::checkWarmStart("tunnelmgrd", "swss");
 
         TunnelMgr tunnelmgr(&cfgDb, &appDb, cfgTunTables);
 

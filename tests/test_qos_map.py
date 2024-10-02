@@ -3,6 +3,32 @@ import time
 
 from swsscommon import swsscommon
 
+CFG_TC_TO_DSCP_MAP_TABLE_NAME =  "TC_TO_DSCP_MAP"
+CFG_TC_TO_DSCP_MAP_KEY = "AZURE"
+TC_TO_DSCP_MAP = {
+    "0": "20",
+    "1": "16",
+    "2": "5",
+    "3": "43",
+    "4": "34",
+    "5": "52",
+    "6": "61",
+    "7": "17",
+}
+
+CFG_TC_TO_DOT1P_MAP_TABLE_NAME =  "TC_TO_DOT1P_MAP"
+CFG_TC_TO_DOT1P_MAP_KEY = "AZURE"
+TC_TO_DOT1P_MAP = {
+    "0": "0",
+    "1": "6",
+    "2": "5",
+    "3": "3",
+    "4": "4",
+    "5": "2",
+    "6": "1",
+    "7": "7",
+}
+
 CFG_DOT1P_TO_TC_MAP_TABLE_NAME =  "DOT1P_TO_TC_MAP"
 CFG_DOT1P_TO_TC_MAP_KEY = "AZURE"
 DOT1P_TO_TC_MAP = {
@@ -32,9 +58,166 @@ MPLS_TC_TO_TC_MAP = {
 CFG_PORT_QOS_MAP_TABLE_NAME =  "PORT_QOS_MAP"
 CFG_PORT_QOS_DOT1P_MAP_FIELD = "dot1p_to_tc_map"
 CFG_PORT_QOS_MPLS_TC_MAP_FIELD = "mpls_tc_to_tc_map"
+CFG_PORT_QOS_TC_DOT1P_MAP_FIELD = "tc_to_dot1p_map"
+CFG_PORT_QOS_TC_DSCP_MAP_FIELD = "tc_to_dscp_map"
 CFG_PORT_TABLE_NAME = "PORT"
 
+#Tests for TC-to-DSCP qos map configuration
+class TestTcDscp(object):
+    def connect_dbs(self, dvs):
+        self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
+    def create_tc_dscp_profile(self):
+        tbl = swsscommon.Table(self.config_db, CFG_TC_TO_DSCP_MAP_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs(list(TC_TO_DSCP_MAP.items()))
+        tbl.set(CFG_TC_TO_DSCP_MAP_KEY, fvs)
+        time.sleep(1)
+
+    def find_tc_dscp_profile(self):
+        found = False
+        tc_dscp_map_raw = None
+        tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP")
+        keys = tbl.getKeys()
+        for key in keys:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+
+            for fv in fvs:
+                if fv[0] == "SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST":
+                    tc_dscp_map_raw = fv[1]
+                elif fv[0] == "SAI_QOS_MAP_ATTR_TYPE" and fv[1] == "SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DSCP":
+                    found = True
+
+            if found:
+                break
+
+        assert found == True
+
+        return (key, tc_dscp_map_raw)
+
+    def apply_tc_dscp_profile_on_all_ports(self):
+        tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_TC_DSCP_MAP_FIELD, CFG_TC_TO_DSCP_MAP_KEY)])
+        ports = swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys()
+        for port in ports:
+            tbl.set(port, fvs)
+
+        time.sleep(1)
+
+
+    def test_tc_dscp_cfg(self, dvs):
+        self.connect_dbs(dvs)
+        self.create_tc_dscp_profile()
+        _, tc_dscp_map_raw = self.find_tc_dscp_profile()
+
+        tc_dscp_map = json.loads(tc_dscp_map_raw)
+        for tc2dscp in tc_dscp_map['list']:
+            tc_val = str(tc2dscp['key']['tc'])
+            dscp_val = str(tc2dscp['value']['dscp'])
+            assert dscp_val == TC_TO_DSCP_MAP[tc_val]
+
+    def test_port_tc_dscp(self, dvs):
+        self.connect_dbs(dvs)
+        self.create_tc_dscp_profile()
+        oid, _ = self.find_tc_dscp_profile()
+
+        self.apply_tc_dscp_profile_on_all_ports()
+
+        cnt = 0
+        tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        keys = tbl.getKeys()
+        for key in keys:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+
+            for fv in fvs:
+                if fv[0] == "SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP":
+                    cnt += 1
+                    assert fv[1] == oid
+
+        port_cnt = len(swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys())
+        assert port_cnt == cnt
+
+
+#Tests for TC-to-Dot1p qos map configuration
+class TestTcDot1p(object):
+    def connect_dbs(self, dvs):
+        self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+    def create_tc_dot1p_profile(self):
+        tbl = swsscommon.Table(self.config_db, CFG_TC_TO_DOT1P_MAP_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs(list(TC_TO_DOT1P_MAP.items()))
+        tbl.set(CFG_TC_TO_DOT1P_MAP_KEY, fvs)
+        time.sleep(1)
+
+    def find_tc_dot1p_profile(self):
+        found = False
+        tc_dot1p_map_raw = None
+        tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP")
+        keys = tbl.getKeys()
+        for key in keys:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+
+            for fv in fvs:
+                if fv[0] == "SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST":
+                    tc_dot1p_map_raw = fv[1]
+                elif fv[0] == "SAI_QOS_MAP_ATTR_TYPE" and fv[1] == "SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DOT1P":
+                    found = True
+
+            if found:
+                break
+
+        assert found == True
+
+        return (key, tc_dot1p_map_raw)
+
+    def apply_tc_dot1p_profile_on_all_ports(self):
+        tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_TC_DOT1P_MAP_FIELD, CFG_TC_TO_DOT1P_MAP_KEY)])
+        ports = swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys()
+        for port in ports:
+            tbl.set(port, fvs)
+
+        time.sleep(1)
+
+
+    def test_tc_dot1p_cfg(self, dvs):
+        self.connect_dbs(dvs)
+        self.create_tc_dot1p_profile()
+        _, tc_dot1p_map_raw = self.find_tc_dot1p_profile()
+
+        tc_dot1p_map = json.loads(tc_dot1p_map_raw)
+        for tc2dot1p in tc_dot1p_map['list']:
+            tc_val = str(tc2dot1p['key']['tc'])
+            dot1p_val = str(tc2dot1p['value']['dot1p'])
+            assert dot1p_val == TC_TO_DOT1P_MAP[tc_val]
+
+    def test_port_tc_dot1p(self, dvs):
+        self.connect_dbs(dvs)
+        self.create_tc_dot1p_profile()
+        oid, _ = self.find_tc_dot1p_profile()
+
+        self.apply_tc_dot1p_profile_on_all_ports()
+
+        cnt = 0
+        tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        keys = tbl.getKeys()
+        for key in keys:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+
+            for fv in fvs:
+                if fv[0] == "SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DOT1P_MAP":
+                    cnt += 1
+                    assert fv[1] == oid
+
+        port_cnt = len(swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys())
+        assert port_cnt == cnt
+
+#Tests for Dot1p-to-TC qos map configuration
 class TestDot1p(object):
     def connect_dbs(self, dvs):
         self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -370,6 +553,73 @@ class TestMplsTc(object):
         port_cnt = len(swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys())
         assert port_cnt == cnt
 
+class TestDscpToTcMap(object):
+    ASIC_QOS_MAP_STR = "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP"
+    ASIC_PORT_STR = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
+    ASIC_SWITCH_STR = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
+
+    def init_test(self, dvs):
+        dvs.setup_db()
+        self.asic_db = dvs.get_asic_db()
+        self.config_db = dvs.get_config_db()
+        self.asic_qos_map_ids = self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)
+        self.asic_qos_map_count = len(self.asic_qos_map_ids)
+        self.dscp_to_tc_table = swsscommon.Table(self.config_db.db_connection, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME)
+        self.port_qos_table = swsscommon.Table(self.config_db.db_connection, swsscommon.CFG_PORT_QOS_MAP_TABLE_NAME)
+
+    def get_qos_id(self):
+        diff = set(self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)) - set(self.asic_qos_map_ids)
+        assert len(diff) <= 1
+        return None if len(diff) == 0 else diff.pop()
+    
+    def test_dscp_to_tc_map_applied_to_switch(self, dvs):
+        self.init_test(dvs)
+        dscp_to_tc_map_id = None
+        created_new_map = False
+        try:
+            existing_map = self.dscp_to_tc_table.getKeys()
+            if "AZURE" not in existing_map: 
+                # Create a DSCP_TO_TC map
+                dscp_to_tc_map = [(str(i), str(i)) for i in range(0, 63)]
+                self.dscp_to_tc_table.set("AZURE", swsscommon.FieldValuePairs(dscp_to_tc_map))
+
+                self.asic_db.wait_for_n_keys(self.ASIC_QOS_MAP_STR, self.asic_qos_map_count + 1)
+
+                # Get the DSCP_TO_TC map ID
+                dscp_to_tc_map_id = self.get_qos_id()
+                assert(dscp_to_tc_map_id is not None)
+
+                # Assert the expected values
+                fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, dscp_to_tc_map_id)
+                assert(fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_TC")
+                created_new_map = True
+            else:
+                for id in self.asic_qos_map_ids:
+                    fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, id)
+                    if fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_TC":
+                        dscp_to_tc_map_id = id
+                        break
+            switch_oid = dvs.getSwitchOid()
+
+            # Insert switch level map entry 
+            self.port_qos_table.set("global", [("dscp_to_tc_map", "AZURE")])
+            time.sleep(1)
+
+            # Check the switch level DSCP_TO_TC_MAP is applied
+            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
+            assert(fvs.get("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP") == dscp_to_tc_map_id)
+
+            # Remove the global level DSCP_TO_TC_MAP
+            self.port_qos_table._del("global")
+            time.sleep(1)
+
+            # Check the global level DSCP_TO_TC_MAP is set to SAI_
+            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
+            assert(fvs.get("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP") == "oid:0x0")
+        finally:
+            if created_new_map:
+                self.dscp_to_tc_table._del("AZURE")
+        
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

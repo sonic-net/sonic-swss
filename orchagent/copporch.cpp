@@ -26,6 +26,7 @@ extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
+extern bool                 gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
@@ -126,11 +127,9 @@ const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     Orch(db, tableName),
     m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
-    m_flex_db(std::shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0))),
     m_asic_db(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
     m_counter_table(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TRAP_NAME_MAP))),
     m_vidToRidTable(std::unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"))),
-    m_flex_counter_group_table(std::unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE))),
     m_trap_counter_manager(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
@@ -369,7 +368,7 @@ bool CoppOrch::removePolicer(string trap_group_name)
 
     sai_attribute_t attr;
     sai_status_t sai_status;
-    sai_object_id_t policer_id = getPolicer(trap_group_name);
+    sai_object_id_t policer_id = getPolicer(trap_group_name).policer_id;
 
     if (SAI_NULL_OBJECT_ID == policer_id)
     {
@@ -407,21 +406,21 @@ bool CoppOrch::removePolicer(string trap_group_name)
     return true;
 }
 
-sai_object_id_t CoppOrch::getPolicer(string trap_group_name)
+policer_object CoppOrch::getPolicer(string trap_group_name)
 {
     SWSS_LOG_ENTER();
 
     SWSS_LOG_DEBUG("trap group name:%s:", trap_group_name.c_str());
     if (m_trap_group_map.find(trap_group_name) == m_trap_group_map.end())
     {
-        return SAI_NULL_OBJECT_ID;
+        return policer_object();
     }
     SWSS_LOG_DEBUG("trap group id:%" PRIx64, m_trap_group_map[trap_group_name]);
     if (m_trap_group_policer_map.find(m_trap_group_map[trap_group_name]) == m_trap_group_policer_map.end())
     {
-        return SAI_NULL_OBJECT_ID;
+        return policer_object();
     }
-    SWSS_LOG_DEBUG("trap group policer id:%" PRIx64, m_trap_group_policer_map[m_trap_group_map[trap_group_name]]);
+    SWSS_LOG_DEBUG("trap group policer id:%" PRIx64, m_trap_group_policer_map[m_trap_group_map[trap_group_name]].policer_id);
     return m_trap_group_policer_map[m_trap_group_map[trap_group_name]];
 }
 
@@ -460,8 +459,28 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
         }
     }
 
+    policer_object obj;
+    obj.policer_id = policer_id;
+    /* Save the CREATE_ONLY attributes for future use */
+    for (sai_uint32_t ind = 0; ind < policer_attribs.size(); ind++)
+    {
+        auto attr = policer_attribs[ind];
+        if(attr.id == SAI_POLICER_ATTR_METER_TYPE)
+        {
+            obj.meter = (sai_meter_type_t)attr.value.s32;
+        }
+        else if(attr.id == SAI_POLICER_ATTR_MODE)
+        {
+            obj.mode = (sai_policer_mode_t)attr.value.s32;
+        }
+        else if(attr.id == SAI_POLICER_ATTR_COLOR_SOURCE)
+        {
+            obj.color = (sai_policer_color_source_t)attr.value.s32;
+        }
+    }
+
     SWSS_LOG_NOTICE("Bind policer to trap group %s:", trap_group_name.c_str());
-    m_trap_group_policer_map[m_trap_group_map[trap_group_name]] = policer_id;
+    m_trap_group_policer_map[m_trap_group_map[trap_group_name]] = obj;
     return true;
 }
 
@@ -613,7 +632,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         if (!trap_id_attribs.empty())
         {
             vector<sai_hostif_trap_type_t> group_trap_ids;
-            TrapIdAttribs trap_attr;
+            TrapIdAttribs trap_attr = m_trap_group_trap_id_attrs[trap_group_name];
             getTrapIdsFromTrapGroup(m_trap_group_map[trap_group_name],
                                     group_trap_ids);
             for (auto trap_id : group_trap_ids)
@@ -752,7 +771,7 @@ void CoppOrch::doTask(SelectableTimer &timer)
     for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
     {
         const auto id = sai_serialize_object_id(it->first);
-        if (m_vidToRidTable->hget("", id, value))
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
 
@@ -1107,12 +1126,14 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
 bool CoppOrch::trapGroupUpdatePolicer (string trap_group_name,
                                        vector<sai_attribute_t> &policer_attribs)
 {
-    sai_object_id_t policer_id = getPolicer(trap_group_name);
-
     if (m_trap_group_map.find(trap_group_name) == m_trap_group_map.end())
     {
         return false;
     }
+
+    auto policer_object = getPolicer(trap_group_name);
+    auto policer_id = policer_object.policer_id;
+
     if (SAI_NULL_OBJECT_ID == policer_id)
     {
         SWSS_LOG_WARN("Creating policer for existing Trap group: %" PRIx64 " (name:%s).",
@@ -1128,6 +1149,35 @@ bool CoppOrch::trapGroupUpdatePolicer (string trap_group_name,
         for (sai_uint32_t ind = 0; ind < policer_attribs.size(); ind++)
         {
             auto policer_attr = policer_attribs[ind];
+            /*
+                Updating the CREATE_ONLY attributes of the policer will cause a crash
+                If modified, throw an error log and proceed with changeable attributes
+            */
+            if(policer_attr.id == SAI_POLICER_ATTR_METER_TYPE)
+            {
+                if (policer_object.meter != (sai_meter_type_t)policer_attr.value.s32)
+                {
+                    SWSS_LOG_ERROR("Trying to modify policer attribute: (meter), trap group: (%s)", trap_group_name.c_str());
+                }
+                continue;
+            }
+            else if(policer_attr.id == SAI_POLICER_ATTR_MODE)
+            {
+                if (policer_object.mode != (sai_policer_mode_t)policer_attr.value.s32)
+                {
+                    SWSS_LOG_ERROR("Trying to modify policer attribute: (mode), trap group: (%s)", trap_group_name.c_str());
+                }
+                continue;
+            }
+            else if(policer_attr.id == SAI_POLICER_ATTR_COLOR_SOURCE)
+            {
+                if (policer_object.color != (sai_policer_color_source_t)policer_attr.value.s32)
+                {
+                    SWSS_LOG_ERROR("Trying to modify policer attribute: (color), trap group: (%s)", trap_group_name.c_str());
+                }
+                continue;
+            }
+
             sai_status_t sai_status = sai_policer_api->set_policer_attribute(policer_id,
                                                                              &policer_attr);
             if (sai_status != SAI_STATUS_SUCCESS)
@@ -1154,20 +1204,22 @@ void CoppOrch::initTrapRatePlugin()
     }
 
     std::string trapRatePluginName = "trap_rates.lua";
+    std::string trapSha;
     try
     {
         std::string trapLuaScript = swss::loadLuaScript(trapRatePluginName);
-        std::string trapSha = swss::loadRedisScript(m_counter_db.get(), trapLuaScript);
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(FLOW_COUNTER_PLUGIN_FIELD, trapSha);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flex_counter_group_table->set(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        trapSha = swss::loadRedisScript(m_counter_db.get(), trapLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Trap flex counter groups were not set successfully: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP,
+                                 "", // Do not touch poll interval
+                                 STATS_MODE_READ,
+                                 FLOW_COUNTER_PLUGIN_FIELD,
+                                 trapSha);
     m_trap_rate_plugin_loaded = true;
 }
 

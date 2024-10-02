@@ -15,26 +15,6 @@ using namespace swss;
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
-/*
- * Following global variables are defined here for the purpose of
- * using existing Orch class which is to be refactored soon to
- * eliminate the direct exposure of the global variables.
- *
- * Once Orch class refactoring is done, these global variables
- * should be removed from here.
- */
-int gBatchSize = 0;
-bool gSwssRecord = false;
-bool gLogRotate = false;
-ofstream gRecordOfs;
-string gRecordFile;
-bool gResponsePublisherRecord = false;
-bool gResponsePublisherLogRotate = false;
-ofstream gResponsePublisherRecordOfs;
-string gResponsePublisherRecordFile;
-/* Global database mutex */
-mutex gDbMutex;
-
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("portmgrd");
@@ -46,6 +26,7 @@ int main(int argc, char **argv)
     {
         vector<string> cfg_port_tables = {
             CFG_PORT_TABLE_NAME,
+            CFG_SEND_TO_INGRESS_PORT_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
@@ -53,8 +34,6 @@ int main(int argc, char **argv)
         DBConnector stateDb("STATE_DB", 0);
 
         PortMgr portmgr(&cfgDb, &appDb, &stateDb, cfg_port_tables);
-
-        // TODO: add tables in stateDB which interface depends on to monitor list
         vector<Orch *> cfgOrchList = {&portmgr};
 
         swss::Select s;

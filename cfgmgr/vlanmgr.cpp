@@ -95,24 +95,13 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
 
-    // The generated command is:
-    // /bin/echo 1 > /sys/class/net/Bridge/bridge/vlan_filtering
-    const std::string echo_cmd = std::string("")
-      + ECHO_CMD + " 1 > /sys/class/net/" + DOT1Q_BRIDGE_NAME + "/bridge/vlan_filtering";
+    // /sbin/ip link set Bridge type bridge vlan_filtering 1
+    const std::string vlan_filtering_cmd = std::string(IP_CMD) + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
+    EXEC_WITH_ERROR_THROW(vlan_filtering_cmd, res);
 
-    int ret = swss::exec(echo_cmd, res);
-    /* echo will fail in virtual switch since /sys directory is read-only.
-     * need to use ip command to setup the vlan_filtering which is not available in debian 8.
-     * Once we move sonic to debian 9, we can use IP command by default
-     * ip command available in Debian 9 to create a bridge with a vlan filtering:
-     * /sbin/ip link add Bridge up type bridge vlan_filtering 1 */
-    if (ret != 0)
-    {
-        const std::string echo_cmd_backup = std::string("")
-          + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
-
-        EXEC_WITH_ERROR_THROW(echo_cmd_backup, res);
-    }
+    // /sbin/ip link set Bridge type bridge no_linklocal_learn 1
+    const std::string no_ll_learn_cmd = std::string(IP_CMD) + " link set " + DOT1Q_BRIDGE_NAME + " type bridge no_linklocal_learn 1";
+    EXEC_WITH_ERROR_THROW(no_ll_learn_cmd, res);
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)
@@ -133,6 +122,11 @@ bool VlanMgr::addHostVlan(int vlan_id)
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
+
+    res.clear();
+    const std::string echo_cmd = std::string("")
+      + ECHO_CMD + " 0 > /proc/sys/net/ipv4/conf/" + VLAN_PREFIX + std::to_string(vlan_id) + "/arp_evict_nocarrier";
+    swss::exec(echo_cmd, res);
 
     return true;
 }
@@ -330,10 +324,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
              */
             if (isVlanStateOk(key) && m_vlans.find(key) == m_vlans.end())
             {
+                SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
                 m_vlans.insert(key);
                 m_vlanReplay.erase(kfvKey(t));
                 it = consumer.m_toSync.erase(it);
-                SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
                 continue;
             }
 
@@ -426,13 +420,13 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("%s doesn't exist", key.c_str());
             }
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -534,7 +528,7 @@ void VlanMgr::processUntaggedVlanMembers(string vlan, const string &members)
             fvVector.push_back(t);
             KeyOpFieldsValuesTuple tuple = make_tuple(member_key, SET_COMMAND, fvVector);
             consumer.addToSync(tuple);
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, tuple)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(tuple)).c_str());
         }
         /*
          * There is pending task from consumer pipe, in this case just skip it.
@@ -654,7 +648,7 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
             {
                 SWSS_LOG_DEBUG("%s doesn't exist", kfvKey(t).c_str());
             }
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
         }
         else
         {

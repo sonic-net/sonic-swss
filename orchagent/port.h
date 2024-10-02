@@ -2,7 +2,7 @@
 #define SWSS_PORT_H
 
 extern "C" {
-#include "sai.h"
+#include <sai.h>
 }
 
 #include <set>
@@ -11,6 +11,9 @@ extern "C" {
 #include <map>
 #include <bitset>
 #include <unordered_set>
+
+#include <macaddress.h>
+#include <sairedis.h>
 
 #define DEFAULT_PORT_VLAN_ID    1
 /*
@@ -74,6 +77,9 @@ struct SystemLagInfo
 class Port
 {
 public:
+    typedef sai_bridge_port_fdb_learning_mode_t port_learn_mode_t;
+
+public:
     enum Type {
         CPU,
         PHY,
@@ -85,8 +91,22 @@ public:
         SUBPORT,
         SYSTEM,
         UNKNOWN
-    } ;
+    };
 
+    enum Role
+    {
+        Ext, // external
+        Int, // internal
+        Inb, // inband
+        Rec, // recirculation
+        Dpc  // DPU Connect Port on SmartSwitch
+    };
+
+public:
+    static constexpr std::size_t max_lanes = 8; // Max HW lanes
+    static constexpr std::size_t max_fec_modes = 3; // Max FEC modes (sync with SAI)
+
+public:
     Port() {};
     Port(std::string alias, Type type) :
             m_alias(alias), m_type(type) {};
@@ -107,12 +127,13 @@ public:
     }
 
     std::string         m_alias;
-    Type                m_type;
-    int                 m_index = 0;    // PHY_PORT: index
+    Type                m_type = UNKNOWN;
+    uint16_t            m_index = 0;    // PHY_PORT: index
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
-    std::string         m_learn_mode = "hardware";
-    int                 m_autoneg = -1;  // -1 means not set, 0 = disabled, 1 = enabled
+    port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+    bool                m_autoneg = false;
+    bool                m_link_training = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;
     bool                m_l3_vni = false;
@@ -139,28 +160,27 @@ public:
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
-    uint8_t   m_pfc_bitmask = 0;
+    uint8_t   m_pfc_bitmask = 0;        // PFC enable bit mask
+    uint8_t   m_pfcwd_sw_bitmask = 0;   // PFC software watchdog enable
     uint16_t  m_tpid = DEFAULT_TPID;
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
+    uint64_t  m_flap_count = 0;
     uint32_t  m_up_member_count = 0;
     uint32_t  m_maximum_headroom = 0;
-    std::vector<uint32_t> m_adv_speeds;
-    sai_port_interface_type_t m_interface_type;
-    std::vector<uint32_t> m_adv_interface_types;
+    std::set<uint32_t> m_adv_speeds;
+    sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
+    std::set<sai_port_interface_type_t> m_adv_interface_types;
     bool      m_mpls = false;
-
     /*
-     * Following two bit vectors are used to lock
-     * the PG/queue from being changed in BufferOrch.
+     * Following bit vector is used to lock
+     * the queue from being changed in BufferOrch.
      * The use case scenario is when PfcWdZeroBufferHandler
-     * sets zero buffer profile it should protect PG/queue
+     * sets zero buffer profile it should protect queue
      * from being overwritten in BufferOrch.
      */
     std::vector<bool> m_queue_lock;
-    std::vector<bool> m_priority_group_lock;
-    std::vector<sai_object_id_t> m_priority_group_pending_profile;
 
     std::unordered_set<sai_object_id_t> m_ingress_acl_tables_uset;
     std::unordered_set<sai_object_id_t> m_egress_acl_tables_uset;
@@ -170,10 +190,37 @@ public:
     SystemLagInfo    m_system_lag_info;
 
     sai_object_id_t  m_switch_id = 0;
+    sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
-    bool m_fec_cfg = false;
-    bool m_an_cfg = false;
+    /* pre-emphasis */
+    std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
+
+    /* Force initial parameter configuration flags */
+    bool m_an_cfg = false;        // Auto-negotiation (AN)
+    bool m_adv_speed_cfg = false; // Advertised speed
+    bool m_intf_cfg = false;      // Interface type
+    bool m_adv_intf_cfg = false;  // Advertised interface type
+    bool m_fec_cfg = false;       // Forward Error Correction (FEC)
+    bool m_override_fec = false;  // Enable Override FEC
+    bool m_pfc_asym_cfg = false;  // Asymmetric Priority Flow Control (PFC)
+    bool m_lm_cfg = false;        // Forwarding Database (FDB) Learning Mode (LM)
+    bool m_lt_cfg = false;        // Link Training (LT)
+
+    int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
+    int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
+
+    /* Path Tracing */
+    uint16_t m_pt_intf_id = 0;
+    sai_port_path_tracing_timestamp_type_t m_pt_timestamp_template = SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23;
+
+    /* link event damping */
+    sai_redis_link_event_damping_algorithm_t m_link_event_damping_algorithm = SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED;
+    uint32_t m_max_suppress_time = 0;
+    uint32_t m_decay_half_life = 0;
+    uint32_t m_suppress_threshold = 0;
+    uint32_t m_reuse_threshold = 0;
+    uint32_t m_flap_penalty = 0;
 };
 
 }

@@ -27,6 +27,8 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     preemphasis         = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
     idriver             = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
     ipredriver          = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
+    pt_interface_id     = 1*4DIGIT      ; Path Tracing Interface ID (1-4095)
+    pt_timestamp_template = "template1" / "template2" / "template3" / "template4"  ; Path Tracing Timestamp Template
 
     ;QOS Mappings
     map_dscp_to_tc      = ref_hash_key_reference
@@ -233,6 +235,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     key           = ROUTE_TABLE:segment ; SRV6 segment name
     ; field       = value
     path          = STRING              ; Comma-separated list of IPV6 prefixes for a SRV6 segment
+    type          = STRING              ; SRV6 segment list type like "insert", "encaps.red"; If not provided, default type will be "encaps.red"
 
 ---------------------------------------------
 ### SRV6_MY_SID_TABLE
@@ -1020,6 +1023,8 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     mtu                 = 1*4DIGIT      ; port MTU
     fec                 = 1*64VCHAR     ; port fec mode
     autoneg             = BIT           ; auto-negotiation mode
+    pt_interface_id     = 1*4DIGIT      ; Path Tracing Interface ID (1-4095)
+    pt_timestamp_template = "template1" / "template2" / "template3" / "template4"  ; Path Tracing Timestamp Template
 
 ### MGMT_PORT_TABLE
     ;Configuration for management port, including at least one key

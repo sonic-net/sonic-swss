@@ -98,3 +98,50 @@ bool AclRulePbh::validateAddAction(string attr_name, string attr_value)
 {
     SWSS_LOG_THROW("This API should not be used on PbhRule");
 }
+
+bool AclRulePbh::disableAction()
+{
+    const auto &cit1 = m_actions.find(SAI_ACL_ENTRY_ATTR_ACTION_SET_ECMP_HASH_ID);
+    if (cit1 != m_actions.cend())
+    {
+        const auto &attr1 = cit1->second.getSaiAttr();
+        if (attr1.value.aclaction.enable)
+        {
+            sai_attribute_t attr;
+
+            attr.id = attr1.id;
+            attr.value.aclaction.enable = false;
+            attr.value.aclaction.parameter.oid = SAI_NULL_OBJECT_ID;
+
+            if (!setAttribute(attr))
+            {
+                return false;
+            }
+
+            m_actions.erase(cit1);
+        }
+    }
+
+    const auto &cit2 = m_actions.find(SAI_ACL_ENTRY_ATTR_ACTION_SET_LAG_HASH_ID);
+    if (cit2 != m_actions.cend())
+    {
+        const auto &attr2 = cit2->second.getSaiAttr();
+        if (attr2.value.aclaction.enable)
+        {
+            sai_attribute_t attr;
+
+            attr.id = attr2.id;
+            attr.value.aclaction.enable = false;
+            attr.value.aclaction.parameter.oid = SAI_NULL_OBJECT_ID;
+
+            if (!setAttribute(attr))
+            {
+                return false;
+            }
+
+            m_actions.erase(cit2);
+        }
+    }
+
+    return true;
+}

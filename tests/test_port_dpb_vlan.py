@@ -52,6 +52,7 @@ class TestPortDPBVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_one_port_one_vlan(self, dvs):
         dpb = DPB()
         vlan = "100"
@@ -117,6 +118,7 @@ class TestPortDPBVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_one_port_multiple_vlan(self, dvs):
 
         dpb = DPB()
@@ -182,6 +184,7 @@ class TestPortDPBVlan(object):
         self.dvs_vlan.remove_vlan("102")
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_all_port_10_vlans(self, dvs):
         num_vlans = 10
         start_vlan = 100

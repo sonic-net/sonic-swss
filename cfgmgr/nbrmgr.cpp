@@ -397,7 +397,7 @@ void NbrMgr::doStateSystemNeighTask(Consumer &consumer)
 
             if (!addKernelNeigh(nbr_odev, ip_address, mac_address))
             {
-                SWSS_LOG_ERROR("Neigh entry add on dev %s failed for '%s'", nbr_odev.c_str(), kfvKey(t).c_str());
+                SWSS_LOG_INFO("Neigh entry add on dev %s failed for '%s'", nbr_odev.c_str(), kfvKey(t).c_str());
                 // Delete neigh to take care of deletion of exiting nbr for mac change. This makes sure that
                 // re-try will be successful and route addtion (below) will be attempted and be successful
                 delKernelNeigh(nbr_odev, ip_address);
@@ -411,7 +411,7 @@ void NbrMgr::doStateSystemNeighTask(Consumer &consumer)
 
             if (!addKernelRoute(nbr_odev, ip_address))
             {
-                SWSS_LOG_ERROR("Route entry add on dev %s failed for '%s'", nbr_odev.c_str(), kfvKey(t).c_str());
+                SWSS_LOG_INFO("Route entry add on dev %s failed for '%s'", nbr_odev.c_str(), kfvKey(t).c_str());
                 delKernelNeigh(nbr_odev, ip_address);
                 // Delete route to take care of deletion of exiting route of nbr for mac change.
                 delKernelRoute(ip_address);
@@ -509,7 +509,12 @@ bool NbrMgr::addKernelRoute(string odev, IpAddress ip_addr)
     }
     else
     {
-        cmd = string("") + IP_CMD + " -6 route add " + ip_str + "/128 dev " + odev;
+        // In voq system, We need the static route to the remote neighbor and connected
+        // route to have the same metric to enable BGP to choose paths from routes learned
+        // via eBGP and iBGP over the internal inband port be part of same ecmp group.
+        // For v4 both the metrics (connected and static) are default 0 so we do not need
+        // to set the metric explicitly.
+        cmd = string("") + IP_CMD + " -6 route add " + ip_str + "/128 dev " + odev + " metric 256";
         SWSS_LOG_NOTICE("IPv6 Route Add cmd: %s",cmd.c_str());
     }
 
@@ -517,8 +522,8 @@ bool NbrMgr::addKernelRoute(string odev, IpAddress ip_addr)
 
     if(ret)
     {
-        /* Just log error and return */
-        SWSS_LOG_ERROR("Failed to add route for %s, error: %d", ip_str.c_str(), ret);
+        /* This failure the caller expects is due to mac move */
+        SWSS_LOG_INFO("Failed to add route for %s, error: %d", ip_str.c_str(), ret);
         return false;
     }
 
@@ -581,8 +586,8 @@ bool NbrMgr::addKernelNeigh(string odev, IpAddress ip_addr, MacAddress mac_addr)
 
     if(ret)
     {
-        /* Just log error and return */
-        SWSS_LOG_ERROR("Failed to add Nbr for %s, error: %d", ip_str.c_str(), ret);
+        /* This failure the caller expects is due to mac move */
+        SWSS_LOG_INFO("Failed to add Nbr for %s, error: %d", ip_str.c_str(), ret);
         return false;
     }
 

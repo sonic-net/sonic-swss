@@ -71,6 +71,7 @@ typedef struct {
     std::string xon_offset;
     std::string xoff;
     std::string threshold;
+    std::string threshold_mode;
     std::string pool_name;
     // port_pgs - stores pgs referencing this profile
     // An element will be added or removed when a PG added or removed
@@ -146,11 +147,14 @@ typedef std::map<std::string, std::string> gearbox_delay_t;
 class BufferMgrDynamic : public Orch
 {
 public:
-    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo);
+    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, DBConnector *applStateDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo);
     using Orch::doTask;
 
 private:
-    std::string m_platform;
+    std::string     m_platform;             // vendor, e.g. "mellanox"
+    std::string     m_specific_platform;    // name of platform, e.g. "x86_64-mlnx_msn3420-r0"
+    unsigned int    m_model_number;         // model number extracted from specific platform, e.g. 3420
+
     std::vector<buffer_direction_t> m_bufferDirections;
     const std::string m_bufferObjectNames[BUFFER_DIR_MAX];
     const std::string m_bufferDirectionNames[BUFFER_DIR_MAX];
@@ -174,7 +178,7 @@ private:
 
     std::string m_configuredSharedHeadroomPoolSize;
 
-    std::shared_ptr<DBConnector> m_applDb = nullptr;
+    DBConnector *m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;
 
     // Fields for zero pool and profiles
@@ -192,6 +196,7 @@ private:
     // key: port name
     // updated only when a port's speed and cable length updated
     port_info_lookup_t m_portInfoLookup;
+    std::map<std::string, std::string> m_cableLengths;
     std::set<std::string> m_adminDownPorts;
     std::set<std::string> m_pendingApplyZeroProfilePorts;
     std::set<std::string> m_pendingSupportedButNotConfiguredPorts[BUFFER_DIR_MAX];
@@ -199,6 +204,7 @@ private:
 
     // BUFFER_POOL table and cache
     ProducerStateTable m_applBufferPoolTable;
+    Table m_applStateBufferPoolTable;
     Table m_stateBufferPoolTable;
     buffer_pool_lookup_t m_bufferPoolLookup;
 
@@ -234,7 +240,7 @@ private:
 
     // Other tables
     Table m_cfgDefaultLosslessBufferParam;
-
+    Table m_cfgDeviceMetaDataTable;
     Table m_stateBufferMaximumTable;
 
     Table m_applPortTable;
@@ -289,6 +295,7 @@ private:
     task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
+    bool isSharedHeadroomPoolEnabledInSai();
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, buffer_direction_t dir);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
@@ -298,6 +305,7 @@ private:
     void handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
     void handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
     bool isReadyToReclaimBufferOnPort(const std::string &port);
+    void cleanUpItemsForReclaimingBuffer(const std::string &port);
 
     // Main flows
     template<class T> task_process_status reclaimReservedBufferForPort(const std::string &port, T &obj, buffer_direction_t dir);

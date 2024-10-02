@@ -49,13 +49,16 @@ def prepend_param_field(param_field):
 
 def verify_response(consumer, key, attr_list, status, err_message = "SWSS_RC_SUCCESS"):
   """ Verifies a response."""
-  consumer.readData()
+  if consumer.peek() <= 0:
+    consumer.readData()
   (op, data, values) = consumer.pop()
   assert data == key
   assert op == status
   assert len(values) >= 1
-  assert values[0][0] == "err_str"
-  assert values[0][1] == err_message
+  assert values[0][0] == "err_str", "Unexpected status '%s' received, expected '%s'" % \
+                (values[0][0], "err_str")
+  assert values[0][1] == err_message, "Unexpected message '%s' received, expected '%s'" % \
+                (values[0][1], err_message)
   values = values[1:]
   verify_attr(values, attr_list)
 
@@ -84,8 +87,8 @@ def get_port_oid_by_name(dvs, port_name):
   return port_oid
 
 def initialize_interface(dvs, port_name, ip):
-  dvs.runcmd("config interface startup {}".format(port_name))
-  dvs.runcmd("config interface ip add {} {}".format(port_name, ip))
+  dvs.port_admin_set(port_name, "up")
+  dvs.interface_ip_add(port_name, ip)
 
 def set_interface_status(dvs, if_name, status = "down", server = 0):
   dvs.servers[0].runcmd("ip link set {} dev {}".format(status, if_name)) == 0

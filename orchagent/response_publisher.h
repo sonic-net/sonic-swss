@@ -1,12 +1,17 @@
 #pragma once
 
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <queue>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "dbconnector.h"
 #include "notificationproducer.h"
+#include "recorder.h"
 #include "response_publisher_interface.h"
 #include "table.h"
 
@@ -16,8 +21,9 @@
 class ResponsePublisher : public ResponsePublisherInterface
 {
   public:
-    explicit ResponsePublisher();
-    virtual ~ResponsePublisher() = default;
+    explicit ResponsePublisher(const std::string &dbName, bool buffered = false, bool db_write_thread = false);
+
+    virtual ~ResponsePublisher();
 
     // Intent attributes are the attributes sent in the notification into the
     // redis channel.
@@ -42,10 +48,52 @@ class ResponsePublisher : public ResponsePublisherInterface
     void writeToDB(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
                    const std::string &op, bool replace = false) override;
 
+    /**
+     * @brief Flush pending responses
+     */
+    void flush();
+
+    /**
+     * @brief Set buffering mode
+     *
+     * @param buffered Flag whether responses are buffered
+     */
+    void setBuffered(bool buffered);
+
   private:
-    swss::DBConnector m_db;
-    // Maps table names to tables.
-    std::unordered_map<std::string, std::unique_ptr<swss::Table>> m_tables;
-    // Maps table names to notifiers.
-    std::unordered_map<std::string, std::unique_ptr<swss::NotificationProducer>> m_notifiers;
+    struct entry
+    {
+        std::string table;
+        std::string key;
+        std::vector<swss::FieldValueTuple> values;
+        std::string op;
+        bool replace;
+        bool flush;
+        bool shutdown;
+
+        entry()
+        {
+        }
+
+        entry(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
+              const std::string &op, bool replace, bool flush, bool shutdown)
+            : table(table), key(key), values(values), op(op), replace(replace), flush(flush), shutdown(shutdown)
+        {
+        }
+    };
+
+    void dbUpdateThread();
+    void writeToDBInternal(const std::string &table, const std::string &key,
+                           const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace);
+
+    std::unique_ptr<swss::DBConnector> m_db;
+    std::unique_ptr<swss::RedisPipeline> m_ntf_pipe;
+    std::unique_ptr<swss::RedisPipeline> m_db_pipe;
+
+    bool m_buffered{false};
+    // Thread to write to DB.
+    std::unique_ptr<std::thread> m_update_thread;
+    std::queue<entry> m_queue;
+    mutable std::mutex m_lock;
+    std::condition_variable m_signal;
 };

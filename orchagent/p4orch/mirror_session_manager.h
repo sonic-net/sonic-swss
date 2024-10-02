@@ -81,9 +81,14 @@ class MirrorSessionManager : public ObjectManagerInterface
         m_publisher = publisher;
     }
 
-    void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
+    void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
 
     void drain() override;
+
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
+
+    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
+                            std::string &object_key) override;
 
   private:
     ReturnCodeOr<P4MirrorSessionAppDbEntry> deserializeP4MirrorSessionAppDbEntry(
@@ -107,6 +112,11 @@ class MirrorSessionManager : public ObjectManagerInterface
                                      P4MirrorSessionEntry *existing_mirror_session_entry);
 
     ReturnCode processDeleteRequest(const std::string &mirror_session_key);
+
+    // state verification DB helper functions. Return err string or empty string.
+    std::string verifyStateCache(const P4MirrorSessionAppDbEntry &app_db_entry,
+                                 const P4MirrorSessionEntry *mirror_session_entry);
+    std::string verifyStateAsicDb(const P4MirrorSessionEntry *mirror_session_entry);
 
     std::unordered_map<std::string, P4MirrorSessionEntry> m_mirrorSessionTable;
 

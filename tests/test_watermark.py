@@ -104,22 +104,8 @@ class TestWatermark(object):
             assert found, "no such watermark found"
 
     def set_up_flex_counter(self, dvs):
-        for q in self.qs:
-            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
-                                     "QUEUE_WATERMARK_STAT_COUNTER:{}".format(q),
-                                     WmFCEntry.queue_stats_entry)
-
-        for pg in self.pgs:
-            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
-                                     "PG_WATERMARK_STAT_COUNTER:{}".format(pg),
-                                     WmFCEntry.pg_stats_entry)
-
-        for buffer in self.buffers:
-            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
-                                      "BUFFER_POOL_WATERMARK_STAT_COUNTER:{}".format(buffer),
-                                      WmFCEntry.buffer_stats_entry)
-
         fc_status_enable = {"FLEX_COUNTER_STATUS": "enable"}
+
         self.config_db.create_entry("FLEX_COUNTER_TABLE",
                                     "PG_WATERMARK",
                                     fc_status_enable)
@@ -130,7 +116,8 @@ class TestWatermark(object):
                                     "BUFFER_POOL_WATERMARK",
                                     fc_status_enable)
 
-        self.populate_asic_all(dvs, "0")
+        # Wait for DB's to populate by orchagent
+        time.sleep(2)
 
     def clear_flex_counter(self, dvs):
         for q in self.qs:
@@ -150,9 +137,13 @@ class TestWatermark(object):
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
 
     def set_up(self, dvs):
-        self.qs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_QUEUE")
-        self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
+        self.pgs = self.counters_db.db_connection.hgetall("COUNTERS_PG_NAME_MAP").values()
+        assert self.pgs is not None and len(self.pgs) > 0
+        self.qs = self.counters_db.db_connection.hgetall("COUNTERS_QUEUE_NAME_MAP").values()
+        assert self.qs is not None and len(self.pgs) > 0
         self.buffers = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL")
+
+        self.populate_asic_all(dvs, "0")
 
         db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
         tbl = swsscommon.Table(db, "COUNTERS_QUEUE_TYPE_MAP")
@@ -172,11 +163,17 @@ class TestWatermark(object):
                  tbl.set('', [(q, "SAI_QUEUE_TYPE_ALL")])
                  self.all_q.append(q)
 
+    def clear_watermark(self, dvs, data):
+        adb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        msg = json.dumps(data, separators=(',',':'))
+        adb.publish('WATERMARK_CLEAR_REQUEST', msg)
+        time.sleep(1)
+
     def test_telemetry_period(self, dvs):
         self.setup_dbs(dvs)
+        self.set_up_flex_counter(dvs)
         self.set_up(dvs)
         try:
-            self.set_up_flex_counter(dvs)
             self.enable_unittests(dvs, "true")
 
             self.populate_asic_all(dvs, "100")
@@ -191,7 +188,10 @@ class TestWatermark(object):
 
             self.populate_asic_all(dvs, "123")
 
-            dvs.runcmd("config watermark telemetry interval {}".format(5))
+            interval = {"interval": "5"}
+            self.config_db.create_entry("WATERMARK_TABLE",
+                                        "TELEMETRY_INTERVAL",
+                                        interval)
 
             time.sleep(self.DEFAULT_TELEMETRY_INTERVAL + 1)
             time.sleep(self.NEW_INTERVAL + 1)
@@ -257,10 +257,7 @@ class TestWatermark(object):
 
         # clear pg shared watermark, and verify that headroom watermark and persistent watermarks are not affected
 
-        exitcode, output = dvs.runcmd("sonic-clear priority-group watermark shared")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
-        # make sure it cleared
+        self.clear_watermark(dvs, ["USER", "PG_SHARED"])
         self.verify_value(dvs, self.pgs, WmTables.user, SaiWmStats.pg_shared, "0")
 
         # make sure the rest is untouched
@@ -271,9 +268,7 @@ class TestWatermark(object):
 
         # clear queue unicast persistent watermark, and verify that multicast watermark and user watermarks are not affected
 
-        exitcode, output = dvs.runcmd("sonic-clear queue persistent-watermark unicast")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
+        self.clear_watermark(dvs, ["PERSISTENT", "Q_SHARED_UNI"])
 
         # make sure it cleared
         self.verify_value(dvs, self.uc_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
@@ -289,16 +284,14 @@ class TestWatermark(object):
         # clear queue all watermark, and verify that multicast and unicast watermarks are not affected
 
         # clear persistent all watermark
-        exitcode, output = dvs.runcmd("sonic-clear queue persistent-watermark all")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
+        self.clear_watermark(dvs, ["PERSISTENT", "Q_SHARED_ALL"])
+
         # make sure it cleared
         self.verify_value(dvs, self.all_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
 
         # clear user all watermark
-        exitcode, output = dvs.runcmd("sonic-clear queue watermark all")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
+        self.clear_watermark(dvs, ["USER", "Q_SHARED_ALL"])
+
         # make sure it cleared
         self.verify_value(dvs, self.all_q, WmTables.user, SaiWmStats.queue_shared, "0")
 

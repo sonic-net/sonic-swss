@@ -6,6 +6,7 @@ FIXME:
 """
 from typing import Dict, List
 from swsscommon import swsscommon
+from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
@@ -21,6 +22,12 @@ class DVSDatabase:
                 redis (e.g. UNIX socket, TCP socket, etc.).
         """
         self.db_connection = swsscommon.DBConnector(db_id, connector, 0)
+        self._separator = SonicDBConfig.getSeparator(self.db_connection)
+
+    @property
+    def separator(self) -> str:
+        """Get DB separator."""
+        return self._separator
 
     def create_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Add the mapping {`key` -> `entry`} to the specified table.
@@ -33,6 +40,24 @@ class DVSDatabase:
         table = swsscommon.Table(self.db_connection, table_name)
         formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
         table.set(key, formatted_entry)
+
+    def set_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
+        """Set entry of an existing key in the specified table.
+
+        Args:
+            table_name: The name of the table.
+            key: The key that needs to be updated.
+            entry: A set of key-value pairs to be updated.
+        """
+        table = swsscommon.Table(self.db_connection, table_name)
+        (status, fv_pairs) = table.get(key)
+
+        formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
+        table.set(key, formatted_entry)
+
+        if status:
+            for f in [ k for k, v in dict(fv_pairs).items() if k not in entry.keys() ]:
+                table.hdel(key, f)
 
     def update_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Update entry of an existing key in the specified table.
@@ -73,6 +98,29 @@ class DVSDatabase:
         """
         table = swsscommon.Table(self.db_connection, table_name)
         table._del(key)  # pylint: disable=protected-access
+
+    def delete_field(self, table_name: str, key: str, field: str) -> None:
+        """Remove a field from an entry stored at `key` in the specified table.
+
+        Args:
+            table_name: The name of the table where the entry is being removed.
+            key: The key that maps to the entry being removed.
+            field: The field that needs to be removed
+        """
+        table = swsscommon.Table(self.db_connection, table_name)
+        table.hdel(key, field)
+
+    def set_field(self, table_name: str, key: str, field: str, value: str) -> None:
+        """Add/Update a field in an entry stored at `key` in the specified table.
+
+        Args:
+            table_name: The name of the table where the entry is being removed.
+            key: The key that maps to the entry being added/updated.
+            field: The field that needs to be added/updated.
+            value: The value that is set for the field.
+        """
+        table = swsscommon.Table(self.db_connection, table_name)
+        table.hset(key, field, value)
 
     def get_keys(self, table_name: str) -> List[str]:
         """Get all of the keys stored in the specified table.

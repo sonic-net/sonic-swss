@@ -4,9 +4,11 @@
 
 #include <limits>
 
+#include "sai_serialize.h"
+
 extern "C"
 {
-#include "saitypes.h"
+#include "sai.h"
 }
 
 namespace
@@ -18,6 +20,11 @@ constexpr char *kRouteObject1 = "Route1";
 constexpr char *kRouteObject2 = "Route2";
 constexpr sai_object_id_t kOid1 = 1;
 constexpr sai_object_id_t kOid2 = 2;
+
+std::string convertToDBField(_In_ const sai_object_type_t object_type, _In_ const std::string &key)
+{
+    return sai_serialize_object_type(object_type) + ":" + key;
+}
 
 TEST(P4OidMapperTest, MapperTest)
 {
@@ -41,6 +48,10 @@ TEST(P4OidMapperTest, MapperTest)
     EXPECT_EQ(kOid1, oid);
     EXPECT_TRUE(mapper.getOID(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, &oid));
     EXPECT_EQ(kOid2, oid);
+    EXPECT_TRUE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid1).empty());
+    EXPECT_TRUE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid2).empty());
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid2).empty());
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid1).empty());
 
     uint32_t ref_count;
     EXPECT_TRUE(mapper.getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, &ref_count));
@@ -74,6 +85,8 @@ TEST(P4OidMapperTest, MapperTest)
     EXPECT_TRUE(mapper.existsOID(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2));
     EXPECT_FALSE(mapper.existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, kRouteObject1));
     EXPECT_FALSE(mapper.existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, kRouteObject2));
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid1).empty());
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid2).empty());
 }
 
 TEST(P4OidMapperTest, ErrorTest)
@@ -117,6 +130,29 @@ TEST(P4OidMapperTest, ErrorTest)
 
     // Decrease non-existing ref count should fail.
     EXPECT_FALSE(mapper.decreaseRefCount(SAI_OBJECT_TYPE_ROUTE_ENTRY, kRouteObject1));
+}
+
+TEST(P4OidMapperTest, VerifyMapperTest)
+{
+    P4OidMapper mapper;
+    swss::Table table(nullptr, "P4RT_KEY_TO_OID");
+    EXPECT_TRUE(mapper.setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid1));
+    EXPECT_TRUE(mapper.setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid2,
+                              /*ref_count=*/100));
+
+    EXPECT_TRUE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid1).empty());
+    EXPECT_TRUE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid2).empty());
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid2).empty());
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid1).empty());
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, "invalid", kOid1).empty());
+
+    // Verification should fail if OID in DB mismatches.
+    table.hset("", convertToDBField(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1), sai_serialize_object_id(kOid2));
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid1).empty());
+
+    // Verification should fail if OID in DB is not found.
+    table.hdel("", convertToDBField(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1));
+    EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid1).empty());
 }
 
 } // namespace

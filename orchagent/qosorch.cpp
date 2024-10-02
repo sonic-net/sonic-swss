@@ -25,8 +25,12 @@ extern sai_acl_api_t* sai_acl_api;
 
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
+extern QosOrch *gQosOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
+extern string gMySwitchType;
+extern string gMyHostName;
+extern string gMyAsicName;
 
 map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_none", SAI_ECN_MARK_MODE_NONE},
@@ -45,12 +49,20 @@ enum {
     RED_DROP_PROBABILITY_SET    = (1U << 2)
 };
 
+enum {
+    GREEN_WRED_ENABLED  = (1U << 0),
+    YELLOW_WRED_ENABLED = (1U << 1),
+    RED_WRED_ENABLED    = (1U << 2)
+};
+
 // field_name is what is expected in CONFIG_DB PORT_QOS_MAP table
 map<string, sai_port_attr_t> qos_to_attr_map = {
     {dscp_to_tc_field_name, SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP},
     {mpls_tc_to_tc_field_name, SAI_PORT_ATTR_QOS_MPLS_EXP_TO_TC_MAP},
     {dot1p_to_tc_field_name, SAI_PORT_ATTR_QOS_DOT1P_TO_TC_MAP},
     {tc_to_queue_field_name, SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP},
+    {tc_to_dot1p_field_name, SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DOT1P_MAP},
+    {tc_to_dscp_field_name, SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP},
     {tc_to_pg_map_field_name, SAI_PORT_ATTR_QOS_TC_TO_PRIORITY_GROUP_MAP},
     {pfc_to_pg_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP},
     {pfc_to_queue_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_QUEUE_MAP},
@@ -65,19 +77,22 @@ map<string, sai_meter_type_t> scheduler_meter_map = {
 };
 
 type_map QosOrch::m_qos_maps = {
-    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_SCHEDULER_TABLE_NAME, new object_reference_map()},
-    {CFG_WRED_PROFILE_TABLE_NAME, new object_reference_map()},
-    {CFG_PORT_QOS_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_QUEUE_TABLE_NAME, new object_reference_map()},
-    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_DSCP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_EXP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_SCHEDULER_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_WRED_PROFILE_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_PORT_QOS_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_QUEUE_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_DSCP_TO_FC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_EXP_TO_FC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_TC_TO_DOT1P_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_TC_TO_DSCP_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_TUNNEL_DECAP_TABLE_NAME, make_shared<object_reference_map>()}
 };
 
 map<string, string> qos_to_ref_table_map = {
@@ -85,25 +100,31 @@ map<string, string> qos_to_ref_table_map = {
     {mpls_tc_to_tc_field_name, CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME},
     {dot1p_to_tc_field_name, CFG_DOT1P_TO_TC_MAP_TABLE_NAME},
     {tc_to_queue_field_name, CFG_TC_TO_QUEUE_MAP_TABLE_NAME},
+    {tc_to_dot1p_field_name, CFG_TC_TO_DOT1P_MAP_TABLE_NAME},
+    {tc_to_dscp_field_name, CFG_TC_TO_DSCP_MAP_TABLE_NAME},
     {tc_to_pg_map_field_name, CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME},
     {pfc_to_pg_map_name, CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME},
     {pfc_to_queue_map_name, CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME},
     {scheduler_field_name, CFG_SCHEDULER_TABLE_NAME},
     {wred_profile_field_name, CFG_WRED_PROFILE_TABLE_NAME},
     {dscp_to_fc_field_name, CFG_DSCP_TO_FC_MAP_TABLE_NAME},
-    {exp_to_fc_field_name, CFG_EXP_TO_FC_MAP_TABLE_NAME}
+    {exp_to_fc_field_name, CFG_EXP_TO_FC_MAP_TABLE_NAME},
+    {decap_dscp_to_tc_field_name, CFG_DSCP_TO_TC_MAP_TABLE_NAME},
+    {decap_tc_to_pg_field_name, CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME},
+    {encap_tc_to_dscp_field_name, CFG_TC_TO_DSCP_MAP_TABLE_NAME},
+    {encap_tc_to_queue_field_name, CFG_TC_TO_QUEUE_MAP_TABLE_NAME}
 };
 
 #define DSCP_MAX_VAL 63
 #define EXP_MAX_VAL 7
 
-task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
+#define PORT_NAME_GLOBAL "global"
+
+task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     string qos_object_name = kfvKey(tuple);
     string qos_map_type_name = consumer.getTableName();
     string op = kfvOp(tuple);
@@ -111,6 +132,11 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
     {
         sai_object = (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId;
+        if ((*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", qos_map_type_name.c_str(), qos_object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     if (op == SET_COMMAND)
     {
@@ -139,6 +165,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
                 return task_process_status::task_failed;
             }
             (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
         }
         freeAttribResources(attributes);
@@ -150,9 +177,16 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
             SWSS_LOG_ERROR("Object with name:%s not found.", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+        if (gQosOrch->isObjectBeingReferenced(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name))
+        {
+            auto hint = gQosOrch->objectReferenceInfo(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name);
+            SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", qos_object_name.c_str(), hint.c_str());
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove = true;
+            return task_process_status::task_need_retry;
+        }
         if (!removeQosItem(sai_object))
         {
-            SWSS_LOG_ERROR("Failed to remove dscp_to_tc map. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
+            SWSS_LOG_ERROR("Failed to remove QoS map. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (QosOrch::getTypeMap()[qos_map_type_name])->find(qos_object_name);
@@ -218,34 +252,6 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     return true;
 }
 
-void DscpToTcMapHandler::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t map_id)
-{
-    SWSS_LOG_ENTER();
-    bool rv = true;
-
-    /* Query DSCP_TO_TC QoS map at switch capability */
-    rv = gSwitchOrch->querySwitchDscpToTcCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
-    if (rv == false)
-    {
-        SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");
-        return;
-    }
-
-    /* Apply DSCP_TO_TC QoS map at switch */
-    sai_attribute_t attr;
-    attr.id = attr_id;
-    attr.value.oid = map_id;
-
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
-        return;
-    }
-
-    SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
-}
-
 sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
 {
     SWSS_LOG_ENTER();
@@ -271,16 +277,28 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
     }
     SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
 
-    applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
-
     return sai_object;
 }
 
-task_process_status QosOrch::handleDscpToTcTable(Consumer& consumer)
+bool DscpToTcMapHandler::removeQosItem(sai_object_id_t sai_object)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_DEBUG("Removing DscpToTcMap object:%" PRIx64, sai_object);
+    sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
+    if (SAI_STATUS_SUCCESS != sai_status)
+    {
+        SWSS_LOG_ERROR("Failed to remove DSCP_TO_TC map, status:%d", sai_status);
+        return false;
+    }
+    return true;
+}
+
+task_process_status QosOrch::handleDscpToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     DscpToTcMapHandler dscp_tc_handler;
-    return dscp_tc_handler.processWorkItem(consumer);
+    return dscp_tc_handler.processWorkItem(consumer, tuple);
 }
 
 bool MplsTcToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -331,11 +349,11 @@ sai_object_id_t MplsTcToTcMapHandler::addQosItem(const vector<sai_attribute_t> &
     return sai_object;
 }
 
-task_process_status QosOrch::handleMplsTcToTcTable(Consumer& consumer)
+task_process_status QosOrch::handleMplsTcToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     MplsTcToTcMapHandler mpls_tc_to_tc_handler;
-    return mpls_tc_to_tc_handler.processWorkItem(consumer);
+    return mpls_tc_to_tc_handler.processWorkItem(consumer, tuple);
 }
 
 bool Dot1pToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -400,11 +418,11 @@ sai_object_id_t Dot1pToTcMapHandler::addQosItem(const vector<sai_attribute_t> &a
     return object_id;
 }
 
-task_process_status QosOrch::handleDot1pToTcTable(Consumer &consumer)
+task_process_status QosOrch::handleDot1pToTcTable(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     Dot1pToTcMapHandler dot1p_tc_handler;
-    return dot1p_tc_handler.processWorkItem(consumer);
+    return dot1p_tc_handler.processWorkItem(consumer, tuple);
 }
 
 bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -453,11 +471,65 @@ sai_object_id_t TcToQueueMapHandler::addQosItem(const vector<sai_attribute_t> &a
     return sai_object;
 }
 
-task_process_status QosOrch::handleTcToQueueTable(Consumer& consumer)
+task_process_status QosOrch::handleTcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     TcToQueueMapHandler tc_queue_handler;
-    return tc_queue_handler.processWorkItem(consumer);
+    return tc_queue_handler.processWorkItem(consumer, tuple);
+}
+
+//Functions for TC-to-DOT1P qos map handling
+bool TcToDot1pMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t list_attr;
+    sai_qos_map_list_t tc_map_list;
+    tc_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
+    tc_map_list.list = new sai_qos_map_t[tc_map_list.count]();
+    uint32_t ind = 0;
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
+    {
+        tc_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
+        tc_map_list.list[ind].value.dot1p = (uint8_t)stoi(fvValue(*i));
+    }
+    list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    list_attr.value.qosmap.count = tc_map_list.count;
+    list_attr.value.qosmap.list = tc_map_list.list;
+    attributes.push_back(list_attr);
+    return true;
+}
+
+sai_object_id_t TcToDot1pMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t sai_status;
+    sai_object_id_t sai_object;
+    vector<sai_attribute_t> qos_map_attrs;
+    sai_attribute_t qos_map_attr;
+
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_TYPE;
+    qos_map_attr.value.s32 = SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DOT1P;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    qos_map_attr.value.qosmap.count = attributes[0].value.qosmap.count;
+    qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
+    if (SAI_STATUS_SUCCESS != sai_status)
+    {
+        SWSS_LOG_ERROR("Failed to create tc_to_dot1p qos map. status:%d", sai_status);
+        return SAI_NULL_OBJECT_ID;
+    }
+    return sai_object;
+}
+
+task_process_status QosOrch::handleTcToDot1pTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+    TcToDot1pMapHandler tc_dot1p_handler;
+    return tc_dot1p_handler.processWorkItem(consumer, tuple);
 }
 
 void WredMapHandler::freeAttribResources(vector<sai_attribute_t> &attributes)
@@ -485,47 +557,140 @@ bool WredMapHandler::convertBool(string str, bool &val)
     return true;
 }
 
+void WredMapHandler::appendThresholdToAttributeList(sai_attr_id_t type,
+                                                    sai_uint32_t threshold,
+                                                    bool needDefer,
+                                                    vector<sai_attribute_t> &normalQueue,
+                                                    vector<sai_attribute_t> &deferredQueue,
+                                                    sai_uint32_t &newThreshold)
+{
+    sai_attribute_t attr;
+
+    attr.id = type;
+    attr.value.u32 = threshold;
+    if (needDefer)
+    {
+        deferredQueue.push_back(attr);
+    }
+    else
+    {
+        normalQueue.push_back(attr);
+    }
+    newThreshold = threshold;
+}
+
+WredMapHandler::qos_wred_thresholds_store_t WredMapHandler::m_wredProfiles;
+
 bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attribs)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
+    vector<sai_attribute_t> deferred_attributes;
+    auto &key = kfvKey(tuple);
+    auto &storedProfile = WredMapHandler::m_wredProfiles[key];
+    qos_wred_thresholds_t currentProfile = storedProfile;
+    sai_uint32_t threshold;
+
+    /*
+     * Setting WRED profile can fail in case
+     * - the current min threshold is greater than the new max threshold 
+     * - or the current max threshold is less than the new min threshold
+     * for any color at any time, on some vendor's platforms.
+     *
+     * The root cause
+     * There can be only one attribute in each SAI SET operation, which means
+     * the vendor SAI do not have a big picture regarding what attributes are being set
+     * and can only perform the sanity check against each SET operation.
+     * In the above case, the sanity check will fail.
+     *
+     * The fix
+     * The thresholds that have been applied to SAI will be stored in orchagent.
+     *
+     * The original logic is to handle each attribute to be set and append it to an attribute list.
+     * To resolve the issue, a 2nd half attribute list is introduced and
+     * will be appended to the original attribute list after all the attributes have been handled.
+     *
+     * In the new logic, each threshold to be set will be checked against the stored data.
+     * In case it violates the condition, the violating attribute will be deferred, done via putting it into the 2nd half attributes list.
+     *
+     * For any color, there can be only 1 threshold violating the condition.
+     * Otherwise, it means both new min > old max and new max > old min, which means either old max < old min or new max < new min,
+     * which means either old or new data is illegal.
+     * This can not happen because illegal data can not be applied and stored.
+     *
+     * By doing so, the other threshold will be applied first, which extends the threshold range and breaks the violating condition.
+     * A logic is also introduced to guarantee the min threshold is always less than the max threshold in the new profile to be set.
+     *
+     * For example:
+     * Current min=1M, max=2M, new min=3M, new max=4M
+     * The min is set first, so current max (2M) < new min (3M), which violates the condition
+     * By the new logic, min threshold will be deferred so the new max will be applied first and then the new min is applied and no violating.
+     *  min = 1M, max = 2M
+     *  => min = 1M, max = 4M
+     *  => min = 3M, max = 4M
+     */
+
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
         if (fvField(*i) == yellow_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_max_threshold);
         }
         else if (fvField(*i) == yellow_min_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_min_threshold);
         }
         else if (fvField(*i) == green_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_GREEN_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_GREEN_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_max_threshold);
         }
         else if (fvField(*i) == green_min_threshold_field_name)
         {
-           attr.id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
-           attr.value.s32 = stoi(fvValue(*i));
-           attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_GREEN_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_min_threshold);
         }
         else if (fvField(*i) == red_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_RED_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_RED_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_max_threshold);
         }
         else if (fvField(*i) == red_min_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_RED_MIN_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_RED_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_min_threshold);
         }
         else if (fvField(*i) == green_drop_probability_field_name)
         {
@@ -584,6 +749,18 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             return false;
         }
     }
+
+    if ((currentProfile.green_min_threshold > currentProfile.green_max_threshold)
+        || (currentProfile.yellow_min_threshold > currentProfile.yellow_max_threshold)
+        || (currentProfile.red_min_threshold > currentProfile.red_max_threshold))
+    {
+        SWSS_LOG_ERROR("Wrong wred profile: min threshold is greater than max threshold");
+        return false;
+    }
+
+    attribs.insert(attribs.end(), deferred_attributes.begin(), deferred_attributes.end());
+    storedProfile = currentProfile;
+
     return true;
 }
 
@@ -611,6 +788,7 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     uint8_t drop_prob_set = 0;
+    uint8_t wred_enable_set = 0;
 
     attr.id = SAI_WRED_ATTR_WEIGHT;
     attr.value.s32 = 0;
@@ -620,32 +798,53 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     {
         attrs.push_back(attrib);
 
-        if (attrib.id == SAI_WRED_ATTR_GREEN_DROP_PROBABILITY)
+        switch (attrib.id)
         {
+        case SAI_WRED_ATTR_GREEN_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= GREEN_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_YELLOW_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= YELLOW_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_RED_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= RED_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_GREEN_DROP_PROBABILITY:
             drop_prob_set |= GREEN_DROP_PROBABILITY_SET;
-        }
-        else if (attrib.id == SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY)
-        {
+            break;
+        case SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY:
             drop_prob_set |= YELLOW_DROP_PROBABILITY_SET;
-        }
-        else if (attrib.id == SAI_WRED_ATTR_RED_DROP_PROBABILITY)
-        {
+            break;
+        case SAI_WRED_ATTR_RED_DROP_PROBABILITY:
             drop_prob_set |= RED_DROP_PROBABILITY_SET;
+            break;
+        default:
+            break;
         }
     }
-    if (!(drop_prob_set & GREEN_DROP_PROBABILITY_SET))
+
+    if (!(drop_prob_set & GREEN_DROP_PROBABILITY_SET) && (wred_enable_set & GREEN_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
         attr.value.s32 = 100;
         attrs.push_back(attr);
     }
-    if (!(drop_prob_set & YELLOW_DROP_PROBABILITY_SET))
+    if (!(drop_prob_set & YELLOW_DROP_PROBABILITY_SET) && (wred_enable_set & YELLOW_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
         attr.value.s32 = 100;
         attrs.push_back(attr);
     }
-    if (!(drop_prob_set & RED_DROP_PROBABILITY_SET))
+    if (!(drop_prob_set & RED_DROP_PROBABILITY_SET) && (wred_enable_set & RED_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_RED_DROP_PROBABILITY;
         attr.value.s32 = 100;
@@ -674,11 +873,11 @@ bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
     return true;
 }
 
-task_process_status QosOrch::handleWredProfileTable(Consumer& consumer)
+task_process_status QosOrch::handleWredProfileTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     WredMapHandler wred_handler;
-    return wred_handler.processWorkItem(consumer);
+    return wred_handler.processWorkItem(consumer, tuple);
 }
 
 bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -720,18 +919,18 @@ sai_object_id_t TcToPgHandler::addQosItem(const vector<sai_attribute_t> &attribu
     sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to create tc_to_pg map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
     return sai_object;
 
 }
 
-task_process_status QosOrch::handleTcToPgTable(Consumer& consumer)
+task_process_status QosOrch::handleTcToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     TcToPgHandler tc_to_pg_handler;
-    return tc_to_pg_handler.processWorkItem(consumer);
+    return tc_to_pg_handler.processWorkItem(consumer, tuple);
 }
 
 bool PfcPrioToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -774,18 +973,18 @@ sai_object_id_t PfcPrioToPgHandler::addQosItem(const vector<sai_attribute_t> &at
     sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to create pfc_priority_to_queue map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
     return sai_object;
 
 }
 
-task_process_status QosOrch::handlePfcPrioToPgTable(Consumer& consumer)
+task_process_status QosOrch::handlePfcPrioToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     PfcPrioToPgHandler pfc_prio_to_pg_handler;
-    return pfc_prio_to_pg_handler.processWorkItem(consumer);
+    return pfc_prio_to_pg_handler.processWorkItem(consumer, tuple);
 }
 
 bool PfcToQueueHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -829,7 +1028,7 @@ sai_object_id_t PfcToQueueHandler::addQosItem(const vector<sai_attribute_t> &att
     sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to create pfc_priority_to_queue map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
     return sai_object;
@@ -922,11 +1121,11 @@ sai_object_id_t DscpToFcMapHandler::addQosItem(const vector<sai_attribute_t> &at
     return sai_object;
 }
 
-task_process_status QosOrch::handleDscpToFcTable(Consumer& consumer)
+task_process_status QosOrch::handleDscpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     DscpToFcMapHandler dscp_fc_handler;
-    return dscp_fc_handler.processWorkItem(consumer);
+    return dscp_fc_handler.processWorkItem(consumer, tuple);
 }
 
 bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple,
@@ -1013,18 +1212,101 @@ sai_object_id_t ExpToFcMapHandler::addQosItem(const vector<sai_attribute_t> &att
     return sai_object;
 }
 
-task_process_status QosOrch::handleExpToFcTable(Consumer& consumer)
+bool TcToDscpMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple,
+                                                        vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t list_attr;
+    list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    list_attr.value.qosmap.count = (uint32_t)kfvFieldsValues(tuple).size();
+    list_attr.value.qosmap.list = new sai_qos_map_t[list_attr.value.qosmap.count]();
+    uint32_t ind = 0;
+
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
+    {
+        try
+        {
+            auto value = stoi(fvValue(*i));
+            if (value < 0)
+            {
+                SWSS_LOG_ERROR("DSCP value %d is negative", value);
+                delete[] list_attr.value.qosmap.list;
+                return false;
+            }
+            else if (value > DSCP_MAX_VAL)
+            {
+                SWSS_LOG_ERROR("DSCP value %d is greater than max value %d", value, DSCP_MAX_VAL);
+                delete[] list_attr.value.qosmap.list;
+                return false;
+            }
+            list_attr.value.qosmap.list[ind].key.tc = static_cast<sai_uint8_t>(stoi(fvField(*i)));
+            list_attr.value.qosmap.list[ind].value.dscp = static_cast<sai_uint8_t>(value);
+
+            SWSS_LOG_DEBUG("key.tc:%d, value.dscp:%d",
+                            list_attr.value.qosmap.list[ind].key.tc,
+                            list_attr.value.qosmap.list[ind].value.dscp);
+        }
+        catch(const invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
+            delete[] list_attr.value.qosmap.list;
+            return false;
+        }
+    }
+    attributes.push_back(list_attr);
+    return true;
+}
+
+sai_object_id_t TcToDscpMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t sai_status;
+    sai_object_id_t sai_object;
+    vector<sai_attribute_t> qos_map_attrs;
+
+    sai_attribute_t qos_map_attr;
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_TYPE;
+    qos_map_attr.value.u32 = SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DSCP;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    qos_map_attr.value.qosmap.count = attributes[0].value.qosmap.count;
+    qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object,
+                                                gSwitchId,
+                                                (uint32_t)qos_map_attrs.size(),
+                                                qos_map_attrs.data());
+    if (SAI_STATUS_SUCCESS != sai_status)
+    {
+        SWSS_LOG_ERROR("Failed to create tc_to_dscp map. status:%d", sai_status);
+        return SAI_NULL_OBJECT_ID;
+    }
+    SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
+    return sai_object;
+}
+
+task_process_status QosOrch::handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     ExpToFcMapHandler exp_fc_handler;
-    return exp_fc_handler.processWorkItem(consumer);
+    return exp_fc_handler.processWorkItem(consumer, tuple);
 }
 
-task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer)
+task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     PfcToQueueHandler pfc_to_queue_handler;
-    return pfc_to_queue_handler.processWorkItem(consumer);
+    return pfc_to_queue_handler.processWorkItem(consumer, tuple);
+}
+
+task_process_status QosOrch::handleTcToDscpTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+    TcToDscpMapHandler tc_to_dscp_handler;
+    return tc_to_dscp_handler.processWorkItem(consumer, tuple);
 }
 
 QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
@@ -1053,20 +1335,21 @@ void QosOrch::initTableHandlers()
     m_qos_handler_map.insert(qos_handler_pair(CFG_WRED_PROFILE_TABLE_NAME, &QosOrch::handleWredProfileTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_DSCP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleDscpToFcTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_EXP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleExpToFcTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_DSCP_MAP_TABLE_NAME, &QosOrch::handleTcToDscpTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_DOT1P_MAP_TABLE_NAME, &QosOrch::handleTcToDot1pTable));
 
     m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handleTcToPgTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handlePfcPrioToPgTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, &QosOrch::handlePfcToQueueTable));
 }
 
-task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
+task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
     sai_status_t sai_status;
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
 
-    KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
     string qos_map_type_name = CFG_SCHEDULER_TABLE_NAME;
     string qos_object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
@@ -1078,6 +1361,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         {
             SWSS_LOG_ERROR("Error sai_object must exist for key %s", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
+        }
+        if ((*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", qos_map_type_name.c_str(), qos_object_name.c_str());
+            return task_process_status::task_need_retry;
         }
     }
     if (op == SET_COMMAND)
@@ -1112,11 +1400,6 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 attr.id = SAI_SCHEDULER_ATTR_SCHEDULING_WEIGHT;
                 attr.value.u8 = (uint8_t)stoi(fvValue(*i));
                 sai_attr_list.push_back(attr);
-            }
-            else if (fvField(*i) == scheduler_priority_field_name)
-            {
-                // TODO: The meaning is to be able to adjust priority of the given scheduler group.
-                // However currently SAI model does not provide such ability.
             }
             else if (fvField(*i) == scheduler_meter_type_field_name)
             {
@@ -1186,6 +1469,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             }
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
             (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove = false;
         }
     }
     else if (op == DEL_COMMAND)
@@ -1194,6 +1478,13 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         {
             SWSS_LOG_ERROR("Object with name:%s not found.", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
+        }
+        if (gQosOrch->isObjectBeingReferenced(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name))
+        {
+            auto hint = gQosOrch->objectReferenceInfo(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name);
+            SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", qos_object_name.c_str(), hint.c_str());
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove = true;
+            return task_process_status::task_need_retry;
         }
         sai_status = sai_scheduler_api->remove_scheduler(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
@@ -1338,22 +1629,58 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id)
 {
     SWSS_LOG_ENTER();
+    sai_object_id_t queue_id;
+    Port input_port = port;
+    sai_object_id_t group_id = 0;
 
-    if (port.m_queue_ids.size() <= queue_ind)
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
-        return false;
+        if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+        {
+            return true;
+        }
+       
+        // Get local port from system port. port is pointing to local port now
+        if (!gPortsOrch->getPort(port.m_system_port_info.local_port_oid, port))
+        {
+            SWSS_LOG_ERROR("Port with alias:%s not found", port.m_alias.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if (port.m_queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
+            return false;
+        }
+        queue_id = port.m_queue_ids[queue_ind];
+        
+        group_id = getSchedulerGroup(port, queue_id);
+        if(group_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
+            return false;
+        }
+
+        // port is set back to system port
+        port = input_port;
     }
-
-    const sai_object_id_t queue_id = port.m_queue_ids[queue_ind];
-
-    const sai_object_id_t group_id = getSchedulerGroup(port, queue_id);
-    if(group_id == SAI_NULL_OBJECT_ID)
+    else
     {
-        SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
-        return false;
+        if (port.m_queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
+            return false;
+        }
+        queue_id = port.m_queue_ids[queue_ind];
+        
+        group_id = getSchedulerGroup(port, queue_id);
+        if(group_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
+            return false;
+        }
     }
-
+    
     /* Apply scheduler profile to all port groups  */
     sai_attribute_t attr;
     sai_status_t    sai_status;
@@ -1384,12 +1711,25 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
     sai_status_t    sai_status;
     sai_object_id_t queue_id;
 
-    if (port.m_queue_ids.size() <= queue_ind)
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
-        return false;
+        std :: vector<sai_object_id_t> queue_ids = gPortsOrch->getPortVoQIds(port);
+        if (queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid voq index specified:%zd", queue_ind);
+            return task_process_status::task_invalid_entry;
+        }
+        queue_id = queue_ids[queue_ind];
+    } 
+    else
+    {
+        if (port.m_queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
+            return false;
+        }
+        queue_id = port.m_queue_ids[queue_ind];
     }
-    queue_id = port.m_queue_ids[queue_ind];
 
     attr.id = SAI_QUEUE_ATTR_WRED_PROFILE_ID;
     attr.value.oid = sai_wred_profile;
@@ -1406,78 +1746,79 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
     return true;
 }
 
-task_process_status QosOrch::handleQueueTable(Consumer& consumer)
+task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     Port port;
     bool result;
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
     size_t queue_ind = 0;
     vector<string> tokens;
+    bool local_port = false;
+    string local_port_name;
 
     sai_uint32_t range_low, range_high;
     vector<string> port_names;
 
     ref_resolve_status  resolve_result;
-    // sample "QUEUE: {Ethernet4|0-1}"
+    /*
+        Input sample "QUEUE : {Ethernet4|0-1}" or
+                     "QUEUE : {STG01-0101-0400-01T2-LC6|ASIC0|Ethernet4|0-1}"
+    */
     tokens = tokenize(key, config_db_key_delimiter);
-    if (tokens.size() != 2)
+
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
-        return task_process_status::task_invalid_entry;
-    }
-    port_names = tokenize(tokens[0], list_item_delimiter);
-    if (!parseIndexRange(tokens[1], range_low, range_high))
-    {
-        SWSS_LOG_ERROR("Failed to parse range:%s", tokens[1].c_str());
-        return task_process_status::task_invalid_entry;
-    }
-    for (string port_name : port_names)
-    {
-        Port port;
-        SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
-        if (!gPortsOrch->getPort(port_name, port))
+        if (tokens.size() != 4)
         {
-            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 4 tokens", key.c_str());
             return task_process_status::task_invalid_entry;
         }
-        SWSS_LOG_DEBUG("processing range:%d-%d", range_low, range_high);
-        for (size_t ind = range_low; ind <= range_high; ind++)
+
+        port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
+        if (!parseIndexRange(tokens[3], range_low, range_high))
         {
-            queue_ind = ind;
-            SWSS_LOG_DEBUG("processing queue:%zd", queue_ind);
-            sai_object_id_t sai_scheduler_profile;
-            string scheduler_profile_name;
-            resolve_result = resolveFieldRefValue(m_qos_maps, scheduler_field_name,
-                             qos_to_ref_table_map.at(scheduler_field_name), tuple,
-                             sai_scheduler_profile, scheduler_profile_name);
-            if (ref_resolve_status::success == resolve_result)
-            {
-                if (op == SET_COMMAND)
-                {
-                    result = applySchedulerToQueueSchedulerGroup(port, queue_ind, sai_scheduler_profile);
-                }
-                else if (op == DEL_COMMAND)
-                {
-                    // NOTE: The map is un-bound from the port. But the map itself still exists.
-                    result = applySchedulerToQueueSchedulerGroup(port, queue_ind, SAI_NULL_OBJECT_ID);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-                    return task_process_status::task_invalid_entry;
-                }
-                if (!result)
-                {
-                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d", scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
-                    return task_process_status::task_failed;
-                }
-                SWSS_LOG_DEBUG("Applied scheduler to port:%s", port_name.c_str());
-            }
-            else if (resolve_result != ref_resolve_status::field_not_found)
+            SWSS_LOG_ERROR("Failed to parse range:%s", tokens[3].c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if((tokens[0] == gMyHostName) && (tokens[1] == gMyAsicName))
+        {
+           local_port = true;
+           local_port_name = tokens[2];
+           SWSS_LOG_INFO("System port %s is local port %d local port name %s", port_names[0].c_str(), local_port, local_port_name.c_str());
+        }
+    }
+    else
+    {
+        if (tokens.size() != 2)
+        {
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        port_names = tokenize(tokens[0], list_item_delimiter);
+        if (!parseIndexRange(tokens[1], range_low, range_high))
+        {
+            SWSS_LOG_ERROR("Failed to parse range:%s", tokens[1].c_str());
+            return task_process_status::task_invalid_entry;
+        }
+    }
+
+    bool donotChangeScheduler = false;
+    bool donotChangeWredProfile = false;
+    sai_object_id_t sai_scheduler_profile;
+    sai_object_id_t sai_wred_profile;
+
+    if (op == SET_COMMAND)
+    {
+        string scheduler_profile_name;
+        resolve_result = resolveFieldRefValue(m_qos_maps, scheduler_field_name,
+                                              qos_to_ref_table_map.at(scheduler_field_name), tuple,
+                                              sai_scheduler_profile, scheduler_profile_name);
+        if (ref_resolve_status::success != resolve_result)
+        {
+            if (resolve_result != ref_resolve_status::field_not_found)
             {
                 if(ref_resolve_status::not_resolved == resolve_result)
                 {
@@ -1488,27 +1829,106 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 return task_process_status::task_failed;
             }
 
-            sai_object_id_t sai_wred_profile;
-            string wred_profile_name;
-            resolve_result = resolveFieldRefValue(m_qos_maps, wred_profile_field_name,
-                             qos_to_ref_table_map.at(wred_profile_field_name), tuple,
-                             sai_wred_profile, wred_profile_name);
-            if (ref_resolve_status::success == resolve_result)
+            if (doesObjectExist(m_qos_maps, CFG_QUEUE_TABLE_NAME, key, scheduler_field_name, scheduler_profile_name))
             {
-                if (op == SET_COMMAND)
+                SWSS_LOG_NOTICE("QUEUE|%s %s was configured but is not any more. Remove it", key.c_str(), scheduler_field_name.c_str());
+                removeMeFromObjsReferencedByMe(m_qos_maps, CFG_QUEUE_TABLE_NAME, key, scheduler_field_name, scheduler_profile_name);
+                sai_scheduler_profile = SAI_NULL_OBJECT_ID;
+            }
+            else
+            {
+                // Did not exist and do not exist. No action
+                donotChangeScheduler = true;
+            }
+        }
+        else
+        {
+            setObjectReference(m_qos_maps, CFG_QUEUE_TABLE_NAME, key, scheduler_field_name, scheduler_profile_name);
+            SWSS_LOG_INFO("QUEUE %s Field %s %s has been resolved to %" PRIx64 , key.c_str(), scheduler_field_name.c_str(), scheduler_profile_name.c_str(), sai_scheduler_profile);
+        }
+
+        string wred_profile_name;
+        resolve_result = resolveFieldRefValue(m_qos_maps, wred_profile_field_name,
+                                              qos_to_ref_table_map.at(wred_profile_field_name), tuple,
+                                              sai_wred_profile, wred_profile_name);
+        if (ref_resolve_status::success != resolve_result)
+        {
+            if (resolve_result != ref_resolve_status::field_not_found)
+            {
+                if(ref_resolve_status::not_resolved == resolve_result)
                 {
-                    result = applyWredProfileToQueue(port, queue_ind, sai_wred_profile);
+                    SWSS_LOG_INFO("Missing or invalid wred profile reference");
+                    return task_process_status::task_need_retry;
                 }
-                else if (op == DEL_COMMAND)
+                SWSS_LOG_ERROR("Resolving wred profile reference failed");
+                return task_process_status::task_failed;
+            }
+
+            if (doesObjectExist(m_qos_maps, CFG_QUEUE_TABLE_NAME, key, wred_profile_field_name, wred_profile_name))
+            {
+                SWSS_LOG_NOTICE("QUEUE|%s %s was configured but is not any more. Remove it", key.c_str(), wred_profile_field_name.c_str());
+                removeMeFromObjsReferencedByMe(m_qos_maps, CFG_QUEUE_TABLE_NAME, key, wred_profile_field_name, wred_profile_name);
+                sai_wred_profile = SAI_NULL_OBJECT_ID;
+            }
+            else
+            {
+                donotChangeWredProfile = true;
+            }
+        }
+        else
+        {
+            setObjectReference(m_qos_maps, CFG_QUEUE_TABLE_NAME, key, wred_profile_field_name, wred_profile_name);
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        removeObject(QosOrch::getTypeMap(), CFG_QUEUE_TABLE_NAME, key);
+        sai_scheduler_profile = SAI_NULL_OBJECT_ID;
+        sai_wred_profile = SAI_NULL_OBJECT_ID;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
+    for (string port_name : port_names)
+    {
+        Port port;
+        SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
+
+        if(local_port == true)
+        {
+            port_name = local_port_name;
+        }
+
+        if (!gPortsOrch->getPort(port_name, port))
+        {
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        SWSS_LOG_DEBUG("processing range:%d-%d", range_low, range_high);
+        for (size_t ind = range_low; ind <= range_high; ind++)
+        {
+            queue_ind = ind;
+            SWSS_LOG_DEBUG("processing queue:%zd", queue_ind);
+
+            if (!donotChangeScheduler)
+            {
+                result = applySchedulerToQueueSchedulerGroup(port, queue_ind, sai_scheduler_profile);
+
+                if (!result)
                 {
-                    // NOTE: The map is un-bound from the port. But the map itself still exists.
-                    result = applyWredProfileToQueue(port, queue_ind, SAI_NULL_OBJECT_ID);
+                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d", scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                    return task_process_status::task_failed;
                 }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-                    return task_process_status::task_invalid_entry;
-                }
+                SWSS_LOG_DEBUG("Applied scheduler to port:%s", port_name.c_str());
+            }
+
+            if (!donotChangeWredProfile)
+            {
+                result = applyWredProfileToQueue(port, queue_ind, sai_wred_profile);
+
                 if (!result)
                 {
                     SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d", wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
@@ -1516,118 +1936,176 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 }
                 SWSS_LOG_DEBUG("Applied wred profile to port:%s", port_name.c_str());
             }
-            else if (resolve_result != ref_resolve_status::field_not_found)
-            {
-                if (ref_resolve_status::empty == resolve_result)
-                {
-                    SWSS_LOG_INFO("Missing wred reference. Unbind wred profile from queue");
-                    // NOTE: The wred profile is un-bound from the port. But the wred profile itself still exists
-                    // and stays untouched.
-                    result = applyWredProfileToQueue(port, queue_ind, SAI_NULL_OBJECT_ID);
-                    if (!result)
-                    {
-                        SWSS_LOG_ERROR("Failed unbinding field:%s from port:%s, queue:%zd, line:%d", wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
-                        return task_process_status::task_failed;
-                    }
-                }
-                else if (ref_resolve_status::not_resolved == resolve_result)
-                {
-                    SWSS_LOG_INFO("Invalid wred reference");
-                    return task_process_status::task_need_retry;
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Resolving wred reference failed");
-                    return task_process_status::task_failed;
-                }
-            }
         }
     }
     SWSS_LOG_DEBUG("finished");
     return task_process_status::task_success;
 }
 
-bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t map_id)
+bool QosOrch::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t map_id)
 {
     SWSS_LOG_ENTER();
 
+    /* Query DSCP_TO_TC QoS map at switch capability */
+    bool rv = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
+    if (rv == false)
+    {
+        SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");
+        return true;
+    }
+
+    /* Apply DSCP_TO_TC QoS map at switch */
     sai_attribute_t attr;
     attr.id = attr_id;
     attr.value.oid = map_id;
 
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed setting sai object:%" PRIx64 " for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
+        return false;
     }
+
+    SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
     return true;
 }
 
-task_process_status QosOrch::ResolveMapAndApplyToPort(
-    Port                    &port,
-    sai_port_attr_t         port_attr,
-    string                  field_name,
-    KeyOpFieldsValuesTuple  &tuple,
-    string                  op)
+task_process_status QosOrch::handleGlobalQosMap(const string &OP, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
-    string object_name;
-    bool result;
-    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_maps, field_name,
-                           qos_to_ref_table_map.at(field_name), tuple, sai_object, object_name);
-    if (ref_resolve_status::success == resolve_result)
+    task_process_status task_status = task_process_status::task_success;
+    
+    if (OP == DEL_COMMAND)
     {
-        if (op == SET_COMMAND)
+        string referenced_obj;
+        if (!doesObjectExist(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL, dscp_to_tc_field_name, referenced_obj))
         {
-            result = applyMapToPort(port, port_attr, sai_object);
+            return task_status;
         }
-        else if (op == DEL_COMMAND)
+        // Set SAI_NULL_OBJECT_ID to switch level if PORT_QOS_MAP|global is removed
+        if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID))
         {
-            // NOTE: The map is un-bound from the port. But the map itself still exists.
-            result = applyMapToPort(port, port_attr, SAI_NULL_OBJECT_ID);
+            removeObject(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL);
+            task_status = task_process_status::task_success;
+            SWSS_LOG_INFO("Global QoS map type %s is removed", dscp_to_tc_field_name.c_str());
         }
         else
         {
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            return task_process_status::task_invalid_entry;
+            task_status = task_process_status::task_failed;
+            SWSS_LOG_WARN("Failed to remove switch level QoS map type %s", dscp_to_tc_field_name.c_str());
         }
-        if (!result)
-        {
-            SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
-            return task_process_status::task_failed;
-        }
-        SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
-        return task_process_status::task_success;
+        return task_status;
     }
-    else if (resolve_result != ref_resolve_status::field_not_found)
+
+    for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
-        if(ref_resolve_status::not_resolved == resolve_result)
+        string map_type_name = fvField(*it);
+        string map_name = fvValue(*it);
+        if (map_type_name != dscp_to_tc_field_name)
         {
-            SWSS_LOG_INFO("Missing or invalid %s reference", field_name.c_str());
-            return task_process_status::task_need_retry;
+            SWSS_LOG_WARN("Qos map type %s is not supported at global level", map_type_name.c_str());
+            continue;
         }
-        SWSS_LOG_ERROR("Resolving %s reference failed", field_name.c_str());
-        return task_process_status::task_failed;
+
+        if (qos_to_attr_map.find(map_type_name) != qos_to_attr_map.end())
+        {
+            sai_object_id_t id;
+            string object_name;
+            ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+
+            if (status != ref_resolve_status::success)
+            {
+                SWSS_LOG_INFO("Global QoS map %s is not yet created", map_name.c_str());
+                task_status = task_process_status::task_need_retry;
+                continue;
+            }
+
+            if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, id))
+            {
+                setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL, map_type_name, object_name);
+                task_status = task_process_status::task_success;
+                SWSS_LOG_INFO("Applied QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
+            }
+            else
+            {
+                task_status = task_process_status::task_failed;
+                SWSS_LOG_INFO("Failed to apply QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
+            }
+        }
     }
-    return task_process_status::task_success;
+    return task_status;
 }
 
-task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
+task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
-    KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
 
+    if (key == PORT_NAME_GLOBAL)
+    {
+        return handleGlobalQosMap(op, tuple);
+    }
+
+    vector<string> port_names = tokenize(key, list_item_delimiter);
+
+    if (op == DEL_COMMAND)
+    {
+        /* Handle DEL command. Just set all the maps to oid:0x0 */
+        for (string port_name : port_names)
+        {
+            Port port;
+
+            /* Skip port which is not found */
+            if (!gPortsOrch->getPort(port_name, port))
+            {
+                SWSS_LOG_ERROR("Failed to apply QoS maps to port %s. Port is not found.", port_name.c_str());
+                continue;
+            }
+
+            for (auto &mapRef : qos_to_attr_map)
+            {
+                string referenced_obj;
+                if (!doesObjectExist(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, mapRef.first, referenced_obj))
+                {
+                    continue;
+                }
+
+                sai_attribute_t attr;
+                attr.id = mapRef.second;
+                attr.value.oid = SAI_NULL_OBJECT_ID;
+
+                sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to remove %s on port %s, rv:%d",
+                                   mapRef.first.c_str(), port_name.c_str(), status);
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return task_process_status::task_invalid_entry;
+                    }
+                }
+                SWSS_LOG_INFO("Removed %s on port %s", mapRef.first.c_str(), port_name.c_str());
+            }
+
+            if (!gPortsOrch->setPortPfc(port.m_port_id, 0))
+            {
+                SWSS_LOG_ERROR("Failed to disable PFC on port %s", port_name.c_str());
+            }
+
+            SWSS_LOG_INFO("Disabled PFC on port %s", port_name.c_str());
+        }
+
+        removeObject(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key);
+
+        return task_process_status::task_success;
+    }
+
     sai_uint8_t pfc_enable = 0;
+    sai_uint8_t pfcwd_sw_enable = 0;
     map<sai_port_attr_t, pair<string, sai_object_id_t>> update_list;
     for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
@@ -1636,7 +2114,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
         {
             sai_object_id_t id;
             string object_name;
-            string map_type_name = fvField(*it), map_name = fvValue(*it);
+            string &map_type_name = fvField(*it), &map_name = fvValue(*it);
             ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
 
             if (status != ref_resolve_status::success)
@@ -1646,21 +2124,48 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             }
 
             update_list[qos_to_attr_map[map_type_name]] = make_pair(map_name, id);
+            setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, map_type_name, object_name);
         }
 
-        if (fvField(*it) == pfc_enable_name)
+        else if (fvField(*it) == pfc_enable_name || fvField(*it) == pfcwd_sw_enable_name)
         {
+            sai_uint8_t bitmask = 0;
             vector<string> queue_indexes;
             queue_indexes = tokenize(fvValue(*it), list_item_delimiter);
             for(string q_ind : queue_indexes)
             {
                 sai_uint8_t q_val = (uint8_t)stoi(q_ind);
-                pfc_enable |= (uint8_t)(1 << q_val);
+                bitmask |= (uint8_t)(1 << q_val);
+            }
+
+            if (fvField(*it) == pfc_enable_name)
+            {
+                pfc_enable = bitmask;
+            }
+            else
+            {
+                pfcwd_sw_enable = bitmask;
             }
         }
     }
 
-    vector<string> port_names = tokenize(key, list_item_delimiter);
+    /* Remove any map that was configured but isn't there any longer. */
+    for (auto &mapRef : qos_to_attr_map)
+    {
+        auto &sai_attribute = mapRef.second;
+        if (update_list.find(sai_attribute) == update_list.end())
+        {
+            string referenced_obj;
+            if (!doesObjectExist(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, mapRef.first, referenced_obj))
+            {
+                continue;
+            }
+            SWSS_LOG_NOTICE("PORT_QOS_MAP|%s %s was configured but is not any more. Remove it", key.c_str(), mapRef.first.c_str());
+            removeMeFromObjsReferencedByMe(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, mapRef.first, referenced_obj);
+            update_list[mapRef.second] = make_pair("NULL", SAI_NULL_OBJECT_ID);
+        }
+    }
+
     for (string port_name : port_names)
     {
         Port port;
@@ -1708,6 +2213,9 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
 
             SWSS_LOG_INFO("Applied PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
         }
+
+        // Save pfd_wd bitmask unconditionally
+        gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, pfcwd_sw_enable);
     }
 
     SWSS_LOG_NOTICE("Applied QoS maps to ports");
@@ -1719,12 +2227,13 @@ void QosOrch::doTask()
     SWSS_LOG_ENTER();
 
     auto *port_qos_map_cfg_exec = getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME);
+    auto *queue_exec = getExecutor(CFG_QUEUE_TABLE_NAME);
 
     for (const auto &it : m_consumerMap)
     {
         auto *exec = it.second.get();
 
-        if (exec == port_qos_map_cfg_exec)
+        if (exec == port_qos_map_cfg_exec || exec == queue_exec)
         {
             continue;
         }
@@ -1733,6 +2242,7 @@ void QosOrch::doTask()
     }
 
     port_qos_map_cfg_exec->drain();
+    queue_exec->drain();
 }
 
 void QosOrch::doTask(Consumer &consumer)
@@ -1756,7 +2266,7 @@ void QosOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        auto task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer);
+        auto task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer, it->second);
         switch(task_status)
         {
             case task_process_status::task_success :
@@ -1781,3 +2291,53 @@ void QosOrch::doTask(Consumer &consumer)
         }
     }
 }
+
+/**
+ * Function Description:
+ *    @brief Resolve the id of QoS map that is referenced by tunnel
+ *
+ * Arguments:
+ *    @param[in] referencing_table_name - The name of table that is referencing the QoS map
+ *    @param[in] tunnle_name - The name of tunnel
+ *    @param[in] map_type_name - The type of referenced QoS map
+ *    @param[in] tuple - The KeyOpFieldsValuesTuple that contains keys - values
+ *
+ * Return Values:
+ *    @return The sai_object_id of referenced map, or SAI_NULL_OBJECT_ID  if there's an error
+ */
+sai_object_id_t QosOrch::resolveTunnelQosMap(std::string referencing_table_name, std::string tunnel_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple)
+{
+    sai_object_id_t id;
+    string object_name;
+    ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+    if (status == ref_resolve_status::success)
+    {
+        
+        setObjectReference(m_qos_maps, referencing_table_name, tunnel_name, map_type_name, object_name);
+        SWSS_LOG_INFO("Resolved QoS map for table %s tunnel %s type %s name %s", referencing_table_name.c_str(), tunnel_name.c_str(), map_type_name.c_str(), object_name.c_str());
+        return id;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to resolve QoS map for table %s tunnel %s type %s", referencing_table_name.c_str(), tunnel_name.c_str(), map_type_name.c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
+}
+
+/**
+ * Function Description:
+ *    @brief Remove the reference from tunnel object. Called after tunnel is removed
+ *
+ * Arguments:
+ *    @param[in] referencing_table_name - The name of table that is referencing the QoS map
+ *    @param[in] tunnle_name - The name of tunnel
+ *
+ * Return Values:
+ *    @return no return
+ */
+void QosOrch::removeTunnelReference(std::string referencing_table_name, std::string tunnel_name)
+{
+    removeObject(m_qos_maps, referencing_table_name, tunnel_name);
+    SWSS_LOG_INFO("Freed QoS objects referenced by %s:%s", referencing_table_name.c_str(), tunnel_name.c_str());
+}
+

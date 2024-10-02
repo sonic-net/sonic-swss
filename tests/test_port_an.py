@@ -254,12 +254,11 @@ class TestPortAutoNeg(object):
         cfvs = swsscommon.FieldValuePairs([("admin_status", "up")])
         ctbl.set("Ethernet0", cfvs)
 
-        # enable warm restart
-        (exitcode, result) = dvs.runcmd("config warm_restart enable swss")
-        assert exitcode == 0
+
+        dvs.warm_restart_swss("true")
 
         # freeze orchagent for warm restart
-        (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
         time.sleep(2)
 
@@ -290,10 +289,69 @@ class TestPortAutoNeg(object):
 
         finally:
             # disable warm restart
-            dvs.runcmd("config warm_restart disable swss")
+            dvs.warm_restart_swss("disable")
             # slow down crm polling
-            dvs.runcmd("crm config polling interval 10000")
+            dvs.crm_poll_set("10000")
 
+    def test_PortAutoNegRemoteAdvSpeeds(self, dvs, testlog):
+
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+
+        ctbl = swsscommon.Table(cdb, "PORT")
+        stbl = swsscommon.Table(sdb, "PORT_TABLE")
+
+        # set autoneg = true and admin_status = up
+        fvs = swsscommon.FieldValuePairs([("autoneg","on"),("admin_status","up")])
+        ctbl.set("Ethernet0", fvs)
+
+        time.sleep(10)
+
+        (status, fvs) = stbl.get("Ethernet0")
+        assert status == True
+        assert "rmt_adv_speeds" in [fv[0] for fv in fvs]
+
+    def test_PortAdvWithoutAutoneg(self, dvs, testlog):
+
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+
+        tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+        ctbl = swsscommon.Table(cdb, "PORT")
+        stbl = swsscommon.Table(sdb, "PORT_TABLE")
+
+        # set autoneg = off
+        fvs = swsscommon.FieldValuePairs([("autoneg", "off")])
+        ctbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+        fvs = swsscommon.FieldValuePairs([("adv_speeds", "100,1000"),
+                                          ("adv_interface_types", "CR2,CR4")])
+        ctbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+
+        assert "SAI_PORT_ATTR_AUTO_NEG_MODE" in [fv[0] for fv in fvs]
+        assert "SAI_PORT_ATTR_ADVERTISED_SPEED" in [fv[0] for fv in fvs]
+        assert "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE" in [fv[0] for fv in fvs]
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_AUTO_NEG_MODE":
+                assert fv[1] == "false"
+            elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_SPEED":
+                assert fv[1] == "2:100,1000"
+            elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE":
+                assert fv[1] == "2:SAI_PORT_INTERFACE_TYPE_CR2,SAI_PORT_INTERFACE_TYPE_CR4"
+
+        # set admin up
+        cfvs = swsscommon.FieldValuePairs([("admin_status", "up")])
+        ctbl.set("Ethernet0", cfvs)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

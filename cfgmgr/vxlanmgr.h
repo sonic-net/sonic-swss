@@ -6,6 +6,7 @@
 #include "orch.h"
 
 #include <map>
+#include <vector>
 #include <memory>
 #include <string>
 #include <utility>
@@ -69,7 +70,9 @@ private:
     void delAppDBTunnelMapTable(std::string vxlanTunnelMapName);
     int createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id,
                              std::string src_ip, std::string dst_ip, std::string vlan_id);
+    int downVxlanNetdevice(std::string vxlan_dev_name);
     int deleteVxlanNetdevice(std::string vxlan_dev_name);
+    std::vector<std::string> parseNetDev(const std::string& stdout);
     void getAllVxlanNetDevices();
 
     /*
@@ -87,6 +90,7 @@ private:
     bool deleteVxlan(const VxlanInfo & info);
 
     void clearAllVxlanDevices();
+    void disableLearningForAllVxlanNetdevices();
 
     ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable,m_appEvpnNvoTable;
     Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable;

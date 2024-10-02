@@ -145,6 +145,21 @@ using swss::StatusCode;
         return RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL_RC_;                                                           \
     } while (0)
 
+#define SAI_RANGED_STATUS_IS_INVALID_ATTRIBUTE(x)                                                                      \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_INVALID_ATTRIBUTE_0))
+
+#define SAI_RANGED_STATUS_IS_INVALID_ATTR_VALUE(x)                                                                     \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_INVALID_ATTR_VALUE_0))
+
+#define SAI_RANGED_STATUS_IS_ATTR_NOT_IMPLEMENTED(x)                                                                   \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_ATTR_NOT_IMPLEMENTED_0))
+
+#define SAI_RANGED_STATUS_IS_UNKNOWN_ATTRIBUTE(x)                                                                      \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_UNKNOWN_ATTRIBUTE_0))
+
+#define SAI_RANGED_STATUS_IS_ATTR_NOT_SUPPORTED(x)                                                                     \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_ATTR_NOT_SUPPORTED_0))
+
 class ReturnCode
 {
   public:
@@ -162,13 +177,54 @@ class ReturnCode
     ReturnCode(const sai_status_t &status, const std::string &message = "")
         : stream_(std::ios_base::out | std::ios_base::ate), is_sai_(true)
     {
-        if (m_saiStatusCodeLookup.find(status) == m_saiStatusCodeLookup.end())
+        // Non-ranged SAI codes that are not included in this lookup map will map to
+        // SWSS_RC_UNKNOWN. This includes the general SAI failure:
+        // SAI_STATUS_FAILURE.
+        static const auto *const saiStatusCodeLookup = new std::unordered_map<sai_status_t, StatusCode>({
+            {SAI_STATUS_SUCCESS, StatusCode::SWSS_RC_SUCCESS},
+            {SAI_STATUS_NOT_SUPPORTED, StatusCode::SWSS_RC_UNIMPLEMENTED},
+            {SAI_STATUS_NO_MEMORY, StatusCode::SWSS_RC_NO_MEMORY},
+            {SAI_STATUS_INSUFFICIENT_RESOURCES, StatusCode::SWSS_RC_FULL},
+            {SAI_STATUS_INVALID_PARAMETER, StatusCode::SWSS_RC_INVALID_PARAM},
+            {SAI_STATUS_ITEM_ALREADY_EXISTS, StatusCode::SWSS_RC_EXISTS},
+            {SAI_STATUS_ITEM_NOT_FOUND, StatusCode::SWSS_RC_NOT_FOUND},
+            {SAI_STATUS_TABLE_FULL, StatusCode::SWSS_RC_FULL},
+            {SAI_STATUS_NOT_IMPLEMENTED, StatusCode::SWSS_RC_UNIMPLEMENTED},
+            {SAI_STATUS_OBJECT_IN_USE, StatusCode::SWSS_RC_IN_USE},
+            {SAI_STATUS_NOT_EXECUTED, StatusCode::SWSS_RC_NOT_EXECUTED},
+        });
+
+        if (saiStatusCodeLookup->find(status) == saiStatusCodeLookup->end())
         {
-            status_ = StatusCode::SWSS_RC_UNKNOWN;
+            // Check for ranged SAI codes.
+            if (SAI_RANGED_STATUS_IS_INVALID_ATTRIBUTE(status))
+            {
+                status_ = StatusCode::SWSS_RC_INVALID_PARAM;
+            }
+            else if (SAI_RANGED_STATUS_IS_INVALID_ATTR_VALUE(status))
+            {
+                status_ = StatusCode::SWSS_RC_INVALID_PARAM;
+            }
+            else if (SAI_RANGED_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+            {
+                status_ = StatusCode::SWSS_RC_UNIMPLEMENTED;
+            }
+            else if (SAI_RANGED_STATUS_IS_UNKNOWN_ATTRIBUTE(status))
+            {
+                status_ = StatusCode::SWSS_RC_INVALID_PARAM;
+            }
+            else if (SAI_RANGED_STATUS_IS_ATTR_NOT_SUPPORTED(status))
+            {
+                status_ = StatusCode::SWSS_RC_UNIMPLEMENTED;
+            }
+            else
+            {
+                status_ = StatusCode::SWSS_RC_UNKNOWN;
+            }
         }
         else
         {
-            status_ = m_saiStatusCodeLookup[status];
+            status_ = saiStatusCodeLookup->at(status);
         }
         stream_ << message;
     }
@@ -259,21 +315,6 @@ class ReturnCode
     }
 
   private:
-    // SAI codes that are not included in this lookup map will map to
-    // SWSS_RC_UNKNOWN. This includes the general SAI failure: SAI_STATUS_FAILURE.
-    std::unordered_map<sai_status_t, StatusCode> m_saiStatusCodeLookup = {
-        {SAI_STATUS_SUCCESS, StatusCode::SWSS_RC_SUCCESS},
-        {SAI_STATUS_NOT_SUPPORTED, StatusCode::SWSS_RC_UNIMPLEMENTED},
-        {SAI_STATUS_NO_MEMORY, StatusCode::SWSS_RC_NO_MEMORY},
-        {SAI_STATUS_INSUFFICIENT_RESOURCES, StatusCode::SWSS_RC_FULL},
-        {SAI_STATUS_INVALID_PARAMETER, StatusCode::SWSS_RC_INVALID_PARAM},
-        {SAI_STATUS_ITEM_ALREADY_EXISTS, StatusCode::SWSS_RC_EXISTS},
-        {SAI_STATUS_ITEM_NOT_FOUND, StatusCode::SWSS_RC_NOT_FOUND},
-        {SAI_STATUS_TABLE_FULL, StatusCode::SWSS_RC_FULL},
-        {SAI_STATUS_NOT_IMPLEMENTED, StatusCode::SWSS_RC_UNIMPLEMENTED},
-        {SAI_STATUS_OBJECT_IN_USE, StatusCode::SWSS_RC_IN_USE},
-    };
-
     StatusCode status_;
     std::stringstream stream_;
     // Whether the ReturnCode is generated from a SAI status code or not.

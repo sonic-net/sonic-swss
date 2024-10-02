@@ -21,6 +21,8 @@
 #include "neighorch.h"
 #include "crmorch.h"
 #include "routeorch.h"
+#include "tunneldecaporch.h"
+#include "flowcounterrouteorch.h"
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
@@ -37,10 +39,12 @@ extern PortsOrch *gPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern RouteOrch *gRouteOrch;
 extern MacAddress gVxlanMacAddress;
 extern BfdOrch *gBfdOrch;
-
+extern SwitchOrch *gSwitchOrch;
+extern TunnelDecapOrch *gTunneldecapOrch;
 /*
  * VRF Modeling and VNetVrf class definitions
  */
@@ -97,6 +101,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
                            vnet_name_.c_str(), status);
             throw std::runtime_error("Failed to create VR object");
         }
+        gFlowCounterRouteOrch->onAddVR(router_id);
         return true;
     };
 
@@ -167,6 +172,28 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
     }
 
     return true;
+}
+
+void VNetVrfObject::addProfile(IpPrefix& ipPrefix, string& profile)
+{
+    profile_[ipPrefix] = profile;
+}
+
+void VNetVrfObject::removeProfile(IpPrefix& ipPrefix)
+{
+    if (profile_.find(ipPrefix) != profile_.end())
+    {
+        profile_.erase(ipPrefix);
+    }
+}
+
+string VNetVrfObject::getProfile(IpPrefix& ipPrefix)
+{
+    if (profile_.find(ipPrefix) != profile_.end())
+    {
+        return profile_[ipPrefix];
+    }
+    return string();
 }
 
 void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
@@ -309,12 +336,16 @@ VNetVrfObject::~VNetVrfObject()
     set<sai_object_id_t> vr_ent = getVRids();
     for (auto it : vr_ent)
     {
-        sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
-        if (status != SAI_STATUS_SUCCESS)
+        if (it != gVirtualRouterId)
         {
-            SWSS_LOG_ERROR("Failed to remove virtual router name: %s, rv:%d",
-                            vnet_name_.c_str(), status);
+            sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove virtual router name: %s, rv:%d",
+                                vnet_name_.c_str(), status);
+            }
         }
+        gFlowCounterRouteOrch->onRemoveVR(it);
     }
 
     SWSS_LOG_INFO("VNET '%s' deleted ", vnet_name_.c_str());
@@ -400,6 +431,7 @@ bool VNetOrch::addOperation(const Request& request)
     uint32_t vni=0;
     string tunnel;
     string scope;
+    swss::MacAddress overlay_dmac;
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -431,6 +463,10 @@ bool VNetOrch::addOperation(const Request& request)
         {
             advertise_prefix = request.getAttrBool("advertise_prefix");
         }
+        else if (name == "overlay_dmac")
+        {
+            overlay_dmac = request.getAttrMacAddress("overlay_dmac");
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -457,7 +493,7 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix };
+                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix, overlay_dmac };
                 obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
 
@@ -475,9 +511,14 @@ bool VNetOrch::addOperation(const Request& request)
             else
             {
                 SWSS_LOG_NOTICE("VNET '%s' already exists ", vnet_name.c_str());
+                if (!!overlay_dmac && overlay_dmac != it->second->getOverlayDMac())
+                {
+                    it->second->setOverlayDMac(overlay_dmac);
+                    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+                    vnet_route_orch->updateAllMonitoringSession(vnet_name);
+                }
             }
         }
-
         if (create)
         {
             vnet_table_[vnet_name] = std::move(obj);
@@ -551,6 +592,40 @@ bool VNetOrch::delOperation(const Request& request)
     return true;
 }
 
+bool VNetOrch::getVrfIdByVnetName(const std::string& vnet_name, sai_object_id_t &vrf_id)
+{
+    if (!isVnetExists(vnet_name))
+    {
+        return false;
+    }
+
+    auto *vrf_obj = getTypePtr<VNetVrfObject>(vnet_name);
+    // Now we only support ingress VR for VNET, so just get ingress VR ID
+    // Once we support egress VR, need revisit here.
+    vrf_id = vrf_obj->getVRidIngress();
+    return vrf_id != SAI_NULL_OBJECT_ID;
+}
+
+bool VNetOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name)
+{
+    for (auto &entry : vnet_table_)
+    {
+        auto *vrf_obj = dynamic_cast<VNetVrfObject *>(entry.second.get());
+        if (!vrf_obj)
+        {
+            continue;
+        }
+
+        if (vrf_obj->getVRidIngress() == vrf_id)
+        {
+            vnet_name = entry.first;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /*
  * Vnet Route Handling
  */
@@ -583,6 +658,8 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
+    gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vr_id, ip_pfx, false);
+
     return true;
 }
 
@@ -614,6 +691,8 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
+    gFlowCounterRouteOrch->onAddMiscRouteEntry(vr_id, ip_pfx, false);
+
     return true;
 }
 
@@ -640,7 +719,8 @@ static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_obj
 }
 
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
-                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), bfd_session_producer_(db, APP_BFD_SESSION_TABLE_NAME)
+                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), bfd_session_producer_(db, APP_BFD_SESSION_TABLE_NAME),
+                                    app_tunnel_decap_term_producer_(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -648,8 +728,11 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 
     state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    app_db_ = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
+
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
     state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));
+    monitor_session_producer_ = unique_ptr<Table>(new Table(app_db_.get(), APP_VNET_MONITOR_TABLE_NAME));
 
     gBfdOrch->attach(this);
 }
@@ -665,7 +748,7 @@ sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextH
     return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 }
 
-bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring)
 {
     SWSS_LOG_ENTER();
 
@@ -680,10 +763,13 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
+    std::map<NextHopKey, uint32_t> nh_seq_id_in_nhgrp;
+    uint32_t seq_id = 0;
 
     for (auto it : next_hop_set)
     {
-        if (nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
+        nh_seq_id_in_nhgrp[it] = ++seq_id;
+        if (monitoring != "custom" && nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
         {
             continue;
         }
@@ -696,7 +782,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     vector<sai_attribute_t> nhg_attrs;
 
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+    nhg_attr.value.s32 = gSwitchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
     nhg_attrs.push_back(nhg_attr);
 
     sai_object_id_t next_hop_group_id;
@@ -732,6 +818,13 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
         nhgm_attr.value.oid = nhid;
         nhgm_attrs.push_back(nhgm_attr);
+
+        if (gSwitchOrch->checkOrderedEcmpEnable())
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+            nhgm_attr.value.u32 = nh_seq_id_in_nhgrp[nhopgroup_members_set.find(nhid)->second];
+            nhgm_attrs.push_back(nhgm_attr);
+        }
 
         sai_object_id_t next_hop_group_member_id;
         status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
@@ -815,9 +908,178 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
     return true;
 }
 
+bool VNetRouteOrch::createNextHopGroup(const string& vnet,
+                                       NextHopGroupKey& nexthops,
+                                       VNetVrfObject *vrf_obj,
+                                       const string& monitoring)
+{
+
+    if (nexthops.getSize() == 0)
+    {
+        return true;
+    }
+    else if (nexthops.getSize() == 1)
+    {
+        NextHopKey nexthop(nexthops.to_string(), true);
+        NextHopGroupInfo next_hop_group_entry;
+        next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
+        next_hop_group_entry.ref_count = 0;
+        if (monitoring == "custom" || nexthop_info_[vnet].find(nexthop.ip_address) == nexthop_info_[vnet].end() || nexthop_info_[vnet][nexthop.ip_address].bfd_state == SAI_BFD_SESSION_STATE_UP)
+        {
+            next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
+        }
+        syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+    }
+    else
+    {
+        if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring))
+        {
+            SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
+            return false;
+        }
+    }
+    return true;
+}
+
+NextHopGroupKey VNetRouteOrch::getActiveNHSet(const string& vnet,
+                                       NextHopGroupKey& nexthops,
+                                       const IpPrefix& ipPrefix)
+{
+    // This  function takes  a nexthop group key and iterates over the nexthops in that group
+    // to identify the ones which are active based on their monitor session state.
+    // These next hops are collected into another next hop group key called nhg_custom and returned.
+    NextHopGroupKey nhg_custom("", true);
+    set<NextHopKey> next_hop_set = nexthops.getNextHops();
+    for (auto it : next_hop_set)
+    {
+        if(monitor_info_.find(vnet) != monitor_info_.end() &&
+            monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
+        {
+            for (auto monitor : monitor_info_[vnet][ipPrefix])
+            {
+                if (monitor.second.endpoint == it)
+                {
+                    if (monitor.second.state == MONITOR_SESSION_STATE_UP)
+                    {
+                        // monitor session exists and is up
+                        nhg_custom.add(it);
+
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+    return nhg_custom;
+}
+
+bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
+                                       NextHopGroupKey& nexthops_primary,
+                                       NextHopGroupKey& nexthops_secondary,
+                                       const string& monitoring,
+                                       IpPrefix& ipPrefix,
+                                       VNetVrfObject *vrf_obj,
+                                       NextHopGroupKey& nexthops_selected,
+                                       const map<NextHopKey, IpAddress>& monitors)
+{
+    // This function returns the next hop group which is to be used to in the hardware.
+    // for non priority tunnel routes, this would return nexthops_primary or its subset if
+    // BFD sessions for the endpoits in the NHG are up.
+    // For priority tunnel scenario, it sets up endpoint monitors for both primary and secondary.
+    // This is followed by an attempt to create a NHG which can be subset of nexthops_primary
+    // depending on the endpoint monitor state. If no NHG from primary is created, we attempt
+    // the same for secondary.
+    if(nexthops_secondary.getSize() != 0 && monitoring == "custom")
+    {
+        auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
+        if (it_route == syncd_tunnel_routes_[vnet].end())
+        {
+            setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, ipPrefix);
+            setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, ipPrefix);
+        }
+        else
+        {
+            if (it_route->second.primary != nexthops_primary)
+            {
+                setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, ipPrefix);
+            }
+            if (it_route->second.secondary != nexthops_secondary)
+            {
+                setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, ipPrefix);
+            }
+            nexthops_selected = it_route->second.nhg_key;
+            return true;
+        }
+
+        NextHopGroupKey nhg_custom = getActiveNHSet( vnet, nexthops_primary, ipPrefix);
+        if (!hasNextHopGroup(vnet, nhg_custom))
+        {
+            if (!createNextHopGroup(vnet, nhg_custom, vrf_obj, monitoring))
+            {
+                SWSS_LOG_WARN("Failed to create Primary based custom next hop group. Cannot proceed.");
+                delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
+                delEndpointMonitor(vnet, nexthops_secondary, ipPrefix);
+                monitor_info_[vnet].erase(ipPrefix);
+
+                return false;
+            }
+        }
+        if (nhg_custom.getSize() > 0 )
+        {
+            SWSS_LOG_INFO(" Created Primary based custom next hop group.%s", nhg_custom.to_string().c_str() );
+            nexthops_selected = nhg_custom;
+            return true;
+        }
+        NextHopGroupKey nhg_custom_sec = getActiveNHSet( vnet, nexthops_secondary, ipPrefix);
+
+        if (!hasNextHopGroup(vnet, nhg_custom_sec))
+        {
+            if (!createNextHopGroup(vnet, nhg_custom_sec, vrf_obj, monitoring))
+            {
+                SWSS_LOG_WARN("Failed to create secondary based custom next hop group. Cannot proceed.");
+                delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
+                delEndpointMonitor(vnet, nexthops_secondary, ipPrefix);
+                monitor_info_[vnet].erase(ipPrefix);
+
+                return false;
+            }
+        }
+        if (nhg_custom_sec.getSize() > 0 )
+        {
+            SWSS_LOG_INFO(" Created Secondary based custom next hop group.(%s).", nhg_custom_sec.to_string().c_str() );
+            nexthops_selected = nhg_custom_sec;
+            return true;
+        }
+        // nhg_custom is empty. we shall create a dummy enpty NHG for book keeping.
+        if (!hasNextHopGroup(vnet, nhg_custom) && !hasNextHopGroup(vnet, nhg_custom_sec) )
+        {
+            NextHopGroupInfo next_hop_group_entry;
+            next_hop_group_entry.next_hop_group_id = SAI_NULL_OBJECT_ID;
+            next_hop_group_entry.ref_count = 0;
+            syncd_nexthop_groups_[vnet][nhg_custom] = next_hop_group_entry;
+        }
+        nexthops_selected = nhg_custom;
+        return true;
+    }
+    else if (!hasNextHopGroup(vnet, nexthops_primary))
+    {
+        SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
+        setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, ipPrefix);
+        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring))
+        {
+            delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
+            return false;
+        }
+    }
+    nexthops_selected = nexthops_primary;
+    return true;
+}
+
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
-                                               NextHopGroupKey& nexthops, string& op, 
+                                               NextHopGroupKey& nexthops, string& op, string& profile,
+                                               const string& monitoring, NextHopGroupKey& nexthops_secondary,
+                                               const IpPrefix& adv_prefix,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -855,30 +1117,15 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     if (op == SET_COMMAND)
     {
-        sai_object_id_t nh_id;
-        if (!hasNextHopGroup(vnet, nexthops))
+        sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+        NextHopGroupKey active_nhg("", true);
+        if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, ipPrefix, vrf_obj, active_nhg, monitors))
         {
-            setEndpointMonitor(vnet, monitors, nexthops);
-            if (nexthops.getSize() == 1)
-            {
-                NextHopKey nexthop(nexthops.to_string(), true);
-                NextHopGroupInfo next_hop_group_entry;
-                next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
-                next_hop_group_entry.ref_count = 0;
-                next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
-                syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
-            }
-            else
-            {
-                if (!addNextHopGroup(vnet, nexthops, vrf_obj))
-                {
-                    delEndpointMonitor(vnet, nexthops);
-                    SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
-                    return false;
-                }
-            }
+            return true;
         }
-        nh_id = syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
+
+        // note: nh_id can be SAI_NULL_OBJECT_ID when active_nhg is empty.
+        nh_id = syncd_nexthop_groups_[vnet][active_nhg].next_hop_group_id;
 
         auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
         for (auto vr_id : vr_set)
@@ -886,11 +1133,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             bool route_status = true;
 
             // Remove route if the nexthop group has no active endpoint
-            if (syncd_nexthop_groups_[vnet][nexthops].active_members.empty())
+            if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty())
             {
                 if (it_route != syncd_tunnel_routes_[vnet].end())
                 {
-                    NextHopGroupKey nhg = it_route->second;
+                    NextHopGroupKey nhg = it_route->second.nhg_key;
                     // Remove route when updating from a nhg with active member to another nhg without
                     if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
                     {
@@ -906,12 +1153,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 }
                 else
                 {
-                    NextHopGroupKey nhg = it_route->second;
+                    NextHopGroupKey nhg = it_route->second.nhg_key;
                     if (syncd_nexthop_groups_[vnet][nhg].active_members.empty())
                     {
                         route_status = add_route(vr_id, pfx, nh_id);
-                    } 
-                    else 
+                    }
+                    else
                     {
                         route_status = update_route(vr_id, pfx, nh_id);
                     }
@@ -922,46 +1169,110 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 SWSS_LOG_ERROR("Route add/update failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                 /* Clean up the newly created next hop group entry */
-                if (nexthops.getSize() > 1)
+                if (active_nhg.getSize() > 1)
                 {
-                    removeNextHopGroup(vnet, nexthops, vrf_obj);
+                    removeNextHopGroup(vnet, active_nhg, vrf_obj);
                 }
                 return false;
             }
         }
-
-        if (it_route != syncd_tunnel_routes_[vnet].end())
+        bool route_updated = false;
+        bool priority_route_updated = false;
+        if (it_route != syncd_tunnel_routes_[vnet].end() &&
+            ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
+            (monitoring == "custom" && (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary))))
         {
-            // In case of updating an existing route, decrease the reference count for the previous nexthop group
-            NextHopGroupKey nhg = it_route->second;
-            if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+            route_updated = true;
+            NextHopGroupKey nhg = it_route->second.nhg_key;
+            if (monitoring == "custom")
             {
-                if (nexthops.getSize() > 1)
+                // if the previously active NHG is same as the newly created active NHG.case of primary secondary swap or
+                //when primary is active and secondary is changed or vice versa. In these cases we dont remove the NHG
+                // but only remove the monitors for the set which has changed.
+                if (it_route->second.primary != nexthops)
                 {
-                    removeNextHopGroup(vnet, nhg, vrf_obj);
+                    delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
                 }
-                else
+                if (it_route->second.secondary != nexthops_secondary)
                 {
-                    syncd_nexthop_groups_[vnet].erase(nhg);
-                    NextHopKey nexthop(nhg.to_string(), true);
-                    vrf_obj->removeTunnelNextHop(nexthop);
+                    delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
                 }
-                delEndpointMonitor(vnet, nhg);
+                if (monitor_info_[vnet][ipPrefix].empty())
+                {
+                    monitor_info_[vnet].erase(ipPrefix);
+                }
+                priority_route_updated = true;
             }
             else
             {
-                syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+                // In case of updating an existing route, decrease the reference count for the previous nexthop group
+                if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+                {
+                    if (nhg.getSize() > 1)
+                    {
+                        removeNextHopGroup(vnet, nhg, vrf_obj);
+                    }
+                    else
+                    {
+                        syncd_nexthop_groups_[vnet].erase(nhg);
+                        if(nhg.getSize() == 1)
+                        {
+                            NextHopKey nexthop(nhg.to_string(), true);
+                            vrf_obj->removeTunnelNextHop(nexthop);
+                        }
+                    }
+                    if (monitoring != "custom")
+                    {
+                        delEndpointMonitor(vnet, nhg, ipPrefix);
+                    }
+                }
+                else
+                {
+                    syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+                }
+                vrf_obj->removeRoute(ipPrefix);
+                vrf_obj->removeProfile(ipPrefix);
             }
-            vrf_obj->removeRoute(ipPrefix);
         }
+        if (!profile.empty())
+        {
+            vrf_obj->addProfile(ipPrefix, profile);
+        }
+        if (it_route == syncd_tunnel_routes_[vnet].end() || route_updated)
+        {
+            syncd_nexthop_groups_[vnet][active_nhg].tunnel_routes.insert(ipPrefix);
+            VNetTunnelRouteEntry tunnel_route_entry;
+            tunnel_route_entry.nhg_key = active_nhg;
+            tunnel_route_entry.primary = nexthops;
+            tunnel_route_entry.secondary = nexthops_secondary;
+            syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
+            syncd_nexthop_groups_[vnet][active_nhg].ref_count++;
 
-        syncd_nexthop_groups_[vnet][nexthops].tunnel_routes.insert(ipPrefix);
+            if (priority_route_updated)
+            {
+                MonitorUpdate update;
+                update.prefix = ipPrefix;
+                update.state = MONITOR_SESSION_STATE_UNKNOWN;
+                update.vnet = vnet;
+                updateVnetTunnelCustomMonitor(update);
+                return true;
+            }
 
-        syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
-        syncd_nexthop_groups_[vnet][nexthops].ref_count++;
-        vrf_obj->addRoute(ipPrefix, nexthops);
-
-        postRouteState(vnet, ipPrefix, nexthops);
+            if (adv_prefix.to_string() != ipPrefix.to_string() && prefix_to_adv_prefix_.find(ipPrefix) == prefix_to_adv_prefix_.end())
+            {
+                prefix_to_adv_prefix_[ipPrefix] = adv_prefix;
+                if (adv_prefix_refcount_.find(adv_prefix) == adv_prefix_refcount_.end())
+                {
+                    adv_prefix_refcount_[adv_prefix] = 0;
+                }
+                if(active_nhg.getSize() > 0)
+                {
+                    adv_prefix_refcount_[adv_prefix] += 1;
+                }
+            }
+            vrf_obj->addRoute(ipPrefix, active_nhg);
+        }
+        postRouteState(vnet, ipPrefix, active_nhg, profile);
     }
     else if (op == DEL_COMMAND)
     {
@@ -972,8 +1283,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 ipPrefix.to_string().c_str());
             return true;
         }
-        NextHopGroupKey nhg = it_route->second;
-
+        NextHopGroupKey nhg = it_route->second.nhg_key;
+        auto last_nhg_size = nhg.getSize();
         for (auto vr_id : vr_set)
         {
             // If an nhg has no active member, the route should already be removed
@@ -996,14 +1307,28 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             else
             {
                 syncd_nexthop_groups_[vnet].erase(nhg);
-                NextHopKey nexthop(nhg.to_string(), true);
-                vrf_obj->removeTunnelNextHop(nexthop);
+                // We need to check specifically if there is only one next hop active.
+                // In case of Priority routes we can end up in a situation where the active NHG has 0 nexthops.
+                if(nhg.getSize() == 1)
+                {
+                    NextHopKey nexthop(nhg.to_string(), true);
+                    vrf_obj->removeTunnelNextHop(nexthop);
+                }
             }
-            delEndpointMonitor(vnet, nhg);
+            if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
+            {
+                delEndpointMonitor(vnet, nhg, ipPrefix);
+            }
         }
         else
         {
             syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+        }
+        if (monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
+        {
+            delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
+            delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
+            monitor_info_[vnet].erase(ipPrefix);
         }
 
         syncd_tunnel_routes_[vnet].erase(ipPrefix);
@@ -1013,10 +1338,24 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
 
         vrf_obj->removeRoute(ipPrefix);
+        vrf_obj->removeProfile(ipPrefix);
 
         removeRouteState(vnet, ipPrefix);
-    }
+        if (prefix_to_adv_prefix_.find(ipPrefix) != prefix_to_adv_prefix_.end())
+        {
+            auto adv_pfx = prefix_to_adv_prefix_[ipPrefix];
+            prefix_to_adv_prefix_.erase(ipPrefix);
 
+            if (last_nhg_size > 0)
+            {
+                adv_prefix_refcount_[adv_pfx] -= 1;
+                if (adv_prefix_refcount_[adv_pfx] == 0)
+                {
+                    adv_prefix_refcount_.erase(adv_pfx);
+                }
+            }
+        }
+    }
     return true;
 }
 
@@ -1081,7 +1420,7 @@ bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
                 ipPrefix.to_string().c_str());
             return true;
         }
-        NextHopGroupKey nhg = it_route->second;
+        NextHopGroupKey nhg = it_route->second.nhg_key;
 
         for (auto vr_id : vr_set)
         {
@@ -1094,6 +1433,39 @@ bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
     }
 
     return true;
+}
+
+inline void VNetRouteOrch::createSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    if (!config.enable || subnet_decap_terms_created_.find(ipPrefix) != subnet_decap_terms_created_.end())
+    {
+        return;
+    }
+    SWSS_LOG_NOTICE("Add subnet decap term for %s", ipPrefix.to_string().c_str());
+    static const vector<FieldValueTuple> data = {
+        {"term_type", "MP2MP"},
+        {"subnet_type", "vip"}
+    };
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    app_tunnel_decap_term_producer_.set(key, data);
+    subnet_decap_terms_created_.insert(ipPrefix);
+}
+
+inline void VNetRouteOrch::removeSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    auto it = subnet_decap_terms_created_.find(ipPrefix);
+    if (it == subnet_decap_terms_created_.end())
+    {
+        return;
+    }
+    SWSS_LOG_NOTICE("Remove subnet decap term for %s", ipPrefix.to_string().c_str());
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    app_tunnel_decap_term_producer_.del(key);
+    subnet_decap_terms_created_.erase(it);
 }
 
 template<>
@@ -1254,7 +1626,7 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
-              
+
     if (op == SET_COMMAND)
     {
         addRoute(vnet_name, ip_pfx, nh);
@@ -1308,7 +1680,7 @@ void VNetRouteOrch::attach(Observer* observer, const IpAddress& dstAddr)
                         dstAddr.to_string().c_str());
         for (auto vnetEntry : bestRoute->second)
         {
-            VNetNextHopUpdate update = 
+            VNetNextHopUpdate update =
             {
                 SET_COMMAND,
                 vnetEntry.first, // vnet name
@@ -1349,7 +1721,7 @@ void VNetRouteOrch::detach(Observer* observer, const IpAddress& dstAddr)
     {
         for (auto vnetEntry : bestRoute->second)
         {
-            VNetNextHopUpdate update = 
+            VNetNextHopUpdate update =
             {
                 DEL_COMMAND,
                 vnetEntry.first, // vnet name
@@ -1370,12 +1742,12 @@ void VNetRouteOrch::addRoute(const std::string& vnet, const IpPrefix& ipPrefix, 
     {
         if (ipPrefix.isAddressInSubnet(next_hop_observer.first))
         {
-            auto route_insert_result = next_hop_observer.second.routeTable.emplace(ipPrefix, VNetEntry());            
+            auto route_insert_result = next_hop_observer.second.routeTable.emplace(ipPrefix, VNetEntry());
 
             auto vnet_result_result = route_insert_result.first->second.emplace(vnet, nh);
             if (!vnet_result_result.second)
             {
-                if (vnet_result_result.first->second.ips == nh.ips 
+                if (vnet_result_result.first->second.ips == nh.ips
                     && vnet_result_result.first->second.ifname == nh.ifname)
                 {
                     continue;
@@ -1386,7 +1758,7 @@ void VNetRouteOrch::addRoute(const std::string& vnet, const IpPrefix& ipPrefix, 
             // If the inserted route is the best route. (Table should not be empty. Because we inserted a new entry above)
             if (route_insert_result.first == --next_hop_observer.second.routeTable.end())
             {
-                VNetNextHopUpdate update = 
+                VNetNextHopUpdate update =
                 {
                     SET_COMMAND,
                     vnet, // vnet name
@@ -1424,7 +1796,7 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
             if ( itr == next_hop_observer->second.routeTable.end())
             {
                 SWSS_LOG_ERROR(
-                    "Failed to find any ip(%s) belong to this route(%s).", 
+                    "Failed to find any ip(%s) belong to this route(%s).",
                     next_hop_observer->first.to_string().c_str(),
                     ipPrefix.to_string().c_str());
                 assert(false);
@@ -1480,9 +1852,12 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
 
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
         data.push_back(fvTuple);
-
+        data.emplace_back("multihop", "true");
+        // The BFD sessions established by the Vnet routes with monitoring need to be brought down
+        // when the device goes into TSA.  The following parameter ensures that these session are
+        // brought down while transitioning to TSA and brought back up when transitioning to TSB.
+        data.emplace_back("shutdown_bfd_during_tsa", "true");
         bfd_session_producer_.set(key, data);
-
         bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
     }
 
@@ -1514,7 +1889,78 @@ void VNetRouteOrch::removeBfdSession(const string& vnet, const NextHopKey& endpo
     bfd_sessions_.erase(monitor_addr);
 }
 
-void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops)
+void VNetRouteOrch::updateAllMonitoringSession(const string& vnet)
+{
+    SWSS_LOG_ENTER();
+    vector<FieldValueTuple>  data;
+    auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+    auto overlay_dmac = vnet_obj->getOverlayDMac();
+    SWSS_LOG_INFO ("updating overlay dmac value to %s", overlay_dmac.to_string().c_str());
+
+    if (monitor_info_.find(vnet) != monitor_info_.end())
+    {
+        for (auto prefix : monitor_info_[vnet])
+        {
+            for (auto monitor_addr : monitor_info_[vnet][prefix.first])
+            {
+
+                string key = monitor_addr.first.to_string() + ":" + prefix.first.to_string();
+                SWSS_LOG_INFO ("updating the overlay dmac of %s", key.c_str());
+
+                FieldValueTuple fvTuple1("packet_type", "vxlan");
+                data.push_back(fvTuple1);
+
+                FieldValueTuple fvTuple3("overlay_dmac", overlay_dmac.to_string());
+                data.push_back(fvTuple3);
+
+                monitor_session_producer_->set(key, data);
+            }
+        }
+    }
+}
+
+void VNetRouteOrch::createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple>  data;
+    auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+
+    auto overlay_dmac = vnet_obj->getOverlayDMac();
+    string key = monitor_addr.to_string() + ":" + ipPrefix.to_string();
+    FieldValueTuple fvTuple1("packet_type", "vxlan");
+    data.push_back(fvTuple1);
+
+    FieldValueTuple fvTuple3("overlay_dmac", overlay_dmac.to_string());
+    data.push_back(fvTuple3);
+
+    monitor_session_producer_->set(key, data);
+
+    MonitorSessionInfo info = monitor_info_[vnet][ipPrefix][monitor_addr];
+    info.endpoint = endpoint;
+    info.ref_count = 1;
+    info.state = MONITOR_SESSION_STATE_DOWN;
+    monitor_info_[vnet][ipPrefix][monitor_addr] = info;
+
+}
+
+void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
+        monitor_info_[vnet][ipPrefix].find(monitor_addr) == monitor_info_[vnet][ipPrefix].end())
+    {
+        SWSS_LOG_NOTICE("Monitor session for prefix %s endpoint %s does not exist", ipPrefix.to_string().c_str(), endpoint.to_string().c_str());
+    }
+
+    string key = monitor_addr.to_string() + ":" + ipPrefix.to_string();
+
+    monitor_session_producer_->del(key);
+    monitor_info_[vnet][ipPrefix].erase(monitor_addr);
+}
+
+void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops, const string& monitoring, IpPrefix& ipPrefix)
 {
     SWSS_LOG_ENTER();
 
@@ -1522,41 +1968,128 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
     {
         NextHopKey nh = monitor.first;
         IpAddress monitor_ip = monitor.second;
-        if (nexthop_info_[vnet].find(nh.ip_address) == nexthop_info_[vnet].end())
+        set<NextHopKey> next_hop_set = nexthops.getNextHops();
+        if (next_hop_set.find(nh) != next_hop_set.end())
         {
-            createBfdSession(vnet, nh, monitor_ip);
-        }
-
-        nexthop_info_[vnet][nh.ip_address].ref_count++;
-    }
-}
-
-void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops)
-{
-    SWSS_LOG_ENTER();
-
-    std::set<NextHopKey> nhks = nexthops.getNextHops();
-    for (auto nhk: nhks)
-    {
-        IpAddress ip = nhk.ip_address;
-        if (nexthop_info_[vnet].find(ip) != nexthop_info_[vnet].end()) {
-            if (--nexthop_info_[vnet][ip].ref_count == 0)
+            if (monitoring == "custom")
             {
-                removeBfdSession(vnet, nhk, nexthop_info_[vnet][ip].monitor_addr);
+                if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
+                    monitor_info_[vnet][ipPrefix].find(monitor_ip) == monitor_info_[vnet][ipPrefix].end())
+                {
+                    createMonitoringSession(vnet, nh, monitor_ip, ipPrefix);
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Monitoring session for prefix %s endpoint %s, monitor %s already exists", ipPrefix.to_string().c_str(),
+                        nh.to_string().c_str(), monitor_ip.to_string().c_str());
+                    monitor_info_[vnet][ipPrefix][monitor_ip].ref_count += 1;
+                }
+            }
+            else
+            {
+                if (nexthop_info_[vnet].find(nh.ip_address) == nexthop_info_[vnet].end())
+                {
+                    createBfdSession(vnet, nh, monitor_ip);
+                }
+                nexthop_info_[vnet][nh.ip_address].ref_count++;
             }
         }
     }
 }
 
-void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
+void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    std::set<NextHopKey> nhks = nexthops.getNextHops();
+    bool is_custom_monitoring = false;
+    if (monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
+    {
+        is_custom_monitoring = true;
+    }
+    for (auto nhk: nhks)
+    {
+        IpAddress ip = nhk.ip_address;
+        if (is_custom_monitoring)
+        {
+            for ( auto monitor : monitor_info_[vnet][ipPrefix])
+            {
+                if (monitor.second.endpoint == nhk)
+                {
+                    if (--monitor_info_[vnet][ipPrefix][monitor.first].ref_count == 0)
+                    {
+                        removeMonitoringSession(vnet, nhk, monitor.first, ipPrefix);
+                        break;
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (nexthop_info_[vnet].find(ip) != nexthop_info_[vnet].end()) {
+                if (--nexthop_info_[vnet][ip].ref_count == 0)
+                {
+                    IpAddress monitor_addr = nexthop_info_[vnet][ip].monitor_addr;
+                    removeBfdSession(vnet, nhk, monitor_addr);
+                }
+            }
+        }
+    }
+}
+
+void VNetRouteOrch::updateMonitorState(string& op, const IpPrefix& prefix, const IpAddress& monitor, string state)
+{
+    SWSS_LOG_ENTER();
+    if( op == SET_COMMAND)
+    {
+        for (auto iter :  monitor_info_)
+        {
+            std::string vnet = iter.first;
+            if (monitor_info_[vnet].find(prefix) != monitor_info_[vnet].end() &&
+                monitor_info_[vnet][prefix].find(monitor) != monitor_info_[vnet][prefix].end())
+            {
+                if (state =="up")
+                {
+                    if (monitor_info_[vnet][prefix][monitor].state != MONITOR_SESSION_STATE_UP)
+                    {
+                        SWSS_LOG_NOTICE("Monitor session state for %s|%s (%s) changed from down to up", prefix.to_string().c_str(),
+                            monitor.to_string().c_str(), monitor_info_[vnet][prefix][monitor].endpoint.ip_address.to_string().c_str());
+                        struct MonitorUpdate status_update;
+                        status_update.state = MONITOR_SESSION_STATE_UP;
+                        status_update.prefix = prefix;
+                        status_update.monitor = monitor;
+                        status_update.vnet = vnet;
+                        updateVnetTunnelCustomMonitor(status_update);
+                    }
+                }
+                else if (state =="down")
+                {
+                    if (monitor_info_[vnet][prefix][monitor].state != MONITOR_SESSION_STATE_DOWN)
+                    {
+                        SWSS_LOG_NOTICE("Monitor session state for %s|%s (%s) changed from up to down", prefix.to_string().c_str(),
+                            monitor.to_string().c_str(), monitor_info_[vnet][prefix][monitor].endpoint.ip_address.to_string().c_str());
+                        struct MonitorUpdate status_update;
+                        status_update.state = MONITOR_SESSION_STATE_DOWN;
+                        status_update.prefix = prefix;
+                        status_update.monitor = monitor;
+                        status_update.vnet = vnet;
+                        updateVnetTunnelCustomMonitor(status_update);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     vector<FieldValueTuple> fvVector;
-
     NextHopGroupInfo& nhg_info = syncd_nexthop_groups_[vnet][nexthops];
     string route_state = nhg_info.active_members.empty() ? "inactive" : "active";
     string ep_str = "";
     int idx_ep = 0;
+
     for (auto nh_pair : nhg_info.active_members)
     {
         NextHopKey nh = nh_pair.first;
@@ -1569,16 +2102,35 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
 
     state_vnet_rt_tunnel_table_->set(state_db_key, fvVector);
 
+    auto prefix_to_use = ipPrefix;
+    if (prefix_to_adv_prefix_.find(ipPrefix) != prefix_to_adv_prefix_.end())
+    {
+        route_state = "";
+        auto adv_pfx = prefix_to_adv_prefix_[ipPrefix];
+        if (adv_prefix_refcount_[adv_pfx] == 1)
+        {
+            route_state = "active";
+            prefix_to_use = adv_pfx;
+        }
+     }
     if (vnet_orch_->getAdvertisePrefix(vnet))
     {
         if (route_state == "active")
         {
-            addRouteAdvertisement(ipPrefix);
+            addRouteAdvertisement(prefix_to_use, profile);
         }
-        else
+        else if (route_state == "inactive")
         {
-            removeRouteAdvertisement(ipPrefix);
+            removeRouteAdvertisement(prefix_to_use);
         }
+    }
+    if (route_state == "active")
+    {
+        createSubnetDecapTerm(prefix_to_use);
+    }
+    else if (route_state == "inactive")
+    {
+        removeSubnetDecapTerm(prefix_to_use);
     }
 }
 
@@ -1586,14 +2138,35 @@ void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     state_vnet_rt_tunnel_table_->del(state_db_key);
-    removeRouteAdvertisement(ipPrefix);
+
+    if(prefix_to_adv_prefix_.find(ipPrefix) !=prefix_to_adv_prefix_.end())
+    {
+        auto adv_pfx = prefix_to_adv_prefix_[ipPrefix];
+        if(adv_prefix_refcount_[adv_pfx] == 1)
+        {
+            removeRouteAdvertisement(adv_pfx);
+            removeSubnetDecapTerm(adv_pfx);
+        }
+    }
+    else
+    {
+        removeRouteAdvertisement(ipPrefix);
+        removeSubnetDecapTerm(ipPrefix);
+    }
 }
 
-void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix)
+void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix, string& profile)
 {
     const string key = ipPrefix.to_string();
     vector<FieldValueTuple> fvs;
-    fvs.push_back(FieldValueTuple("", ""));
+    if (profile.empty())
+    {
+        fvs.push_back(FieldValueTuple("", ""));
+    }
+    else
+    {
+        fvs.push_back(FieldValueTuple("profile", profile));
+    }
     state_vnet_rt_adv_table_->set(key, fvs);
 }
 
@@ -1633,7 +2206,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
     size_t found_vrf = key.find(state_db_key_delimiter);
     if (found_vrf == string::npos)
     {
-        SWSS_LOG_ERROR("Failed to parse key %s, no vrf is given", key.c_str());
+        SWSS_LOG_WARN("Failed to parse key %s, no vrf is given", key.c_str());
         return;
     }
 
@@ -1680,7 +2253,20 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
         NextHopGroupKey nexthops = nhg_info_pair.first;
         NextHopGroupInfo& nhg_info = nhg_info_pair.second;
 
-        if (!(nexthops.contains(endpoint)))
+        std::set<NextHopKey> next_hop_set = nexthops.getNextHops();
+        uint32_t seq_id = 0;
+        uint32_t nh_seq_id = 0;
+        for (auto nh: next_hop_set)
+        {
+            seq_id++;
+            if (nh == endpoint)
+            {
+                nh_seq_id = seq_id;
+                break;
+            }
+        }
+
+        if (!nh_seq_id)
         {
             continue;
         }
@@ -1701,6 +2287,13 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
                 nhgm_attr.value.oid = vrf_obj->getTunnelNextHop(endpoint);
                 nhgm_attrs.push_back(nhgm_attr);
+
+                if (gSwitchOrch->checkOrderedEcmpEnable())
+                {
+                    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+                    nhgm_attr.value.u32 = nh_seq_id;
+                    nhgm_attrs.push_back(nhgm_attr);
+                }
 
                 sai_status_t status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
                                                                                 gSwitchId,
@@ -1784,7 +2377,231 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
         // Post configured in State DB
         for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
         {
-            postRouteState(vnet, ip_pfx, nexthops);
+            string profile = vrf_obj->getProfile(ip_pfx);
+            postRouteState(vnet, ip_pfx, nexthops, profile);
+        }
+    }
+}
+
+void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
+{
+    SWSS_LOG_ENTER();
+// This function recieves updates from the MonitorOrch for the endpoints state.
+// Based on the state of the endpoints for a particular route, this function attempts
+// to construct the primary next hop group. if it fails to do so,it attempts to create
+// the secondary next hop group. After that it applies the next hop group and deletes
+// the old next hop group.
+// This function is also called in the case when the route configuration is updated to
+// apply the new next hop group. In this case, the caller sets the state to
+// MONITOR_SESSION_STATE_UNKNOWN and config_update and updateRoute are set to true.
+// This function should never recieve MONITOR_SESSION_STATE_UNKNOWN from MonitorOrch.
+
+    auto prefix = update.prefix;
+    auto state = update.state;
+    auto monitor = update.monitor;
+    auto vnet = update.vnet;
+    bool updateRoute = false;
+    bool config_update = false;
+    if (state != MONITOR_SESSION_STATE_UNKNOWN)
+    {
+        monitor_info_[vnet][prefix][monitor].state = state;
+    }
+    else
+    {
+        // we are coming here as a result of route config update. We need to repost the route if applicable.
+        updateRoute = true;
+        config_update = true;
+    }
+
+    auto route = syncd_tunnel_routes_[vnet].find(prefix);
+    if (route == syncd_tunnel_routes_[vnet].end())
+    {
+        SWSS_LOG_ERROR("Unexpected! Monitor Update for absent route.");
+        return;
+
+    }
+    auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+    set<sai_object_id_t> vr_set;
+
+    auto l_fn = [&] (const string& vnet) {
+        auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+        sai_object_id_t vr_id = vnet_obj->getVRidIngress();
+        vr_set.insert(vr_id);
+    };
+
+    l_fn(vnet);
+
+    auto primary = route->second.primary;
+    auto secondary = route->second.secondary;
+    auto active_nhg = route->second.nhg_key;
+    NextHopGroupKey nhg_custom("", true);
+    sai_ip_prefix_t pfx;
+    copy(pfx, prefix);
+    NextHopGroupKey nhg_custom_primary = getActiveNHSet( vnet, primary, prefix);
+    NextHopGroupKey nhg_custom_secondary = getActiveNHSet( vnet, secondary, prefix);
+    if (nhg_custom_primary.getSize() > 0)
+    {
+        if (nhg_custom_primary != active_nhg )
+        {
+            if (!hasNextHopGroup(vnet, nhg_custom_primary))
+            {
+                if (!createNextHopGroup(vnet, nhg_custom_primary, vrf_obj, "custom"))
+                {
+                    SWSS_LOG_WARN("Failed to create primary based custom next hop group. Cannot proceed.");
+                    return;
+                }
+            }
+            updateRoute = true;
+        }
+        if (updateRoute)
+        {
+            nhg_custom = nhg_custom_primary;
+        }
+    }
+    else if (nhg_custom_secondary.getSize() > 0)
+    {
+        if (nhg_custom_secondary != active_nhg )
+        {
+            if (!hasNextHopGroup(vnet, nhg_custom_secondary))
+            {
+                if (!createNextHopGroup(vnet, nhg_custom_secondary, vrf_obj, "custom"))
+                {
+                    SWSS_LOG_WARN("Failed to create primary based custom next hop group. Cannot proceed.");
+                    return;
+                }
+            }
+            updateRoute = true;
+        }
+        if (updateRoute)
+        {
+            nhg_custom = nhg_custom_secondary;
+        }
+    }
+    else
+    {
+        //both HHG's are inactive, need to remove the route.
+        updateRoute = true;
+    }
+
+    if (nhg_custom.getSize() == 0)
+    {
+        // nhg_custom is empty. we shall create a dummy empty NHG for book keeping.
+        SWSS_LOG_INFO(" Neither Primary or Secondary endpoints are up.");
+        if (!hasNextHopGroup(vnet, nhg_custom))
+        {
+            NextHopGroupInfo next_hop_group_entry;
+            next_hop_group_entry.next_hop_group_id = SAI_NULL_OBJECT_ID;
+            next_hop_group_entry.ref_count = 0;
+            syncd_nexthop_groups_[vnet][nhg_custom] = next_hop_group_entry;
+        }
+    }
+    auto active_nhg_size = active_nhg.getSize();
+    if (updateRoute)
+    {
+        for (auto vr_id : vr_set)
+        {
+            if (nhg_custom.getSize() == 0)
+            {
+                if (active_nhg_size > 0)
+                {
+                    // we need to remove the route
+                    del_route(vr_id, pfx);
+                }
+            }
+            else
+            {
+                bool route_status = true;
+                // note: nh_id can be SAI_NULL_OBJECT_ID when active_nhg is empty.
+                auto nh_id = syncd_nexthop_groups_[vnet][nhg_custom].next_hop_group_id;
+                if (active_nhg_size > 0)
+                {
+                    // we need to replace the nhg in the route
+                    route_status = update_route(vr_id, pfx, nh_id);
+                }
+                else
+                {
+                    // we need to readd the route.
+                    route_status = add_route(vr_id, pfx, nh_id);
+                }
+                if (!route_status)
+                {
+                    SWSS_LOG_ERROR("Route add/update failed for %s, vr_id '0x%" PRIx64, prefix.to_string().c_str(), vr_id);
+                    /* Clean up the newly created next hop group entry */
+                    if (nhg_custom.getSize() > 1)
+                    {
+                        removeNextHopGroup(vnet, nhg_custom, vrf_obj);
+                    }
+                    return;
+                }
+                vrf_obj->addRoute(prefix, nhg_custom);
+            }
+        }
+        if (config_update && nhg_custom != active_nhg)
+        {
+            // This convoluted logic has very good reason behind it.
+            // when a route configuration gets updated, if the new endpoints are same but primaries
+            // are changed, we must increase the ref count of active group to save it from premature
+            // deletion at this place. So, we increment the refcount of existing active_nhg in doRotueTask right
+            // before we call this function. Once here we need to undo this increment of refCount for the active_nhg
+            // which is no longer relevant.
+            syncd_nexthop_groups_[vnet][active_nhg].ref_count--;
+        }
+
+        if(--syncd_nexthop_groups_[vnet][active_nhg].ref_count == 0)
+        {
+            if (active_nhg_size > 1)
+            {
+                removeNextHopGroup(vnet, active_nhg, vrf_obj);
+            }
+            else
+            {
+                syncd_nexthop_groups_[vnet].erase(active_nhg);
+                if(active_nhg_size == 1)
+                {
+                    NextHopKey nexthop(active_nhg.to_string(), true);
+                    vrf_obj->removeTunnelNextHop(nexthop);
+                }
+            }
+        }
+        else
+        {
+            syncd_nexthop_groups_[vnet][active_nhg].tunnel_routes.erase(prefix);
+        }
+        syncd_nexthop_groups_[vnet][nhg_custom].tunnel_routes.insert(prefix);
+        syncd_tunnel_routes_[vnet][prefix].nhg_key = nhg_custom;
+        if (nhg_custom != active_nhg)
+        {
+            syncd_nexthop_groups_[vnet][nhg_custom].ref_count++;
+        }
+        if (nhg_custom.getSize() == 0 && active_nhg_size > 0)
+        {
+            vrf_obj->removeRoute(prefix);
+            removeRouteState(vnet, prefix);
+            if (prefix_to_adv_prefix_.find(prefix) != prefix_to_adv_prefix_.end())
+            {
+                auto adv_pfx = prefix_to_adv_prefix_[prefix];
+                adv_prefix_refcount_[adv_pfx] -=1;
+                if (adv_prefix_refcount_[adv_pfx] == 0)
+                {
+                    adv_prefix_refcount_.erase(adv_pfx);
+                }
+            }
+        }
+        else if (nhg_custom.getSize() > 0 && active_nhg_size == 0)
+        {
+            auto adv_prefix = prefix_to_adv_prefix_[prefix];
+            if (adv_prefix_refcount_.find(adv_prefix) == adv_prefix_refcount_.end())
+            {
+                adv_prefix_refcount_[adv_prefix] = 0;
+            }
+            adv_prefix_refcount_[adv_prefix] += 1;
+            string profile = vrf_obj->getProfile(prefix);
+            postRouteState(vnet, prefix, nhg_custom, profile);
+        }
+        else
+        {
+            string profile = vrf_obj->getProfile(prefix);
+            postRouteState(vnet, prefix, nhg_custom, profile);
         }
     }
 }
@@ -1797,7 +2614,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<string> mac_list;
     vector<string> vni_list;
     vector<IpAddress> monitor_list;
-
+    string profile = "";
+    vector<IpAddress> primary_list;
+    string monitoring;
+    swss::IpPrefix adv_prefix;
+    bool has_priority_ep = false;
+    bool has_adv_pfx = false;
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
@@ -1817,6 +2639,23 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         else if (name == "endpoint_monitor")
         {
             monitor_list = request.getAttrIPList(name);
+        }
+        else if (name == "profile")
+        {
+            profile = request.getAttrString(name);
+        }
+        else if (name == "primary")
+        {
+            primary_list = request.getAttrIPList(name);
+        }
+        else if (name == "monitoring")
+        {
+            monitoring = request.getAttrString(name);
+        }
+        else if (name == "adv_prefix")
+        {
+            adv_prefix = request.getAttrIpPrefix(name);
+            has_adv_pfx = true;
         }
         else
         {
@@ -1842,7 +2681,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         SWSS_LOG_ERROR("Peer monitor size of %zu does not match endpoint size of %zu", monitor_list.size(), ip_list.size());
         return false;
     }
-    
+    if (!primary_list.empty() && monitor_list.empty())
+    {
+        SWSS_LOG_ERROR("Primary/backup behaviour cannot function without endpoint monitoring.");
+        return true;
+    }
+
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
@@ -1850,6 +2694,14 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
+    if (!primary_list.empty())
+    {
+        has_priority_ep = true;
+        SWSS_LOG_INFO("Handling Priority Tunnel with prefix %s", ip_pfx.to_string().c_str());
+    }
+
+    NextHopGroupKey nhg_primary("", true);
+    NextHopGroupKey nhg_secondary("", true);
     NextHopGroupKey nhg("", true);
     map<NextHopKey, IpAddress> monitors;
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
@@ -1872,16 +2724,31 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
 
         NextHopKey nh(ip, mac, vni, true);
-        nhg.add(nh);
         if (!monitor_list.empty())
         {
             monitors[nh] = monitor_list[idx_ip];
         }
+        if (has_priority_ep)
+        {
+            if (std::find(primary_list.begin(), primary_list.end(), ip) != primary_list.end())
+            {
+                // only add the primary endpoint ips.
+                nhg_primary.add(nh);
+            }
+            else
+            {
+                nhg_secondary.add(nh);
+            }
+        }
+        nhg.add(nh);
     }
-
+    if (!has_adv_pfx)
+    {
+        adv_prefix = ip_pfx;
+    }
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op, monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, nhg_secondary, adv_prefix, monitors);
     }
 
     return true;
@@ -2024,6 +2891,47 @@ bool VNetCfgRouteOrch::doVnetRouteTask(const KeyOpFieldsValuesTuple & t, const s
         SWSS_LOG_ERROR("Unknown command : %s", op.c_str());
         return false;
     }
+
+    return true;
+}
+
+MonitorOrch::MonitorOrch(DBConnector *db, string tableName):
+    Orch2(db, tableName, request_)
+{
+    SWSS_LOG_ENTER();
+}
+
+MonitorOrch::~MonitorOrch(void)
+{
+    SWSS_LOG_ENTER();
+}
+
+bool MonitorOrch::addOperation(const Request& request)
+{
+    SWSS_LOG_ENTER();
+    auto monitor = request.getKeyIpAddress(0);
+    auto ip_Prefix = request.getKeyIpPrefix(1);
+
+    auto session_state = request.getAttrString("state");
+    SWSS_LOG_INFO("Added state table entry for monitor %s|%s", ip_Prefix.to_string().c_str(),monitor.to_string().c_str());
+
+    string op = SET_COMMAND;
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    vnet_route_orch->updateMonitorState(op ,ip_Prefix, monitor, session_state );
+
+    return true;
+}
+
+bool MonitorOrch::delOperation(const Request& request)
+{
+    SWSS_LOG_ENTER();
+    auto monitor = request.getKeyIpAddress(0);
+    auto ip_Prefix = request.getKeyIpPrefix(1);
+
+    SWSS_LOG_INFO("Deleting state table entry for monitor %s|%s", ip_Prefix.to_string().c_str(),monitor.to_string().c_str());
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    string op = DEL_COMMAND;
+    vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, "" );
 
     return true;
 }

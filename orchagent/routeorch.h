@@ -23,8 +23,15 @@
 #define EUI64_INTF_ID_LEN 8
 
 #define LOOPBACK_PREFIX     "Loopback"
+#define VLAN_PREFIX         "Vlan"
 
-typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
+struct NextHopGroupMemberEntry
+{
+    sai_object_id_t  next_hop_id; // next hop sai oid
+    uint32_t         seq_id; // Sequence Id of nexthop in the group
+};
+
+typedef std::map<NextHopKey, NextHopGroupMemberEntry> NextHopGroupMembers;
 
 struct NhgBase;
 
@@ -116,8 +123,12 @@ struct RouteBulkContext
     // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
     bool                                using_temp_nhg;
 
-    RouteBulkContext()
-        : excp_intfs_flag(false), using_temp_nhg(false)
+    std::string                         key;       // Key in database table
+    std::string                         protocol;  // Protocol string
+    bool                                is_set;    // True if set operation
+
+    RouteBulkContext(const std::string& key, bool is_set)
+        : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set)
     {
     }
 
@@ -133,6 +144,8 @@ struct RouteBulkContext
         excp_intfs_flag = false;
         vrf_id = SAI_NULL_OBJECT_ID;
         using_temp_nhg = false;
+        key.clear();
+        protocol.clear();
     }
 };
 
@@ -189,6 +202,7 @@ public:
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
     void removeNextHopRoute(const NextHopKey&, const RouteKey&);
     bool updateNextHopRoutes(const NextHopKey&, uint32_t&);
+    bool getRoutesForNexthop(std::set<RouteKey>&, const NextHopKey&);
 
     bool validnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
     bool invalidnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
@@ -208,10 +222,11 @@ public:
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
-    
+
     void increaseNextHopGroupCount();
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
+    const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
 
 private:
     SwitchOrch *m_switchOrch;
@@ -235,6 +250,9 @@ private:
 
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
+
+    std::set<IpPrefix> m_SubnetDecapTermsCreated;
+    ProducerStateTable m_appTunnelDecapTermProducer;
 
     NextHopObserverTable m_nextHopObservers;
 
@@ -262,6 +280,12 @@ private:
     const NhgBase &getNhg(const std::string& nhg_index);
     void incNhgRefCount(const std::string& nhg_index);
     void decNhgRefCount(const std::string& nhg_index);
+
+    void publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status = ReturnCode(SAI_STATUS_SUCCESS));
+
+    bool isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
+    void createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
+    void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

@@ -9,6 +9,7 @@
 #include "redisapi.h"
 
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
+#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
 const string buffer_size_field_name         = "size";
 const string buffer_pool_type_field_name    = "type";
@@ -49,6 +50,7 @@ private:
     void initTableHandlers();
     void initBufferReadyLists(DBConnector *confDb, DBConnector *applDb);
     void initBufferReadyList(Table& table, bool isConfigDb);
+    void initVoqBufferReadyList(Table& table, bool isConfigDb);
     void initFlexCounterGroupTable(void);
     void initBufferConstants();
     task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);
@@ -62,15 +64,12 @@ private:
     std::unordered_map<std::string, bool> m_ready_list;
     std::unordered_map<std::string, std::vector<std::string>> m_port_ready_list_ref;
 
-    unique_ptr<DBConnector> m_flexCounterDb;
-    unique_ptr<ProducerTable> m_flexCounterGroupTable;
-    unique_ptr<ProducerTable> m_flexCounterTable;
-
     Table m_stateBufferMaximumValueTable;
 
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+    set<string> m_partiallyAppliedQueues;
 };
 #endif /* SWSS_BUFFORCH_H */
 

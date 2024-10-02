@@ -162,9 +162,10 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
     {
         auto tsync = m_teamSelectables[lagName];
-        if (tsync->admin_state == admin_state && tsync->mtu == mtu)
+        if (tsync->admin_state == admin_state && tsync->oper_state == oper_state && tsync->mtu == mtu)
             return;
         tsync->admin_state = admin_state;
+        tsync->oper_state = oper_state;
         tsync->mtu = mtu;
         lag_update = false;
     }

@@ -15,26 +15,6 @@ using namespace swss;
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
-/*
- * Following global variables are defined here for the purpose of
- * using existing Orch class which is to be refactored soon to
- * eliminate the direct exposure of the global variables.
- *
- * Once Orch class refactoring is done, these global variables
- * should be removed from here.
- */
-int gBatchSize = 0;
-bool gSwssRecord = false;
-bool gLogRotate = false;
-ofstream gRecordOfs;
-string gRecordFile;
-bool gResponsePublisherRecord = false;
-bool gResponsePublisherLogRotate = false;
-ofstream gResponsePublisherRecordOfs;
-string gResponsePublisherRecordFile;
-/* Global database mutex */
-mutex gDbMutex;
-
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("sflowmgrd");
@@ -44,21 +24,31 @@ int main(int argc, char **argv)
 
     try
     {
-        vector<string> cfg_sflow_tables = {
-            CFG_SFLOW_TABLE_NAME,
-            CFG_SFLOW_SESSION_TABLE_NAME,
-            CFG_PORT_TABLE_NAME
-        };
-
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
+        DBConnector stateDb("STATE_DB", 0);
 
-        SflowMgr sflowmgr(&cfgDb, &appDb, cfg_sflow_tables);
+        TableConnector conf_port_table(&cfgDb, CFG_PORT_TABLE_NAME);
+        TableConnector state_port_table(&stateDb, STATE_PORT_TABLE_NAME);
+        TableConnector conf_sflow_table(&cfgDb, CFG_SFLOW_TABLE_NAME);
+        TableConnector conf_sflow_session_table(&cfgDb, CFG_SFLOW_SESSION_TABLE_NAME);
 
-        vector<Orch *> cfgOrchList = {&sflowmgr};
+        vector<TableConnector> sflow_tables = {
+            conf_port_table,
+            state_port_table,
+            conf_sflow_table,
+            conf_sflow_session_table
+        };
+
+        SflowMgr sflowmgr(&appDb, sflow_tables);
+        /* During process startup, the ordering of config_db followed by state_db notifications cannot be guaranteed 
+           and so handle the config events manually */
+        sflowmgr.readPortConfig();
+
+        vector<Orch *> orchList = {&sflowmgr};
 
         swss::Select s;
-        for (Orch *o : cfgOrchList)
+        for (Orch *o : orchList)
         {
             s.addSelectables(o->getSelectables());
         }

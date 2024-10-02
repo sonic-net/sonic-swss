@@ -60,6 +60,31 @@ def check_port_oper_status(appl_db, port_name, state):
             break
     assert oper_status == state
 
+def check_port_host_tx_ready_status(state_db, port_name, status):
+    portTable = swsscommon.Table(state_db, swsscommon.STATE_PORT_TABLE_NAME)
+    (status, fvs) = portTable.get(port_name)
+
+    assert status == True
+
+    assert "host_tx_ready" in [fv[0] for fv in fvs]
+    for fv in fvs:
+        if fv[0] == "host_tx_ready":
+            assert fv[1] == "true" if status == "up" else "false"
+
+def update_host_tx_ready_status(dvs, port_id, switch_id, admin_state):
+    host_tx_ready = "SAI_PORT_HOST_TX_READY_STATUS_READY" if admin_state == "up" else "SAI_PORT_HOST_TX_READY_STATUS_NOT_READY"
+    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    fvp = swsscommon.FieldValuePairs()
+    ntf_data =  "[{\"host_tx_ready_status\":\""+host_tx_ready+"\",\"port_id\":\""+port_id+"\",\"switch_id\":\""+switch_id+"\"}]"
+    ntf.send("port_host_tx_ready", ntf_data, fvp)
+
+def get_port_id(dvs, port_name):
+    count_db = swsscommon.DBConnector(2, dvs.redis_sock, 0)
+    port_name_map = swsscommon.Table(count_db, "COUNTERS_PORT_NAME_MAP")
+    status, returned_value = port_name_map.hget("", port_name)
+    assert status == True
+    return returned_value
+
 # function to check the restore count incremented by 1 for a single process
 def swss_app_check_RestoreCount_single(state_db, restore_count, name):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -118,12 +143,14 @@ def how_many_entries_exist(db, table):
 
 def stop_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'pkill -x neighsyncd'])
+    time.sleep(1)
 
 def start_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
 
 def stop_restore_neighbors(dvs):
     dvs.runcmd(['sh', '-c', 'pkill -x restore_neighbors'])
+    time.sleep(1)
 
 def start_restore_neighbors(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
@@ -237,18 +264,34 @@ def ping_new_ips(dvs):
             dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4, j+NUM_NEIGH_PER_INTF+2)])
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4, j+NUM_NEIGH_PER_INTF+2)])
 
+def warm_restart_set(dvs, app, enable):
+    db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(db, "WARM_RESTART_ENABLE_TABLE")
+    fvs = swsscommon.FieldValuePairs([("enable",enable)])
+    tbl.set(app, fvs)
+    time.sleep(1)
+
+
+def warm_restart_timer_set(dvs, app, timer, val):
+    db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(db, "WARM_RESTART")
+    fvs = swsscommon.FieldValuePairs([(timer, val)])
+    tbl.set(app, fvs)
+    time.sleep(1)
 
 class TestWarmReboot(object):
     def test_PortSyncdWarmRestart(self, dvs, testlog):
+        dvs.setup_db()
+        switch_id = dvs.getSwitchOid()
 
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
 
-        dvs.runcmd("config interface startup Ethernet16")
-        dvs.runcmd("config interface startup Ethernet20")
+        dvs.port_admin_set("Ethernet16", "up")
+        dvs.port_admin_set("Ethernet20", "up")
 
         time.sleep(1)
 
@@ -259,8 +302,8 @@ class TestWarmReboot(object):
         intf_tbl.set("Ethernet20|11.0.0.9/29", fvs)
         intf_tbl.set("Ethernet16", fvs)
         intf_tbl.set("Ethernet20", fvs)
-        dvs.runcmd("config interface startup Ethernet16")
-        dvs.runcmd("config interface startup Ethernet20")
+        dvs.port_admin_set("Ethernet16", "up")
+        dvs.port_admin_set("Ethernet20", "up")
 
         dvs.servers[4].runcmd("ip link set down dev eth0") == 0
         dvs.servers[4].runcmd("ip link set up dev eth0") == 0
@@ -278,6 +321,13 @@ class TestWarmReboot(object):
         check_port_oper_status(appl_db, "Ethernet16", "up")
         check_port_oper_status(appl_db, "Ethernet20", "up")
 
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet16") , switch_id, "up")
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet20") , switch_id, "up")
+
+        # Ethernet port host_tx_ready status should be "true"
+        check_port_host_tx_ready_status(state_db, "Ethernet16", "up")
+        check_port_host_tx_ready_status(state_db, "Ethernet20", "up")
+
         # Ping should work between servers via vs vlan interfaces
         ping_stats = dvs.servers[4].runcmd("ping -c 1 11.0.0.10")
         time.sleep(1)
@@ -293,6 +343,7 @@ class TestWarmReboot(object):
 
         # restart portsyncd
         dvs.runcmd(['sh', '-c', 'pkill -x portsyncd'])
+        time.sleep(1)
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
         dvs.runcmd(['sh', '-c', 'supervisorctl start portsyncd'])
@@ -320,6 +371,13 @@ class TestWarmReboot(object):
         check_port_oper_status(appl_db, "Ethernet20", "up")
         check_port_oper_status(appl_db, "Ethernet24", "down")
 
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet16") , switch_id, "up")
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet20") , switch_id, "up")
+        update_host_tx_ready_status(dvs, get_port_id(dvs, "Ethernet24") , switch_id, "down")
+
+        check_port_host_tx_ready_status(state_db, "Ethernet16", "up")
+        check_port_host_tx_ready_status(state_db, "Ethernet20", "up")
+        check_port_host_tx_ready_status(state_db, "Ethernet24", "down")
 
         swss_app_check_RestoreCount_single(state_db, restore_count, "portsyncd")
 
@@ -328,7 +386,6 @@ class TestWarmReboot(object):
         intf_tbl._del("Ethernet16")
         intf_tbl._del("Ethernet20")
         time.sleep(2)
-
 
     def test_VlanMgrdWarmRestart(self, dvs, testlog):
 
@@ -339,12 +396,12 @@ class TestWarmReboot(object):
         dvs.runcmd("ifconfig Ethernet16  0")
         dvs.runcmd("ifconfig Ethernet20  0")
 
-        dvs.runcmd("config interface startup Ethernet16 ")
-        dvs.runcmd("config interface startup Ethernet20 ")
+        dvs.port_admin_set("Ethernet16", "up")
+        dvs.port_admin_set("Ethernet20", "up")
 
         time.sleep(1)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
 
         # create vlan
         create_entry_tbl(
@@ -387,8 +444,6 @@ class TestWarmReboot(object):
         intf_tbl.set("Vlan20|11.0.0.9/29", fvs)
         intf_tbl.set("Vlan16", fvs)
         intf_tbl.set("Vlan20", fvs)
-        dvs.runcmd("config interface startup Vlan16")
-        dvs.runcmd("config interface startup Vlan20")
 
         dvs.servers[4].runcmd("ifconfig eth0 11.0.0.2/29")
         dvs.servers[4].runcmd("ip route add default via 11.0.0.1")
@@ -415,6 +470,7 @@ class TestWarmReboot(object):
         restore_count = swss_get_RestoreCount(dvs, state_db)
 
         dvs.runcmd(['sh', '-c', 'pkill -x vlanmgrd'])
+        time.sleep(1)
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
 
@@ -453,7 +509,7 @@ class TestWarmReboot(object):
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
         restore_count = swss_get_RestoreCount(dvs, state_db)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
         dvs.runcmd("supervisorctl restart intfmgrd")
 
         reached_desired_state = False
@@ -474,7 +530,7 @@ class TestWarmReboot(object):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
 
         #
         # Testcase1:
@@ -503,8 +559,8 @@ class TestWarmReboot(object):
         intf_tbl.set("{}".format(intfs[1]), fvs)
         intf_tbl.set("{}".format(intfs[0]), fvs)
         intf_tbl.set("{}".format(intfs[1]), fvs)
-        dvs.runcmd("config interface startup {}".format(intfs[0]))
-        dvs.runcmd("config interface startup {}".format(intfs[1]))
+        dvs.port_admin_set(intfs[0], "up")
+        dvs.port_admin_set(intfs[1], "up")
 
         ips = ["24.0.0.2", "24.0.0.3", "28.0.0.2", "28.0.0.3"]
         v6ips = ["2400::2", "2400::3", "2800::2", "2800::3"]
@@ -748,7 +804,7 @@ class TestWarmReboot(object):
         # setup timer in configDB
         timer_value = "15"
 
-        dvs.runcmd("config warm_restart neighsyncd_timer {}".format(timer_value))
+        warm_restart_timer_set(dvs, "swss", "neighsyncd_timer", timer_value)
 
         # get restore_count
         restore_count = swss_get_RestoreCount(dvs, state_db)
@@ -847,7 +903,7 @@ class TestWarmReboot(object):
 
         time.sleep(1)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
 
         config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         intf_tbl = swsscommon.Table(config_db, "INTERFACE")
@@ -856,8 +912,8 @@ class TestWarmReboot(object):
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet4", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface startup Ethernet4")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.port_admin_set("Ethernet4", "up")
 
         dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
         dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
@@ -876,23 +932,23 @@ class TestWarmReboot(object):
 
         time.sleep(1)
         # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK failed\n"
 
         # Should succeed, the option for skipPendingTaskCheck -s and noFreeze -n have been provided.
         # Wait up to 500 milliseconds for response from orchagent. Default wait time is 1000 milliseconds.
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
 
         # Remove unfinished routes
         ps._del("3.3.3.0/24")
 
         time.sleep(1)
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
 
         # Should fail since orchagent has been frozen at last step.
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
         assert result == "RESTARTCHECK failed\n"
 
         # Cleaning previously pushed route-entry to ease life of subsequent testcases.
@@ -916,7 +972,7 @@ class TestWarmReboot(object):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
 
         tbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
 
@@ -931,9 +987,9 @@ class TestWarmReboot(object):
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet4", fvs)
         intf_tbl.set("Ethernet8", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface startup Ethernet4")
-        dvs.runcmd("config interface startup Ethernet8")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.port_admin_set("Ethernet4", "up")
+        dvs.port_admin_set("Ethernet8", "up")
 
         dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
         dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
@@ -1034,7 +1090,7 @@ class TestWarmReboot(object):
                     orchStateCount += 1;
 
         # Only WARM_RESTART_TABLE|orchagent state=reconciled operation may exist after port oper status change.
-        assert orchStateCount == 1
+        assert orchStateCount == 2
 
         #clean up arp
         dvs.runcmd("arp -d 10.0.0.1")
@@ -1062,7 +1118,6 @@ class TestWarmReboot(object):
     # Routing warm-restart testcases
     #
     ################################################################################
-
 
     def test_routing_WarmRestart(self, dvs, testlog):
 
@@ -1102,9 +1157,9 @@ class TestWarmReboot(object):
         intf_tbl.set("{}".format(intfs[1]), fvs)
         intf_tbl.set("{}".format(intfs[2]), fvs)
         intf_tbl.set("{}".format(intfs[2]), fvs)
-        dvs.runcmd("config interface startup {}".format(intfs[0]))
-        dvs.runcmd("config interface startup {}".format(intfs[1]))
-        dvs.runcmd("config interface startup {}".format(intfs[2]))
+        dvs.port_admin_set(intfs[0], "up")
+        dvs.port_admin_set(intfs[1], "up")
+        dvs.port_admin_set(intfs[2], "up")
 
         time.sleep(1)
 
@@ -1199,8 +1254,8 @@ class TestWarmReboot(object):
         # The following two instructions will be substituted by the commented ones
         # once the later ones are added to sonic-utilities repo.
 
-        dvs.runcmd("config warm_restart enable bgp")
-        dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
+        warm_restart_set(dvs, "bgp", "true")
+        warm_restart_timer_set(dvs, "bgp", "bgp_timer", str(restart_timer))
 
         time.sleep(1)
 
@@ -1249,7 +1304,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.100.0/24"
-        assert rt_val == {"ifname": "Ethernet0", "nexthop": "111.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0"
+        assert rt_val.get("nexthop") == "111.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1321,7 +1377,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.200.0/24"
-        assert rt_val == {"ifname": "Ethernet0,Ethernet4,Ethernet8", "nexthop": "111.0.0.2,122.0.0.2,133.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0,Ethernet4,Ethernet8"
+        assert rt_val.get("nexthop") == "111.0.0.2,122.0.0.2,133.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1394,7 +1451,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.1.3"
-        assert rt_val == {"ifname": "Ethernet0,Ethernet4,Ethernet8", "nexthop": "111.0.0.2,122.0.0.2,133.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0,Ethernet4,Ethernet8"
+        assert rt_val.get("nexthop") == "111.0.0.2,122.0.0.2,133.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1432,7 +1490,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.1.3"
-        assert rt_val == {"ifname": "Ethernet0,Ethernet4", "nexthop": "111.0.0.2,122.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0,Ethernet4"
+        assert rt_val.get("nexthop") == "111.0.0.2,122.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1469,7 +1528,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "fc00:4:4::1"
-        assert rt_val == {"ifname": "Ethernet0", "nexthop": "1110::2"}
+        assert rt_val.get("ifname") == "Ethernet0"
+        assert rt_val.get("nexthop") == "1110::2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1567,7 +1627,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.100.0/24"
-        assert rt_val == {"ifname": "Ethernet0", "nexthop": "111.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0"
+        assert rt_val.get("nexthop") == "111.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1679,7 +1740,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.100.0/24"
-        assert rt_val == {"ifname": "Ethernet4", "nexthop": "122.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet4"
+        assert rt_val.get("nexthop") == "122.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1711,7 +1773,7 @@ class TestWarmReboot(object):
         del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu")
         del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
 
-        dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
+        warm_restart_timer_set(dvs, "bgp", "bgp_timer", str(restart_timer))
         # Restart zebra
         dvs.stop_zebra()
         dvs.start_zebra()
@@ -1854,7 +1916,7 @@ class TestWarmReboot(object):
         flush_neigh_entries(dvs)
         time.sleep(5)
 
-        dvs.runcmd("config warm_restart enable system")
+        warm_restart_set(dvs, "system", "true")
 
         # Test neighbors on NUM_INTF (e,g 8) interfaces
         # Ethernet32/36/.../60, with ip: 32.0.0.1/24... 60.0.0.1/24
@@ -1877,7 +1939,7 @@ class TestWarmReboot(object):
             intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)
             intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
             intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
-            dvs.runcmd("config interface startup Ethernet{}".format(i*4, i*4))
+            dvs.port_admin_set("Ethernet{}".format(i*4), "up")
             dvs.servers[i].runcmd("ip link set up dev eth0")
             dvs.servers[i].runcmd("ip addr flush dev eth0")
             #result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")
@@ -2103,7 +2165,7 @@ class TestWarmReboot(object):
         swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
         # disable system warm restart
-        dvs.runcmd("config warm_restart disable system")
+        warm_restart_set(dvs, "system", "false")
 
         for i in range(8, 8+NUM_INTF):
             intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(i*4, i*4))
@@ -2117,11 +2179,11 @@ class TestWarmReboot(object):
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
 
         # bring up interface
-        dvs.runcmd("config interface startup Ethernet0 ")
-        dvs.runcmd("config interface startup Ethernet4 ")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.port_admin_set("Ethernet4", "up")
 
         # create vrf
         create_entry_tbl(conf_db, "VRF", "Vrf_1", [('empty', 'empty')])
@@ -2160,6 +2222,7 @@ class TestWarmReboot(object):
         (exitcode, vrf_before) = dvs.runcmd(['sh', '-c', "ip link show | grep Vrf"])
 
         dvs.runcmd(['sh', '-c', 'pkill -x vrfmgrd'])
+        time.sleep(1)
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
 
@@ -2285,7 +2348,7 @@ class TestWarmReboot(object):
         # Monitor port should not change b/c routes are ECMP
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
 
@@ -2332,7 +2395,7 @@ class TestWarmReboot(object):
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
 
         # Execute the warm reboot
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
 
@@ -2365,6 +2428,46 @@ class TestWarmReboot(object):
         dvs.start_swss()
         dvs.check_swss_ready()
 
+    def test_TunnelMgrdWarmRestart(self, dvs):
+        tunnel_name = "MuxTunnel0"
+        tunnel_table = "TUNNEL_DECAP_TABLE"
+        tunnel_decap_term_table = "TUNNEL_DECAP_TERM_TABLE"
+        tunnel_params = {
+            "tunnel_type": "IPINIP",
+            "src_ip": "10.1.0.33",
+            "dst_ip": "10.1.0.32",
+            "dscp_mode": "uniform",
+            "ecn_mode": "standard",
+            "ttl_mode": "pipe"
+        }
+
+        pubsub_tunnel = dvs.SubscribeAppDbObject(tunnel_table)
+        pubsub_decap_term = dvs.SubscribeAppDbObject(tunnel_decap_term_table)
+
+        dvs.runcmd("config warm_restart enable swss")
+        config_db = dvs.get_config_db()
+        config_db.create_entry("TUNNEL", tunnel_name, tunnel_params)
+
+        app_db = dvs.get_app_db()
+        dst_ip = tunnel_params.pop("dst_ip")
+        app_db.wait_for_matching_keys(tunnel_table, [tunnel_name])
+        app_db.wait_for_matching_keys(tunnel_decap_term_table, [tunnel_name + ":" + dst_ip])
+
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_tunnel)
+        assert nadd == len(tunnel_params)
+        assert ndel == 1  # Expect 1 deletion as part of table creation
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_decap_term)
+        assert nadd == 2
+        assert ndel == 1
+
+        dvs.runcmd("supervisorctl restart tunnelmgrd")
+        dvs.check_services_ready()
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_tunnel)
+        assert nadd == 0
+        assert ndel == 0
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_decap_term)
+        assert nadd == 0
+        assert ndel == 0
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

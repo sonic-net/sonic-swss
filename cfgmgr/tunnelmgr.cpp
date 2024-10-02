@@ -9,6 +9,7 @@
 #include "tokenize.h"
 #include "shellcmd.h"
 #include "exec.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -107,7 +108,9 @@ static int cmdIpTunnelRouteDel(const std::string& pfx, std::string & res)
 TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_appIpInIpTunnelTable(appDb, APP_TUNNEL_DECAP_TABLE_NAME),
-        m_cfgPeerTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME)
+        m_appIpInIpTunnelDecapTermTable(appDb, APP_TUNNEL_DECAP_TERM_TABLE_NAME),
+        m_cfgPeerTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
+        m_cfgTunnelTable(cfgDb, CFG_TUNNEL_TABLE_NAME)
 {
     std::vector<string> peer_keys;
     m_cfgPeerTable.getKeys(peer_keys);
@@ -126,6 +129,23 @@ TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<s
             }
         }
     }
+    
+    if (WarmStart::isWarmStart())
+    {
+        std::vector<string> tunnel_keys;
+        m_cfgTunnelTable.getKeys(tunnel_keys);
+
+        for (auto tunnel: tunnel_keys)
+        {
+            m_tunnelReplay.insert(tunnel);
+        }
+        if (m_tunnelReplay.empty())
+        {
+            finalizeWarmReboot();
+        }
+
+    }
+
 
     auto consumerStateTable = new swss::ConsumerStateTable(appDb, APP_TUNNEL_ROUTE_TABLE_NAME,
                               TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
@@ -191,6 +211,11 @@ void TunnelMgr::doTask(Consumer &consumer)
             ++it;
         }
     }
+
+    if (!replayDone && m_tunnelReplay.empty() && WarmStart::isWarmStart())
+    {
+        finalizeWarmReboot();
+    }
 }
 
 bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
@@ -199,6 +224,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
 
     const std::string & tunnelName = kfvKey(t);
     const std::string & op = kfvOp(t);
+    std::string src_ip;
     TunnelInfo tunInfo;
 
     for (auto fieldValue : kfvFieldsValues(t))
@@ -212,6 +238,10 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         else if (field == "tunnel_type")
         {
             tunInfo.type = value;
+        }
+        else if (field == "src_ip")
+        {
+            src_ip = value;
         }
     }
 
@@ -230,8 +260,36 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
                 SWSS_LOG_NOTICE("Peer/Remote IP not configured");
             }
 
-            m_appIpInIpTunnelTable.set(tunnelName, kfvFieldsValues(t));
+            /* If the tunnel is already in hardware (i.e. present in the replay),
+             * don't try to create it again since it will cause an OA crash
+             * (warmboot case)
+             */
+            if (m_tunnelReplay.find(tunnelName) == m_tunnelReplay.end())
+            {
+                /* Create the tunnel */
+                std::vector<FieldValueTuple> fvs;
+                std::copy_if(kfvFieldsValues(t).cbegin(), kfvFieldsValues(t).cend(),
+                             std::back_inserter(fvs),
+                             [](const FieldValueTuple & fv) {
+                                 return fvField(fv) != "dst_ip";
+                             });
+                m_appIpInIpTunnelTable.set(tunnelName, fvs);
+
+                /* Create the decap term */
+                fvs.clear();
+                if (!src_ip.empty())
+                {
+                    fvs.emplace_back("src_ip", src_ip);
+                    fvs.emplace_back("term_type", "P2P");
+                }
+                else
+                {
+                    fvs.emplace_back("term_type", "P2MP");
+                }
+                m_appIpInIpTunnelDecapTermTable.set(tunnelName + DEFAULT_KEY_SEPARATOR + tunInfo.dst_ip, fvs);
+            }
         }
+        m_tunnelReplay.erase(tunnelName);
         m_tunnelCache[tunnelName] = tunInfo;
     }
     else
@@ -247,6 +305,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         tunInfo = it->second;
         if (tunInfo.type == IPINIP)
         {
+            m_appIpInIpTunnelDecapTermTable.del(tunnelName + DEFAULT_KEY_SEPARATOR + tunInfo.dst_ip);
             m_appIpInIpTunnelTable.del(tunnelName);
         }
         else
@@ -355,4 +414,14 @@ bool TunnelMgr::configIpTunnel(const TunnelInfo& tunInfo)
     }
 
     return true;
+}
+
+
+void TunnelMgr::finalizeWarmReboot()
+{
+    replayDone = true;
+    WarmStart::setWarmStartState("tunnelmgrd", WarmStart::REPLAYED);
+    SWSS_LOG_NOTICE("tunnelmgrd warmstart state set to REPLAYED");
+    WarmStart::setWarmStartState("tunnelmgrd", WarmStart::RECONCILED);
+    SWSS_LOG_NOTICE("tunnelmgrd warmstart state set to RECONCILED");
 }

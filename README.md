@@ -1,8 +1,18 @@
-[![Total alerts](https://img.shields.io/lgtm/alerts/g/Azure/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Azure/sonic-swss/alerts/)
-[![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/Azure/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Azure/sonic-swss/context:python)
-[![Language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/Azure/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Azure/sonic-swss/context:cpp)
+*static analysis:*
 
-[![VS](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/badge/icon?subject=VS%20build)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/)
+[![Total alerts](https://img.shields.io/lgtm/alerts/g/sonic-net/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/sonic-net/sonic-swss/alerts/)
+[![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/sonic-net/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/sonic-net/sonic-swss/context:python)
+[![Language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/sonic-net/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/sonic-net/sonic-swss/context:cpp)
+
+*sonic-swss builds:*
+
+[![master build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=master&label=master)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=master)
+[![202205 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202205&label=202205)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202205)
+[![202111 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202111&label=202111)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202111)
+[![202106 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202106&label=202106)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202106)
+[![202012 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202012&label=202012)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202012)
+[![201911 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=201911&label=201911)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=201911)
+
 
 # SONiC - SWitch State Service - SWSS
 
@@ -41,7 +51,7 @@ For your convenience, you can install prepared packages on Debian Jessie:
 
 #### Install from Source
 
-Checkout the source: `git clone https://github.com/Azure/sonic-swss.git` and install it yourself.
+Checkout the source: `git clone https://github.com/sonic-net/sonic-swss.git` and install it yourself.
 
 Get SAI header files into /usr/include/sai. Put the SAI header files that you use to compile
 libsairedis into /usr/include/sai
@@ -64,13 +74,13 @@ You can also build a debian package using:
 ## Need Help?
 
 For general questions, setup help, or troubleshooting:
-- [sonicproject on Google Groups](https://groups.google.com/d/forum/sonicproject)
+- [sonicproject on Google Groups](https://groups.google.com/g/sonicproject)
 
 For bug reports or feature requests, please open an Issue.
 
 ## Contribution guide
 
-See the [contributors guide](https://github.com/Azure/SONiC/blob/gh-pages/CONTRIBUTING.md) for information about how to contribute.
+See the [contributors guide](https://github.com/sonic-net/SONiC/wiki/Becoming-a-contributor) for information about how to contribute.
 
 ### GitHub Workflow
 

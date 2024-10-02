@@ -11,7 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include "json.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "warm_restart.h"
 
 using namespace std;
@@ -20,26 +20,6 @@ using json = nlohmann::json;
 
 /* SELECT() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
-
-/*
- * Following global variables are defined here for the purpose of
- * using existing Orch class which is to be refactored soon to
- * eliminate the direct exposure of the global variables.
- *
- * Once Orch class refactoring is done, these global variables
- * should be removed from here.
- */
-int gBatchSize = 0;
-bool gSwssRecord = false;
-bool gLogRotate = false;
-ofstream gRecordOfs;
-string gRecordFile;
-bool gResponsePublisherRecord = false;
-bool gResponsePublisherLogRotate = false;
-ofstream gResponsePublisherRecordOfs;
-string gResponsePublisherRecordFile;
-/* Global database mutex */
-mutex gDbMutex;
 
 void usage()
 {
@@ -66,7 +46,7 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 
 void write_to_state_db(shared_ptr<vector<KeyOpFieldsValuesTuple>> db_items_ptr)
 {
-    DBConnector db("STATE_DB", 0, true);
+    DBConnector db("STATE_DB", 0);
     auto &db_items = *db_items_ptr;
     for (auto &db_item : db_items)
     {
@@ -189,6 +169,8 @@ int main(int argc, char **argv)
             WarmStart::initialize("buffermgrd", "swss");
             WarmStart::checkWarmStart("buffermgrd", "swss");
 
+            DBConnector applStateDb("APPL_STATE_DB", 0);
+
             vector<TableConnector> buffer_table_connectors = {
                 TableConnector(&cfgDb, CFG_PORT_TABLE_NAME),
                 TableConnector(&cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
@@ -202,7 +184,7 @@ int main(int argc, char **argv)
                 TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
                 TableConnector(&stateDb, STATE_PORT_TABLE_NAME)
             };
-            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, peripherial_table_ptr, zero_profiles_ptr));
+            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, &applStateDb, buffer_table_connectors, peripherial_table_ptr, zero_profiles_ptr));
         }
         else if (!pg_lookup_file.empty())
         {
@@ -215,7 +197,8 @@ int main(int argc, char **argv)
                 CFG_BUFFER_QUEUE_TABLE_NAME,
                 CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
                 CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME,
-                CFG_DEVICE_METADATA_TABLE_NAME
+                CFG_DEVICE_METADATA_TABLE_NAME,
+                CFG_PORT_QOS_MAP_TABLE_NAME
             };
             cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &applDb, pg_lookup_file, cfg_buffer_tables));
         }

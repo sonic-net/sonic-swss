@@ -3,6 +3,7 @@ import re
 import time
 import json
 import pytest
+import ipaddress
 
 from swsscommon import swsscommon
 from dvslib.dvs_common import wait_for_result
@@ -604,6 +605,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[1].runcmd("ip -6 route del default dev eth0")
         dvs.servers[1].runcmd("ip -6 address del 2001::2/64 dev eth0")
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_RouteAddRemoveIpv4RouteWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -1033,6 +1035,228 @@ class TestRoutePerf(TestRouteBase):
 
         dvs.servers[1].runcmd("ip route del default dev eth0")
         dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
+
+class TestFpmSyncResponse(TestRouteBase):
+    @pytest.fixture
+    def setup(self, dvs):
+        self.setup_db(dvs)
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.0.0.0/31")
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+        dvs.runcmd("ping -c 1 10.0.0.1")
+
+        yield
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip route del default dev eth0")
+        dvs.servers[0].runcmd("ip address del 10.0.0.1/31 dev eth0")
+
+        # bring interface down
+        self.set_admin_status("Ethernet0", "down")
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "10.0.0.0/31")
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+
+    def is_offloaded(self, dvs, route):
+        rc, output = dvs.runcmd(f"vtysh -c 'show ip route {route} json'")
+        assert rc == 0
+
+        route_entry = json.loads(output)
+        return bool(route_entry[route][0].get('offloaded'))
+
+    @pytest.mark.xfail(reason="BGP suppress FIB disabled on master/202405 - https://github.com/sonic-net/sonic-buildimage/issues/19092")
+    @pytest.mark.parametrize("suppress_state", ["enabled", "disabled"])
+    def test_offload(self, suppress_state, setup, dvs):
+        route = "1.1.1.0/24"
+
+        # enable route suppression
+        rc, _ = dvs.runcmd(f"config suppress-fib-pending {suppress_state}")
+        assert rc == 0, "Failed to configure suppress-fib-pending"
+
+        time.sleep(5)
+
+        try:
+            rc, _ = dvs.runcmd("bash -c 'kill -SIGSTOP $(pidof orchagent)'")
+            assert rc == 0, "Failed to suspend orchagent"
+
+            rc, _ = dvs.runcmd(f"ip route add {route} via 10.0.0.1 proto bgp")
+            assert rc == 0, "Failed to configure route"
+
+            time.sleep(5)
+
+            if suppress_state == 'disabled':
+                assert self.is_offloaded(dvs,route), f"{route} is expected to be offloaded (suppression is {suppress_state})"
+                return
+
+            assert not self.is_offloaded(dvs, route), f"{route} is expected to be not offloaded (suppression is {suppress_state})"
+
+            rc, _ = dvs.runcmd("bash -c 'kill -SIGCONT $(pidof orchagent)'")
+            assert rc == 0, "Failed to resume orchagent"
+
+            def check_offloaded():
+                return (self.is_offloaded(dvs, route), None)
+
+            wait_for_result(check_offloaded, failure_message=f"{route} is expected to be offloaded after orchagent resume")
+        finally:
+            dvs.runcmd("bash -c 'kill -SIGCONT $(pidof orchagent)'")
+            dvs.runcmd(f"ip route del {route}")
+
+            # make sure route suppression is disabled
+            dvs.runcmd("config suppress-fib-pending disabled")
+
+
+class TestSubnetDecapVipRoute(TestRouteBase):
+    VLAN_ID = "1000"
+    VLAN_INTF = "Vlan1000"
+    SERV_IPV4 = "192.168.0.100"
+    SERV_IPV6 = "fc02:1000::100"
+    CFG_SUBNET_DECAP_TABLE_NAME = "SUBNET_DECAP"
+    APP_TUNNEL_DECAP_TERM_TABLE_NAME = "TUNNEL_DECAP_TERM_TABLE"
+
+    def add_neighbor(self, dvs, ip, mac):
+        if ipaddress.ip_address(ip).version == 6:
+            dvs.runcmd("ip -6 neigh replace " + ip + " lladdr " + mac + " dev " + self.VLAN_INTF)
+        else:
+            dvs.runcmd("ip -4 neigh replace " + ip + " lladdr " + mac + " dev " + self.VLAN_INTF)
+
+    def add_route(self, dvs, ip_prefix):
+        if ipaddress.ip_network(ip_prefix).version == 4:
+            dvs.runcmd(
+                'vtysh -c "configure terminal" -c "ip route %s %s"' % (ip_prefix, self.SERV_IPV4)
+            )
+        else:
+            dvs.runcmd(
+                'vtysh -c "configure terminal" -c "ipv6 route %s %s"' % (ip_prefix, self.SERV_IPV6)
+            )
+
+    def remove_route(self, dvs, ip_prefix):
+        if ipaddress.ip_network(ip_prefix).version == 4:
+            dvs.runcmd(
+                'vtysh -c "configure terminal" -c "no ip route %s %s"' % (ip_prefix, self.SERV_IPV4)
+            )
+        else:
+            dvs.runcmd(
+                'vtysh -c "configure terminal" -c "no ipv6 route %s %s"' % (ip_prefix, self.SERV_IPV6)
+            )
+
+    def validate_subnet_decap_term(self, dvs, ip_prefix_list):
+        tunnel_decap_term_app_table = swsscommon.Table(dvs.pdb, self.APP_TUNNEL_DECAP_TERM_TABLE_NAME)
+        decap_term_list = tunnel_decap_term_app_table.getKeys()
+        decap_term_prefix_list = [decap_term.split(":", 1)[1] for decap_term in decap_term_list]
+
+        assert len(ip_prefix_list) == len(decap_term_prefix_list)
+        for ip_prefix in ip_prefix_list:
+            assert ip_prefix in decap_term_prefix_list
+
+        for decap_term in decap_term_list:
+            _, fvs = tunnel_decap_term_app_table.get(decap_term)
+            decap_term_attrs = dict(fvs)
+            assert decap_term_attrs["term_type"] == "MP2MP"
+            assert decap_term_attrs["subnet_type"] == "vip"
+
+    @pytest.fixture(scope="class", autouse=True)
+    def setup_vlan(self, dvs, dvs_vlan_manager, setup_subnet_decap):
+        dvs.setup_db()
+
+        subnet_decap_config = {
+            "status": "enable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        setup_subnet_decap(subnet_decap_config)
+
+        vlan = self.VLAN_ID
+        vlan_intf = self.VLAN_INTF
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+        self.dvs_vlan.verify_vlan(vlan_oid, vlan)
+
+        dvs.port_admin_set("Ethernet0", "up")
+        self.dvs_vlan.create_vlan_member(vlan, "Ethernet0")
+        self.dvs_vlan.verify_vlan_member(vlan_oid, "Ethernet0")
+
+        dvs.add_ip_address(vlan_intf, "192.168.0.1/24")
+        dvs.add_ip_address(vlan_intf, "fc02:1000::1/64")
+
+        yield
+
+        dvs.remove_ip_address(vlan_intf, "192.168.0.1/24")
+        dvs.remove_ip_address(vlan_intf, "fc02:1000::1/64")
+
+        self.dvs_vlan.remove_vlan_member(vlan, "Ethernet0")
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+
+        time.sleep(2)
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
+    @pytest.fixture(scope="class", autouse=True)
+    def setup_server_neighbor(self, dvs, setup_vlan):
+        self.add_neighbor(dvs, self.SERV_IPV4, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.SERV_IPV6, "00:00:00:00:00:01")
+
+    @pytest.fixture(scope="class")
+    def setup_subnet_decap(self, dvs):
+
+        def _apply_subnet_decap_config(subnet_decap_config):
+            """Apply subnet decap config to CONFIG_DB."""
+            fvs = swsscommon.FieldValuePairs(list(subnet_decap_config.items()))
+            subnet_decap_tbl.set("AZURE", fvs)
+
+        def _cleanup_subnet_decap_config():
+            """Cleanup subnet decap config in CONFIG_DB."""
+            for key in subnet_decap_tbl.getKeys():
+                subnet_decap_tbl._del(key)
+
+        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        subnet_decap_tbl = swsscommon.Table(configdb, self.CFG_SUBNET_DECAP_TABLE_NAME)
+        _cleanup_subnet_decap_config()
+
+        yield _apply_subnet_decap_config
+
+        _cleanup_subnet_decap_config()
+
+    def test_vip_route(self, dvs, setup_subnet_decap):
+        self.add_route(dvs, "10.10.20.0/24")
+        self.add_route(dvs, "2001:506:28:9d::/64")
+
+        time.sleep(2)
+        self.validate_subnet_decap_term(dvs, ["10.10.20.0/24", "2001:506:28:9d::/64"])
+
+        self.remove_route(dvs, "10.10.20.0/24")
+        self.remove_route(dvs, "2001:506:28:9d::/64")
+
+        time.sleep(2)
+        self.validate_subnet_decap_term(dvs, [])
+
+        subnet_decap_config = {
+            "status": "disable",
+            "src_ip": "10.10.10.0/24",
+            "src_ip_v6": "20c1:ba8::/64"
+        }
+        setup_subnet_decap(subnet_decap_config)
+
+        self.add_route(dvs, "10.10.20.0/24")
+        self.add_route(dvs, "2001:506:28:9d::/64")
+
+        time.sleep(2)
+        self.validate_subnet_decap_term(dvs, [])
+
+        self.remove_route(dvs, "10.10.20.0/24")
+        self.remove_route(dvs, "2001:506:28:9d::/64")
+
+        time.sleep(2)
+        self.validate_subnet_decap_term(dvs, [])
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

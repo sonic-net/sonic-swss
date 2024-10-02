@@ -307,13 +307,6 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
         op = "replace";
         port_name = info->port_name;
         fdb_type = info->type;
-        /* Check if this vlan+key is also learned by vxlan neighbor then delete learned on */
-        if (m_mac.find(key) != m_mac.end())
-        {
-            macDelVxlanEntry(key, info);
-            SWSS_LOG_INFO("Local learn event deleting from VXLAN table DEL_KEY %s", key.c_str());
-            macDelVxlan(key);
-        }
     }
     else
     {
@@ -331,11 +324,11 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
-        type = "dynamic";
+        type = "dynamic extern_learn";
     }
     else
     {
-        type = "static";
+        type = "sticky static";
     }
 
     const std::string cmds = std::string("")
@@ -346,6 +339,17 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     int ret = swss::exec(cmds, res);
 
     SWSS_LOG_INFO("cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+
+    if (info->op_type == FDB_OPER_ADD)
+    {
+        /* Check if this vlan+key is also learned by vxlan neighbor then delete the dest entry */
+        if (m_mac.find(key) != m_mac.end())
+        {
+            macDelVxlanEntry(key, info);
+            SWSS_LOG_INFO("Local learn event deleting from VXLAN table DEL_KEY %s", key.c_str());
+            macDelVxlan(key);
+        }
+    }
 
     return;
 }
@@ -380,7 +384,7 @@ void FdbSync::addLocalMac(string key, string op)
 
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
-            type = "dynamic";
+            type = "dynamic extern_learn";
         }
         else
         {
@@ -428,7 +432,7 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
 
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
-        type = "dynamic";
+        type = "dynamic extern_learn";
     }
     else
     {
@@ -507,7 +511,7 @@ void FdbSync::macRefreshStateDB(int vlan, string kmac)
 
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
-            type = "dynamic";
+            type = "dynamic extern_learn";
         }
         else
         {

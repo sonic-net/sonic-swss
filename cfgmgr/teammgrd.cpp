@@ -12,20 +12,17 @@ using namespace swss;
 
 #define SELECT_TIMEOUT 1000
 
-int gBatchSize = 0;
-bool gSwssRecord = false;
-bool gLogRotate = false;
-ofstream gRecordOfs;
-string gRecordFile;
-bool gResponsePublisherRecord = false;
-bool gResponsePublisherLogRotate = false;
-ofstream gResponsePublisherRecordOfs;
-string gResponsePublisherRecordFile;
-
 bool received_sigterm = false;
+static struct sigaction old_sigaction;
 
 void sig_handler(int signo)
 {
+    SWSS_LOG_ENTER();
+
+    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
+        old_sigaction.sa_handler(signo);
+    }
+
     received_sigterm = true;
     return;
 }
@@ -38,7 +35,13 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("--- Starting teammrgd ---");
 
     /* Register the signal handler for SIGTERM */
-    signal(SIGTERM, sig_handler);
+    struct sigaction sigact = {};
+    sigact.sa_handler = sig_handler;
+    if (sigaction(SIGTERM, &sigact, &old_sigaction))
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
+        exit(EXIT_FAILURE);
+    }
 
     try
     {

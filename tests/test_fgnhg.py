@@ -216,7 +216,7 @@ def startup_link(dvs, db, port):
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
 
 def run_warm_reboot(dvs):
-    dvs.runcmd("config warm_restart enable swss")
+    dvs.warm_restart_swss("true")
 
     # Stop swss before modifing the configDB
     dvs.stop_swss()
@@ -280,7 +280,7 @@ def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
         create_entry(config_db, IF_TB, if_name_key, fvs_nul)
         create_entry(config_db, IF_TB, ip_pref_key, fvs_nul)
-        dvs.runcmd("config interface startup " + if_name_key)
+        dvs.port_admin_set(if_name_key, "up")
         shutdown_link(dvs, app_db, i)
         startup_link(dvs, app_db, i)
         bank = 1
@@ -300,7 +300,7 @@ def remove_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
         remove_entry(config_db, IF_TB, if_name_key)
         remove_entry(config_db, IF_TB, ip_pref_key)
-        dvs.runcmd("config interface shutdown " + if_name_key)
+        dvs.port_admin_set(if_name_key, "down")
         shutdown_link(dvs, app_db, i)
         remove_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2))
     remove_entry(config_db, FG_NHG, fg_nhg_name)
@@ -334,7 +334,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
         create_entry(config_db, VLAN_MEMB_TB, vlan_name_key + "|" + if_name_key, fvs)
         create_entry(config_db, VLAN_IF_TB, vlan_name_key, fvs_nul)
         create_entry(config_db, VLAN_IF_TB, ip_pref_key, fvs_nul)
-        dvs.runcmd("config interface startup " + if_name_key)
+        dvs.port_admin_set(if_name_key, "up")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         dvs.servers[i].runcmd("ip link set up dev eth0") == 0
         bank = 0
@@ -619,7 +619,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
         remove_entry(config_db, VLAN_IF_TB, vlan_name_key)
         remove_entry(config_db, VLAN_MEMB_TB, vlan_name_key + "|" + if_name_key)
         remove_entry(config_db, VLAN_TB, vlan_name_key)
-        dvs.runcmd("config interface shutdown " + if_name_key)
+        dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
 
@@ -770,7 +770,7 @@ class TestFineGrainedNextHopGroup(object):
             ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
             create_entry(config_db, IF_TB, if_name_key, fvs_nul)
             create_entry(config_db, IF_TB, ip_pref_key, fvs_nul)
-            dvs.runcmd("config interface startup " + if_name_key)
+            dvs.port_admin_set(if_name_key, "up")
             shutdown_link(dvs, app_db, i)
             startup_link(dvs, app_db, i)
             dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))

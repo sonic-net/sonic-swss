@@ -23,6 +23,7 @@
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
+#define MATCH_OUT_PORT          "OUT_PORT"
 #define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
@@ -49,6 +50,8 @@
 #define MATCH_INNER_IP_PROTOCOL "INNER_IP_PROTOCOL"
 #define MATCH_INNER_L4_SRC_PORT "INNER_L4_SRC_PORT"
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
+#define MATCH_BTH_OPCODE        "BTH_OPCODE"
+#define MATCH_AETH_SYNDROME     "AETH_SYNDROME"
 
 #define BIND_POINT_TYPE_PORT "PORT"
 #define BIND_POINT_TYPE_PORTCHANNEL "PORTCHANNEL"
@@ -65,9 +68,11 @@
 #define ACTION_DTEL_TAIL_DROP_REPORT_ENABLE "TAIL_DROP_REPORT_ENABLE"
 #define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
 #define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
+#define ACTION_COUNTER                      "COUNTER"
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
+#define PACKET_ACTION_COPY        "COPY"
 #define PACKET_ACTION_REDIRECT    "REDIRECT"
 #define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
 
@@ -83,19 +88,28 @@
 #define IP_TYPE_IP              "IP"
 #define IP_TYPE_NON_IP          "NON_IP"
 #define IP_TYPE_IPv4ANY         "IPV4ANY"
-#define IP_TYPE_NON_IPv4        "NON_IPv4"
+#define IP_TYPE_NON_IPv4        "NON_IPV4"
 #define IP_TYPE_IPv6ANY         "IPV6ANY"
-#define IP_TYPE_NON_IPv6        "NON_IPv6"
+#define IP_TYPE_NON_IPv6        "NON_IPV6"
 #define IP_TYPE_ARP             "ARP"
 #define IP_TYPE_ARP_REQUEST     "ARP_REQUEST"
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
 
 #define MLNX_MAX_RANGES_COUNT   16
 #define INGRESS_TABLE_DROP      "IngressTableDrop"
+#define EGRESS_TABLE_DROP       "EgressTableDrop"
 #define RULE_OPER_ADD           0
 #define RULE_OPER_DELETE        1
 
 #define ACL_COUNTER_FLEX_COUNTER_GROUP "ACL_STAT_COUNTER"
+
+enum AclObjectStatus
+{
+    ACTIVE = 0,
+    INACTIVE,
+    PENDING_CREATION,
+    PENDING_REMOVAL
+};
 
 struct AclActionCapabilities
 {
@@ -112,6 +126,12 @@ typedef map<string, sai_packet_action_t> acl_packet_action_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 typedef map<acl_stage_type_t, AclActionCapabilities> acl_capabilities_t;
 typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabilities_t;
+
+typedef map<acl_stage_type_t, set<sai_acl_action_type_t> > acl_stage_action_list_t;
+typedef map<string, acl_stage_action_list_t> acl_table_action_list_lookup_t;
+
+typedef map<acl_stage_type_t, set<sai_acl_table_attr_t> > acl_stage_match_field_t;
+typedef map<string, acl_stage_match_field_t> acl_table_match_field_lookup_t;
 
 class AclRule;
 
@@ -155,6 +175,9 @@ public:
     const map<sai_acl_table_attr_t, shared_ptr<AclTableMatchInterface>>& getMatches() const;
     const set<sai_acl_range_type_t>& getRangeTypes() const;
     const set<sai_acl_action_type_t>& getActions() const;
+
+    bool addAction(sai_acl_action_type_t action);
+    bool addMatch(shared_ptr<AclTableMatchInterface> match);
 
 private:
     friend class AclTableTypeBuilder;
@@ -254,6 +277,7 @@ public:
     sai_object_id_t getCounterOid() const;
     bool hasCounter() const;
     vector<sai_object_id_t> getInPorts() const;
+    bool getCreateCounter() const;
 
     const vector<AclRangeConfig>& getRangeConfig() const;
     static shared_ptr<AclRule> makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
@@ -320,6 +344,7 @@ public:
     AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool createCounter();
     bool createRule();
     bool removeRule();
     void onUpdate(SubjectType, void *) override;
@@ -334,10 +359,10 @@ protected:
     MirrorOrch *m_pMirrorOrch {nullptr};
 };
 
-class AclRuleDTelFlowWatchListEntry: public AclRule
+class AclRuleDTelWatchListEntry: public AclRule
 {
 public:
-    AclRuleDTelFlowWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
+    AclRuleDTelWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     bool createRule();
@@ -353,17 +378,6 @@ protected:
     string m_intSessionId;
     bool INT_enabled;
     bool INT_session_valid;
-};
-
-class AclRuleDTelDropWatchListEntry: public AclRule
-{
-public:
-    AclRuleDTelDropWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
-    bool validateAddAction(string attr_name, string attr_value);
-    bool validate();
-    void onUpdate(SubjectType, void *) override;
-protected:
-    DTelOrch *m_pDTelOrch;
 };
 
 class AclTable
@@ -386,6 +400,15 @@ public:
     bool validateAddPorts(const unordered_set<string> &value);
     bool validate();
     bool create();
+
+    // Add actions to ACL table if mandatory action list is required on table creation.
+    bool addMandatoryActions();
+
+    // Add stage mandatory matching fields to ACL table
+    bool addStageMandatoryMatchFields();
+
+    // Add stage mandatory range fields to ACL table
+    bool addStageMandatoryRangeFields();
 
     // validate AclRule match attribute against rule and table configuration
     bool validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const;
@@ -430,6 +453,9 @@ public:
     set<string> portSet;
     // Set to store the not configured ACL table port alias
     set<string> pendingPortSet;
+
+    // Is the ACL table bound to switch?
+    bool bindToSwitch = false;
 
 private:
     sai_object_id_t m_oid = SAI_NULL_OBJECT_ID;
@@ -482,12 +508,17 @@ public:
     bool isAclMirrorV6Supported() const;
     bool isAclMirrorV4Supported() const;
     bool isAclMirrorTableSupported(string type) const;
+    bool isAclL3V4V6TableSupported(acl_stage_type_t stage) const;
     bool isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const;
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
     bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
 
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
+    map<acl_stage_type_t, bool> m_L3V4V6Capability;
+
+    void registerFlexCounter(const AclRule& rule);
+    void deregisterFlexCounter(const AclRule& rule);
 
     // Get the OID for the ACL bind point for a given port
     static bool getAclBindPortId(Port& port, sai_object_id_t& port_id);
@@ -505,7 +536,7 @@ private:
     void doAclRuleTask(Consumer &consumer);
     void doAclTableTypeTask(Consumer &consumer);
     void init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
-    void initDefaultTableTypes();
+    void initDefaultTableTypes(const string& platform, const string& sub_platform);
 
     void queryMirrorTableCapability();
     void queryAclActionCapability();
@@ -537,9 +568,16 @@ private:
     void createDTelWatchListTables();
     void deleteDTelWatchListTables();
 
-    void registerFlexCounter(const AclRule& rule);
-    void deregisterFlexCounter(const AclRule& rule);
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
+
+    void setAclTableStatus(string table_name, AclObjectStatus status);
+    void setAclRuleStatus(string table_name, string rule_name, AclObjectStatus status);
+
+    void removeAclTableStatus(string table_name);
+    void removeAclRuleStatus(string table_name, string rule_name);
+
+    void removeAllAclTableStatus();
+    void removeAllAclRuleStatus();
 
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
@@ -550,6 +588,9 @@ private:
     static Table m_countersTable;
 
     Table m_aclStageCapabilityTable;
+
+    Table m_aclTableStateTable;
+    Table m_aclRuleStateTable;
 
     map<acl_stage_type_t, string> m_mirrorTableId;
     map<acl_stage_type_t, string> m_mirrorV6TableId;

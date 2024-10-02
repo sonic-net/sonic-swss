@@ -10,12 +10,13 @@ local port_count_8lanes = 0
 -- Number of lossy PG on ports with 8 lanes
 local lossypg_8lanes = 0
 
+local ingress_profile_is_lossless = {}
+
 -- Private headrom
 local private_headroom = 10 * 1024
 
 local result = {}
 local profiles = {}
-local lossless_profiles = {}
 
 local total_port = 0
 
@@ -52,11 +53,11 @@ local function iterate_all_items(all_items, check_lossless)
         port = string.match(all_items[i], "Ethernet%d+")
         if port ~= nil then
             local range = string.match(all_items[i], "Ethernet%d+:([^%s]+)$")
-            local profile_name = redis.call('HGET', all_items[i], 'profile')
-            if not profile_name then
+            local profile_name_without_table = redis.call('HGET', all_items[i], 'profile')
+            if not profile_name_without_table then
                 return 1
             end
-            profile_name = "BUFFER_PROFILE_TABLE:" .. profile_name
+            local profile_name = "BUFFER_PROFILE_TABLE:" .. profile_name_without_table
             local profile_ref_count = profiles[profile_name]
             if profile_ref_count == nil then
                 -- Indicate an error in case the referenced profile hasn't been inserted or has been removed
@@ -71,10 +72,11 @@ local function iterate_all_items(all_items, check_lossless)
                 size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
             end
             profiles[profile_name] = profile_ref_count + size
-            if port_set_8lanes[port] and profile_name == 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' then
+            if port_set_8lanes[port] and ingress_profile_is_lossless[profile_name] == false then
+                -- Handle additional buffer reserved for lossy PG on 8-lane ports
                 lossypg_8lanes = lossypg_8lanes + size
             end
-            if check_lossless and lossless_profiles[profile_name] then
+            if check_lossless and ingress_profile_is_lossless[profile_name] then
                 if lossless_ports[port] == nil then
                     lossless_port_count = lossless_port_count + 1
                     lossless_ports[port] = true
@@ -113,7 +115,8 @@ local function iterate_profile_list(all_items)
             -- To distinguish both cases, a new name "ingress_lossy_profile_list" is introduced to indicate
             -- the profile is used by the profile list where its size should be zero.
             profile_name = 'BUFFER_PROFILE_TABLE:' .. profile_name
-            if profile_name == 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' then
+            -- TODO CHECK ALL LOSSY PROFILES
+            if ingress_profile_is_lossless[profile_name] == false then
                 profile_name = profile_name .. '_list'
                 if profiles[profile_name] == nil then
                     profiles[profile_name] = 0
@@ -130,7 +133,7 @@ local function iterate_profile_list(all_items)
     return 0
 end
 
-local function fetch_buffer_pool_size_from_appldb()
+local function fetch_buffer_pool_size_from_appldb(shp_enabled)
     local buffer_pools = {}
     redis.call('SELECT', config_db)
     local buffer_pool_keys = redis.call('KEYS', 'BUFFER_POOL|*')
@@ -155,15 +158,42 @@ local function fetch_buffer_pool_size_from_appldb()
         end
         xoff = redis.call('HGET', 'BUFFER_POOL_TABLE:' .. buffer_pools[i], 'xoff')
         if not xoff then
-            table.insert(result, buffer_pools[i] .. ':' .. size)
+            if shp_enabled and size == "0" and buffer_pools[i] == "ingress_lossless_pool" then
+                -- During initialization, if SHP is enabled
+                --   1. the buffer pool sizes, xoff have initialized to 0, which means the shared headroom pool is disabled
+                --   2. but the buffer profiles already indicate the shared headroom pool is enabled
+                --   3. later on the buffer pool sizes are updated with xoff being non-zero
+                -- In case the orchagent starts handling buffer configuration between 2 and 3,
+                -- It is inconsistent between buffer pools and profiles, which fails Mellanox SAI sanity check
+                -- To avoid it, it indicates the shared headroom pool is enabled by setting a very small buffer pool and shared headroom pool sizes
+                table.insert(result, buffer_pools[i] .. ':2048:1024')
+            else
+                table.insert(result, buffer_pools[i] .. ':' .. size)
+            end
         else
             table.insert(result, buffer_pools[i] .. ':' .. size .. ':' .. xoff)
         end
     end
 end
 
+-- Main --
 -- Connect to CONFIG_DB
 redis.call('SELECT', config_db)
+
+-- Parse all the pools and seperate them according to the direction
+local ipools = {}
+local epools = {}
+local pools = redis.call('KEYS', 'BUFFER_POOL|*')
+for i = 1, #pools, 1 do
+    local type = redis.call('HGET', pools[i], 'type')
+    if type == 'ingress' then
+        table.insert(ipools, pools[i])
+    else
+        if type == 'egress' then
+            table.insert(epools, pools[i])
+        end
+    end
+end
 
 local ports_table = redis.call('KEYS', 'PORT|*')
 
@@ -250,9 +280,19 @@ redis.call('SELECT', appl_db)
 local all_profiles = redis.call('KEYS', 'BUFFER_PROFILE*')
 for i = 1, #all_profiles, 1 do
     if all_profiles[i] ~= "BUFFER_PROFILE_TABLE_KEY_SET" and all_profiles[i] ~= "BUFFER_PROFILE_TABLE_DEL_SET" then
-        local xoff = redis.call('HGET', all_profiles[i], 'xoff')
-        if xoff then
-            lossless_profiles[all_profiles[i]] = true
+        local pool = redis.call('HGET', all_profiles[i], 'pool')
+        for j = 1, #ipools, 1 do
+            if "BUFFER_POOL|" .. pool == ipools[j] then
+                -- For ingress profiles, check whether it is lossless or lossy
+                -- For lossy profiles, there is buffer implicitly reserved when they are applied on PGs
+                local xoff = redis.call('HGET', all_profiles[i], 'xoff')
+                if xoff then
+                    ingress_profile_is_lossless[all_profiles[i]] = true
+                else
+                    ingress_profile_is_lossless[all_profiles[i]] = false
+                end
+                break
+            end
         end
         profiles[all_profiles[i]] = 0
     end
@@ -266,7 +306,7 @@ local fail_count = 0
 fail_count = fail_count + iterate_all_items(all_pgs, true)
 fail_count = fail_count + iterate_all_items(all_tcs, false)
 if fail_count > 0 then
-    fetch_buffer_pool_size_from_appldb()
+    fetch_buffer_pool_size_from_appldb(shp_enabled)
     return result
 end
 
@@ -276,7 +316,7 @@ local all_egress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_EGRESS_PROFILE_
 fail_count = fail_count + iterate_profile_list(all_ingress_profile_lists)
 fail_count = fail_count + iterate_profile_list(all_egress_profile_lists)
 if fail_count > 0 then
-    fetch_buffer_pool_size_from_appldb()
+    fetch_buffer_pool_size_from_appldb(shp_enabled)
     return result
 end
 
@@ -289,12 +329,13 @@ local accumulative_xoff = 0
 for name in pairs(profiles) do
     if name ~= "BUFFER_PROFILE_TABLE_KEY_SET" and name ~= "BUFFER_PROFILE_TABLE_DEL_SET" then
         local size = tonumber(redis.call('HGET', name, 'size'))
-        if size ~= nil then 
-            if name == "BUFFER_PROFILE_TABLE:ingress_lossy_profile" then
-                size = size + lossypg_reserved
+        if size ~= nil then
+            -- Handle the implicitly reserved buffer for lossy profile applied on PG
+            if ingress_profile_is_lossless[name] == false then
+               size = size + lossypg_reserved
             end
             if size ~= 0 then
-                if shp_enabled and shp_size == 0 then
+                if shp_size == 0 then
                     local xon = tonumber(redis.call('HGET', name, 'xon'))
                     local xoff = tonumber(redis.call('HGET', name, 'xoff'))
                     if xon ~= nil and xoff ~= nil and xon + xoff > size then
@@ -304,6 +345,8 @@ for name in pairs(profiles) do
                 accumulative_occupied_buffer = accumulative_occupied_buffer + size * profiles[name]
             end
             table.insert(statistics, {name, size, profiles[name]})
+        else
+            table.insert(statistics, {name, "-", profiles[name]})
         end
     end
 end
@@ -314,6 +357,12 @@ accumulative_occupied_buffer = accumulative_occupied_buffer + lossypg_extra_for_
 
 -- Accumulate sizes for private headrooms
 local accumulative_private_headroom = 0
+local force_enable_shp = false
+if accumulative_xoff > 0 and shp_enabled ~= true then
+    force_enable_shp = true
+    shp_size = 655360
+    shp_enabled = true
+end
 if shp_enabled then
     accumulative_private_headroom = lossless_port_count * private_headroom
     accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_private_headroom
@@ -336,7 +385,6 @@ redis.call('SELECT', config_db)
 
 -- Fetch all the pools that need update
 local pools_need_update = {}
-local ipools = redis.call('KEYS', 'BUFFER_POOL|ingress*')
 local ingress_pool_count = 0
 local ingress_lossless_pool_size = nil
 for i = 1, #ipools, 1 do
@@ -351,7 +399,6 @@ for i = 1, #ipools, 1 do
     end
 end
 
-local epools = redis.call('KEYS', 'BUFFER_POOL|egress*')
 for i = 1, #epools, 1 do
     local size = redis.call('HGET', epools[i], 'size')
     if not size then
@@ -361,16 +408,21 @@ end
 
 if shp_enabled and shp_size == 0 then
     shp_size = math.ceil(accumulative_xoff / over_subscribe_ratio)
+    if shp_size == 0 then
+        shp_size = 655360
+    end
 end
 
 local pool_size
 if shp_size then
     accumulative_occupied_buffer = accumulative_occupied_buffer + shp_size
 end
+
+local available_buffer = mmu_size - accumulative_occupied_buffer
 if ingress_pool_count == 1 then
-    pool_size = mmu_size - accumulative_occupied_buffer
+    pool_size = available_buffer
 else
-    pool_size = (mmu_size - accumulative_occupied_buffer) / 2
+    pool_size = available_buffer / 2
 end
 
 if pool_size > ceiling_mmu_size then
@@ -379,12 +431,19 @@ end
 
 local shp_deployed = false
 for i = 1, #pools_need_update, 1 do
+    local percentage = tonumber(redis.call('HGET', pools_need_update[i], 'percentage'))
+    local effective_pool_size
+    if percentage ~= nil and percentage >= 0 then
+        effective_pool_size = available_buffer * percentage / 100
+    else
+        effective_pool_size = pool_size
+    end
     local pool_name = string.match(pools_need_update[i], "BUFFER_POOL|([^%s]+)$")
     if shp_size ~= 0 and pool_name == "ingress_lossless_pool" then
-        table.insert(result, pool_name .. ":" .. math.ceil(pool_size) .. ":" .. math.ceil(shp_size))
+        table.insert(result, pool_name .. ":" .. math.ceil(effective_pool_size) .. ":" .. math.ceil(shp_size))
         shp_deployed = true
     else
-        table.insert(result, pool_name .. ":" .. math.ceil(pool_size))
+        table.insert(result, pool_name .. ":" .. math.ceil(effective_pool_size))
     end
 end
 
@@ -402,6 +461,7 @@ table.insert(result, "debug:mgmt_pool:" .. mgmt_pool_size)
 if shp_enabled then
     table.insert(result, "debug:accumulative_private_headroom:" .. accumulative_private_headroom)
     table.insert(result, "debug:accumulative xoff:" .. accumulative_xoff)
+    table.insert(result, "debug:force enabled shp:" .. tostring(force_enable_shp))
 end
 table.insert(result, "debug:accumulative_mgmt_pg:" .. accumulative_management_pg)
 table.insert(result, "debug:egress_mirror:" .. accumulative_egress_mirror_overhead)

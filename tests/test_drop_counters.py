@@ -11,7 +11,7 @@ SWITCH_EGRESS_DROPS = 'SWITCH_EGRESS_DROPS'
 
 # Debug Counter Table
 DEBUG_COUNTER_TABLE = 'DEBUG_COUNTER'
-DROP_REASON_TABLE =   'DEBUG_COUNTER_DROP_REASON'
+DROP_REASON_TABLE = 'DEBUG_COUNTER_DROP_REASON'
 
 # Debug Counter Capability Table
 CAPABILITIES_TABLE = 'DEBUG_COUNTER_CAPABILITIES'
@@ -54,7 +54,11 @@ ASIC_COUNTER_SWITCH_OUT_TYPE = 'SAI_DEBUG_COUNTER_TYPE_SWITCH_OUT_DROP_REASONS'
 EXPECTED_ASIC_FIELDS = [ASIC_COUNTER_TYPE_FIELD, ASIC_COUNTER_INGRESS_REASON_LIST_FIELD, ASIC_COUNTER_EGRESS_REASON_LIST_FIELD]
 EXPECTED_NUM_ASIC_FIELDS = 2
 
+# port to be add and removed
+PORT = "Ethernet0"
+PORT_TABLE_NAME = "PORT"
 
+@pytest.mark.usefixtures('dvs_port_manager')
 # FIXME: It is really annoying to have to re-run tests due to inconsistent timing, should
 # implement some sort of polling interface for checking ASIC/flex counter tables after
 # applying changes to config DB
@@ -64,6 +68,7 @@ class TestDropCounters(object):
         self.config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         self.flex_db = swsscommon.DBConnector(5, dvs.redis_sock, 0)
         self.state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        self.counters_db = swsscommon.DBConnector(2, dvs.redis_sock, 0)
 
     def genericGetAndAssert(self, table, key):
         status, fields = table.get(key)
@@ -654,6 +659,79 @@ class TestDropCounters(object):
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
+    
+    def getPortOid(self, dvs, port_name):
+        port_name_map = swsscommon.Table(self.counters_db, "COUNTERS_PORT_NAME_MAP")
+        status, returned_value = port_name_map.hget("", port_name);
+        assert status == True
+        return returned_value
+    
+    def test_add_remove_port(self, dvs, testlog):
+        """
+            This test verifies that debug counters are removed when we remove a port 
+            and debug counters are added each time we add ports (if debug counter is enabled)
+        """
+        self.setup_db(dvs)
+         
+        # save port info
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, PORT_TABLE_NAME)
+        (status, fvs) = tbl.get(PORT)      
+        assert status == True
+ 
+        # get counter oid
+        oid = self.getPortOid(dvs, PORT)
+
+        # verifies debug coutner dont exist for port
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+        status, fields = flex_counter_table.get(oid)
+        assert len(fields) == 0
+ 
+        # add debug counters
+        name1 = 'DEBUG_0'
+        reason1 = 'L3_ANY'
+        name2 = 'DEBUG_1'
+        reason2 = 'L2_ANY'
+        
+        self.create_drop_counter(name1, PORT_INGRESS_DROPS)
+        self.add_drop_reason(name1, reason1)
+        
+        self.create_drop_counter(name2, PORT_EGRESS_DROPS)
+        self.add_drop_reason(name2, reason2)
+        time.sleep(3)
+ 
+        # verifies debug counter exist for port
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+        status, fields = flex_counter_table.get(oid)
+        assert status == True
+        assert len(fields) == 1
+         
+        # remove port and wait until it was removed from ASIC DB
+        self.dvs_port.remove_port(PORT)
+        dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", oid)
+
+        # verify that debug counter were removed
+        status, fields = flex_counter_table.get(oid)
+        assert len(fields) == 0
+ 
+        # add port and wait until the port is added on asic db
+        num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+        tbl.set(PORT, fvs)
+        dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_keys_without_port + 1)
+        dvs.get_counters_db().wait_for_fields("COUNTERS_PORT_NAME_MAP", "", [PORT])
+        
+        # verifies that debug counters were added for port
+        oid = self.getPortOid(dvs, PORT)
+        status, fields = flex_counter_table.get(oid)
+        assert status == True
+        assert len(fields) == 1
+        
+        # Cleanup for the next test.
+        self.delete_drop_counter(name1)
+        self.remove_drop_reason(name1, reason1)
+        
+        self.delete_drop_counter(name2)
+        self.remove_drop_reason(name2, reason2)
 
     def test_createAndDeleteMultipleCounters(self, dvs, testlog):
         """

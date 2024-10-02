@@ -14,7 +14,6 @@ class TestInbandInterface(object):
 
     def add_mgmt_vrf(self, dvs):
         initial_entries = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")) 
-        #dvs.runcmd("config vrf add mgmt")
         dvs.runcmd("ip link add mgmt type vrf table 5000")
         dvs.runcmd("ifconfig mgmt up")
         time.sleep(2)

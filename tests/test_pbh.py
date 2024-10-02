@@ -1,6 +1,8 @@
 import pytest
 import logging
 
+import test_flex_counters as flex_counter_module
+
 
 PBH_HASH_FIELD_NAME = "inner_ip_proto"
 PBH_HASH_FIELD_HASH_FIELD = "INNER_IP_PROTOCOL"
@@ -128,6 +130,7 @@ class TestPbhInterfaceBinding:
             self.dvs_lag.get_and_verify_port_channel(0)
 
 
+@pytest.mark.usefixtures("dvs_hash_manager")
 class TestPbhBasicFlows:
     def test_PbhHashFieldCreationDeletion(self, testlog):
         try:
@@ -160,12 +163,12 @@ class TestPbhBasicFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
         finally:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -203,7 +206,7 @@ class TestPbhBasicFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
 
             # PBH table
             pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
@@ -245,7 +248,7 @@ class TestPbhBasicFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -253,6 +256,228 @@ class TestPbhBasicFlows:
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
 
+@pytest.mark.usefixtures("dvs_hash_manager")
+class TestPbhBasicEditFlows:
+    def test_PbhRuleUpdate(self, testlog):
+        try:
+            # PBH hash field
+            pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.create_pbh_hash_field(
+                hash_field_name=PBH_HASH_FIELD_NAME,
+                hash_field=PBH_HASH_FIELD_HASH_FIELD,
+                sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
+            )
+            self.dvs_pbh.verify_pbh_hash_field_count(1)
+
+            # PBH hash
+            pbhlogger.info("Create PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.create_pbh_hash(
+                hash_name=PBH_HASH_NAME,
+                hash_field_list=PBH_HASH_HASH_FIELD_LIST
+            )
+            self.dvs_hash.verify_hash_count(1)
+
+            # PBH table
+            pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.create_pbh_table(
+                table_name=PBH_TABLE_NAME,
+                interface_list=PBH_TABLE_INTERFACE_LIST,
+                description=PBH_TABLE_DESCRIPTION
+            )
+            self.dvs_acl.verify_acl_table_count(1)
+
+            # PBH rule
+            attr_dict = {
+                "ether_type": PBH_RULE_ETHER_TYPE,
+                "ip_protocol": PBH_RULE_IP_PROTOCOL,
+                "gre_key": PBH_RULE_GRE_KEY,
+                "inner_ether_type": PBH_RULE_INNER_ETHER_TYPE
+            }
+
+            pbhlogger.info("Create PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.create_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH
+            )
+            self.dvs_acl.verify_acl_rule_count(1)
+
+            attr_dict = {
+                "ether_type": "0x86dd",
+                "ipv6_next_header": "0x2f",
+                "inner_ether_type": "0x0800"
+            }
+
+            pbhlogger.info("Update PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.update_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority="100",
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_LAG_HASH",
+                flow_counter="ENABLED"
+            )
+
+            hash_id = self.dvs_hash.get_hash_ids(1)[0]
+            counter_id = self.dvs_acl.get_acl_counter_ids(1)[0]
+
+            sai_attr_dict = {
+                "SAI_ACL_ENTRY_ATTR_PRIORITY": self.dvs_acl.get_simple_qualifier_comparator("100"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE": self.dvs_acl.get_simple_qualifier_comparator("34525&mask:0xffff"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL": self.dvs_acl.get_simple_qualifier_comparator("disabled"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": self.dvs_acl.get_simple_qualifier_comparator("47&mask:0xff"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_GRE_KEY": self.dvs_acl.get_simple_qualifier_comparator("disabled"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE": self.dvs_acl.get_simple_qualifier_comparator("2048&mask:0xffff"),
+                "SAI_ACL_ENTRY_ATTR_ACTION_SET_ECMP_HASH_ID": self.dvs_acl.get_simple_qualifier_comparator("disabled"),
+                "SAI_ACL_ENTRY_ATTR_ACTION_SET_LAG_HASH_ID": self.dvs_acl.get_simple_qualifier_comparator(hash_id),
+                "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER": self.dvs_acl.get_simple_qualifier_comparator(counter_id)
+            }
+
+            self.dvs_acl.verify_acl_rule_generic(
+                sai_qualifiers=sai_attr_dict
+            )
+
+        finally:
+            # PBH rule
+            pbhlogger.info("Remove PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.remove_pbh_rule(PBH_TABLE_NAME, PBH_RULE_NAME)
+            self.dvs_acl.verify_acl_rule_count(0)
+
+            # PBH table
+            pbhlogger.info("Remove PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.remove_pbh_table(PBH_TABLE_NAME)
+            self.dvs_acl.verify_acl_table_count(0)
+
+            # PBH hash
+            pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
+            self.dvs_hash.verify_hash_count(0)
+
+            # PBH hash field
+            pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
+            self.dvs_pbh.verify_pbh_hash_field_count(0)
+
+
+    def test_PbhRuleUpdateFlowCounter(self, dvs, testlog):
+        try:
+            # PBH hash field
+            pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.create_pbh_hash_field(
+                hash_field_name=PBH_HASH_FIELD_NAME,
+                hash_field=PBH_HASH_FIELD_HASH_FIELD,
+                sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
+            )
+            self.dvs_pbh.verify_pbh_hash_field_count(1)
+
+            # PBH hash
+            pbhlogger.info("Create PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.create_pbh_hash(
+                hash_name=PBH_HASH_NAME,
+                hash_field_list=PBH_HASH_HASH_FIELD_LIST
+            )
+            self.dvs_hash.verify_hash_count(1)
+
+            # PBH table
+            pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.create_pbh_table(
+                table_name=PBH_TABLE_NAME,
+                interface_list=PBH_TABLE_INTERFACE_LIST,
+                description=PBH_TABLE_DESCRIPTION
+            )
+            self.dvs_acl.verify_acl_table_count(1)
+
+            # Prepare ACL FLEX Counter environment
+            meta_data = flex_counter_module.counter_group_meta['acl_counter']
+            counter_key = meta_data['key']
+            counter_stat = meta_data['group_name']
+            counter_map = meta_data['name_map']
+
+            test_flex_counters = flex_counter_module.TestFlexCounters()
+            test_flex_counters.setup_dbs(dvs)
+            test_flex_counters.verify_no_flex_counters_tables(counter_stat)
+
+            # PBH rule
+            pbhlogger.info("Create PBH rule: {}".format(PBH_RULE_NAME))
+
+            attr_dict = {
+                "ether_type": PBH_RULE_ETHER_TYPE,
+                "ip_protocol": PBH_RULE_IP_PROTOCOL,
+                "gre_key": PBH_RULE_GRE_KEY,
+                "inner_ether_type": PBH_RULE_INNER_ETHER_TYPE
+            }
+
+            self.dvs_pbh.create_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_ECMP_HASH",
+                flow_counter="ENABLED"
+            )
+            self.dvs_acl.verify_acl_rule_count(1)
+            self.dvs_acl.get_acl_counter_ids(1)
+
+            pbhlogger.info("Enable a ACL FLEX counter")
+            test_flex_counters.set_flex_counter_group_status(counter_key, counter_map)
+            test_flex_counters.set_flex_counter_group_interval(counter_key, counter_stat, '1000')
+            test_flex_counters.verify_flex_counters_populated(counter_map, counter_stat)
+
+            pbhlogger.info("Disable a flow counter for PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.update_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_ECMP_HASH",
+                flow_counter="DISABLED"
+            )
+            self.dvs_acl.get_acl_counter_ids(0)
+
+            pbhlogger.info("Enable a flow counter for PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.update_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_ECMP_HASH",
+                flow_counter="ENABLED"
+            )
+            self.dvs_acl.get_acl_counter_ids(1)
+
+        finally:
+            # PBH rule
+            pbhlogger.info("Remove PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.remove_pbh_rule(PBH_TABLE_NAME, PBH_RULE_NAME)
+            self.dvs_acl.verify_acl_rule_count(0)
+
+            # PBH table
+            pbhlogger.info("Remove PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.remove_pbh_table(PBH_TABLE_NAME)
+            self.dvs_acl.verify_acl_table_count(0)
+
+            # PBH hash
+            pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
+            self.dvs_hash.verify_hash_count(0)
+
+            # PBH hash field
+            pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
+            self.dvs_pbh.verify_pbh_hash_field_count(0)
+
+            # ACL FLEX counter
+            pbhlogger.info("Disable ACL FLEX counter")
+            test_flex_counters.post_trap_flow_counter_test(meta_data)
+
+
+@pytest.mark.usefixtures("dvs_hash_manager")
 @pytest.mark.usefixtures("dvs_lag_manager")
 class TestPbhExtendedFlows:
     class PbhRefCountHelper(object):
@@ -374,13 +599,13 @@ class TestPbhExtendedFlows:
             hash_field_list=meta_dict["hash_field_list"]
         )
         pbh_ref_count.incPbhHashCount()
-        self.dvs_pbh.verify_pbh_hash_count(pbh_ref_count.getPbhHashCount())
+        self.dvs_hash.verify_hash_count(pbh_ref_count.getPbhHashCount())
 
     def remove_hash(self, meta_dict, pbh_ref_count):
         pbhlogger.info("Remove PBH hash: {}".format(meta_dict["name"]))
         self.dvs_pbh.remove_pbh_hash(meta_dict["name"])
         pbh_ref_count.decPbhHashCount()
-        self.dvs_pbh.verify_pbh_hash_count(pbh_ref_count.getPbhHashCount())
+        self.dvs_hash.verify_hash_count(pbh_ref_count.getPbhHashCount())
 
     def create_table(self, meta_dict, pbh_ref_count):
         pbhlogger.info("Create PBH table: {}".format(meta_dict["name"]))
@@ -687,6 +912,7 @@ class TestPbhExtendedFlows:
         pass
 
 
+@pytest.mark.usefixtures("dvs_hash_manager")
 class TestPbhDependencyFlows:
     def test_PbhHashCreationDeletionWithDependencies(self, testlog):
         try:
@@ -696,7 +922,7 @@ class TestPbhDependencyFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -706,7 +932,7 @@ class TestPbhDependencyFlows:
                 sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
             )
             self.dvs_pbh.verify_pbh_hash_field_count(1)
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
         finally:
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -716,7 +942,7 @@ class TestPbhDependencyFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
     def test_PbhRuleCreationDeletionWithDependencies(self, testlog):
@@ -727,7 +953,7 @@ class TestPbhDependencyFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -737,7 +963,7 @@ class TestPbhDependencyFlows:
                 sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
             )
             self.dvs_pbh.verify_pbh_hash_field_count(1)
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
 
             # PBH rule
             attr_dict = {
@@ -787,7 +1013,7 @@ class TestPbhDependencyFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
 

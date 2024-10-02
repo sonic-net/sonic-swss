@@ -1,5 +1,6 @@
 #include "tokenize.h"
 #include "bufferorch.h"
+#include "directory.h"
 #include "logger.h"
 #include "sai_serialize.h"
 #include "warm_restart.h"
@@ -16,10 +17,11 @@ extern sai_switch_api_t *sai_switch_api;
 extern sai_buffer_api_t *sai_buffer_api;
 
 extern PortsOrch *gPortsOrch;
+extern Directory<Orch*> gDirectory;
 extern sai_object_id_t gSwitchId;
-
-#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
-
+extern string gMySwitchType;
+extern string gMyHostName;
+extern string gMyAsicName;
 
 static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 {
@@ -28,12 +30,12 @@ static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 };
 
 type_map BufferOrch::m_buffer_type_maps = {
-    {APP_BUFFER_POOL_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PROFILE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_QUEUE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PG_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_reference_map()}
+    {APP_BUFFER_POOL_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PROFILE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_QUEUE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PG_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()}
 };
 
 map<string, string> buffer_to_ref_table_map = {
@@ -42,11 +44,11 @@ map<string, string> buffer_to_ref_table_map = {
     {buffer_profile_list_field_name, APP_BUFFER_PROFILE_TABLE_NAME}
 };
 
+std::map<string, std::map<size_t, string>> pg_port_flags;
+std::map<string, std::map<size_t, string>> queue_port_flags;
+
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
-    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
@@ -54,7 +56,11 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     initTableHandlers();
     initBufferReadyLists(applDb, confDb);
     initFlexCounterGroupTable();
-    initBufferConstants();
+
+    if (gMySwitchType != "dpu")
+    {
+        initBufferConstants();
+    }
 };
 
 void BufferOrch::initTableHandlers()
@@ -98,16 +104,32 @@ void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
         Table pg_table(applDb, APP_BUFFER_PG_TABLE_NAME);
         initBufferReadyList(pg_table, false);
 
-        Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
-        initBufferReadyList(queue_table, false);
+        if(gMySwitchType == "voq") 
+        {
+            Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
+            initVoqBufferReadyList(queue_table, false);
+        }
+        else
+        {
+            Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
+            initBufferReadyList(queue_table, false);
+        }
     }
     else
     {
         Table pg_table(confDb, CFG_BUFFER_PG_TABLE_NAME);
         initBufferReadyList(pg_table, true);
 
-        Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
-        initBufferReadyList(queue_table, true);
+        if(gMySwitchType == "voq") 
+        {
+            Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
+            initVoqBufferReadyList(queue_table, true);
+        }
+        else
+        {
+            Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
+            initBufferReadyList(queue_table, true);
+        }
     }
 }
 
@@ -144,6 +166,38 @@ void BufferOrch::initBufferReadyList(Table& table, bool isConfigDb)
     }
 }
 
+void BufferOrch::initVoqBufferReadyList(Table& table, bool isConfigDb)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<std::string> keys;
+    table.getKeys(keys);
+
+    const char dbKeyDelimiter = (isConfigDb ? config_db_key_delimiter : delimiter);
+
+    // populate the lists with buffer configuration information
+    for (const auto& key: keys)
+    {
+        auto &&tokens = tokenize(key, dbKeyDelimiter);
+        if (tokens.size() != 4)
+        {
+            SWSS_LOG_ERROR("Wrong format of a table '%s' key '%s'. Skip it", table.getTableName().c_str(), key.c_str());
+            continue;
+        }
+
+        // We need transform the key from config db format to appl db format
+        auto appldb_key = tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2] + delimiter + tokens[3];
+        m_ready_list[appldb_key] = false;
+
+        auto &&port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
+        for(const auto& port_name: port_names)
+        {
+            SWSS_LOG_INFO("Item %s has been inserted into ready list", appldb_key.c_str());
+            m_port_ready_list_ref[port_name].push_back(appldb_key);
+        }
+    }
+}
+
 void BufferOrch::initBufferConstants()
 {
     sai_status_t status;
@@ -169,22 +223,23 @@ void BufferOrch::initBufferConstants()
 void BufferOrch::initFlexCounterGroupTable(void)
 {
     string bufferPoolWmPluginName = "watermark_bufferpool.lua";
+    string bufferPoolWmSha;
 
     try
     {
         string bufferPoolLuaScript = swss::loadLuaScript(bufferPoolWmPluginName);
-        string bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
-
-        vector<FieldValueTuple> fvTuples;
-        fvTuples.emplace_back(BUFFER_POOL_PLUGIN_FIELD, bufferPoolWmSha);
-        fvTuples.emplace_back(POLL_INTERVAL_FIELD, BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
-
-        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvTuples);
+        bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Buffer pool watermark lua script and/or flex counter group not set successfully. Runtime error: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 "", // do not touch stats_mode
+                                 BUFFER_POOL_PLUGIN_FIELD,
+                                 bufferPoolWmSha);
 }
 
 bool BufferOrch::isPortReady(const std::string& port_name) const
@@ -215,7 +270,7 @@ void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t obj
     if (m_isBufferPoolWatermarkCounterIdListGenerated)
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
-        m_flexCounterTable->del(key);
+        stopFlexCounterPolling(gSwitchId, key);
     }
 }
 
@@ -266,37 +321,32 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 
     if (!noWmClrCapability)
     {
-        vector<FieldValueTuple> fvs;
-
-        fvs.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
+        setFlexCounterGroupStatsMode(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                     STATS_MODE_READ_AND_CLEAR);
     }
 
     // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
-    vector<FieldValueTuple> fvTuples;
-    fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
+    string stats_mode;
+
     bitMask = 1;
+
     for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
 
+        stats_mode = "";
+
         if (noWmClrCapability)
         {
-            string stats_mode = STATS_MODE_READ_AND_CLEAR;
             if (noWmClrCapability & bitMask)
             {
                 stats_mode = STATS_MODE_READ;
             }
-            fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
 
-            m_flexCounterTable->set(key, fvTuples);
-            fvTuples.pop_back();
             bitMask <<= 1;
         }
-        else
-        {
-            m_flexCounterTable->set(key, fvTuples);
-        }
+
+        startFlexCounterPolling(gSwitchId, key, statList, BUFFER_POOL_COUNTER_ID_LIST, stats_mode);
     }
 
     m_isBufferPoolWatermarkCounterIdListGenerated = true;
@@ -318,14 +368,21 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     string map_type_name = APP_BUFFER_POOL_TABLE_NAME;
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
+    string xoff;
 
     SWSS_LOG_DEBUG("object name:%s", object_name.c_str());
     if (m_buffer_type_maps[map_type_name]->find(object_name) != m_buffer_type_maps[map_type_name]->end())
     {
         sai_object = (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId;
         SWSS_LOG_DEBUG("found existing object:%s of type:%s", object_name.c_str(), map_type_name.c_str());
+        if ((*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", map_type_name.c_str(), object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     SWSS_LOG_DEBUG("processing command:%s", op.c_str());
+
     if (op == SET_COMMAND)
     {
         vector<sai_attribute_t> attribs;
@@ -406,6 +463,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                 attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
                 attribs.push_back(attr);
+                xoff = value;
             }
             else
             {
@@ -447,7 +505,9 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                     return handle_status;
                 }
             }
+
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
             // Here we take the PFC watchdog approach to update the COUNTERS_DB metadata (e.g., PFC_WD_DETECTION_TIME per queue)
             // at initialization (creation and registration phase)
@@ -456,6 +516,15 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // "FLEX_COUNTER_STATUS"
             m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
         }
+
+        // Only publish the result when shared headroom pool is enabled and it has been successfully applied to SAI
+        if (!xoff.empty())
+        {
+            vector<FieldValueTuple> fvs;
+            fvs.emplace_back("xoff", xoff);
+            SWSS_LOG_INFO("Publishing the result after applying the shared headroom pool size %s to SAI", xoff.c_str());
+            m_publisher.publish(APP_BUFFER_POOL_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
+        }
     }
     else if (op == DEL_COMMAND)
     {
@@ -463,6 +532,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         {
             auto hint = objectReferenceInfo(m_buffer_type_maps, map_type_name, object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", object_name.c_str(), hint.c_str());
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = true;
 
             return task_process_status::task_need_retry;
         }
@@ -480,11 +550,14 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                     return handle_status;
                 }
             }
+            SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         }
-        SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
         m_countersDb->hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
+
+        vector<FieldValueTuple> fvs;
+        m_publisher.publish(APP_BUFFER_POOL_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
     }
     else
     {
@@ -509,6 +582,11 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
     {
         sai_object = (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId;
         SWSS_LOG_DEBUG("found existing object:%s of type:%s", object_name.c_str(), map_type_name.c_str());
+        if ((*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", map_type_name.c_str(), object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     SWSS_LOG_DEBUG("processing command:%s", op.c_str());
     if (op == SET_COMMAND)
@@ -523,13 +601,6 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             sai_attribute_t attr;
             if (field == buffer_pool_field_name)
             {
-                if (SAI_NULL_OBJECT_ID != sai_object)
-                {
-                    // We should skip the profile's pool name because it's create only when setting a profile's attribute.
-                    SWSS_LOG_INFO("Skip setting buffer profile's pool %s for profile %s", value.c_str(), object_name.c_str());
-                    continue;
-                }
-
                 sai_object_id_t sai_pool;
                 ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_pool_field_name,
                                                     buffer_to_ref_table_map.at(buffer_pool_field_name),
@@ -623,6 +694,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            vector<sai_attribute_t> attribs_to_retry;
             SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             for (auto &attribute : attribs)
             {
@@ -634,7 +706,18 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
                 else if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
+                    SWSS_LOG_NOTICE("Unable to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry one more time", object_name.c_str(), sai_object, sai_status);
+                    attribs_to_retry.push_back(attribute);
+                }
+            }
+
+            for (auto &attribute : attribs)
+            {
+                sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    // A retried attribute can not be "not implemented"
+                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry once", object_name.c_str(), sai_object, sai_status);
                     task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
                     if (handle_status != task_process_status::task_success)
                     {
@@ -656,6 +739,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
         }
 
@@ -668,6 +752,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         {
             auto hint = objectReferenceInfo(m_buffer_type_maps, map_type_name, object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", object_name.c_str(), hint.c_str());
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = true;
 
             return task_process_status::task_need_retry;
         }
@@ -698,7 +783,8 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
 }
 
 /*
-Input sample "BUFFER_QUEUE|Ethernet4,Ethernet45|10-15"
+   Input sample "BUFFER_QUEUE|Ethernet4,Ethernet45|10-15" or
+                "BUFFER_QUEUE|STG01-0101-0400-01T2-LC6|ASIC0|Ethernet4|10-15"
 */
 task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
 {
@@ -710,18 +796,47 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     vector<string> tokens;
     sai_uint32_t range_low, range_high;
     bool need_update_sai = true;
+    bool local_port = false;
+    string local_port_name;
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
     tokens = tokenize(key, delimiter);
-    if (tokens.size() != 2)
+
+    vector<string> port_names;
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
-        return task_process_status::task_invalid_entry;
+        if (tokens.size() != 4)
+        {
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 4 tokens", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
+        if (!parseIndexRange(tokens[3], range_low, range_high))
+        {
+            return task_process_status::task_invalid_entry;
+        }
+
+        if((tokens[0] == gMyHostName) && (tokens[1] == gMyAsicName))
+        {
+           local_port = true;
+           local_port_name = tokens[2];
+           SWSS_LOG_INFO("System port %s is local port %d local port name %s", port_names[0].c_str(), local_port, local_port_name.c_str());
+        }
     }
-    vector<string> port_names = tokenize(tokens[0], list_item_delimiter);
-    if (!parseIndexRange(tokens[1], range_low, range_high))
+    else 
     {
-        return task_process_status::task_invalid_entry;
+        if (tokens.size() != 2)
+        {
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        port_names = tokenize(tokens[0], list_item_delimiter);
+        if (!parseIndexRange(tokens[1], range_low, range_high))
+        {
+            return task_process_status::task_invalid_entry;
+        }
     }
 
     if (op == SET_COMMAND)
@@ -741,6 +856,21 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_failed;
         }
 
+        string old_buffer_profile_name;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name)
+            && (old_buffer_profile_name == buffer_profile_name))
+        {
+            if (m_partiallyAppliedQueues.find(key) == m_partiallyAppliedQueues.end())
+            {
+                SWSS_LOG_INFO("Skip setting buffer queue %s to %s since it is not changed", key.c_str(), buffer_profile_name.c_str());
+                return task_process_status::task_success;
+            }
+            else
+            {
+                m_partiallyAppliedQueues.erase(key);
+            }
+        }
+
         SWSS_LOG_NOTICE("Set buffer queue %s to %s", key.c_str(), buffer_profile_name.c_str());
 
         setObjectReference(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, buffer_profile_name);
@@ -756,6 +886,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         sai_buffer_profile = SAI_NULL_OBJECT_ID;
         SWSS_LOG_NOTICE("Remove buffer queue %s", key.c_str());
         removeObject(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key);
+        m_partiallyAppliedQueues.erase(key);
     }
     else
     {
@@ -770,6 +901,12 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
+
+        if(local_port == true)
+        {
+            port_name = local_port_name;
+        }
+
         if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
@@ -778,20 +915,36 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
             SWSS_LOG_DEBUG("processing queue:%zd", ind);
-            if (port.m_queue_ids.size() <= ind)
+            sai_object_id_t queue_id;
+
+            if (gMySwitchType == "voq") 
             {
-                SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
-                return task_process_status::task_invalid_entry;
-            }
-            if (port.m_queue_lock[ind])
+                std :: vector<sai_object_id_t> queue_ids = gPortsOrch->getPortVoQIds(port);
+                if (queue_ids.size() <= ind)
+                {
+                    SWSS_LOG_ERROR("Invalid voq index specified:%zd", ind);
+                    return task_process_status::task_invalid_entry;
+                }
+                queue_id = queue_ids[ind];
+            } 
+            else
             {
-                SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
-                return task_process_status::task_need_retry;
+                if (port.m_queue_ids.size() <= ind)
+                 {
+                    SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
+                    return task_process_status::task_invalid_entry;
+                }
+                if (port.m_queue_lock[ind])
+                {
+                    SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
+                    m_partiallyAppliedQueues.insert(key);
+                    return task_process_status::task_need_retry;
+                }
+                queue_id = port.m_queue_ids[ind];
             }
+
             if (need_update_sai)
             {
-                sai_object_id_t queue_id;
-                queue_id = port.m_queue_ids[ind];
                 SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
                 sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
@@ -803,7 +956,58 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                         return handle_status;
                     }
                 }
+                // create/remove a port queue counter for the queue buffer.
+                // For VOQ chassis, flexcounterorch adds the Queue Counters for all egress and VOQ queues of all front panel and system ports
+                // to  the FLEX_COUNTER_DB irrespective of BUFFER_QUEUE configuration. So Port Queue counter needs to be updated only for non VOQ switch.
+                else if (gMySwitchType != "voq")
+                {
+                    auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+                    auto queues = tokens[1];
+                    if (op == SET_COMMAND &&
+                        (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                    {
+                        gPortsOrch->createPortBufferQueueCounters(port, queues);
+                    }
+                    else if (op == DEL_COMMAND &&
+                             (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                    {
+                        gPortsOrch->removePortBufferQueueCounters(port, queues);
+                    }
+                }
             }
+
+            /* when we apply buffer configuration we need to increase the ref counter of this port
+             * or decrease the ref counter for this port when we remove buffer cfg
+             * so for each priority cfg in each port we will increase/decrease the ref counter
+             * also we need to know when the set command is for creating a buffer cfg or modifying buffer cfg -
+             * we need to increase ref counter only on create flow.
+             * so we added a map that will help us to know what was the last command for this port and priority -
+             * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
+             * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
+            if (op == SET_COMMAND)
+            {
+                if (queue_port_flags[port_name][ind] != SET_COMMAND)
+                {
+                    /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
+                    gPortsOrch->increasePortRefCount(port_name);
+                }
+            }
+            else if (op == DEL_COMMAND)
+            {
+                if (queue_port_flags[port_name][ind] == SET_COMMAND)
+		{
+                    /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
+                    gPortsOrch->decreasePortRefCount(port_name);
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
+                return task_process_status::task_invalid_entry;
+            }
+            /* save the last command (set or delete) */
+            queue_port_flags[port_name][ind] = op;
+
         }
     }
 
@@ -822,8 +1026,17 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         // set order is detected.
         for (const auto &port_name : port_names)
         {
-            if (gPortsOrch->isPortAdminUp(port_name)) {
-                SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            if(local_port == true)
+            {
+                if (gPortsOrch->isPortAdminUp(local_port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
+            }
+            else
+            {
+                if (gPortsOrch->isPortAdminUp(port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
             }
         }
     }
@@ -862,7 +1075,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     if (op == SET_COMMAND)
     {
         ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name,
-                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple, 
+                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple,
                                              sai_buffer_profile, buffer_profile_name);
         if (ref_resolve_status::success != resolve_result)
         {
@@ -874,6 +1087,14 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
 
             SWSS_LOG_ERROR("Resolving pg profile reference failed");
             return task_process_status::task_failed;
+        }
+
+        string old_buffer_profile_name;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_PG_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name)
+            && (old_buffer_profile_name == buffer_profile_name))
+        {
+            SWSS_LOG_INFO("Skip setting buffer priority group %s to %s since it is not changed", key.c_str(), buffer_profile_name.c_str());
+            return task_process_status::task_success;
         }
 
         SWSS_LOG_NOTICE("Set buffer PG %s to %s", key.c_str(), buffer_profile_name.c_str());
@@ -904,7 +1125,6 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     for (string port_name : port_names)
     {
         Port port;
-        bool portUpdated = false;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
         if (!gPortsOrch->getPort(port_name, port))
         {
@@ -918,12 +1138,6 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
             {
                 SWSS_LOG_ERROR("Invalid pg index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
-            }
-            if (port.m_priority_group_lock[ind])
-            {
-                SWSS_LOG_WARN("Priority group %zd on port %s is locked, pending profile 0x%" PRIx64 " until unlocked", ind, port_name.c_str(), sai_buffer_profile);
-                portUpdated = true;
-                port.m_priority_group_pending_profile[ind] = sai_buffer_profile;
             }
             else
             {
@@ -942,12 +1156,57 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                             return handle_status;
                         }
                     }
+                    // create or remove a port PG counter for the PG buffer
+                    else
+                    {
+                        auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+                        auto pgs = tokens[1];
+                        if (op == SET_COMMAND &&
+                            (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                        {
+                            gPortsOrch->createPortBufferPgCounters(port, pgs);
+                        }
+                        else if (op == DEL_COMMAND &&
+                                 (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                        {
+                            gPortsOrch->removePortBufferPgCounters(port, pgs);
+                        }
+                    }
                 }
             }
-        }
-        if (portUpdated)
-        {
-            gPortsOrch->setPort(port_name, port);
+
+            /* when we apply buffer configuration we need to increase the ref counter of this port
+             * or decrease the ref counter for this port when we remove buffer cfg
+             * so for each priority cfg in each port we will increase/decrease the ref counter
+             * also we need to know when the set command is for creating a buffer cfg or modifying buffer cfg -
+             * we need to increase ref counter only on create flow.
+             * so we added a map that will help us to know what was the last command for this port and priority -
+             * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
+             * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
+            if (op == SET_COMMAND)
+            {
+                if (pg_port_flags[port_name][ind] != SET_COMMAND)
+                {
+                    /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
+                    gPortsOrch->increasePortRefCount(port_name);
+                }
+            }
+            else if (op == DEL_COMMAND)
+            {
+                if (pg_port_flags[port_name][ind] == SET_COMMAND)
+                {
+                    /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
+                    gPortsOrch->decreasePortRefCount(port_name);
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
+                return task_process_status::task_invalid_entry;
+            }
+            /* save the last command (set or delete) */
+            pg_port_flags[port_name][ind] = op;
+
         }
     }
 
@@ -989,28 +1248,51 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
 
     vector<string> port_names = tokenize(key, list_item_delimiter);
     vector<sai_object_id_t> profile_list;
-
-    string profile_name_list;
-    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
-                                        buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
-                                        profile_list, profile_name_list);
-    if (ref_resolve_status::success != resolve_status)
-    {
-        if(ref_resolve_status::not_resolved == resolve_status)
-        {
-            SWSS_LOG_INFO("Missing or invalid ingress buffer profile reference specified for:%s", key.c_str());
-            return task_process_status::task_need_retry;
-        }
-        SWSS_LOG_ERROR("Failed resolving ingress buffer profile reference specified for:%s", key.c_str());
-        return task_process_status::task_failed;
-    }
-
-    setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
-
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = (uint32_t)profile_list.size();
-    attr.value.objlist.list = profile_list.data();
+
+    if (op == SET_COMMAND)
+    {
+        string profile_name_list;
+        ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
+                                                                 buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
+                                                                 profile_list, profile_name_list);
+        if (ref_resolve_status::success != resolve_status)
+        {
+            if(ref_resolve_status::not_resolved == resolve_status)
+            {
+                SWSS_LOG_INFO("Missing or invalid ingress buffer profile reference specified for:%s", key.c_str());
+                return task_process_status::task_need_retry;
+            }
+            SWSS_LOG_ERROR("Failed resolving ingress buffer profile reference specified for:%s", key.c_str());
+            return task_process_status::task_failed;
+        }
+
+        string old_profile_name_list;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, old_profile_name_list)
+            && (old_profile_name_list == profile_name_list))
+        {
+            SWSS_LOG_INFO("Skip setting buffer ingress profile list %s to %s since it is not changed", key.c_str(), profile_name_list.c_str());
+            return task_process_status::task_success;
+        }
+
+        setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
+
+        attr.value.objlist.count = (uint32_t)profile_list.size();
+        attr.value.objlist.list = profile_list.data();
+    }
+    else if (op == DEL_COMMAND)
+    {
+        SWSS_LOG_NOTICE("%s has been removed from BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE", key.c_str());
+        removeObject(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key);
+        attr.value.objlist.count = 0;
+        attr.value.objlist.list = profile_list.data();
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown command %s when handling BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE key %s", op.c_str(), key.c_str());
+    }
+
     for (string port_name : port_names)
     {
         if (!gPortsOrch->getPort(port_name, port))
@@ -1045,28 +1327,51 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
     vector<string> port_names = tokenize(key, list_item_delimiter);
     vector<sai_object_id_t> profile_list;
-
-    string profile_name_list;
-    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
-                                        buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
-                                        profile_list, profile_name_list);
-    if (ref_resolve_status::success != resolve_status)
-    {
-        if(ref_resolve_status::not_resolved == resolve_status)
-        {
-            SWSS_LOG_INFO("Missing or invalid egress buffer profile reference specified for:%s", key.c_str());
-            return task_process_status::task_need_retry;
-        }
-        SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s", key.c_str());
-        return task_process_status::task_failed;
-    }
-
-    setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
-
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = (uint32_t)profile_list.size();
-    attr.value.objlist.list = profile_list.data();
+
+    if (op == SET_COMMAND)
+    {
+        string profile_name_list;
+        ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
+                                                                 buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
+                                                                 profile_list, profile_name_list);
+        if (ref_resolve_status::success != resolve_status)
+        {
+            if(ref_resolve_status::not_resolved == resolve_status)
+            {
+                SWSS_LOG_INFO("Missing or invalid egress buffer profile reference specified for:%s", key.c_str());
+                return task_process_status::task_need_retry;
+            }
+            SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s", key.c_str());
+            return task_process_status::task_failed;
+        }
+
+        string old_profile_name_list;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, old_profile_name_list)
+            && (old_profile_name_list == profile_name_list))
+        {
+            SWSS_LOG_INFO("Skip setting buffer egress profile list %s to %s since it is not changed", key.c_str(), profile_name_list.c_str());
+            return task_process_status::task_success;
+        }
+
+        setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
+
+        attr.value.objlist.count = (uint32_t)profile_list.size();
+        attr.value.objlist.list = profile_list.data();
+    }
+    else if (op == DEL_COMMAND)
+    {
+        SWSS_LOG_NOTICE("%s has been removed from BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE", key.c_str());
+        removeObject(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key);
+        attr.value.objlist.count = 0;
+        attr.value.objlist.list = profile_list.data();
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown command %s when handling BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE key %s", op.c_str(), key.c_str());
+    }
+
     for (string port_name : port_names)
     {
         if (!gPortsOrch->getPort(port_name, port))
@@ -1127,7 +1432,15 @@ void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isConfigDone())
+    if (gMySwitchType == "voq")
+    {
+        if(!gPortsOrch->isInitDone()) 
+        {
+            SWSS_LOG_INFO("Buffer task for %s can't be executed ahead of port config done", consumer.getTableName().c_str());
+            return;
+        }
+    }
+    else if (!gPortsOrch->isConfigDone())
     {
         SWSS_LOG_INFO("Buffer task for %s can't be executed ahead of port config done", consumer.getTableName().c_str());
         return;
