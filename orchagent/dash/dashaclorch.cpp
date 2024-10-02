@@ -74,7 +74,7 @@ inline void lexical_convert(const string &buffer, DashAclStage &stage)
 
 }
 
-DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer) :
+DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tables, zmqServer),
     m_dash_orch(dash_orch),
     m_group_mgr(db, dash_orch, this),
