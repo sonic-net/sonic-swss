@@ -55,6 +55,9 @@ NatOrch *gNatOrch;
 PolicerOrch *gPolicerOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
+ShlOrch *gShlOrch;
+L2NhgOrch *gL2NhgOrch;
+EvpnMhOrch *gEvpnMhOrch;
 MACsecOrch *gMacsecOrch;
 CoppOrch *gCoppOrch;
 P4Orch *gP4Orch;
@@ -250,7 +253,7 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
-	vector<string> dash_vnet_tables = {
+    vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
@@ -468,6 +471,24 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    vector<string> evpn_sh_tables = {
+        { APP_EVPN_SH_TABLE_NAME }
+    };
+
+    gShlOrch = new ShlOrch(m_applDb, evpn_sh_tables);
+
+    vector<string> evpn_df_tables = {
+       { APP_EVPN_DF_TABLE_NAME }
+    };
+
+    gEvpnMhOrch = new EvpnMhOrch(m_applDb, evpn_df_tables);
+
+    vector<string> l2_nexthop_group_tables = {
+        APP_L2_NEXTHOP_GROUP_TABLE_NAME,
+    };
+
+    gL2NhgOrch = new L2NhgOrch(m_applDb, l2_nexthop_group_tables);
+
     //
     // Policy Based Hashing (PBH) orchestrator
     //
@@ -516,6 +537,9 @@ bool OrchDaemon::init()
     m_orchList.push_back(gNatOrch);
     m_orchList.push_back(gMlagOrch);
     m_orchList.push_back(gIsoGrpOrch);
+    m_orchList.push_back(gShlOrch);
+    m_orchList.push_back(gL2NhgOrch);
+    m_orchList.push_back(gEvpnMhOrch);
     m_orchList.push_back(gFgNhgOrch);
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);

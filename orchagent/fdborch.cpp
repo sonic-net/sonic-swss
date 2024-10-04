@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <cstdint>
 #include <iostream>
 #include <vector>
 #include <unordered_map>
@@ -8,6 +9,7 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "fdborch.h"
+#include "l2nhgorch.h"
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
@@ -18,9 +20,10 @@
 extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
-extern CrmOrch *        gCrmOrch;
-extern MlagOrch*        gMlagOrch;
+extern CrmOrch         *gCrmOrch;
+extern MlagOrch        *gMlagOrch;
 extern Directory<Orch*> gDirectory;
+extern L2NhgOrch       *gL2NhgOrch;
 
 const int FdbOrch::fdborch_pri = 20;
 
@@ -112,6 +115,7 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
         fdbdata.sai_fdb_type = update.sai_fdb_type;
         fdbdata.origin = FDB_ORIGIN_LEARN;
         fdbdata.remote_ip = "";
+        fdbdata.nhg_id = 0;
         fdbdata.esi = "";
         fdbdata.vni = 0;
 
@@ -454,6 +458,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 fdbData.type = update.type;
                 fdbData.origin = existing_entry->second.origin;
                 fdbData.remote_ip = existing_entry->second.remote_ip;
+                fdbData.nhg_id = existing_entry->second.nhg_id;
                 fdbData.esi = existing_entry->second.esi;
                 fdbData.vni = existing_entry->second.vni;
                 saved_fdb_entries[update.port.m_alias].push_back(
@@ -769,6 +774,7 @@ void FdbOrch::doTask(Consumer& consumer)
             string port = "";
             string type = "dynamic";
             string remote_ip = "";
+            uint32_t nhg_id = 0;
             string esi = "";
             unsigned int vni = 0;
             string sticky = "";
@@ -803,6 +809,17 @@ void FdbOrch::doTask(Consumer& consumer)
                         }
                     }
 
+                    if (fvField(i) == "nexthop_group")
+                    {
+                        try {
+                            nhg_id = (unsigned int) stoi(fvValue(i));
+                        } catch(exception &e) {
+                            SWSS_LOG_INFO("Invalid VNI in remote MAC %s", fvValue(i).c_str());
+                            nhg_id = 0;
+                            break;
+                        }
+                    }
+
                     if (fvField(i) == "esi")
                     {
                         esi = fvValue(i);
@@ -828,25 +845,32 @@ void FdbOrch::doTask(Consumer& consumer)
             {
                 VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-                if (tunnel_orch->isDipTunnelsSupported())
+                if (!nhg_id)
                 {
-                    if(!remote_ip.length())
+                    if (tunnel_orch->isDipTunnelsSupported())
                     {
-                        it = consumer.m_toSync.erase(it);
-                        continue;
+                        if(!remote_ip.length())
+                        {
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+                        port = tunnel_orch->getTunnelPortName(remote_ip);
                     }
-                    port = tunnel_orch->getTunnelPortName(remote_ip);
+                    else
+                    {
+                        EvpnNvoOrch* evpn_nvo_orch = gDirectory.get<EvpnNvoOrch*>();
+                        VxlanTunnel* sip_tunnel = evpn_nvo_orch->getEVPNVtep();
+                        if (sip_tunnel == NULL)
+                        {
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+                        port = tunnel_orch->getTunnelPortName(sip_tunnel->getSrcIP().to_string(), true);
+                    }
                 }
                 else
                 {
-                    EvpnNvoOrch* evpn_nvo_orch = gDirectory.get<EvpnNvoOrch*>();
-                    VxlanTunnel* sip_tunnel = evpn_nvo_orch->getEVPNVtep();
-                    if (sip_tunnel == NULL)
-                    {
-                        it = consumer.m_toSync.erase(it);
-                        continue;
-                    }
-                    port = tunnel_orch->getTunnelPortName(sip_tunnel->getSrcIP().to_string(), true);
+                    port = gL2NhgOrch->getL2EcmpGroupPortName(to_string(nhg_id));
                 }
             }
 
@@ -856,6 +880,7 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.type = type;
             fdbData.origin = origin;
             fdbData.remote_ip = remote_ip;
+            fdbData.nhg_id = nhg_id;
             fdbData.esi = esi;
             fdbData.vni = vni;
             fdbData.is_flush_pending = false;
@@ -1238,13 +1263,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     Port vlan;
     Port port;
     string end_point_ip = "";
+    sai_object_id_t     m_bridge_port_id = 0;
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
     SWSS_LOG_ENTER();
-    SWSS_LOG_INFO("mac=%s bv_id=0x%" PRIx64 " port_name=%s type=%s origin=%d remote_ip=%s",
+    SWSS_LOG_INFO("mac=%s bv_id=0x%" PRIx64 " port_name=%s type=%s origin=%d remote_ip=%s nhg_id=%u",
             entry.mac.to_string().c_str(), entry.bv_id, port_name.c_str(),
-            fdbData.type.c_str(), fdbData.origin, fdbData.remote_ip.c_str());
+            fdbData.type.c_str(), fdbData.origin, fdbData.remote_ip.c_str(), fdbData.nhg_id);
 
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
@@ -1252,8 +1278,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         return false;
     }
 
+    if (fdbData.nhg_id && !gL2NhgOrch->hasL2EcmpGroup(to_string(fdbData.nhg_id)))
+    {
+        SWSS_LOG_NOTICE("L2 ECMP group %u was not created", fdbData.nhg_id);
+        return false;
+    }
+
     /* Retry until port is created */
-    if (!m_portsOrch->getPort(port_name, port) || (port.m_bridge_port_id == SAI_NULL_OBJECT_ID))
+    if (!m_portsOrch->getPort(port_name, port) || ((m_bridge_port_id = port.m_bridge_port_id) == SAI_NULL_OBJECT_ID))
     {
         SWSS_LOG_INFO("Saving a fdb entry until port %s becomes active", port_name.c_str());
         saved_fdb_entries[port_name].push_back({entry.mac,
@@ -1270,10 +1302,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     /* Retry until port is member of vlan*/
     if (!m_portsOrch->isVlanMember(vlan, port, end_point_ip))
     {
-        SWSS_LOG_INFO("Saving a fdb entry until port %s becomes vlan %s member", port_name.c_str(), vlan.m_alias.c_str());
-        saved_fdb_entries[port_name].push_back({entry.mac,
-                vlan.m_vlan_info.vlan_id, fdbData});
-        return true;
+        if (!fdbData.nhg_id)
+        {
+            SWSS_LOG_INFO("Saving a fdb entry until port %s becomes vlan %s member", port_name.c_str(), vlan.m_alias.c_str());
+            saved_fdb_entries[port_name].push_back({entry.mac,
+                    vlan.m_vlan_info.vlan_id, fdbData});
+            return true;
+        }
     }
 
     sai_status_t status;
@@ -1298,11 +1333,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
         if (!m_portsOrch->getPortByBridgePortId(it->second.bridge_port_id, oldPort))
         {
-            SWSS_LOG_ERROR("Existing port 0x%" PRIx64 " details not found", it->second.bridge_port_id);
-            return false;
+            if (!fdbData.nhg_id)
+            {
+                SWSS_LOG_ERROR("Existing port 0x%" PRIx64 " details not found", it->second.bridge_port_id);
+                return false;
+            }
         }
 
-        if ((oldOrigin == fdbData.origin) && (oldType == fdbData.type) && (port.m_bridge_port_id == it->second.bridge_port_id)
+        if ((oldOrigin == fdbData.origin) && (oldType == fdbData.type) && (m_bridge_port_id == it->second.bridge_port_id)
             && (oldRemoteIp == fdbData.remote_ip))
         {
             /* Duplicate Mac */
@@ -1350,7 +1388,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             }
             else if ((oldOrigin == FDB_ORIGIN_LEARN) && (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
             {
-                if ((port.m_bridge_port_id == it->second.bridge_port_id) && (oldType == "dynamic") && (fdbData.type == "dynamic_local"))
+                if ((m_bridge_port_id == it->second.bridge_port_id) && (oldType == "dynamic") && (fdbData.type == "dynamic_local"))
                 {
                     SWSS_LOG_INFO("FdbOrch: mac=%s %s port=%s type=%s origin=%d old_origin=%d"
                         " old_type=%s local mac exists,"
@@ -1405,10 +1443,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     }
 
     attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-    attr.value.oid = port.m_bridge_port_id;
+    attr.value.oid = m_bridge_port_id;
     attrs.push_back(attr);
 
-    if (fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+    if (fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED && !fdbData.remote_ip.empty())
     {
         IpAddress remote = IpAddress(fdbData.remote_ip);
         sai_ip_address_t ipaddr;
@@ -1472,12 +1510,15 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                 }
             }
         }
-        if (oldPort.m_bridge_port_id != port.m_bridge_port_id)
+        if (oldPort.m_bridge_port_id != m_bridge_port_id)
         {
             oldPort.m_fdb_count--;
             m_portsOrch->setPort(oldPort.m_alias, oldPort);
-            port.m_fdb_count++;
-            m_portsOrch->setPort(port.m_alias, port);
+            if (m_bridge_port_id != SAI_NULL_OBJECT_ID)
+            {
+                port.m_fdb_count++;
+                m_portsOrch->setPort(port.m_alias, port);
+            }
         }
     }
     else
@@ -1496,14 +1537,17 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
-        port.m_fdb_count++;
-        m_portsOrch->setPort(port.m_alias, port);
+        if (m_bridge_port_id != SAI_NULL_OBJECT_ID)
+        {
+            port.m_fdb_count++;
+            m_portsOrch->setPort(port.m_alias, port);
+        }
         vlan.m_fdb_count++;
         m_portsOrch->setPort(vlan.m_alias, vlan);
     }
 
     FdbData storeFdbData = fdbData;
-    storeFdbData.bridge_port_id = port.m_bridge_port_id;
+    storeFdbData.bridge_port_id = m_bridge_port_id;
     // overwrite the type and origin
     if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.type == "dynamic_local"))
     {
@@ -1591,7 +1635,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
 
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s bv_id=0x%" PRIx64 "origin %d", entry.mac.to_string().c_str(), entry.bv_id, origin);
+    SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s bv_id=0x%" PRIx64 " origin %d", entry.mac.to_string().c_str(), entry.bv_id, origin);
 
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
@@ -1612,8 +1656,11 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     FdbData fdbData = it->second;
     if (!m_portsOrch->getPortByBridgePortId(fdbData.bridge_port_id, port))
     {
-        SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: Failed to locate port from bridge_port_id 0x%" PRIx64, fdbData.bridge_port_id);
-        return false;
+        if (!fdbData.nhg_id)
+        {
+            SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: Failed to locate port from bridge_port_id 0x%" PRIx64, fdbData.bridge_port_id);
+            return false;
+        }
     }
 
     if (fdbData.origin != origin)

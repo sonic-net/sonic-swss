@@ -98,7 +98,19 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
-           
+
+            SelectableTimer warmStartShlTimer(timespec{0, 0});
+            // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
+            SelectableTimer eoiuCheckShlTimer(timespec{0, 0});
+            // After eoiu flags are detected, start a hold timer before starting reconciliation.
+            SelectableTimer eoiuHoldShlTimer(timespec{0, 0});
+
+            SelectableTimer warmStartDfTimer(timespec{0, 0});
+            // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
+            SelectableTimer eoiuCheckDfTimer(timespec{0, 0});
+            // After eoiu flags are detected, start a hold timer before starting reconciliation.
+            SelectableTimer eoiuHoldDfTimer(timespec{0, 0});
+
             /*
              * Pipeline should be flushed right away to deal with state pending
              * from previous try/catch iterations.
@@ -150,6 +162,74 @@ int main(int argc, char **argv)
             else
             {
                 sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
+            }
+
+            /* If warm-restart feature is enabled, execute 'restoration' logic */
+            bool warmStartShlEnabled = sync.m_warmStartHelperShl.checkAndStart();
+            if (warmStartShlEnabled)
+            {
+                /* Obtain warm-restart timer defined for routing application */
+                time_t warmRestartIval = sync.m_warmStartHelperShl.getRestartTimer();
+                if (!warmRestartIval)
+                {
+                    warmStartShlTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
+                }
+                else
+                {
+                    warmStartShlTimer.setInterval(timespec{warmRestartIval, 0});
+                }
+
+                /* Execute restoration instruction and kick off warm-restart timer */
+                if (sync.m_warmStartHelperShl.runRestoration())
+                {
+                    warmStartShlTimer.start();
+                    s.addSelectable(&warmStartShlTimer);
+                    SWSS_LOG_NOTICE("Warm-Restart Shl timer started.");
+                }
+
+                // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
+                eoiuCheckShlTimer.setInterval(timespec{5, 0});
+                eoiuCheckShlTimer.start();
+                s.addSelectable(&eoiuCheckShlTimer);
+                SWSS_LOG_NOTICE("Warm-Restart eoiuCheckShlTimer timer started.");
+            }
+            else
+            {
+                sync.m_warmStartHelperShl.setState(WarmStart::WSDISABLED);
+            }
+
+            /* If warm-restart feature is enabled, execute 'restoration' logic */
+            bool warmStartDfEnabled = sync.m_warmStartHelperDf.checkAndStart();
+            if (warmStartDfEnabled)
+            {
+                /* Obtain warm-restart timer defined for routing application */
+                time_t warmRestartIval = sync.m_warmStartHelperDf.getRestartTimer();
+                if (!warmRestartIval)
+                {
+                    warmStartDfTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
+                }
+                else
+                {
+                    warmStartDfTimer.setInterval(timespec{warmRestartIval, 0});
+                }
+
+                /* Execute restoration instruction and kick off warm-restart timer */
+                if (sync.m_warmStartHelperDf.runRestoration())
+                {
+                    warmStartDfTimer.start();
+                    s.addSelectable(&warmStartDfTimer);
+                    SWSS_LOG_NOTICE("Warm-Restart Df timer started.");
+                }
+
+                // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
+                eoiuCheckDfTimer.setInterval(timespec{5, 0});
+                eoiuCheckDfTimer.start();
+                s.addSelectable(&eoiuCheckDfTimer);
+                SWSS_LOG_NOTICE("Warm-Restart eoiuCheckDfTimer timer started.");
+            }
+            else
+            {
+                sync.m_warmStartHelperDf.setState(WarmStart::WSDISABLED);
             }
 
             while (true)
@@ -210,6 +290,108 @@ int main(int argc, char **argv)
                         // re-start eoiu check timer
                         eoiuCheckTimer.start();
                         SWSS_LOG_DEBUG("Warm-Restart eoiuCheckTimer restarted");
+                    }
+                    else
+                    {
+                        s.removeSelectable(&eoiuCheckTimer);
+                    }
+                }
+                else if (temps == &warmStartShlTimer || temps == &eoiuHoldShlTimer)
+                {
+                    if (temps == &warmStartShlTimer)
+                    {
+                        SWSS_LOG_NOTICE("Warm-Restart SHL timer expired.");
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("Warm-Restart SHL EOIU hold timer expired.");
+                    }
+
+                    sync.onWarmStartShlEnd();
+
+                    // remove the one-shot timer.
+                    s.removeSelectable(temps);
+                    pipeline.flush();
+                    SWSS_LOG_DEBUG("Pipeline flushed");
+                }
+                else if (temps == &eoiuCheckShlTimer)
+                {
+                    if (sync.m_warmStartHelperShl.inProgress())
+                    {
+                        if (eoiuFlagsSet(bgpStateTable))
+                        {
+                            /* Obtain eoiu hold timer defined for bgp docker */
+                            uintmax_t eoiuHoldIval = WarmStart::getWarmStartTimer("eoiu_hold", "bgp");
+                            if (!eoiuHoldIval)
+                            {
+                                eoiuHoldShlTimer.setInterval(timespec{DEFAULT_EOIU_HOLD_INTERVAL, 0});
+                                eoiuHoldIval = DEFAULT_EOIU_HOLD_INTERVAL;
+                            }
+                            else
+                            {
+                                eoiuHoldTimer.setInterval(timespec{(time_t)eoiuHoldIval, 0});
+                            }
+                            eoiuHoldShlTimer.start();
+                            s.addSelectable(&eoiuHoldShlTimer);
+                            SWSS_LOG_NOTICE("Warm-Restart started SHL EOIU hold timer which is to expire in %" PRIuMAX " seconds.", eoiuHoldIval);
+                            s.removeSelectable(&eoiuCheckTimer);
+                            continue;
+                        }
+                        eoiuCheckShlTimer.setInterval(timespec{1, 0});
+                        // re-start eoiu check timer
+                        eoiuCheckShlTimer.start();
+                        SWSS_LOG_DEBUG("Warm-Restart SHL eoiuCheckTimer restarted");
+                    }
+                    else
+                    {
+                        s.removeSelectable(&eoiuCheckShlTimer);
+                    }
+                }
+                else if (temps == &warmStartDfTimer || temps == &eoiuHoldDfTimer)
+                {
+                    if (temps == &warmStartDfTimer)
+                    {
+                        SWSS_LOG_NOTICE("Warm-Restart DF timer expired.");
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("Warm-Restart DF EOIU hold timer expired.");
+                    }
+
+                    sync.onWarmStartDfEnd();
+
+                    // remove the one-shot timer.
+                    s.removeSelectable(temps);
+                    pipeline.flush();
+                    SWSS_LOG_DEBUG("Pipeline flushed");
+                }
+                else if (temps == &eoiuCheckDfTimer)
+                {
+                    if (sync.m_warmStartHelperDf.inProgress())
+                    {
+                        if (eoiuFlagsSet(bgpStateTable))
+                        {
+                            /* Obtain eoiu hold timer defined for bgp docker */
+                            uintmax_t eoiuHoldIval = WarmStart::getWarmStartTimer("eoiu_hold", "bgp");
+                            if (!eoiuHoldIval)
+                            {
+                                eoiuHoldDfTimer.setInterval(timespec{DEFAULT_EOIU_HOLD_INTERVAL, 0});
+                                eoiuHoldIval = DEFAULT_EOIU_HOLD_INTERVAL;
+                            }
+                            else
+                            {
+                                eoiuHoldDfTimer.setInterval(timespec{(time_t)eoiuHoldIval, 0});
+                            }
+                            eoiuHoldDfTimer.start();
+                            s.addSelectable(&eoiuHoldTimer);
+                            SWSS_LOG_NOTICE("Warm-Restart started Df EOIU hold timer which is to expire in %" PRIuMAX " seconds.", eoiuHoldIval);
+                            s.removeSelectable(&eoiuCheckDfTimer);
+                            continue;
+                        }
+                        eoiuCheckDfTimer.setInterval(timespec{1, 0});
+                        // re-start eoiu check timer
+                        eoiuCheckDfTimer.start();
+                        SWSS_LOG_DEBUG("Warm-Restart Df eoiuCheckTimer restarted");
                     }
                     else
                     {
@@ -288,6 +470,16 @@ int main(int argc, char **argv)
                 {
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");
+                }
+                else if (!warmStartShlEnabled || sync.m_warmStartHelperShl.isReconciled())
+                {
+                    pipeline.flush();
+                    SWSS_LOG_DEBUG("Pipeline flushed SHL");
+                }
+                else if (!warmStartDfEnabled || sync.m_warmStartHelperDf.isReconciled())
+                {
+                    pipeline.flush();
+                    SWSS_LOG_DEBUG("Pipeline flushed DF");
                 }
             }
         }
