@@ -1,12 +1,16 @@
 -- KEYS - port name
 -- ARGV[1] - profile name
 -- ARGV[2] - new size
--- ARGV[3] - pg to add
+-- ARGV[3] - new xon
+-- ARGV[4] - new xoff
+-- ARGV[5] - pg to add
 
 local port = KEYS[1]
 local input_profile_name = ARGV[1]
 local input_profile_size = tonumber(ARGV[2])
-local new_pg = ARGV[3]
+local input_profile_xon = tonumber(ARGV[3])
+local input_profile_xoff = tonumber(ARGV[4])
+local new_pg = ARGV[5]
 
 local function is_port_with_8lanes(lanes)
     -- On Spectrum 3, ports with 8 lanes have doubled pipeline latency
@@ -55,16 +59,30 @@ end
 
 local asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
 local pipeline_latency = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_latency'))
+local cell_size = tonumber(redis.call('HGET', asic_keys[1], 'cell_size'))
+local port_reserved_shp = tonumber(redis.call('HGET', asic_keys[1], 'port_reserved_shp'))
+local port_max_shp = tonumber(redis.call('HGET', asic_keys[1], 'port_max_shp'))
 if is_port_with_8lanes(lanes) then
     -- The pipeline latency should be adjusted accordingly for ports with 2 buffer units
     pipeline_latency = pipeline_latency * 2 - 1
     egress_mirror_size = egress_mirror_size * 2
+    port_reserved_shp = port_reserved_shp * 2
 end
+
 local lossy_pg_size = pipeline_latency * 1024
 accumulative_size = accumulative_size + lossy_pg_size + egress_mirror_size
 
 -- Fetch all keys in BUFFER_PG according to the port
 redis.call('SELECT', appl_db)
+
+local is_shp_enabled
+local shp_size = tonumber(redis.call('HGET', 'BUFFER_POOL_TABLE:ingress_lossless_pool', 'xoff'))
+if shp_size == nil or shp_size == 0 then
+    is_shp_enabled = false
+else
+    is_shp_enabled = true
+end
+local accumulative_shared_headroom = 0
 
 local debuginfo = {}
 
@@ -122,26 +140,50 @@ end
 table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
 for pg_key, profile in pairs(all_pgs) do
     local current_profile_size
+    local current_profile_xon
+    local current_profile_xoff
+    local buffer_profile_table_name = 'BUFFER_PROFILE_TABLE:'
     if profile ~= input_profile_name then
-        local referenced_profile_size = redis.call('HGET', 'BUFFER_PROFILE_TABLE:' .. profile, 'size')
+        local referenced_profile_size = redis.call('HGET', buffer_profile_table_name .. profile, 'size')
         if not referenced_profile_size then
-            referenced_profile_size = redis.call('HGET', '_BUFFER_PROFILE_TABLE:' .. profile, 'size')
+            buffer_profile_table_name = '_BUFFER_PROFILE_TABLE:'
+            referenced_profile_size = redis.call('HGET', buffer_profile_table_name .. profile, 'size')
             table.insert(debuginfo, 'debug:pending profile: ' .. profile)
         end
         current_profile_size = tonumber(referenced_profile_size)
+        current_profile_xon = tonumber(redis.call('HGET', buffer_profile_table_name .. profile, 'xon'))
+        current_profile_xoff = tonumber(redis.call('HGET', buffer_profile_table_name .. profile, 'xoff'))
     else
         current_profile_size = input_profile_size
+        current_profile_xon = input_profile_xon
+        current_profile_xoff = input_profile_xoff
     end
     if current_profile_size == 0 then
         current_profile_size = lossy_pg_size
     end
     accumulative_size = accumulative_size + current_profile_size * get_number_of_pgs(pg_key)
-    table.insert(debuginfo, 'debug:' .. pg_key .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_key) .. ':accu:' .. accumulative_size)
+
+    if is_shp_enabled and current_profile_xon and current_profile_xoff then
+        if current_profile_size < current_profile_xon + current_profile_xoff then
+            accumulative_shared_headroom = accumulative_shared_headroom + (current_profile_xon + current_profile_xoff - current_profile_size) * get_number_of_pgs(pg_key)
+        end
+    end
+    table.insert(debuginfo, 'debug:' .. pg_key .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_key) .. ':accu:' .. accumulative_size .. ':accu_shp:' .. accumulative_shared_headroom)
 end
 
 if max_headroom_size > accumulative_size then
-    table.insert(ret, "result:true")
-    table.insert(ret, "debug:Accumulative headroom on port " .. accumulative_size .. ", the maximum available headroom " .. max_headroom_size)
+    if is_shp_enabled then
+        local max_shp = (port_max_shp + port_reserved_shp) * cell_size
+        if accumulative_shared_headroom > max_shp then
+            table.insert(ret, "result:false")
+        else
+            table.insert(ret, "result:true")
+        end
+        table.insert(ret, "debug:Accumulative headroom on port " .. accumulative_size .. ", the maximum available headroom " .. max_headroom_size .. ", the port SHP " .. accumulative_shared_headroom .. ", max SHP " .. max_shp)
+    else
+        table.insert(ret, "result:true")
+        table.insert(ret, "debug:Accumulative headroom on port " .. accumulative_size .. ", the maximum available headroom " .. max_headroom_size)
+    end
 else
     table.insert(ret, "result:false")
     table.insert(ret, "debug:Accumulative headroom on port " .. accumulative_size .. " exceeds the maximum available headroom which is " .. max_headroom_size)
