@@ -21,7 +21,7 @@
 #include "netmsg.h"
 #include "linkcache.h"
 #include "exec.h"
-
+#include "schema.h"
 #include "vrrpsync.h"
 #include "warm_restart.h"
 #include "netmsg.h"
