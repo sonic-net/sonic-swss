@@ -1454,7 +1454,6 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     )
         return;
 
-
     if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
     {
         len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
@@ -1834,8 +1833,12 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
 
     nhm = (struct nhmsg *)NLMSG_DATA(h);
 
-    netlink_parse_rtattr(tb, NHA_MAX, ((struct rtattr *)(((char *)(nhm)) + NLMSG_ALIGN(sizeof(struct nhmsg)))), len);
+    struct rtattr* rta;
+    char* nhm_ptr = (char *)(nhm) + NLMSG_ALIGN(sizeof(struct nhmsg));
 
+    memcpy(&rta, nhm_ptr, sizeof(struct rtattr));
+    netlink_parse_rtattr(tb, NHA_MAX, rta, len);
+    
     if (!tb[NHA_ID]) {
         SWSS_LOG_ERROR(
             "Nexthop group without an ID received from the zebra");
