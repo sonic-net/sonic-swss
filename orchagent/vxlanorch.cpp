@@ -358,6 +358,15 @@ create_tunnel(
         attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_VAL;
         attr.value.u8 = encap_ttl;
         tunnel_attrs.push_back(attr);
+    } else {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
+        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+        tunnel_attrs.push_back(attr);
+
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_VAL;
+        attr.value.u8 = DEFAULT_TUNNEL_ENCAP_TTL;
+        tunnel_attrs.push_back(attr);
+
     }
 
     sai_object_id_t tunnel_id;
