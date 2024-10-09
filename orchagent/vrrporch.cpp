@@ -21,10 +21,10 @@ bool VrrpOrch::hasSameIpAddr(const string &alias,const IpPrefix &vip_prefix)
     for (const auto &intfPrefix: m_syncdIntfses[alias].ip_addresses)
     {
         if (intfPrefix.getIp() == vip_prefix.getIp())
-	    {
+        {
                 SWSS_LOG_NOTICE("vrrp hasSameIpAddr configured %s vip %s",alias.c_str(),vip_prefix.to_string().c_str());
                 return true;
-            }
+        }
     }
     return false;
 }
@@ -58,7 +58,7 @@ bool VrrpOrch::addOperation(const Request& request)
        if (vrrp_table_[key].vmac == request.getAttrMacAddress("vmac"))
         {
             SWSS_LOG_ERROR("_vrrp_table entry already exists, with vmac %s, vip %s for port %s",mac.to_string().c_str(),
-				ip_pfx.to_string().c_str(),request.getKeyString(0).c_str());
+                ip_pfx.to_string().c_str(),request.getKeyString(0).c_str());
             return true;
         }
     }
@@ -120,7 +120,7 @@ bool VrrpOrch::addOperation(const Request& request)
     attr.id = SAI_ROUTER_INTERFACE_ATTR_IS_VIRTUAL;
     attr.value.booldata =  true;
     vmac_attrs.push_back(attr);
-	//program VRRPMAC.
+    //program VRRPMAC.
     SWSS_LOG_INFO("vrrp orch add, before create_router_interface : port name %s, rif_id %lx, &rif_id %p",request.getKeyString(0).c_str(),vrrp_rif_id,&vrrp_rif_id);
     sai_status_t vmac_status = sai_router_intfs_api->create_router_interface(&vrrp_rif_id, gSwitchId, (uint32_t)vmac_attrs.size(), vmac_attrs.data());
     SWSS_LOG_NOTICE("vrrp orch add, after create_router_interface : port name %s, rif_id %lx",request.getKeyString(0).c_str(),vrrp_rif_id);
@@ -130,7 +130,7 @@ bool VrrpOrch::addOperation(const Request& request)
                  port.m_alias.c_str(), vmac_status);
         throw runtime_error("Failed to program Vrrp Mac on interface.");
     }
-	//program VIP
+    //program VIP
     if (!hasSameIpAddr (request.getKeyString(0),request.getKeyIpPrefix(1)))
     {
         attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
@@ -139,7 +139,7 @@ bool VrrpOrch::addOperation(const Request& request)
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = vrrp_rif_id;
         vip_attrs.push_back(attr);
-	    //API to program VRRP ipaddress
+        //API to program VRRP ipaddress
         sai_status_t vip_status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)vip_attrs.size(), vip_attrs.data());
         if (vip_status != SAI_STATUS_SUCCESS)
         {
@@ -165,12 +165,12 @@ bool VrrpOrch::addOperation(const Request& request)
     else
     {
         SWSS_LOG_NOTICE("_vrrp_table entry already exists with vmac %s, rif_id %lx, update vmac to %s, rifid to %lx",
-				vrrp_table_[key].vmac.to_string().c_str(),vrrp_table_[key].rifid,
-				request.getAttrMacAddress("vmac").to_string().c_str(),vrrp_rif_id);
+                vrrp_table_[key].vmac.to_string().c_str(),vrrp_table_[key].rifid,
+                request.getAttrMacAddress("vmac").to_string().c_str(),vrrp_rif_id);
         vrrp_table_.erase(key);
         vrrp_table_[key] = {request.getAttrMacAddress("vmac"),vrrp_rif_id};
     }
-	//Flush the FDB entry for vmac on vrrp master
+    //Flush the FDB entry for vmac on vrrp master
     FdbEntry entry;
     entry.mac = request.getAttrMacAddress("vmac");
     entry.bv_id = port_oid;
@@ -218,7 +218,7 @@ bool VrrpOrch::delOperation(const Request& request)
     entry.mac = vrrp_table_[key].vmac;
     entry.bv_id = port_oid;
     gFdbOrch->removeFdbEntry(entry, FDB_ORIGIN_LEARN);
-	//If same vip is configured as DIP on the port, then skip delete vip as it will delete the DIP on the port.
+    //If same vip is configured as DIP on the port, then skip delete vip as it will delete the DIP on the port.
     if (!hasSameIpAddr (request.getKeyString(0), request.getKeyIpPrefix(1)))
     {
         sai_status_t vip_status = sai_route_api->remove_route_entry(&unicast_route_entry);
@@ -238,7 +238,7 @@ bool VrrpOrch::delOperation(const Request& request)
         throw runtime_error("Failed to remove Vrrp Mac on interface.");
     }
     SWSS_LOG_NOTICE("vrrp orch del success,port %s vip %s vmac %s rifid %lx",request.getKeyString(0).c_str(),
-		ip_pfx.to_string().c_str(),vrrp_table_[key].vmac.to_string().c_str(),vrrp_table_[key].rifid);
+        ip_pfx.to_string().c_str(),vrrp_table_[key].vmac.to_string().c_str(),vrrp_table_[key].rifid);
     vrrp_table_.erase(key);
     return true;
 }
