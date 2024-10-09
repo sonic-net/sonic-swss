@@ -351,6 +351,20 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     sai_attribute_t eni_attr;
     vector<sai_attribute_t> eni_attrs;
 
+    eni_attr.id = SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID;
+    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
+    sai_object_id_t route_group_oid =
+        dash_route_orch->getRouteGroupOid(entry.metadata.group_id());
+    if (route_group_oid != SAI_NULL_OBJECT_ID)
+    {
+        eni_attr.value.oid = route_group_oid;
+        eni_attrs.push_back(eni_attr);
+    }
+    else {
+        SWSS_LOG_WARN("Failed to find route group %s for ENI %s",
+                entry.metadata.group_id().c_str(), eni.c_str());
+    }
+
     eni_attr.id = SAI_ENI_ATTR_VNET_ID;
     eni_attr.value.oid = gVnetNameToId[entry.metadata.vnet()];
     eni_attrs.push_back(eni_attr);
