@@ -13,6 +13,7 @@
 #include <swss/tokenize.h>
 #include "routeorch.h"
 #include "macsecorch.h"
+#include "dash/dashorch.h"
 #include "flowcounterrouteorch.h"
 
 extern sai_port_api_t *sai_port_api;
@@ -39,6 +40,7 @@ extern sai_object_id_t gSwitchId;
 #define TUNNEL_KEY                  "TUNNEL"
 #define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
 #define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
+#define ENI_KEY                     "ENI"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -61,6 +63,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
     {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
     {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
+    {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
@@ -84,6 +87,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
     SWSS_LOG_ENTER();
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    DashOrch* dash_orch = gDirectory.get<DashOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -199,6 +203,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
                     {
                         vxlan_tunnel_orch->generateTunnelCounterMap();
+                    }
+                    if (dash_orch && (key == ENI_KEY))
+                    {
+                        dash_orch->handleFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
