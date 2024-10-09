@@ -85,13 +85,15 @@ bool PortMgr::isPortStateOk(const string &alias)
         auto state_opt = swss::fvsGetValue(temp, "state", true);
         if (!state_opt)
         {
+            SWSS_LOG_WARN("Port %s is not ready", alias.c_str());
             return false;
         }
 
-        SWSS_LOG_INFO("Port %s is ready", alias.c_str());
+        SWSS_LOG_WARN("Port %s is ready", alias.c_str());
         return true;
     }
 
+    SWSS_LOG_WARN("Port %s get failed", alias.c_str());
     return false;
 }
 
@@ -208,7 +210,7 @@ void PortMgr::doTask(Consumer &consumer)
 
             if (!portOk)
             {
-                SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
+                SWSS_LOG_WARN("Port %s is not ready, pending...", alias.c_str());
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
@@ -222,18 +224,18 @@ void PortMgr::doTask(Consumer &consumer)
             if (!mtu.empty())
             {
                 setPortMtu(alias, mtu);
-                SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
+                SWSS_LOG_WARN("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
             }
 
             if (!admin_status.empty())
             {
                 setPortAdminStatus(alias, admin_status == "up");
-                SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
+                SWSS_LOG_WARN("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
         }
         else if (op == DEL_COMMAND)
         {
-            SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
+            SWSS_LOG_WARN("Delete Port: %s", alias.c_str());
             m_appPortTable.del(alias);
             m_portList.erase(alias);
         }

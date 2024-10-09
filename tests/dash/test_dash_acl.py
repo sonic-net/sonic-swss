@@ -21,6 +21,10 @@ import binascii
 
 import pytest
 
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
@@ -244,6 +248,7 @@ class DashAcl(object):
     def create_acl_group(self, group_id, ip_version):
         pb = AclGroup()
         pb.ip_version = IpVersion.IP_VERSION_IPV4
+        logger.warning("create_acl_group: {}='{}'".format(str(group_id), pb.SerializeToString()))
         self.app_dash_acl_group_table[str(group_id)] = {"pb": pb.SerializeToString()}
 
     def remove_acl_group(self, group_id):

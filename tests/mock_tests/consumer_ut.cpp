@@ -10,6 +10,25 @@ namespace consumer_test
 {
     using namespace std;
 
+    class TestOrch : public Orch
+    {
+    public:
+        TestOrch(swss::DBConnector *db, string tableName)
+            :Orch(db, tableName),
+            m_notification_count(0)
+        {
+        }
+
+        void doTask(Consumer& consumer)
+        {
+            std::cout << "TestOrch::doTask " << consumer.m_toSync.size() << std::endl;
+            m_notification_count += consumer.m_toSync.size();
+            consumer.m_toSync.clear();
+        }
+
+        long m_notification_count;
+    };
+
     struct ConsumerTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -321,5 +340,32 @@ namespace consumer_test
         exp_kofv = entryb;
         validate_syncmap(consumer->m_toSync, 1, key, exp_kofv);
 
+    }
+
+    TEST_F(ConsumerTest, ConsumerPops_notification_count)
+    {
+        int consumer_pops_batch_size = 10;
+        TestOrch test_orch(m_config_db.get(), "CFG_TEST_TABLE");
+        Consumer test_consumer(
+                new swss::ConsumerStateTable(m_config_db.get(), "CFG_TEST_TABLE", consumer_pops_batch_size, 1), &test_orch, "CFG_TEST_TABLE");
+        swss::ProducerStateTable producer_table(m_config_db.get(), "CFG_TEST_TABLE");
+
+        m_config_db->flushdb();
+        for (int notification_count = 0; notification_count< consumer_pops_batch_size*2; notification_count++)
+        {
+            std::vector<FieldValueTuple> fields;
+            FieldValueTuple t("test_field", "test_value");
+            fields.push_back(t);
+            producer_table.set(std::to_string(notification_count), fields);
+            
+            cout << "ConsumerPops_notification_count:: add key: " << notification_count << endl;
+        }
+
+        // consumer should pops consumer_pops_batch_size notifications 
+        test_consumer.execute();
+        ASSERT_EQ(test_orch.m_notification_count, consumer_pops_batch_size);
+
+        test_consumer.execute();
+        ASSERT_EQ(test_orch.m_notification_count, consumer_pops_batch_size*2);
     }
 }
