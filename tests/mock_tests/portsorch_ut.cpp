@@ -655,7 +655,7 @@ namespace portsorch_test
             mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
             mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
             mockReply->element[2]->type = REDIS_REPLY_STRING;
-            sai_port_oper_status_notification_t port_oper_status;
+            sai_port_oper_status_notification_t port_oper_status = {};
             port_oper_status.port_state = oper_status;
             port_oper_status.port_id = port.m_port_id;
             std::string data = sai_serialize_port_oper_status_ntf(1, &port_oper_status);
