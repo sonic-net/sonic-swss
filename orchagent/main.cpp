@@ -68,10 +68,11 @@ int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
+uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-t create_switch_timeout]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -90,6 +91,7 @@ void usage()
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
+    cout << "    -t Override create switch timeout, in sec" << endl;
 }
 
 void sighup_handler(int signo)
@@ -344,7 +346,7 @@ int main(int argc, char **argv)
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:t:")) != -1)
     {
         switch (opt)
         {
@@ -428,6 +430,9 @@ int main(int argc, char **argv)
                 zmq_server_address = optarg;
                 enable_zmq = true;
             }
+            break;
+        case 't':
+            create_switch_timeout = atoi(optarg);
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
@@ -598,7 +603,7 @@ int main(int argc, char **argv)
         delay_factor = 2;
     }
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu" || asan_enabled)
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu" || asan_enabled || create_switch_timeout)
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -606,7 +611,12 @@ int main(int argc, char **argv)
          * and systems ports to initialize
          */
 
-        if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
+        if (create_switch_timeout)
+        {
+            /* Convert timeout to milliseconds from seconds */
+            attr.value.u64 = (create_switch_timeout * 1000);
+        }
+        else if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
         {
             attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
@@ -641,7 +651,7 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu" || create_switch_timeout)
     {
         /* Set syncd response timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
