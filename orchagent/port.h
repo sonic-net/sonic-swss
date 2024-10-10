@@ -74,6 +74,8 @@ struct SystemLagInfo
     int32_t spa_id = 0;
 };
 
+typedef std::map<sai_uint16_t, sai_object_id_t> stp_port_ids_t;
+
 class Port
 {
 public:
@@ -192,6 +194,9 @@ public:
     sai_object_id_t  m_switch_id = 0;
     sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
+
+    stp_port_ids_t m_stp_port_ids; //STP Port object ids for each STP instance
+    sai_int16_t m_stp_id = -1; //STP instance for the VLAN
 
     /* pre-emphasis */
     std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
