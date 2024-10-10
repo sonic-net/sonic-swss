@@ -109,6 +109,7 @@ orchagent_SOURCES = \
             response_publisher.cpp \
             nvgreorch.cpp \
             zmqorch.cpp \
+            dbggendumporch.cpp\
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
