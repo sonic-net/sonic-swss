@@ -274,7 +274,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
     }
 }
 
-void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -291,6 +291,7 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     if (!dash_orch->getRouteTypeActions(ctxt.metadata.routing_type(), route_type_actions))
     {
         SWSS_LOG_INFO("Failed to get route type actions for %s", key.c_str());
+        return false;
     }
 
     for (auto action: route_type_actions.items())
@@ -309,7 +310,7 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             else
             {
                 SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
-                return;
+                return false;
             }
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
@@ -359,9 +360,10 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
+    return true;
 }
 
-void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -380,7 +382,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
         SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
                         pa_refcount_table_[pa_ref_key],
                         underlay_ip_str.c_str());
-        return;
+        return true;
     }
 
     uint32_t attr_count = 1;
@@ -399,6 +401,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     pa_refcount_table_[pa_ref_key] = 1;
     SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
                     underlay_ip_str.c_str());
+    return true;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -408,17 +411,14 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
     bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
     if (!exists)
     {
+        
         bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end());
-        if (vnet_exists)
-        {
-            addOutboundCaToPa(key, ctxt);
-            addPaValidation(key, ctxt);
-        }
-        else
+        if (!vnet_exists)
         {
             SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
+            return false;
         }
-        return false;
+        return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
     }
     /*
      * If the VNET map is already added, don't add it to the bulker and

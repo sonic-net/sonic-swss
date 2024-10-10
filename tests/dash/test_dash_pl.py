@@ -30,12 +30,12 @@ NUM_PORTS = 2
 
 @pytest.fixture(autouse=True)
 def common_setup_teardown(dash_db: DashDB):
-    dash_db.set_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK, ROUTING_TYPE_PL_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID, APPLIANCE_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1, VNET_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID, ENI_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP1, VNET_MAPPING_CONFIG_PRIVATELINK)
     dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP1_CONFIG)
+    dash_db.set_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK, ROUTING_TYPE_PL_CONFIG)
     # Don't set DASH_ROUTE_TABLE and DASH_ENI_ROUTE_TABLE entries here for flexibility, test cases will set them as needed
 
     yield
@@ -79,3 +79,4 @@ def test_pl_outbound_ca_to_pa_attrs(dash_db: DashDB):
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK, outbound_attrs, PL_OVERLAY_DIP_MASK)
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY, outbound_attrs, ENCAP_VNI)
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION, outbound_attrs, SAI_DASH_ENCAPSULATION_NVGRE)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP, outbound_attrs, UNDERLAY_IP)
