@@ -298,16 +298,20 @@ private:
 const request_description_t vnet_route_description = {
     { REQ_T_STRING, REQ_T_IP_PREFIX },
     {
-        { "endpoint",               REQ_T_IP_LIST },
-        { "ifname",                 REQ_T_STRING },
-        { "nexthop",                REQ_T_STRING },
-        { "vni",                    REQ_T_STRING },
-        { "mac_address",            REQ_T_STRING },
-        { "endpoint_monitor",       REQ_T_IP_LIST },
-        { "profile",                REQ_T_STRING },
-        { "primary",                REQ_T_IP_LIST },
-        { "monitoring",             REQ_T_STRING },
-        { "adv_prefix",             REQ_T_IP_PREFIX },
+        { "endpoint",                       REQ_T_IP_LIST },
+        { "ifname",                         REQ_T_STRING },
+        { "nexthop",                        REQ_T_STRING },
+        { "vni",                            REQ_T_STRING },
+        { "mac_address",                    REQ_T_STRING },
+        { "endpoint_monitor",               REQ_T_IP_LIST },
+        { "profile",                        REQ_T_STRING },
+        { "primary",                        REQ_T_IP_LIST },
+        { "monitoring",                     REQ_T_STRING },
+        { "adv_prefix",                     REQ_T_IP_PREFIX },
+        { "rx_monitor_timer",               REQ_T_UINT },
+        { "tx_monitor_timer",               REQ_T_UINT },
+        { "check_directly_connected",       REQ_T_BOOL },
+
     },
     { }
 };
@@ -404,6 +408,12 @@ struct VNetTunnelRouteEntry
     NextHopGroupKey secondary;
 };
 
+struct VnetRouteMonitorIntervals
+{
+    // The interval in milliseconds at which the BFD session should be monitored
+    uint32_t rx_monitor_timer;
+    uint32_t tx_monitor_timer;
+};
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
@@ -448,7 +458,8 @@ private:
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
-    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr,
+                          bool has_monitor_interval, u_int32_t tx_monitor_interval, u_int32_t rx_monitor_interval);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
@@ -469,6 +480,7 @@ private:
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
+                    bool check_directly_connected,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -487,6 +499,7 @@ private:
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
     std::map<IpPrefix, IpPrefix> prefix_to_adv_prefix_;
     std::map<IpPrefix, int> adv_prefix_refcount_;
+    std::map<IpPrefix, VnetRouteMonitorIntervals> prefix_to_monitor_intervals_;
     std::set<IpPrefix> subnet_decap_terms_created_;
     ProducerStateTable bfd_session_producer_;
     ProducerStateTable app_tunnel_decap_term_producer_;

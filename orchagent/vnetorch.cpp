@@ -1080,6 +1080,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                                                NextHopGroupKey& nexthops, string& op, string& profile,
                                                const string& monitoring, NextHopGroupKey& nexthops_secondary,
                                                const IpPrefix& adv_prefix,
+                                               bool check_directly_connected,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -1829,7 +1830,8 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
     syncd_routes_.erase(route_itr);
 }
 
-void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr)
+void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr,
+                                     bool has_monitor_interval, u_int32_t tx_monitor_interval, u_int32_t rx_monitor_interval)
 {
     SWSS_LOG_ENTER();
 
@@ -1857,6 +1859,13 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         // when the device goes into TSA.  The following parameter ensures that these session are
         // brought down while transitioning to TSA and brought back up when transitioning to TSB.
         data.emplace_back("shutdown_bfd_during_tsa", "true");
+        if (has_monitor_interval)
+        {
+            FieldValueTuple fvTuple1("tx_interval", to_string(tx_monitor_interval));
+            data.push_back(fvTuple1);
+            FieldValueTuple fvTuple2("rx_interval", to_string(rx_monitor_interval));
+            data.push_back(fvTuple2);
+        }
         bfd_session_producer_.set(key, data);
         bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
     }
@@ -1963,7 +1972,19 @@ void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey
 void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops, const string& monitoring, IpPrefix& ipPrefix)
 {
     SWSS_LOG_ENTER();
+    bool has_monitor_internvals = false;
+    uint32_t tx_monitor_interval = 0;
+    uint32_t rx_monitor_interval = 0;
 
+    if (monitoring != "custom")
+    {
+        if (prefix_to_monitor_intervals_.find(ipPrefix) != prefix_to_monitor_intervals_.end())
+        {
+            has_monitor_internvals = true;
+            tx_monitor_interval = prefix_to_monitor_intervals_[ipPrefix].tx_interval;
+            rx_monitor_interval = prefix_to_monitor_intervals_[ipPrefix].rx_interval;
+        }
+    }
     for (auto monitor : monitors)
     {
         NextHopKey nh = monitor.first;
@@ -1989,7 +2010,7 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
             {
                 if (nexthop_info_[vnet].find(nh.ip_address) == nexthop_info_[vnet].end())
                 {
-                    createBfdSession(vnet, nh, monitor_ip);
+                    createBfdSession(vnet, nh, monitor_ip, has_monitor_internvals, tx_monitor_interval, rx_monitor_interval);
                 }
                 nexthop_info_[vnet][nh.ip_address].ref_count++;
             }
@@ -2620,6 +2641,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     swss::IpPrefix adv_prefix;
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
+    bool has_monitor_intervals = false;
+    uint32_t rx_monitor_timer = 0;
+    uint32_t tx_monitor_timer = 0;
+    bool check_directly_connected = false;
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
@@ -2656,6 +2681,20 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         {
             adv_prefix = request.getAttrIpPrefix(name);
             has_adv_pfx = true;
+        }
+        else if (name == "rx_interval")
+        {
+            rx_interval = request.getAttrUint(name);
+            has_monitor_intervals = true;
+       }
+        else if (name == "tx_interval")
+        {
+            tx_interval = request.getAttrUint(name);
+            has_monitor_intervals = true;
+        }
+        else if (name == "check_directly_connected")
+        {
+            check_directly_connected = request.getAttrBool(name);
         }
         else
         {
@@ -2746,9 +2785,32 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     {
         adv_prefix = ip_pfx;
     }
+    if (has_monitor_intervals)
+    {
+        struct VnetRouteMonitorIntervals intervals;
+        intervals.rx_interval = rx_interval;
+        intervals.tx_interval = tx_interval;
+        prefix_to_monitor_intervals_[ip_pfx] = intervals;
+    }
+    if ( op == DEL_COMMAND)
+    {
+        if (prefix_to_monitor_intervals_.find(ip_pfx) != prefix_to_monitor_intervals_.end())
+        {
+            prefix_to_monitor_intervals_.erase(ip_pfx);
+        }
+    }
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, nhg_secondary, adv_prefix, monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name,
+            ip_pfx,
+            (has_priority_ep == true) ? nhg_primary : nhg,
+            op,
+            profile,
+            monitoring,
+            nhg_secondary,
+            adv_prefix,
+            check_directly_connected,
+            monitors);
     }
 
     return true;
