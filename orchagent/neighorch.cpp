@@ -1750,6 +1750,15 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 it++;
                 continue;
             }
+            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
+            {
+                NextHopKey nexthop = { ip_address, ibif.m_alias};
+                if (hasNextHop(nexthop))
+                {
+                   it++;
+                   continue;
+                }
+            }
 
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end() ||
                     m_syncdNeighbors[neighbor_entry].mac != mac_address ||
