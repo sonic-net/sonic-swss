@@ -42,9 +42,11 @@ class ProduceStateTable(object):
         for k, v in pairs:
             pairs_str.append((to_string(k), to_string(v)))
         self.table.set(key, pairs_str)
+        time.sleep(1)
 
     def __delitem__(self, key: str):
         self.table.delete(str(key))
+        time.sleep(1)
 
 
 class Table(object):
