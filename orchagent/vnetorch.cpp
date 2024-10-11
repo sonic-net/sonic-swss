@@ -1831,7 +1831,7 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
 }
 
 void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr,
-                                     bool has_monitor_interval, u_int32_t tx_monitor_interval, u_int32_t rx_monitor_interval)
+                                     bool has_monitor_interval, u_int64_t tx_monitor_interval, u_int64_t rx_monitor_interval)
 {
     SWSS_LOG_ENTER();
 
@@ -1973,16 +1973,16 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
 {
     SWSS_LOG_ENTER();
     bool has_monitor_internvals = false;
-    uint32_t tx_monitor_interval = 0;
-    uint32_t rx_monitor_interval = 0;
+    uint64_t tx_monitor_interval = 0;
+    uint64_t rx_monitor_interval = 0;
 
     if (monitoring != "custom")
     {
         if (prefix_to_monitor_intervals_.find(ipPrefix) != prefix_to_monitor_intervals_.end())
         {
             has_monitor_internvals = true;
-            tx_monitor_interval = prefix_to_monitor_intervals_[ipPrefix].tx_interval;
-            rx_monitor_interval = prefix_to_monitor_intervals_[ipPrefix].rx_interval;
+            tx_monitor_interval = prefix_to_monitor_intervals_[ipPrefix].tx_monitor_timer;
+            rx_monitor_interval = prefix_to_monitor_intervals_[ipPrefix].rx_monitor_timer;
         }
     }
     for (auto monitor : monitors)
@@ -2642,8 +2642,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
     bool has_monitor_intervals = false;
-    uint32_t rx_monitor_timer = 0;
-    uint32_t tx_monitor_timer = 0;
+    uint64_t rx_monitor_timer = 0;
+    uint64_t tx_monitor_timer = 0;
     bool check_directly_connected = false;
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -2682,14 +2682,14 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             adv_prefix = request.getAttrIpPrefix(name);
             has_adv_pfx = true;
         }
-        else if (name == "rx_interval")
+        else if (name == "rx_monitor_timer")
         {
-            rx_interval = request.getAttrUint(name);
+            rx_monitor_timer = request.getAttrUint(name);
             has_monitor_intervals = true;
        }
-        else if (name == "tx_interval")
+        else if (name == "tx_monitor_timer")
         {
-            tx_interval = request.getAttrUint(name);
+            tx_monitor_timer = request.getAttrUint(name);
             has_monitor_intervals = true;
         }
         else if (name == "check_directly_connected")
@@ -2788,8 +2788,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     if (has_monitor_intervals)
     {
         struct VnetRouteMonitorIntervals intervals;
-        intervals.rx_interval = rx_interval;
-        intervals.tx_interval = tx_interval;
+        intervals.rx_monitor_timer = rx_monitor_timer;
+        intervals.tx_monitor_timer = tx_monitor_timer;
         prefix_to_monitor_intervals_[ip_pfx] = intervals;
     }
     if ( op == DEL_COMMAND)

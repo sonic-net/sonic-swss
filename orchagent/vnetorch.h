@@ -411,9 +411,10 @@ struct VNetTunnelRouteEntry
 struct VnetRouteMonitorIntervals
 {
     // The interval in milliseconds at which the BFD session should be monitored
-    uint32_t rx_monitor_timer;
-    uint32_t tx_monitor_timer;
+    uint64_t rx_monitor_timer;
+    uint64_t tx_monitor_timer;
 };
+
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
@@ -459,7 +460,7 @@ private:
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr,
-                          bool has_monitor_interval, u_int32_t tx_monitor_interval, u_int32_t rx_monitor_interval);
+                          bool has_monitor_interval, u_int64_t tx_monitor_interval, u_int64_t rx_monitor_interval);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);

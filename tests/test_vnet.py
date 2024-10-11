@@ -3687,6 +3687,8 @@ class TestVnetOrch(object):
             "src_ip_v6": "20c1:ba8::/64"
         }
         setup_subnet_decap(subnet_decap_config)
+        import pdb
+        pdb.set_trace()
 
         vnet_obj = self.get_vnet_obj()
         vnet_obj.fetch_exist_entries(dvs)
