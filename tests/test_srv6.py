@@ -18,6 +18,13 @@ def get_created_entry(db, table, existed_entries):
     assert len(new_entries) == 1, "Wrong number of created entries."
     return new_entries[0]
 
+def get_created_entries(db, table, existed_entries, number):
+    tbl =  swsscommon.Table(db, table)
+    entries = set(tbl.getKeys())
+    new_entries = list(entries - existed_entries)
+    assert len(new_entries) == number, "Wrong number of created entries."
+    return new_entries
+
 class TestSrv6Mysid(object):
     def setup_db(self, dvs):
         self.pdb = dvs.get_app_db()
@@ -240,7 +247,7 @@ class TestSrv6Mysid(object):
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X"
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP"
 
         # create MySID END.DX4
         fvs = swsscommon.FieldValuePairs([('action', 'end.dx4'), ('adj', '192.0.2.1')])
@@ -425,7 +432,7 @@ class TestSrv6Mysid(object):
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X"
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP"
 
         # remove neighbor
         self.remove_neighbor("Ethernet104", "2001::1")
@@ -475,7 +482,7 @@ class TestSrv6(object):
         table = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
         existed_entries = get_exist_entries(self.adb.db_connection, table)
 
-        fvs=swsscommon.FieldValuePairs([('seg_src',segsrc),('segment',segname)])
+        fvs=swsscommon.FieldValuePairs([('seg_src',segsrc), ('segment',segname), ('nexthop','0.0.0.0'), ('ifname','unknown')])
         routetbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
         routetbl.set(routeip,fvs)
 
@@ -626,6 +633,532 @@ class TestSrv6(object):
         assert tunnel_entries == get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
         assert nexthop_entries == get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
         assert route_entries == get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+
+class TestSrv6Vpn(object):
+    def setup_db(self, dvs):
+        self.pdb = dvs.get_app_db()
+        self.adb = dvs.get_asic_db()
+        self.cdb = dvs.get_config_db()
+
+    def create_srv6_vpn_route(self, routeip, nexthop, segsrc, vpn_sid, ifname):
+        table = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
+        existed_entries = get_exist_entries(self.adb.db_connection, table)
+
+        fvs=swsscommon.FieldValuePairs([('seg_src', segsrc), ('nexthop', nexthop), ('vpn_sid', vpn_sid), ('ifname', ifname)])
+        routetbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        routetbl.set(routeip,fvs)
+
+        self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
+        return get_created_entry(self.adb.db_connection, table, existed_entries)
+
+    def create_srv6_vpn_route_with_nhg(self, routeip, nhg_index, pic_ctx_index):
+        table = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
+        existed_entries = get_exist_entries(self.adb.db_connection, table)
+
+        fvs=swsscommon.FieldValuePairs([('nexthop_group', nhg_index), ('pic_context_id', pic_ctx_index)])
+        routetbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        routetbl.set(routeip,fvs)
+
+        self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
+        return get_created_entry(self.adb.db_connection, table, existed_entries)
+    
+    def update_srv6_vpn_route_attribute_with_nhg(self, routeip, nhg_index, pic_ctx_index):
+        fvs=swsscommon.FieldValuePairs([('nexthop_group', nhg_index), ('pic_context_id', pic_ctx_index)])
+        routetbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        routetbl.set(routeip,fvs)
+        return True
+
+    def update_srv6_vpn_route_attribute(self, routeip, nexthops, segsrc_list, vpn_list, ifname_list):
+        fvs=swsscommon.FieldValuePairs([('seg_src', ",".join(segsrc_list)), ('nexthop', ",".join(nexthops)), ('vpn_sid', ",".join(vpn_list)), ('ifname', ",".join(ifname_list))])
+        routetbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        routetbl.set(routeip,fvs)
+        return True
+
+    def remove_srv6_route(self, routeip):
+        routetbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        routetbl._del(routeip)
+
+    def create_nhg(self, nhg_index, nexthops, segsrc_list, ifname_list):
+        table = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
+        existed_entries = get_exist_entries(self.adb.db_connection, table)
+
+        fvs=swsscommon.FieldValuePairs([('seg_src', ",".join(segsrc_list)), ('nexthop', ",".join(nexthops)), ('ifname', ",".join(ifname_list))])
+        nhgtbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEXTHOP_GROUP_TABLE")
+        nhgtbl.set(nhg_index,fvs)
+
+        self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
+        return get_created_entry(self.adb.db_connection, table, existed_entries)
+    
+    def remove_nhg(self, nhg_index):
+        nhgtbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEXTHOP_GROUP_TABLE")
+        nhgtbl._del(nhg_index)
+
+    def create_pic_context(self, pic_ctx_id, nexthops, vpn_list):
+        table = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY"
+        existed_entries = get_exist_entries(self.adb.db_connection, table)
+
+        fvs=swsscommon.FieldValuePairs([('nexthop', ",".join(nexthops)), ('vpn_sid', ",".join(vpn_list))])
+        pictbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "PIC_CONTEXT_TABLE")
+        pictbl.set(pic_ctx_id,fvs)
+
+        self.adb.wait_for_n_keys(table, len(existed_entries) + len(vpn_list))
+        return get_created_entries(self.adb.db_connection, table, existed_entries, len(vpn_list))
+    
+    def remove_pic_context(self, pic_ctx_id):
+        pictbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "PIC_CONTEXT_TABLE")
+        pictbl._del(pic_ctx_id)
+
+
+    def check_deleted_route_entries(self, destinations):
+        def _access_function():
+            route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            route_destinations = [json.loads(route_entry)["dest"] for route_entry in route_entries]
+            return (all(destination not in route_destinations for destination in destinations), None)
+
+        wait_for_result(_access_function)
+
+    def test_srv6_vpn_with_single_nh(self, dvs, testlog):
+        self.setup_db(dvs)
+        dvs.setup_db()
+
+        # save exist asic db entries
+        tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        nexthop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        route_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        vpn_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID")
+        map_entry_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        map_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
+
+        # create v4 route with vpn sid
+        route_key = self.create_srv6_vpn_route('5000::/64', '2001::1', '1001:2000::1', '3000::1', 'unknown')
+        nexthop_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_entries)
+        tunnel_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries)
+        map_entry_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY", map_entry_entries)
+        map_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", map_entries)
+        prefix_agg_id = "1"
+
+        # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID":
+                assert prefix_agg_id == fv[1]
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL_MAP database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
+        (status, fvs) = tbl.get(map_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_TUNNEL_MAP_ATTR_TYPE":
+                assert fv[1] == "SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID"
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        (status, fvs) = tbl.get(tunnel_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_TUNNEL_ATTR_PEER_MODE":
+                assert fv[1] == "SAI_TUNNEL_PEER_MODE_P2P"
+
+        # check vpn sid value in SRv6 route is created
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        (status, fvs) = tbl.get(map_entry_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_TUNNEL_MAP_ENTRY_ATTR_SRV6_VPN_SID_VALUE":
+                assert fv[1] == "3000::1"
+            if fv[0] == "SAI_TUNNEL_MAP_ENTRY_ATTR_PREFIX_AGG_ID_KEY":
+                assert fv[1] == prefix_agg_id
+
+        # check sid list value in ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP is created
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        (status, fvs) = tbl.get(nexthop_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEXT_HOP_ATTR_TYPE":
+                assert fv[1] == "SAI_NEXT_HOP_TYPE_SRV6_SIDLIST"
+
+        self.remove_srv6_route('5000::/64')
+        self.check_deleted_route_entries('5000::/64')
+        time.sleep(5)
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL_MAP is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
+        (status, fvs) = tbl.get(map_id)
+        assert status == False
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        (status, fvs) = tbl.get(tunnel_id)
+        assert status == False
+
+        # check vpn sid value in SRv6 route is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        (status, fvs) = tbl.get(map_entry_id)
+        assert status == False
+
+        # check nexthop id in SRv6 route is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        (status, fvs) = tbl.get(nexthop_id)
+        assert status == False
+
+        # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key)
+        assert status == False
+
+    def test_pic(self, dvs, testlog):
+        self.setup_db(dvs)
+        dvs.setup_db()
+
+        segsrc_list = []
+        nexthop_list = []
+        ifname_list = []
+        vpn_list = []
+        nhg_index = '100'
+        pic_ctx_index = '200'
+
+        # save exist asic db entries
+        tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        nexthop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        map_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
+        nexthop_group_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+        nexthop_group_member_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        map_entry_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+
+        segsrc_list.append('1001:2000::1')
+        segsrc_list.append('1001:2000::1')
+
+        nexthop_list.append('2000::1')
+        nexthop_list.append('2000::2')
+
+        ifname_list.append('unknown')
+        ifname_list.append('unknown')
+
+        vpn_list.append('3000::1')
+        vpn_list.append('3000::2')
+
+        nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
+        tunnel_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries, 2)
+        nh_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_entries, 2)
+        nhg_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nexthop_group_entries)
+        nhg_mem = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", nexthop_group_member_entries, 2)
+        map_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", map_entries, 2)
+
+        nh_ids = sorted(nh_ids)
+        nhg_mem = sorted(nhg_mem)
+
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        (status, fvs) = tbl.get(nhg_mem[0])
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
+                assert fv[1] == nhg_id
+            elif fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID":
+                assert fv[1] == nh_ids[0]
+
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        (status, fvs) = tbl.get(nhg_mem[1])
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
+                assert fv[1] == nhg_id
+            elif fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID":
+                assert fv[1] == nh_ids[1]
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL_MAP database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
+        for map_id in map_ids:
+            (status, fvs) = tbl.get(map_id)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_TUNNEL_MAP_ATTR_TYPE":
+                    assert fv[1] == "SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID"
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        for tunnel_id in tunnel_ids:
+            (status, fvs) = tbl.get(tunnel_id)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_TUNNEL_ATTR_PEER_MODE":
+                    assert fv[1] == "SAI_TUNNEL_PEER_MODE_P2P"
+
+        # check sid list value in ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP is created
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        for nh_id in nh_ids:
+            (status, fvs) = tbl.get(nh_id)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_NEXT_HOP_ATTR_TYPE":
+                    assert fv[1] == "SAI_NEXT_HOP_TYPE_SRV6_SIDLIST"
+
+        pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
+        map_entry_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY", map_entry_entries, 2)
+        prefix_agg_id = "1"
+
+        # check vpn sid value in SRv6 route is created
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        for map_entry_id in map_entry_ids:
+            (status, fvs) = tbl.get(map_entry_id)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_TUNNEL_MAP_ENTRY_ATTR_PREFIX_AGG_ID_KEY":
+                    assert fv[1] == prefix_agg_id
+
+        # remove nhg and pic_context
+        self.remove_nhg(nhg_index)
+        self.remove_pic_context(pic_ctx_index)
+
+        time.sleep(5)
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+        (status, fvs) = tbl.get(nhg_id)
+        assert status == False
+
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        for nhg_mem_id in nhg_mem:
+            (status, fvs) = tbl.get(nhg_mem_id)
+            assert status == False
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL_MAP is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
+        for map_id in map_ids:
+            (status, fvs) = tbl.get(map_id)
+            assert status == False
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        for tunnel_id in tunnel_ids:
+            (status, fvs) = tbl.get(tunnel_id)
+            assert status == False
+
+        # check next hop in ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        for nh_id in nh_ids:
+            (status, fvs) = tbl.get(nh_id)
+            assert status == False
+
+        # check vpn sid value in SRv6 route is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        for map_entry_id in map_entry_ids:
+            (status, fvs) = tbl.get(map_entry_id)
+            assert status == False
+
+    def test_srv6_vpn_with_nhg(self, dvs, testlog):
+        self.setup_db(dvs)
+        dvs.setup_db()
+
+        segsrc_list = []
+        nexthop_list = []
+        vpn_list = []
+        ifname_list = []
+        nhg_index = '100'
+        pic_ctx_index = '200'
+
+        # save exist asic db entries
+        nexthop_group_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+
+        segsrc_list.append('1001:2000::1')
+        segsrc_list.append('1001:2000::1')
+
+        nexthop_list.append('2000::1')
+        nexthop_list.append('2000::2')
+
+        vpn_list.append('3000::1')
+        vpn_list.append('3000::2')
+
+        ifname_list.append('unknown')
+        ifname_list.append('unknown')
+
+
+        nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
+        pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
+        route_key = self.create_srv6_vpn_route_with_nhg('5000::/64', nhg_index, pic_ctx_index)
+        
+        
+        nhg_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nexthop_group_entries)
+        prefix_agg_id = "1"
+
+        # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == nhg_id
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID":
+                assert fv[1] == prefix_agg_id
+
+
+        route_key_new = self.create_srv6_vpn_route_with_nhg('5001::/64', nhg_index, pic_ctx_index)
+        
+        # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key_new)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == nhg_id
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID":
+                assert fv[1] == prefix_agg_id
+
+        # remove routes
+        self.remove_srv6_route('5001::/64')
+        self.check_deleted_route_entries('5001::/64')
+
+        time.sleep(5)
+        # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key_new)
+        assert status == False
+
+        # remove routes
+        self.remove_srv6_route('5000::/64')
+        self.check_deleted_route_entries('5000::/64')
+
+        time.sleep(5)
+        # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY is removed
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key)
+        assert status == False
+
+        # remove nhg and pic_context
+        self.remove_nhg(nhg_index)
+        self.remove_pic_context(pic_ctx_index)
+
+    def test_srv6_vpn_nh_update(self, dvs, testlog):
+        self.setup_db(dvs)
+        dvs.setup_db()
+
+        segsrc_list = []
+        nexthop_list = []
+        vpn_list = []
+        ifname_list = []
+
+        # save exist asic db entries
+        tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        nexthop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        route_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        vpn_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID")
+        map_entry_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        map_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
+
+        nexthop_group_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+        nexthop_group_member_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        map_entry_prefix_agg_id = "1"
+        route_entry_prefix_agg_id = "1"
+        route_entry_next_hop_id = "1"
+
+        # create v4 route with vpn sid
+        route_key = self.create_srv6_vpn_route('5000::/64', '2000::1', '1001:2000::1', '3000::1', 'unknown')
+        map_entry_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY", map_entry_entries)
+
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        (status, fvs) = tbl.get(map_entry_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_TUNNEL_MAP_ENTRY_ATTR_PREFIX_AGG_ID_KEY":
+                map_entry_prefix_agg_id = fv[1]
+
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                route_entry_next_hop_id = fv[1]
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID":
+                route_entry_prefix_agg_id = fv[1]
+
+        segsrc_list.append('1001:2000::1')
+        segsrc_list.append('1001:2000::1')
+
+        nexthop_list.append('2000::1')
+        nexthop_list.append('2000::2')
+
+        vpn_list.append('3000::1')
+        vpn_list.append('3000::2')
+
+        ifname_list.append('unknown')
+        ifname_list.append('unknown')
+
+        nhg_index = '100'
+        pic_ctx_index = '200'
+
+        map_entry_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+
+        nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
+        pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
+        self.update_srv6_vpn_route_attribute_with_nhg('5000::/64', nhg_index, pic_ctx_index)
+        
+
+        time.sleep(5)
+        nh_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_entries, 2)
+        nhg_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nexthop_group_entries)
+        nhg_mem = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", nexthop_group_member_entries, 2)
+
+        map_entry_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY", map_entry_entries, 2)
+        map_entry_id_group = "1"
+
+        for map_id in map_entry_ids:
+            if map_id != map_entry_id:
+                map_entry_id_group = map_id
+                break
+
+        nh_ids = sorted(nh_ids)
+        nhg_mem = sorted(nhg_mem)
+
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        (status, fvs) = tbl.get(map_entry_id_group)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_TUNNEL_MAP_ENTRY_ATTR_PREFIX_AGG_ID_KEY":
+                assert fv[1] != map_entry_prefix_agg_id
+
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+        (status, fvs) = tbl.get(nhg_id)
+        assert status == True
+
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        (status, fvs) = tbl.get(nhg_mem[0])
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
+                assert fv[1] == nhg_id
+            elif fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID":
+                assert fv[1] == nh_ids[0]
+
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        (status, fvs) = tbl.get(nhg_mem[1])
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
+                assert fv[1] == nhg_id
+            elif fv[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID":
+                assert fv[1] == nh_ids[1]
+
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        (status, fvs) = tbl.get(route_key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] != route_entry_next_hop_id
+            if fv[0] == "SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID":
+                assert fv[1] != route_entry_prefix_agg_id
+
+        # remove routes
+        self.remove_srv6_route('5000::/64')
+        self.check_deleted_route_entries('5000::/64')
+        time.sleep(5)
+
+        # remove nhg and pic_context
+        self.remove_nhg(nhg_index)
+        self.remove_pic_context(pic_ctx_index)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
