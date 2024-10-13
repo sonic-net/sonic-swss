@@ -50,6 +50,8 @@ public:
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
     void onWarmStartEnd(swss::DBConnector& applStateDb);
+    void onWarmStartShlEnd();
+    void onWarmStartDfEnd();
 
     /* Mark all routes from DB with offloaded flag */
     void markRoutesOffloaded(swss::DBConnector& db);
@@ -65,6 +67,8 @@ public:
     }
 
     WarmStartHelper  m_warmStartHelper;
+    WarmStartHelper  m_warmStartHelperShl;
+    WarmStartHelper  m_warmStartHelperDf;
 
 private:
     /* regular route table */
@@ -75,6 +79,10 @@ private:
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable; 
+    /* regular bridge port table */
+    ProducerStateTable  m_shlTable;
+    /* regular df mode table */
+    ProducerStateTable  m_shl_dfmodeTable;
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
 
@@ -100,6 +108,9 @@ private:
 
     /* Handle vnet route */
     void onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet);
+
+    /* Handle bridge port msg */
+    void onBridgePortMsg(struct nlmsghdr *h, int len);
 
     /* Get interface name based on interface index */
     bool getIfName(int if_index, char *if_name, size_t name_len);

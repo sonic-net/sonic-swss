@@ -523,6 +523,7 @@ namespace fdb_syncd_flush_test
         fdbData.type = "dynamic";
         fdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
         fdbData.remote_ip = "1.1.1.1";
+        fdbData.nhg_id = 0;
         fdbData.esi = "";
         fdbData.vni = 100;
         FdbEntry entry;

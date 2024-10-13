@@ -523,6 +523,20 @@ IsolationGroup::setMembers(string ports)
     return ISO_GRP_STATUS_SUCCESS;
 }
 
+vector<string>
+IsolationGroup::getMembers()
+{
+    SWSS_LOG_ENTER();
+    vector<string> members;
+
+    for (auto mem : m_members)
+    {
+        members.emplace_back(mem.first);
+    }
+
+    return members;
+}
+
 isolation_group_status_t
 IsolationGroup::bind(Port &port)
 {
@@ -666,7 +680,7 @@ IsolationGroup::setBindPorts(string ports)
     old_bindports.insert(old_bindports.end(), m_bind_ports.begin(), m_bind_ports.end());
     for (auto alias : portList)
     {
-        if ((0 == alias.find("Ethernet")) || (0 == alias.find("PortChannel")))
+        if ((0 == alias.find("Ethernet")) || (0 == alias.find("PortChannel")) || (0 == alias.find("Port_EVPN_")))
         {
             auto iter = find(old_bindports.begin(), old_bindports.end(), alias);
             if (iter != old_bindports.end())

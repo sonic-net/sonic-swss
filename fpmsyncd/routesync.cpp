@@ -74,13 +74,16 @@ static decltype(auto) makeNlAddr(const T& ip)
     return makeUniqueWithDestructor(addr, nl_addr_put);
 }
 
-
 RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
     m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
+    m_shlTable(pipeline, APP_EVPN_SH_TABLE_NAME, true),
+    m_shl_dfmodeTable(pipeline, APP_EVPN_DF_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelperShl(pipeline, &m_shlTable, APP_EVPN_SH_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelperDf(pipeline, &m_shl_dfmodeTable, APP_EVPN_DF_TABLE_NAME, "bgp", "bgp"),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_nl_sock = nl_socket_alloc();
@@ -584,12 +587,172 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     return;
 }
 
-void RouteSync::onMsgRaw(struct nlmsghdr *h)
+
+void RouteSync::onBridgePortMsg(struct nlmsghdr *h, int len)
 {
+    enum {
+        BRPORT_NON_DF,
+        BRPORT_SPH_FILTER_CNT,
+        BRPORT_SPH_FILTERS,
+        BRPORT_MAX
+    };
+
+    struct rtattr *tb[BRPORT_MAX] = {0};
+    char ifname[IFNAMSIZ] = {0};
+    int nlmsg_type = h->nlmsg_type;
+    string vteps_cnt_str, vteps_str;
+    bool df = false;
+
+    struct tcmsg *tcm = (struct tcmsg *)NLMSG_DATA(h);
+    /* Parse attributes and extract fields of interest. */
+    netlink_parse_rtattr(tb, BRPORT_MAX - 1, TCA_RTA(tcm), len);
+
+    if (tcm->tcm_family != AF_BRIDGE)
+        return;
+
+    if (!getIfName(tcm->tcm_ifindex, ifname, sizeof(ifname))) {
+        SWSS_LOG_ERROR("Failed to get ifname for index: %d", tcm->tcm_ifindex);
+        return;
+    }
+
+    if (tb[BRPORT_SPH_FILTER_CNT])
+    {
+        uint32_t vteps_cnt = *(uint32_t *)RTA_DATA(tb[BRPORT_SPH_FILTER_CNT]);
+        vteps_cnt_str = to_string(vteps_cnt);
+    }
+
+    if (tb[BRPORT_SPH_FILTERS])
+    {
+        const struct in_addr *vteps = (const struct in_addr *)RTA_DATA(tb[BRPORT_SPH_FILTERS]);
+        stringstream vteps_ss;
+        for (uint32_t i = 0; i < *(uint32_t *)RTA_DATA(tb[BRPORT_SPH_FILTER_CNT]); i++) 
+        {
+            vteps_ss << inet_ntoa(vteps[i]);
+            if (i != *(uint32_t *)RTA_DATA(tb[BRPORT_SPH_FILTER_CNT]) - 1) 
+            {
+                vteps_ss << ",";
+            }
+        }
+        vteps_str = vteps_ss.str();
+    }
+
+    if (tb[BRPORT_NON_DF])
+        df = !(*(uint8_t *)RTA_DATA(tb[BRPORT_NON_DF]));
+
+    if (nlmsg_type == RTM_NEWTFILTER && vteps_str.empty())
+        return;
+
+    bool warmRestartShlInProgress = m_warmStartHelperShl.inProgress();
+    bool warmRestartDfInProgress = m_warmStartHelperDf.inProgress();
+    string key = ifname;
+
+    if (nlmsg_type == RTM_DELTFILTER) 
+    {
+        if (!warmRestartShlInProgress)
+        {
+            m_shlTable.del(key);
+            SWSS_LOG_INFO("EVPN_SPLIT_HORIZON_TABLE del msg: %s", key.c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode SHL: Receiving delete msg: %s",
+                          key.c_str());
+
+            vector<FieldValueTuple> shl_fvVector;
+            const KeyOpFieldsValuesTuple shl_kfv = std::make_tuple(key,
+                                                               DEL_COMMAND,
+                                                               shl_fvVector);
+            m_warmStartHelperShl.insertRefreshMap(shl_kfv);
+        }
+
+        if (!warmRestartDfInProgress)
+        {
+            m_shl_dfmodeTable.del(key);
+            SWSS_LOG_INFO("EVPN_DF_TABLE del msg: %s", key.c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode DF: Receiving delete msg: %s",
+                          key.c_str());
+
+            vector<FieldValueTuple> df_fvVector;
+            const KeyOpFieldsValuesTuple df_kfv = std::make_tuple(key,
+                                                               DEL_COMMAND,
+                                                               df_fvVector);
+            m_warmStartHelperDf.insertRefreshMap(df_kfv);
+        }
+    } 
+    else 
+    {
+        vector<FieldValueTuple> shf_fvVector;
+        FieldValueTuple fv("vteps", vteps_str);
+        shf_fvVector.push_back(fv);
+
+        vector<FieldValueTuple> df_fvVector;
+        FieldValueTuple df_fv("df", df ? "true" : "false");
+        df_fvVector.push_back(df_fv);
+
+        if (!warmRestartShlInProgress)
+        {
+            m_shlTable.set(key, shf_fvVector);
+            SWSS_LOG_INFO("EVPN_SPLIT_HORIZON_TABLE set msg: %s vteps %s",
+                           key.c_str(), vteps_str.c_str());
+        }
+
+        /*
+         * During Split Horizon Filtering (SHF)/Designated Forwarder (DF) status updates
+         * will be temporarily put on hold by the warm-restart logic.
+         */
+
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode: EVPN_SPLIT_HORIZON_TABLE SHL set msg: %s vteps %s",
+                          key.c_str(), vteps_str.c_str());
+
+            const KeyOpFieldsValuesTuple shf_kfv = std::make_tuple(key,
+                                                               SET_COMMAND,
+                                                               shf_fvVector);
+            m_warmStartHelperShl.insertRefreshMap(shf_kfv);
+        }
+
+        if (!warmRestartDfInProgress)
+        {
+            m_shl_dfmodeTable.set(key, df_fvVector);
+            SWSS_LOG_INFO("EVPN_DF_TABLE set msg: %s df %s",
+                           key.c_str(), df ? "true" : "false");
+        }
+
+        /*
+         * During Split Horizon Filtering (SHF)/Designated Forwarder (DF) status updates
+         * will be temporarily put on hold by the warm-restart logic.
+         */
+
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode: EVPN_SPLIT_HORIZON_TABLE DF set msg: %s DF - %s",
+                          key.c_str(), df ? "true" : "false");
+
+            const KeyOpFieldsValuesTuple df_kfv = std::make_tuple(key,
+                                                               SET_COMMAND,
+                                                               df_fvVector);
+            m_warmStartHelperDf.insertRefreshMap(df_kfv);
+        }
+    }
+
+    return;
+}
+
+
+
+
+void RouteSync::onMsgRaw(struct nlmsghdr *h)
+{   
     int len;
 
     if ((h->nlmsg_type != RTM_NEWROUTE)
-        && (h->nlmsg_type != RTM_DELROUTE))
+        && (h->nlmsg_type != RTM_DELROUTE)
+        && (h->nlmsg_type != RTM_NEWTFILTER)
+        && (h->nlmsg_type != RTM_DELTFILTER))
         return;
     /* Length validity. */
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
@@ -600,7 +763,12 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
             (size_t)NLMSG_LENGTH(sizeof(struct ndmsg)));
         return;
     }
-    onEvpnRouteMsg(h, len);
+
+    if (h->nlmsg_type == RTM_NEWTFILTER || h->nlmsg_type == RTM_DELTFILTER)
+        onBridgePortMsg(h, len);
+    else
+        onEvpnRouteMsg(h, len);
+
     return;
 }
 
@@ -1510,5 +1678,27 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
     {
         m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
+    }
+}
+
+void RouteSync::onWarmStartShlEnd()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_warmStartHelperShl.inProgress())
+    {
+        m_warmStartHelperShl.reconcile();
+        SWSS_LOG_NOTICE("Warm-Restart reconciliation SHL processed.");
+    }
+}
+
+void RouteSync::onWarmStartDfEnd()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_warmStartHelperDf.inProgress())
+    {
+        m_warmStartHelperDf.reconcile();
+        SWSS_LOG_NOTICE("Warm-Restart reconciliation DF processed.");
     }
 }
