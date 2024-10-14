@@ -57,8 +57,9 @@ class TestZmqDash(object):
     @pytest.fixture(scope="class")
     def enable_orchagent_zmq(self, dvs):
         # change orchagent to use ZMQ
+        # change orchagent to use custom create_switch_timeout
         dvs.runcmd("cp /usr/bin/orchagent.sh /usr/bin/orchagent.sh_zmq_ut_backup")
-        dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -q tcp:\/\/127.0.0.1:8100 /g' /usr/bin/orchagent.sh")
+        dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -q tcp:\/\/127.0.0.1:8100 -t 60 /g' /usr/bin/orchagent.sh")
         dvs.stop_swss()
         dvs.start_swss()
 
