@@ -1877,7 +1877,7 @@ def dvs(request, manage_dvs) -> DockerVirtualSwitch:
 
     return manage_dvs(log_path, dvs_env)
 
-@pytest.yield_fixture(scope="module")
+@pytest.fixture(scope="module")
 def vst(request):
     vctns = request.config.getoption("--vctns")
     topo = request.config.getoption("--topo")
