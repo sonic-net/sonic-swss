@@ -77,8 +77,8 @@ for i = n, 1, -1 do
                         effective_poll_time = (port_timestamp_current - port_timestamp_lasttime) / 1000
                     else
                         effective_poll_time = global_effective_poll_time
-                        effective_poll_time_lasttime = false
                     end
+                    effective_poll_time_lasttime = false
                 else
                     effective_poll_time = global_effective_poll_time
                     effective_poll_time_lasttime = global_effective_poll_time_lasttime
