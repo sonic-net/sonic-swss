@@ -27,6 +27,8 @@ class TestVirtualChassis(object):
                 chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
                 chassis_app_db.db_connection.set("SYSTEM_LAG_ID_START", "1")
                 chassis_app_db.db_connection.set("SYSTEM_LAG_ID_END", "2")
+                chassis_app_db.db_connection.rpush("SYSTEM_LAG_IDS_FREE_LIST", "1")
+                chassis_app_db.db_connection.rpush("SYSTEM_LAG_IDS_FREE_LIST", "2")
                 break
             
     def config_inbandif_port(self, vct, ibport):
