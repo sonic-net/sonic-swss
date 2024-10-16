@@ -59,11 +59,11 @@ class ProducerStateTable(swsscommon.ProducerStateTable):
         for k, v in pairs:
             pairs_str.append((to_string(k), to_string(v)))
         self.set(key, pairs_str)
-        time.sleep(3)
+        time.sleep(1)
 
     def __delitem__(self, key: str):
         self.delete(str(key))
-        time.sleep(3)
+        time.sleep(1)
 
 
 class Table(swsscommon.Table):
