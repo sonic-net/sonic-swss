@@ -536,8 +536,7 @@ namespace flexcounter_test
         ASSERT_TRUE(gPortsOrch->allPortsReady());
 
         // Enable and check counters
-        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_DELAY_STATUS_FIELD, "false"},
-                                                    {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
         flexCounterCfg.set("PG_WATERMARK", values);
         flexCounterCfg.set("QUEUE_WATERMARK", values);
         flexCounterCfg.set("QUEUE", values);
@@ -831,6 +830,14 @@ namespace flexcounter_test
         entries.clear();
         static_cast<Orch *>(gBufferOrch)->doTask();
         ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pool_oid));
+
+        // Warm/fast-boot case - no FC processing done before APPLY_VIEW
+        std::vector<std::string> ts;
+
+        gDirectory.get<FlexCounterOrch*>()->bake();
+        gDirectory.get<FlexCounterOrch*>()->dumpPendingTasks(ts);
+
+        ASSERT_TRUE(ts.empty());
     }
 
     INSTANTIATE_TEST_CASE_P(
