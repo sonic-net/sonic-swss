@@ -141,16 +141,29 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix=""):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, adv_prefix=adv_prefix)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="",
+                       primary="", monitoring="", adv_prefix="", rx_timer="", tx_timer="", check_directly_connected=False):
+
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor,
+                    profile=profile, primary=primary, monitoring=monitoring, adv_prefix=adv_prefix,
+                    rx_timer=rx_timer, tx_timer=tx_timer, check_directly_connected=check_directly_connected)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix=""):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="",
+                     monitoring="", adv_prefix="", rx_timer="", tx_timer="",
+                     check_directly_connected=False):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
             ("endpoint", endpoint),
     ]
+
+    if rx_timer:
+        attrs.append(('rx_monitor_timer', rx_timer))
+    if tx_timer:
+        attrs.append(('tx_monitor_timer', tx_timer))
+    if check_directly_connected:
+        attrs.append(('check_directly_connected', 'true'))
 
     if vni:
         attrs.append(('vni', vni))
@@ -479,6 +492,21 @@ def get_bfd_session_id(dvs, addr):
             return entry
 
     return None
+
+def get_bfd_tx_rx_interval(dvs, addr):
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    tbl =  swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION")
+    entries = set(tbl.getKeys())
+    for entry in entries:
+        status, fvs = tbl.get(entry)
+        fvs = dict(fvs)
+        assert status, "Got an error when get a key"
+        if fvs["SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS"] == addr and fvs["SAI_BFD_SESSION_ATTR_MULTIHOP"] == "true":
+            rx_interval = fvs["SAI_BFD_SESSION_ATTR_MIN_RX"]
+            tx_interval = fvs["SAI_BFD_SESSION_ATTR_MIN_TX"]
+            return (tx_interval, rx_interval)
+
+    return None, None
 
 
 def check_del_bfd_session(dvs, addrs):
@@ -3687,9 +3715,6 @@ class TestVnetOrch(object):
             "src_ip_v6": "20c1:ba8::/64"
         }
         setup_subnet_decap(subnet_decap_config)
-        import pdb
-        pdb.set_trace()
-
         vnet_obj = self.get_vnet_obj()
         vnet_obj.fetch_exist_entries(dvs)
 
@@ -3849,6 +3874,134 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         delete_subnet_decap_tunnel(dvs, "IPINIP_SUBNET_V6")
         vnet_obj.check_del_ipinip_tunnel(dvs, "IPINIP_SUBNET_V6")
+
+    '''
+   Test 28 - Test for monitor Tx and Rx interval parameters.
+    '''
+    def test_vnet_orch_28(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_28'
+        vnet_name = 'Vnet28'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10028', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10028')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        tx_timer = '1234'
+        rx_timer = '5678'
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2',
+                           profile="Test_profile", adv_prefix='100.100.1.0/24',tx_timer=tx_timer, rx_timer=rx_timer)
+
+        # default monitor session status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+
+        # check the bfd session is created and the interval is set
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, '9.1.0.1')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, '9.1.0.2')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        # change the values of tx and rx timers in a route
+        tx_timer = '2345'
+        rx_timer = '6789'
+        set_vnet_routes(dvs,"100.100.1.1/32", vnet_name,'9.1.0.1,9.1.0.2,9.1.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3',
+                        profile="Test_profile", adv_prefix='100.100.1.0/24',tx_timer=tx_timer, rx_timer=rx_timer)
+
+        # check the bfd session is created for new nexthop with updated values
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, '9.1.0.3')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+
+        #ensure bfd session is removed
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, '9.1.0.1')
+        assert tx_val == None and rx_val == None
+
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, '9.1.0.2')
+        assert tx_val ==None and rx_val == None
+
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, '9.1.0.3')
+        assert tx_val ==None and rx_val == None
+
+
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+
+        create_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::1,fd:10:1::2,fd:10:1::3',
+                           ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3', profile="test_profile",
+                           tx_timer=tx_timer, rx_timer=rx_timer,check_directly_connected=True)
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", [])
+        check_remove_routes_advertisement(dvs, "fd:10:10::1/128")
+
+        # check the bfd session is created and the interval is set
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::1')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::2')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::3')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        tx_timer = '5432'
+        rx_timer = '9876'
+        set_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::1,fd:10:1::2,fd:10:1::3,fd:10:1::4',
+                           ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3,fd:10:2::4', profile="test_profile",
+                           tx_timer=tx_timer, rx_timer=rx_timer,check_directly_connected=False)
+
+        # check the bfd session is created for new nexthop with updated values
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::4')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        #remove first and re-add the nexthop to change its BFD interval values
+        set_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::2,fd:10:1::3,fd:10:1::4',
+                           ep_monitor='fd:10:2::2,fd:10:2::3,fd:10:1::4', profile="test_profile",
+                           tx_timer=tx_timer, rx_timer=rx_timer,check_directly_connected=False)
+
+        set_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::1,fd:10:1::2,fd:10:1::3,fd:10:1::4',
+                           ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3,fd:10:1::4', profile="test_profile",
+                           tx_timer=tx_timer, rx_timer=rx_timer,check_directly_connected=False)
+
+        # check the bfd session is created for new nexthop with updated values
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::1')
+        assert tx_val == (tx_timer+'000')
+        assert rx_val == (rx_timer+'000')
+
+        # Remove tunnel route 2
+        delete_vnet_routes(dvs, "fd:10:10::1/128", vnet_name)
+        #ensure bfd session is removed
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::1')
+        assert tx_val == None and rx_val == None
+
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::2')
+        assert tx_val ==None and rx_val == None
+
+        tx_val, rx_val = get_bfd_tx_rx_interval(dvs, 'fd:10:2::3')
+        assert tx_val ==None and rx_val == None
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
