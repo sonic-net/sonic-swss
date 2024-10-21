@@ -292,7 +292,9 @@ namespace switchorch_test
         initSwitchOrch();
 
         sai_timespec_t timestamp = {.tv_sec = 1701160447, .tv_nsec = 538710245};
-        sai_switch_health_data_t data = {.data_type = SAI_HEALTH_DATA_TYPE_GENERAL};
+        sai_switch_health_data_t data;
+        memset(&data, 0, sizeof(data));
+        data.data_type = SAI_HEALTH_DATA_TYPE_GENERAL;
         vector<uint8_t> data_from_sai({100, 101, 115, 99, 114, 105, 112, 116, 105, 245, 111, 110, 245, 10, 123, 125, 100, 100});
         sai_u8_list_t description;
         description.list = data_from_sai.data();
