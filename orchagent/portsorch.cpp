@@ -6757,10 +6757,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     /* Restore to default pvid if this port joined this VLAN in untagged mode previously */
     if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
     {
-        if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
-        {
-            return false;
-        }
+        setPortPvid(port, DEFAULT_PORT_VLAN_ID);
     }
 
     m_portList[port.m_alias] = port;
