@@ -122,6 +122,7 @@ static acl_packet_action_lookup_t aclPacketActionLookup =
 {
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
     { PACKET_ACTION_DROP,    SAI_PACKET_ACTION_DROP },
+    { PACKET_ACTION_COPY,    SAI_PACKET_ACTION_COPY },
 };
 
 static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
