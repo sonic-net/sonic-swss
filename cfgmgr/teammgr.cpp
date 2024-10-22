@@ -654,38 +654,19 @@ bool TeamMgr::removeLag(const string &alias)
     string res;
     pid_t pid;
 
-    try
     {
-        std::stringstream cmd;
-        cmd << "cat " << shellquote("/var/run/teamd/" + alias + ".pid");
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
-    }
-    catch (const std::exception &e)
-    {
-        SWSS_LOG_NOTICE("Failed to remove non-existent port channel %s pid...", alias.c_str());
-        return false;
-    }
-
-    try
-    {
-        pid = static_cast<pid_t>(std::stoul(res, nullptr, 10));
-        SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
-    }
-    catch (const std::exception &e)
-    {
-        SWSS_LOG_ERROR("Failed to read port channel %s pid: %s", alias.c_str(), e.what());
-        return false;
+        ifstream pidfile("/var/run/teamd/" + alias + ".pid");
+        if (pidfile.is_open()) {
+            pidfile >> pid;
+            SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
+        } else {
+            SWSS_LOG_NOTICE("Failed to remove non-existent port channel %s pid...", alias.c_str());
+            return false;
+        }
     }
 
-    try
-    {
-        std::stringstream cmd;
-        cmd << "kill -TERM " << pid;
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
-    }
-    catch (const std::exception &e)
-    {
-        SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, e.what());
+    if (kill(pid, SIGTERM)) {
+        SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, strerror(errno));
         return false;
     }
 
