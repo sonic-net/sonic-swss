@@ -211,6 +211,7 @@ bool OrchDaemon::init()
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
 
+    SWSS_LOG_WARN("Considering ARS support");
     sai_attr_capability_t capability;
     if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ARS_PROFILE,
                                        SAI_ARS_PROFILE_ALGO_EWMA,
@@ -228,6 +229,7 @@ bool OrchDaemon::init()
         gArsOrch = new ArsOrch(m_configDb, m_applDb, m_stateDb, ars_tables);
         gDirectory.set(gArsOrch);
         gIsArsSupported = true;
+        SWSS_LOG_WARN("ARS support is enabled");
     }
 
     vector<string> srv6_tables = {

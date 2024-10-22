@@ -27,57 +27,44 @@ ArsOrch::ArsOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vect
 {
     SWSS_LOG_ENTER();
     isArsConfigured = false;
-
-    sai_attr_capability_t capability;
-
-
-    sai_object_id_t ars_profile_id;
-    sai_attribute_t sai_attr;
-    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ARS_PROFILE,
-                                       SAI_ARS_PROFILE_ALGO_EWMA,
-                                       &capability) == SAI_STATUS_SUCCESS)
-    {
-        if (capability.create_implemented == true)
-        {
-            sai_attr.id = SAI_ARS_PROFILE_ATTR_ALGO;
-            sai_attr.value.u8 = SAI_ARS_PROFILE_ALGO_EWMA;
-            sai_status_t status = sai_ars_profile_api->create_ars_profile(&ars_profile_id,
-                                                                          gSwitchId,
-                                                                          1,
-                                                                          &sai_attr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to create ARS profile: %d", status);
-                throw runtime_error("Failed to create ARS profile");
-            }
-
-            if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
-                                               SAI_SWITCH_ATTR_ARS_PROFILE,
-                                               &capability) == SAI_STATUS_SUCCESS)
-            {
-                if (capability.create_implemented == true)
-                {
-                    sai_attr.id = SAI_SWITCH_ATTR_ARS_PROFILE;
-                    sai_attr.value.oid = ars_profile_id;
-                    status = sai_switch_api->set_switch_attribute(gSwitchId, &sai_attr);
-                    if (status != SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_ERROR("Failed to bind ARS profile to switch: %d", status);
-                        throw runtime_error("Failed to bind ARS profile to switch");
-                    }
-                }
-
-                gPortsOrch->attach(this);
-                m_sai_ars_profile_id = ars_profile_id;
-            }
-        }
-    }
+    SWSS_LOG_ERROR("ENTER");
+    gPortsOrch->attach(this);
+    SWSS_LOG_ERROR("EXIT");
 }
 
 void ArsOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
     assert(cntx);
+
+    if (!isArsConfigured)
+    {
+        SWSS_LOG_INFO("ARS not enabled - no action on interface state change");
+        return;
+    }
+
+    switch(type) {
+        case SUBJECT_TYPE_PORT_OPER_STATE_CHANGE:
+        {
+            PortOperStateUpdate *update = reinterpret_cast<PortOperStateUpdate *>(cntx);
+            auto arsProfile_entry = m_arsProfiles.begin();
+            if (arsProfile_entry == m_arsProfiles.end())
+            {
+                SWSS_LOG_INFO("ARS profile not configured - no action on interface state change");
+                return;
+            }
+
+            bool is_found = (arsProfile_entry->second.minPathInterfaces.find(update->port.m_alias) != arsProfile_entry->second.minPathInterfaces.end());
+            SWSS_LOG_INFO("Interface %s %sconfigured for ARS - %sable ARS on interface",
+                    update->port.m_alias.c_str(),
+                    is_found ? "" : "not ",
+                    update->operStatus == SAI_PORT_OPER_STATUS_UP ? "en" : "dis");
+            updateArsMinPathInterface(arsProfile_entry->second, update->port, is_found);
+            break;
+        }
+        default:
+            break;
+    }
 }
 
 
@@ -271,6 +258,10 @@ bool ArsOrch::updateArsMinPathInterface(ArsProfileEntry &profile, const Port &po
         return false;
     }
 
+    SWSS_LOG_ERROR("Interface %s - %sable ARS on interface",
+                    port.m_alias.c_str(),
+                    is_enable ? "en" : "dis");
+
     return true;
 }
 
@@ -286,9 +277,10 @@ bool ArsOrch::doTaskArsProfile(const KeyOpFieldsValuesTuple & t)
     ArsAssignMode assign_mode = PER_FLOWLET_QUALITY;
     bool current_enable = isArsConfigured;
 
+    SWSS_LOG_ERROR("ARS profile Op %s Name %s", op.c_str(), ars_profile_name.c_str());
+
     if (op == SET_COMMAND)
     {
-
         for (auto i : kfvFieldsValues(t))
         {
             if (fvField(i) == "max_flows")
@@ -313,11 +305,7 @@ bool ArsOrch::doTaskArsProfile(const KeyOpFieldsValuesTuple & t)
             }
             else if (fvField(i) == "match_mode")
             {
-                if (fvValue(i) == "nexthop-based")
-                {
-                    match_mode = MATCH_NEXTHOP_BASED;
-                }
-                else if (fvValue(i) != "route-based")
+                if (fvValue(i) != "route-based")
                 {
                     SWSS_LOG_WARN("Received unsupported match_mode %s, defaulted to route-based",
                                     fvValue(i).c_str());
@@ -387,6 +375,7 @@ bool ArsOrch::doTaskArsProfile(const KeyOpFieldsValuesTuple & t)
             return setArsProfile(arsProfile_entry->second);
         }
     }
+
     return true;
 }
 
@@ -400,22 +389,16 @@ bool ArsOrch::doTaskArsMinPathInterfaces(const KeyOpFieldsValuesTuple & t)
     string op = kfvOp(t);
     auto arsProfile_entry = m_arsProfiles.find(profile_name);
 
-    Port p;
-    if (!gPortsOrch->getPort(if_name, p))
+    SWSS_LOG_ERROR("ARS Path Op %s Profile %s Interface %s", op.c_str(), profile_name.c_str(), if_name.c_str());
+
+    if (arsProfile_entry == m_arsProfiles.end()) 
     {
-        SWSS_LOG_WARN("Tried to add/remove non-existent interface %s of Ars profile %s - skipped",
-                if_name.c_str(), profile_name.c_str());
+        SWSS_LOG_WARN("ARS entry %s doesn't exists, ignoring", profile_name.c_str());
         return true;
     }
 
     if (op == SET_COMMAND)
     {
-        if (arsProfile_entry == m_arsProfiles.end()) 
-        {
-            SWSS_LOG_WARN("ARS entry %s doesn't exists, ignoring", profile_name.c_str());
-            return true;
-        }
-
         if (arsProfile_entry->second.minPathInterfaces.find(if_name) != arsProfile_entry->second.minPathInterfaces.end()) 
         {
             SWSS_LOG_WARN("Tried to add already added interface %s to Ars profile %s - skipped",
@@ -429,12 +412,7 @@ bool ArsOrch::doTaskArsMinPathInterfaces(const KeyOpFieldsValuesTuple & t)
     }
     else if (op == DEL_COMMAND)
     {
-        if (arsProfile_entry == m_arsProfiles.end())
-        {
-            SWSS_LOG_INFO("Received delete call for non-existent entry %s", profile_name.c_str());
-            return true;
-        }
-        else if (arsProfile_entry->second.minPathInterfaces.find(if_name) == arsProfile_entry->second.minPathInterfaces.end())
+        if (arsProfile_entry->second.minPathInterfaces.find(if_name) == arsProfile_entry->second.minPathInterfaces.end())
         {
             SWSS_LOG_INFO("Received delete call for non-existent minPath interface %s for Ars entry %s", if_name.c_str(), profile_name.c_str());
             return true;
@@ -448,8 +426,16 @@ bool ArsOrch::doTaskArsMinPathInterfaces(const KeyOpFieldsValuesTuple & t)
 
     if (isArsConfigured)
     {
+        Port p;
+        if (!gPortsOrch->getPort(if_name, p))
+        {
+            SWSS_LOG_WARN("Tried to add/remove non-existent interface %s of Ars profile %s - skipped",
+                    if_name.c_str(), profile_name.c_str());
+            return true;
+        }
         return updateArsMinPathInterface(arsProfile_entry->second, p, (op == SET_COMMAND));
     }
+
     return true;
 }
 
@@ -462,6 +448,8 @@ bool ArsOrch::doTaskArsNhgPrefix(const KeyOpFieldsValuesTuple & t)
     IpPrefix ip_prefix = IpPrefix(key);
     auto prefix_entry = m_arsNexthopGroupPrefixes.find(ip_prefix);
 
+    SWSS_LOG_ERROR("ARS Prefix Op %s Prefix %s", op.c_str(), ip_prefix.to_string().c_str());
+
     if (op == SET_COMMAND)
     {
         if (prefix_entry != m_arsNexthopGroupPrefixes.end())
@@ -473,7 +461,7 @@ bool ArsOrch::doTaskArsNhgPrefix(const KeyOpFieldsValuesTuple & t)
         string ars_profile = "";
         for (auto i : kfvFieldsValues(t))
         {
-            if (fvField(i) == "ARS_NHG_PREFIX")
+            if (fvField(i) == "profile_name")
             {
                 ars_profile = fvValue(i);
             }
@@ -499,8 +487,6 @@ bool ArsOrch::doTaskArsNhgPrefix(const KeyOpFieldsValuesTuple & t)
             return true;
         }
 
-        /* enabling ARS over already configured nexthop groups is not supported */
-        SWSS_LOG_INFO("nabling ARS over already configured nexthop groups is not supported");
         sai_object_id_t vrf_id = gVirtualRouterId;
         NextHopGroupKey nhg = gRouteOrch->getSyncdRouteNhgKey(vrf_id, ip_prefix);
         if (nhg.getSize() == 0)
@@ -537,6 +523,54 @@ void ArsOrch::doTask(Consumer& consumer)
     const string & table_name = consumer.getTableName();
     auto it = consumer.m_toSync.begin();
     bool entry_handled = true;
+
+    if (!m_sai_ars_profile_id)
+    {
+        sai_attr_capability_t capability;
+
+
+        sai_object_id_t ars_profile_id;
+        sai_attribute_t sai_attr;
+        if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ARS_PROFILE,
+                                        SAI_ARS_PROFILE_ALGO_EWMA,
+                                        &capability) == SAI_STATUS_SUCCESS)
+        {
+            if (capability.create_implemented == true)
+            {
+                sai_attr.id = SAI_ARS_PROFILE_ATTR_ALGO;
+                sai_attr.value.u32 = SAI_ARS_PROFILE_ALGO_EWMA;
+                SWSS_LOG_ERROR("Creating ARS profile attr id %d value %d\n", sai_attr.id, sai_attr.value.u32);
+                sai_status_t status = sai_ars_profile_api->create_ars_profile(&ars_profile_id,
+                                                                            gSwitchId,
+                                                                            1,
+                                                                            &sai_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to create ARS profile: %d", status);
+                    throw runtime_error("Failed to create ARS profile");
+                }
+
+                m_sai_ars_profile_id = ars_profile_id;
+
+                if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                                SAI_SWITCH_ATTR_ARS_PROFILE,
+                                                &capability) == SAI_STATUS_SUCCESS)
+                {
+                    if (capability.create_implemented == true)
+                    {
+                        sai_attr.id = SAI_SWITCH_ATTR_ARS_PROFILE;
+                        sai_attr.value.oid = ars_profile_id;
+                        status = sai_switch_api->set_switch_attribute(gSwitchId, &sai_attr);
+                        if (status != SAI_STATUS_SUCCESS)
+                        {
+                            SWSS_LOG_ERROR("Failed to bind ARS profile to switch: %d", status);
+                            throw runtime_error("Failed to bind ARS profile to switch");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if (!m_sai_ars_profile_id)
     {
