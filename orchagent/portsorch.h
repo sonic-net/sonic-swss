@@ -245,6 +245,8 @@ public:
 
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
+    bool setPortArsEnable(const Port& port, bool is_enable);
+    bool setPortArsLoadScaling(const Port& port);
 
 private:
     unique_ptr<Table> m_counterTable;

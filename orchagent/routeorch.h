@@ -15,6 +15,7 @@
 #include "nexthopgroupkey.h"
 #include "bulker.h"
 #include "fgnhgorch.h"
+#include "arsorch.h"
 #include <map>
 
 /* Maximum next hop group number */
@@ -184,7 +185,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, ArsOrch *gArsOrch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -235,6 +236,7 @@ private:
     VRFOrch *m_vrfOrch;
     FgNhgOrch *m_fgNhgOrch;
     Srv6Orch *m_srv6Orch;
+    ArsOrch *m_gArsOrch;
 
     unsigned int m_nextHopGroupCount;
     unsigned int m_maxNextHopGroupCount;
@@ -286,6 +288,8 @@ private:
     bool isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
     void createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
+
+    bool addNextHopGroup(const NextHopGroupKey&, vector<sai_attribute_t> &nhg_attrs);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

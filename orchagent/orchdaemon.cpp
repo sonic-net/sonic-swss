@@ -43,6 +43,7 @@ NhgOrch *gNhgOrch;
 NhgMapOrch *gNhgMapOrch;
 CbfNhgOrch *gCbfNhgOrch;
 FgNhgOrch *gFgNhgOrch;
+ArsOrch *gArsOrch;
 AclOrch *gAclOrch;
 PbhOrch *gPbhOrch;
 MirrorOrch *gMirrorOrch;
@@ -66,6 +67,7 @@ MonitorOrch *gMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
 
 bool gIsNatSupported = false;
+bool gIsArsSupported = false;
 event_handle_t g_events_handle;
 
 #define DEFAULT_MAX_BULK_SIZE 1000
@@ -209,6 +211,25 @@ bool OrchDaemon::init()
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
 
+    sai_attr_capability_t capability;
+    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ARS_PROFILE,
+                                       SAI_ARS_PROFILE_ALGO_EWMA,
+                                       &capability) == SAI_STATUS_SUCCESS)
+    {
+        const int arsorch_pri = 15;
+
+        vector<table_name_with_pri_t> ars_tables = {
+            { CFG_ARS_PROFILE,            arsorch_pri },
+            { CFG_ARS_MIN_PATH_INTERFACE, arsorch_pri },
+            { CFG_ARS_NHG_PREFIX,         arsorch_pri },
+            { CFG_ARS_NHG_MEMBER,         arsorch_pri }
+        };
+
+        gArsOrch = new ArsOrch(m_configDb, m_applDb, m_stateDb, ars_tables);
+        gDirectory.set(gArsOrch);
+        gIsArsSupported = true;
+    }
+
     vector<string> srv6_tables = {
         APP_SRV6_SID_LIST_TABLE_NAME,
         APP_SRV6_MY_SID_TABLE_NAME
@@ -221,7 +242,7 @@ bool OrchDaemon::init()
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch);
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, gArsOrch);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
@@ -515,6 +536,10 @@ bool OrchDaemon::init()
     m_orchList.push_back(gMlagOrch);
     m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(gFgNhgOrch);
+    if (gIsArsSupported)
+    {
+        m_orchList.push_back(gArsOrch);
+    }
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);

@@ -250,7 +250,7 @@ namespace mock_orch_test
                 { APP_ROUTE_TABLE_NAME, routeorch_pri },
                 { APP_LABEL_ROUTE_TABLE_NAME, routeorch_pri }
             };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch, nullptr);
             gDirectory.set(gRouteOrch);
             ut_orch_list.push_back((Orch **)&gRouteOrch);
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
