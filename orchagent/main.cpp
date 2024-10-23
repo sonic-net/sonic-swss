@@ -52,6 +52,8 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_BATCH_SIZE  128
 extern int gBatchSize;
 
+bool gRingMode = false;
+
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
@@ -73,7 +75,7 @@ uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-R]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -94,6 +96,7 @@ void usage()
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
     cout << "    -t Override create switch timeout, in sec" << endl;
+    cout << "    -R enable the ring buffer thread" << endl;
 }
 
 void sighup_handler(int signo)
@@ -348,7 +351,7 @@ int main(int argc, char **argv)
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:R")) != -1)
     {
         switch (opt)
         {
@@ -441,6 +444,9 @@ int main(int argc, char **argv)
             break;
         case 't':
             create_switch_timeout = atoi(optarg);
+            break;
+        case 'R':
+            gRingMode = true;
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
@@ -790,6 +796,11 @@ int main(int argc, char **argv)
     else
     {
         orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+    }
+
+    if (gRingMode) {
+        /* Initialize the ring before OrchDaemon initializing Orchs */
+        orchDaemon->enableRingBuffer();
     }
 
     if (!orchDaemon->init())
