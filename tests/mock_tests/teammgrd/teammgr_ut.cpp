@@ -9,7 +9,7 @@ static std::vector< std::pair<pid_t, int> > mockKillCommands;
 static std::map<std::string, std::FILE*> pidFiles;
 
 static int (*callback_kill)(pid_t pid, int sig) = NULL;
-static FILE* (*callback_fopen)(const char *pathname, const char *mode) = NULL;
+static std::pair<bool, FILE*> (*callback_fopen)(const char *pathname, const char *mode) = NULL;
 
 static int cb_kill(pid_t pid, int sig)
 {
@@ -27,22 +27,25 @@ int kill(pid_t pid, int sig)
     return realfunc(pid, sig);
 }
 
-static FILE* cb_fopen(const char *pathname, const char *mode)
+static std::pair<bool, FILE*> cb_fopen(const char *pathname, const char *mode)
 {
     auto pidFileSearch = pidFiles.find(pathname);
     if (pidFileSearch != pidFiles.end()) {
-        return pidFileSearch->second;
+        if (!pidFileSearch->second) {
+            errno = ENOENT;
+        }
+        return std::make_pair(true, pidFileSearch->second);
     } else {
-        return NULL;
+        return std::make_pair(false, (FILE*)NULL);
     }
 }
 
 FILE* fopen(const char *pathname, const char *mode)
 {
     if (callback_fopen) {
-        FILE *fd = callback_fopen(pathname, mode);
-        if (fd) {
-            return fd;
+        std::pair<bool, FILE*> callback_fd = callback_fopen(pathname, mode);
+        if (callback_fd.first) {
+            return callback_fd.second;
         }
     }
     FILE* (*realfunc)(const char *, const char *) =
@@ -53,9 +56,9 @@ FILE* fopen(const char *pathname, const char *mode)
 FILE* fopen64(const char *pathname, const char *mode)
 {
     if (callback_fopen) {
-        FILE *fd = callback_fopen(pathname, mode);
-        if (fd) {
-            return fd;
+        std::pair<bool, FILE*> callback_fd = callback_fopen(pathname, mode);
+        if (callback_fd.first) {
+            return callback_fd.second;
         }
     }
     FILE* (*realfunc)(const char *, const char *) =
@@ -75,6 +78,11 @@ int cb(const std::string &cmd, std::string &stdout)
         pidFiles["/var/run/teamd/PortChannel382.pid"] = pidFile;
         return 1;
     }
+    else if (cmd.find("/usr/bin/teamd -r -t PortChannel812") != std::string::npos)
+    {
+        pidFiles["/var/run/teamd/PortChannel812.pid"] = NULL;
+        return 1;
+    }
     else if (cmd.find("/usr/bin/teamd -r -t PortChannel495") != std::string::npos)
     {
         mkdir("/var/run/teamd", 0755);
@@ -83,6 +91,19 @@ int cb(const std::string &cmd, std::string &stdout)
         std::rewind(pidFile);
         pidFiles["/var/run/teamd/PortChannel495.pid"] = pidFile;
         return 0;
+    }
+    else if (cmd.find("/usr/bin/teamd -r -t PortChannel198") != std::string::npos)
+    {
+        pidFiles["/var/run/teamd/PortChannel198.pid"] = NULL;
+    }
+    else {
+        for (int i = 600; i < 620; i++)
+        {
+            if (cmd.find(std::string("/usr/bin/teamd -r -t PortChannel") + std::to_string(i)) != std::string::npos)
+            {
+                pidFiles[std::string("/var/run/teamd/PortChannel") + std::to_string(i) + std::string(".pid")] = NULL;
+            }
+        }
     }
     return 0;
 }
@@ -145,20 +166,28 @@ namespace teammgr_ut
                                             { "min_links", "2" } });
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
-        int exec_cmd_called = 0;
-        for (auto cmd : mockCallArgs){
-            if (cmd.find("/usr/bin/teamd -r -t PortChannel382") != std::string::npos) {
-                exec_cmd_called++;
-            }
-        }
-        ASSERT_EQ(exec_cmd_called, 1);
-        int kill_cmd_called = 0;
-        for (auto killedProcess : mockKillCommands) {
-            if (killedProcess.first == 1234) {
-                kill_cmd_called++;
-            }
-        }
-        ASSERT_EQ(kill_cmd_called, 1);
+        ASSERT_NE(mockCallArgs.size(), 0);
+        EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel382"), std::string::npos);
+        EXPECT_EQ(mockCallArgs.size(), 1);
+        EXPECT_EQ(mockKillCommands.front().first, 1234);
+        EXPECT_EQ(mockKillCommands.size(), 1);
+    }
+
+    TEST_F(TeamMgrTest, testProcessPidFileMissingAfterAddLagFailure)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table = swss::Table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel812", { { "admin_status", "up" },
+                                            { "mtu", "9100" },
+                                            { "fallback", "true" },
+                                            { "lacp_key", "auto" },
+                                            { "min_links", "1" } });
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+        ASSERT_NE(mockCallArgs.size(), 0);
+        EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel812"), std::string::npos);
+        EXPECT_EQ(mockCallArgs.size(), 1);
+        EXPECT_EQ(mockKillCommands.size(), 0);
     }
 
     TEST_F(TeamMgrTest, testProcessCleanupAfterAddLag)
@@ -171,20 +200,48 @@ namespace teammgr_ut
                                             { "min_links", "2" } });
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
-        int exec_cmd_called = 0;
-        for (auto cmd : mockCallArgs){
-            if (cmd.find("/usr/bin/teamd -r -t PortChannel495") != std::string::npos) {
-                exec_cmd_called++;
-            }
-        }
-        ASSERT_EQ(exec_cmd_called, 1);
+        ASSERT_EQ(mockCallArgs.size(), 3);
+        ASSERT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel495"), std::string::npos);
         teammgr.cleanTeamProcesses();
-        int kill_cmd_called = 0;
-        for (auto killedProcess : mockKillCommands) {
-            if (killedProcess.first == 5678) {
-                kill_cmd_called++;
-            }
+        EXPECT_EQ(mockKillCommands.size(), 1);
+        EXPECT_EQ(mockKillCommands.front().first, 5678);
+    }
+
+    TEST_F(TeamMgrTest, testProcessPidFileMissingDuringCleanup)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table = swss::Table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel198", { { "admin_status", "up" },
+                                            { "mtu", "9100" },
+                                            { "fallback", "true" },
+                                            { "lacp_key", "auto" },
+                                            { "min_links", "1" } });
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+        ASSERT_NE(mockCallArgs.size(), 0);
+        EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel198"), std::string::npos);
+        EXPECT_EQ(mockCallArgs.size(), 3);
+        teammgr.cleanTeamProcesses();
+        EXPECT_EQ(mockKillCommands.size(), 0);
+    }
+
+    TEST_F(TeamMgrTest, testSleepDuringCleanup)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table = swss::Table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        for (int i = 600; i < 620; i++)
+        {
+            cfg_lag_table.set(std::string("PortChannel") + std::to_string(i), { { "admin_status", "up" },
+                    { "mtu", "9100" },
+                    { "lacp_key", "auto" } });
         }
-        ASSERT_EQ(kill_cmd_called, 1);
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+        ASSERT_EQ(mockCallArgs.size(), 60);
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        teammgr.cleanTeamProcesses();
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        EXPECT_EQ(mockKillCommands.size(), 0);
+        EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count(), 200);
     }
 }
