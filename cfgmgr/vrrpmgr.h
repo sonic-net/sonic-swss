@@ -34,10 +34,10 @@ struct VrrpIntfConf
     }
 };
 
-class MacvlanMgr : public Orch
+class VrrpMgr : public Orch
 {
 public:
-    MacvlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    VrrpMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
 private:
