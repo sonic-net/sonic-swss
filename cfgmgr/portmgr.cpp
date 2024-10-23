@@ -242,6 +242,15 @@ void PortMgr::doTask(Consumer &consumer)
                 }
             }
 
+            if (!portOk)
+            {
+                // Port configuration is handled by the orchagent. If the configuration is written to the APP DB using
+                // multiple Redis write commands, the orchagent may receive a partial configuration and create a port
+                // with incorrect settings.
+                field_values.emplace_back("mtu", mtu);
+                field_values.emplace_back("admin_status", admin_status);
+            }
+
             if (field_values.size())
             {
                 writeConfigToAppDb(alias, field_values);
@@ -254,6 +263,7 @@ void PortMgr::doTask(Consumer &consumer)
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
