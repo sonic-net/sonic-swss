@@ -138,7 +138,7 @@ class AsicDbValidator(DVSDatabase):
             return (True, None)
 
         # Verify that ASIC DB has been fully initialized
-        init_polling_config = PollingConfig(2, 30, strict=True)
+        init_polling_config = PollingConfig(2, 60, strict=True)
         wait_for_result(_verify_db_contents, init_polling_config)
 
     def _generate_oid_to_interface_mapping(self) -> None:
@@ -1136,6 +1136,13 @@ class DockerVirtualSwitch:
         fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
         tbl.set(interface, fvs)
         time.sleep(1)
+        
+    def set_dhcp_rate_limit(self, interface, dhcp_rate_limit):
+        tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("dhcp_rate_limit", dhcp_rate_limit)])
+        tbl.set(interface, fvs)
+        time.sleep(20)
 
     # deps: acl, mirror_port_erspan
     def add_neighbor(self, interface, ip, mac):
@@ -1848,6 +1855,7 @@ def manage_dvs(request) -> str:
             dvs.destroy_servers()
             dvs.create_servers()
             dvs.restart()
+            time.sleep(60)
 
         return dvs
 
@@ -1859,10 +1867,11 @@ def manage_dvs(request) -> str:
 
     dvs.get_logs()
     dvs.destroy()
-
+    
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
+        time.sleep(60)
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:

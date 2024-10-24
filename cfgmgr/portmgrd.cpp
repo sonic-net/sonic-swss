@@ -34,19 +34,18 @@ int main(int argc, char **argv)
         DBConnector stateDb("STATE_DB", 0);
 
         PortMgr portmgr(&cfgDb, &appDb, &stateDb, cfg_port_tables);
-        vector<Orch *> cfgOrchList = {&portmgr};
+        vector<Orch *> cfgOrchList = {&portmgr}; 
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
-
+        
         while (true)
         {
             Selectable *sel;
             int ret;
-
             ret = s.select(&sel, SELECT_TIMEOUT);
             if (ret == Select::ERROR)
             {
