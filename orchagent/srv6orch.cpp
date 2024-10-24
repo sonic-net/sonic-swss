@@ -1,5 +1,6 @@
 #include <iostream>
 #include <sstream>
+#include <inttypes.h>
 
 #include "routeorch.h"
 #include "logger.h"
@@ -47,8 +48,8 @@ const map<string, sai_my_sid_entry_endpoint_behavior_t> end_behavior_map =
 
 const map<string, sai_my_sid_entry_endpoint_behavior_flavor_t> end_flavor_map =
 {
-    {"end",                SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
-    {"end.x",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+    {"end",                SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP},
+    {"end.x",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP},
     {"end.t",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
     {"un",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
     {"ua",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD}
@@ -132,60 +133,51 @@ bool Srv6Orch::srv6NexthopExists(const NextHopKey &nhKey)
     }
 }
 
-bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
+bool Srv6Orch::removeSrv6NexthopWithoutVpn(const NextHopKey &nhKey)
+{
+    SWSS_LOG_ENTER();
+    return deleteSrv6Nexthop(nhKey);
+}
+
+bool Srv6Orch::removeSrv6Nexthops(const std::vector<NextHopGroupKey> &nhgv)
 {
     SWSS_LOG_ENTER();
 
-    for (auto &sr_nh : nhg.getNextHops())
+    // 1. remove vpn_sid first
+    for (auto& it_nhg : nhgv)
     {
-        string srv6_source, segname;
-        sai_status_t status = SAI_STATUS_SUCCESS;
-        srv6_source = sr_nh.srv6_source;
-        segname = sr_nh.srv6_segment;
-
-        SWSS_LOG_NOTICE("SRV6 Nexthop %s refcount %d", sr_nh.to_string(false,true).c_str(), m_neighOrch->getNextHopRefCount(sr_nh));
-        if (m_neighOrch->getNextHopRefCount(sr_nh) == 0)
+        if (it_nhg.is_srv6_vpn())
         {
-            status = sai_next_hop_api->remove_next_hop(srv6_nexthop_table_[sr_nh]);
-            if (status != SAI_STATUS_SUCCESS)
+            for (auto &sr_nh : it_nhg.getNextHops())
             {
-                SWSS_LOG_ERROR("Failed to remove SRV6 nexthop %s", sr_nh.to_string(false,true).c_str());
-                return false;
+                if (sr_nh.isSrv6Vpn())
+                {
+                    if (!deleteSrv6Vpn(sr_nh.ip_address.to_string(), sr_nh.srv6_vpn_sid, getAggId(it_nhg)))
+                    {
+                        deleteAggId(it_nhg);
+                        SWSS_LOG_ERROR("Failed to delete SRV6 vpn %s", sr_nh.to_string(false, true).c_str());
+                        return false;
+                    }
+                }
             }
-
-            /* Update nexthop in SID table after deleting the nexthop */
-            SWSS_LOG_INFO("Seg %s nexthop refcount %zu",
-                      segname.c_str(),
-                      sid_table_[segname].nexthops.size());
-            if (sid_table_[segname].nexthops.find(sr_nh) != sid_table_[segname].nexthops.end())
-            {
-                sid_table_[segname].nexthops.erase(sr_nh);
-            }
-            m_neighOrch->updateSrv6Nexthop(sr_nh, 0);
-            srv6_nexthop_table_.erase(sr_nh);
-
-            /* Delete NH from the tunnel map */
-            SWSS_LOG_INFO("Delete NH %s from tunnel map",
-                sr_nh.to_string(false, true).c_str());
-            srv6TunnelUpdateNexthops(srv6_source, sr_nh, false);
-        }
-
-        size_t tunnel_nhs = srv6TunnelNexthopSize(srv6_source);
-        if (tunnel_nhs == 0)
-        {
-            status = sai_tunnel_api->remove_tunnel(srv6_tunnel_table_[srv6_source].tunnel_object_id);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to remove SRV6 tunnel object for source %s", srv6_source.c_str());
-                return false;
-            }
-            srv6_tunnel_table_.erase(srv6_source);
-        }
-        else
-        {
-            SWSS_LOG_INFO("Nexthops referencing this tunnel object %s: %zu", srv6_source.c_str(),tunnel_nhs);
+            decreasePrefixAggIdRefCount(it_nhg);
+            deleteAggId(it_nhg);
         }
     }
+
+    // 2. delete nexthop & prefix agg id
+    for (auto& nhg : nhgv)
+    {
+        for (auto &sr_nh : nhg.getNextHops())
+        {
+            if (!deleteSrv6Nexthop(sr_nh))
+            {
+                SWSS_LOG_ERROR("Failed to delete SRV6 nexthop %s", sr_nh.to_string(false,true).c_str());
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -194,26 +186,37 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
     SWSS_LOG_ENTER();
     string srv6_segment = nh.srv6_segment;
     string srv6_source = nh.srv6_source;
+    string srv6_tunnel_endpoint;
 
     if (srv6NexthopExists(nh))
     {
         SWSS_LOG_INFO("SRV6 nexthop already created for %s", nh.to_string(false,true).c_str());
         return true;
     }
-    sai_object_id_t srv6_object_id = sid_table_[srv6_segment].sid_object_id;
-    sai_object_id_t srv6_tunnel_id = srv6_tunnel_table_[srv6_source].tunnel_object_id;
 
-    if (srv6_object_id == SAI_NULL_OBJECT_ID)
+    sai_object_id_t srv6_segment_id;
+    sai_object_id_t srv6_tunnel_id;
+
+    if (srv6_segment == "")
     {
-        SWSS_LOG_ERROR("segment object doesn't exist for segment %s", srv6_segment.c_str());
-        return false;
+        srv6_segment_id = SAI_NULL_OBJECT_ID;
+    }
+    else
+    {
+        srv6_segment_id = sid_table_[srv6_segment].sid_object_id;
     }
 
-    if (srv6_tunnel_id == SAI_NULL_OBJECT_ID)
+    if (nh.ip_address.to_string() == "0.0.0.0")
     {
-        SWSS_LOG_ERROR("tunnel object doesn't exist for source %s", srv6_source.c_str());
-        return false;
+        srv6_tunnel_endpoint = srv6_source;
+        srv6_tunnel_id = srv6_tunnel_table_[srv6_tunnel_endpoint].tunnel_object_id;
     }
+    else
+    {
+        srv6_tunnel_endpoint = nh.ip_address.to_string();
+        srv6_tunnel_id = srv6_p2p_tunnel_table_[srv6_tunnel_endpoint].tunnel_id;
+    }
+
     SWSS_LOG_INFO("Create srv6 nh for tunnel src %s with seg %s", srv6_source.c_str(), srv6_segment.c_str());
     vector<sai_attribute_t> nh_attrs;
     sai_object_id_t nexthop_id;
@@ -225,7 +228,7 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
     nh_attrs.push_back(attr);
 
     attr.id = SAI_NEXT_HOP_ATTR_SRV6_SIDLIST_ID;
-    attr.value.oid = srv6_object_id;
+    attr.value.oid = srv6_segment_id;
     nh_attrs.push_back(attr);
 
     attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
@@ -242,8 +245,133 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
     }
     m_neighOrch->updateSrv6Nexthop(nh, nexthop_id);
     srv6_nexthop_table_[nh] = nexthop_id;
-    sid_table_[srv6_segment].nexthops.insert(nh);
-    srv6TunnelUpdateNexthops(srv6_source, nh, true);
+    if (srv6_segment != "")
+    {
+        sid_table_[srv6_segment].nexthops.insert(nh);
+    }
+
+    if (nh.ip_address.to_string() == "0.0.0.0")
+    {
+        srv6TunnelUpdateNexthops(srv6_source, nh, true);
+    }
+    else
+    {
+        srv6P2ptunnelUpdateNexthops(nh, true);
+    }
+    return true;
+}
+
+bool Srv6Orch::deleteSrv6Nexthop(const NextHopKey &nh)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    if (!srv6NexthopExists(nh))
+    {
+        return true;
+    }
+
+    SWSS_LOG_DEBUG("SRV6 Nexthop %s refcount %d", nh.to_string(false,true).c_str(), m_neighOrch->getNextHopRefCount(nh));
+    if (m_neighOrch->getNextHopRefCount(nh) == 0)
+    {
+        sai_object_id_t nexthop_id;
+        nexthop_id = srv6_nexthop_table_[nh];
+        status = sai_next_hop_api->remove_next_hop(nexthop_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove SRV6 nexthop %s", nh.to_string(false,true).c_str());
+            return false;
+        }
+
+        /* Decrease srv6 segment reference */
+        if (nh.srv6_segment != "")
+        {
+            /* Update nexthop in SID table after deleting the nexthop */
+            SWSS_LOG_INFO("Seg %s nexthop refcount %zu",
+                      nh.srv6_segment.c_str(),
+                      sid_table_[nh.srv6_segment].nexthops.size());
+            if (sid_table_[nh.srv6_segment].nexthops.find(nh) != sid_table_[nh.srv6_segment].nexthops.end())
+            {
+                sid_table_[nh.srv6_segment].nexthops.erase(nh);
+            }
+        }
+        m_neighOrch->updateSrv6Nexthop(nh, 0);
+
+        srv6_nexthop_table_.erase(nh);
+
+        /* Delete NH from the tunnel map */
+        SWSS_LOG_INFO("Delete NH %s from tunnel map",
+            nh.to_string(false, true).c_str());
+
+        if (nh.ip_address.to_string() == "0.0.0.0")
+        {
+            string srv6_source = nh.srv6_source;
+            srv6TunnelUpdateNexthops(srv6_source, nh, false);
+            size_t tunnel_nhs = srv6TunnelNexthopSize(srv6_source);
+            if (tunnel_nhs == 0)
+            {
+                status = sai_tunnel_api->remove_tunnel(srv6_tunnel_table_[srv6_source].tunnel_object_id);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to remove SRV6 tunnel object for source %s", srv6_source.c_str());
+                    return false;
+                }
+                srv6_tunnel_table_.erase(srv6_source);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Nexthops referencing this tunnel object %s: %zu", srv6_source.c_str(),tunnel_nhs);
+            }
+        }
+        else
+        {
+            std::string endpoint = nh.ip_address.to_string();
+            srv6P2ptunnelUpdateNexthops(nh, false);
+            if (!deleteSrv6P2pTunnel(endpoint))
+            {
+                SWSS_LOG_ERROR("Failed to remove SRV6 p2p tunnel object for dst %s,", endpoint.c_str());
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool Srv6Orch::createSrv6NexthopWithoutVpn(const NextHopKey &nh, sai_object_id_t &nexthop_id)
+{
+    SWSS_LOG_ENTER();
+
+    // 1. create tunnel
+    if (nh.ip_address.to_string() == "0.0.0.0")
+    {
+        // create srv6 tunnel
+        auto srv6_source = nh.srv6_source;
+        if (!createSrv6Tunnel(srv6_source))
+        {
+            SWSS_LOG_ERROR("Failed to create tunnel for source %s", srv6_source.c_str());
+            return false;
+        }
+    }
+    else
+    {
+        // create p2p tunnel
+        if (!createSrv6P2pTunnel(nh.srv6_source, nh.ip_address.to_string()))
+        {
+            SWSS_LOG_ERROR("Failed to create SRV6 p2p tunnel %s", nh.to_string(false, true).c_str());
+            return false;
+        }
+    }
+
+    // 2. create nexthop
+    if (!createSrv6Nexthop(nh))
+    {
+        SWSS_LOG_ERROR("Failed to create SRV6 nexthop %s", nh.to_string(false,true).c_str());
+        return false;
+    }
+
+    nexthop_id = srv6_nexthop_table_[nh];
     return true;
 }
 
@@ -255,18 +383,34 @@ bool Srv6Orch::srv6Nexthops(const NextHopGroupKey &nhgKey, sai_object_id_t &next
     string srv6_segment;
 
     for (auto nh : nexthops)
+    { 
+        // create SRv6 nexthop
+        if (!createSrv6NexthopWithoutVpn(nh, nexthop_id))
+        {
+            SWSS_LOG_ERROR("Failed to create SRv6 nexthop %s", nh.to_string(false, true).c_str());
+            return false;
+        }
+    }
+
+    // create SRv6 VPN if need
+    if (nhgKey.is_srv6_vpn())
     {
-        srv6_source = nh.srv6_source;
-        if (!createSrv6Tunnel(srv6_source))
+        for (auto it = nexthops.begin(); it != nexthops.end(); ++it)
         {
-            SWSS_LOG_ERROR("Failed to create tunnel for source %s", srv6_source.c_str());
-            return false;
+            if (it->isSrv6Vpn())
+            {
+                if (!createSrv6Vpn(it->ip_address.to_string(), it->srv6_vpn_sid, getAggId(nhgKey)))
+                {
+                    for (auto itt = nexthops.begin(); itt != it; ++itt)
+                        deleteSrv6Vpn(itt->ip_address.to_string(), itt->srv6_vpn_sid, getAggId(nhgKey));
+                    deleteAggId(nhgKey);
+                    SWSS_LOG_ERROR("Failed to create SRV6 vpn %s", it->to_string(false, true).c_str());
+                    return false;
+                }
+            }
         }
-        if (!createSrv6Nexthop(nh))
-        {
-            SWSS_LOG_ERROR("Failed to create SRV6 nexthop %s", nh.to_string(false,true).c_str());
-            return false;
-        }
+
+        increasePrefixAggIdRefCount(nhgKey);
     }
 
     if (nhgKey.getSize() == 1)
@@ -855,6 +999,491 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     return true;
 }
 
+uint32_t Srv6Orch::getAggId(const NextHopGroupKey &nhg)
+{
+    SWSS_LOG_ENTER();
+    static uint32_t g_agg_id = 1;
+    uint32_t agg_id;
+
+    if (srv6_prefix_agg_id_table_.find(nhg) != srv6_prefix_agg_id_table_.end()) {
+        agg_id = srv6_prefix_agg_id_table_[nhg].prefix_agg_id;
+        SWSS_LOG_INFO("Agg id already exist, agg_id_key: %s, agg_id %u", nhg.to_string().c_str(), agg_id);
+    } else {
+        while (srv6_prefix_agg_id_set_.find(g_agg_id) != srv6_prefix_agg_id_set_.end()) {
+            SWSS_LOG_INFO("Agg id %d is busy, try next", g_agg_id);
+            g_agg_id++;
+            // restart with 1 if flip
+            if (g_agg_id == 0) {
+                g_agg_id = 1;
+            }
+        }
+        agg_id = g_agg_id;
+        srv6_prefix_agg_id_table_[nhg].prefix_agg_id = g_agg_id;
+        // initialize ref_count with 0, will be added in increasePrefixAggIdRefCount() later
+        srv6_prefix_agg_id_table_[nhg].ref_count = 0;
+        srv6_prefix_agg_id_set_.insert(g_agg_id);
+        SWSS_LOG_INFO("Agg id not exist, create agg_id_key: %s, agg_id %u", nhg.to_string().c_str(), agg_id);
+    }
+
+    return agg_id;
+}
+
+uint32_t Srv6Orch::getAggId(const std::string& index)
+{
+    SWSS_LOG_ENTER();
+    static uint32_t g_agg_id = 1;
+    uint32_t agg_id;
+
+    if (srv6_prefix_agg_id_table_for_nhg_.find(index) != srv6_prefix_agg_id_table_for_nhg_.end()) {
+        agg_id = srv6_prefix_agg_id_table_for_nhg_[index].prefix_agg_id;
+        SWSS_LOG_INFO("Agg id already exist, agg_id_key: %s, agg_id %u", index.c_str(), agg_id);
+    } else {
+        while (srv6_prefix_agg_id_set_.find(g_agg_id) != srv6_prefix_agg_id_set_.end()) {
+            SWSS_LOG_INFO("Agg id %d is busy, try next", g_agg_id);
+            g_agg_id++;
+            // restart with 1 if flip
+            if (g_agg_id == 0) {
+                g_agg_id = 1;
+            }
+        }
+        agg_id = g_agg_id;
+        srv6_prefix_agg_id_table_for_nhg_[index].prefix_agg_id = g_agg_id;
+        // initialize ref_count with 0, will be added in increasePrefixAggIdRefCount() later
+        srv6_prefix_agg_id_table_for_nhg_[index].ref_count = 0;
+        srv6_prefix_agg_id_set_.insert(g_agg_id);
+        SWSS_LOG_INFO("Agg id not exist, create agg_id_key: %s, agg_id %u", index.c_str(), agg_id);
+    }
+
+    return agg_id;
+}
+
+void Srv6Orch::deleteAggId(const NextHopGroupKey &nhg)
+{
+    SWSS_LOG_ENTER();
+    uint32_t agg_id;
+
+    if (srv6_prefix_agg_id_table_.find(nhg) == srv6_prefix_agg_id_table_.end()) {
+        return;
+    }
+
+    agg_id = srv6_prefix_agg_id_table_[nhg].prefix_agg_id;
+    if (srv6_prefix_agg_id_table_[nhg].ref_count == 0) {
+        srv6_prefix_agg_id_table_.erase(nhg);
+        srv6_prefix_agg_id_set_.erase(agg_id);
+        SWSS_LOG_INFO("Delete Agg id %d, agg_id_key: %s", agg_id, nhg.to_string().c_str());
+    }
+    else
+    {
+        SWSS_LOG_INFO("Referencing this prefix agg id %u : %u", agg_id, srv6_prefix_agg_id_table_[nhg].ref_count);
+    }
+}
+
+void Srv6Orch::deleteAggId(const std::string& index)
+{
+    SWSS_LOG_ENTER();
+    uint32_t agg_id;
+
+    if (srv6_prefix_agg_id_table_for_nhg_.find(index) == srv6_prefix_agg_id_table_for_nhg_.end()) {
+        return;
+    }
+
+    agg_id = srv6_prefix_agg_id_table_for_nhg_[index].prefix_agg_id;
+    if (srv6_prefix_agg_id_table_for_nhg_[index].ref_count == 0) {
+        srv6_prefix_agg_id_table_for_nhg_.erase(index);
+        srv6_prefix_agg_id_set_.erase(agg_id);
+        SWSS_LOG_INFO("Delete Agg id %d, agg_id_key: %s", agg_id, index.c_str());
+    }
+    else
+    {
+        SWSS_LOG_INFO("Referencing this prefix agg id %u : %u", agg_id, srv6_prefix_agg_id_table_for_nhg_[index].ref_count);
+    }
+}
+
+void Srv6Orch::increasePicContextIdRefCount(const std::string &index)
+{
+    SWSS_LOG_ENTER();
+    if (srv6_pic_context_table_.find(index) == srv6_pic_context_table_.end())
+        SWSS_LOG_ERROR("Unexpected refcount increase for context id %s", index.c_str());
+    else
+        ++srv6_pic_context_table_[index].ref_count;
+}
+
+void Srv6Orch::decreasePicContextIdRefCount(const std::string &index)
+{
+    SWSS_LOG_ENTER();
+    if (srv6_pic_context_table_.find(index) == srv6_pic_context_table_.end())
+        SWSS_LOG_ERROR("Unexpected refcount decrease for context id %s", index.c_str());
+    else
+        --srv6_pic_context_table_[index].ref_count;
+}
+
+void Srv6Orch::increasePrefixAggIdRefCount(const NextHopGroupKey &nhg)
+{
+    SWSS_LOG_ENTER();
+    if (srv6_prefix_agg_id_table_.find(nhg) == srv6_prefix_agg_id_table_.end())
+    {
+        SWSS_LOG_ERROR("Unexpected prefix agg refcount increase for nexthop %s", nhg.to_string().c_str());
+    }
+    else
+    {
+        srv6_prefix_agg_id_table_[nhg].ref_count++;
+    }
+}
+
+void Srv6Orch::increasePrefixAggIdRefCount(const std::string& index)
+{
+    SWSS_LOG_ENTER();
+    if (srv6_prefix_agg_id_table_for_nhg_.find(index) == srv6_prefix_agg_id_table_for_nhg_.end())
+    {
+        SWSS_LOG_ERROR("Unexpected prefix agg refcount increase for nexthop %s", index.c_str());
+    }
+    else
+    {
+        ++srv6_prefix_agg_id_table_for_nhg_[index].ref_count;
+    }
+}
+
+void Srv6Orch::decreasePrefixAggIdRefCount(const NextHopGroupKey &nhg)
+{
+    SWSS_LOG_ENTER();
+    if (srv6_prefix_agg_id_table_.find(nhg) == srv6_prefix_agg_id_table_.end())
+    {
+        SWSS_LOG_ERROR("Unexpected prefix agg refcount decrease for nexthop %s", nhg.to_string().c_str());
+    }
+    else
+    {
+        srv6_prefix_agg_id_table_[nhg].ref_count--;
+    }
+}
+
+void Srv6Orch::decreasePrefixAggIdRefCount(const std::string& index)
+{
+    SWSS_LOG_ENTER();
+    if (srv6_prefix_agg_id_table_for_nhg_.find(index) == srv6_prefix_agg_id_table_for_nhg_.end())
+    {
+        SWSS_LOG_ERROR("Unexpected prefix agg refcount decrease for nexthop %s", index.c_str());
+    }
+    else
+    {
+        --srv6_prefix_agg_id_table_for_nhg_[index].ref_count;
+    }
+}
+
+bool Srv6Orch::srv6P2pTunnelExists(const std::string &endpoint)
+{
+    if (srv6_p2p_tunnel_table_.find(endpoint) != srv6_p2p_tunnel_table_.end())
+    {
+        return true;
+    }
+    return false;
+}
+
+bool Srv6Orch::createSrv6P2pTunnel(const std::string &src, const std::string &endpoint)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t saistatus;
+    sai_object_id_t srv6_tunnel_map_id;
+
+    sai_attribute_t tunnel_map_attr;
+    vector<sai_attribute_t> tunnel_map_attrs;
+
+    if (srv6P2pTunnelExists(endpoint)) {
+        return true;
+    }
+
+    // 0. create tunnel map
+    tunnel_map_attr.id = SAI_TUNNEL_MAP_ATTR_TYPE;
+    tunnel_map_attr.value.u32 = SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID;
+    tunnel_map_attrs.push_back(tunnel_map_attr);
+
+    saistatus = sai_tunnel_api->create_tunnel_map(&srv6_tunnel_map_id, gSwitchId,
+        (uint32_t)tunnel_map_attrs.size(), tunnel_map_attrs.data());
+    if (saistatus != SAI_STATUS_SUCCESS) {
+        SWSS_LOG_ERROR("Failed to create srv6 p2p tunnel map for src_ip: %s dst_ip: %s", src.c_str(), endpoint.c_str());
+        return false;
+    }
+
+    // 1. create tunnel
+    sai_object_id_t tunnel_id;
+    sai_attribute_t tunnel_attr;
+    vector<sai_attribute_t> tunnel_attrs;
+    sai_ip_address_t ipaddr;
+
+    tunnel_attr.id = SAI_TUNNEL_ATTR_TYPE;
+    tunnel_attr.value.s32 = SAI_TUNNEL_TYPE_SRV6;
+    tunnel_attrs.push_back(tunnel_attr);
+
+    IpAddress src_ip(src);
+    ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+    memcpy(ipaddr.addr.ip6, src_ip.getV6Addr(), sizeof(ipaddr.addr.ip6));
+    tunnel_attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
+    tunnel_attr.value.ipaddr = ipaddr;
+    tunnel_attrs.push_back(tunnel_attr);
+
+    tunnel_attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+    tunnel_attr.value.oid = gUnderlayIfId;
+    tunnel_attrs.push_back(tunnel_attr);
+
+    sai_object_id_t tunnel_map_list[1];
+    tunnel_map_list[0] = srv6_tunnel_map_id;
+    tunnel_attr.id = SAI_TUNNEL_ATTR_ENCAP_MAPPERS;
+    tunnel_attr.value.objlist.count = 1;
+    tunnel_attr.value.objlist.list = tunnel_map_list;
+    tunnel_attrs.push_back(tunnel_attr);
+
+    tunnel_attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
+    tunnel_attr.value.u32 = SAI_TUNNEL_PEER_MODE_P2P;
+    tunnel_attrs.push_back(tunnel_attr);
+
+    IpAddress dst_ip(endpoint);
+    ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+    memcpy(ipaddr.addr.ip6, dst_ip.getV6Addr(), sizeof(ipaddr.addr.ip6));
+    tunnel_attr.id = SAI_TUNNEL_ATTR_ENCAP_DST_IP;
+    tunnel_attr.value.ipaddr = ipaddr;
+    tunnel_attrs.push_back(tunnel_attr);
+
+    saistatus = sai_tunnel_api->create_tunnel(
+        &tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
+    if (saistatus != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create srv6 p2p tunnel for src ip: %s, dst ip: %s",
+            src.c_str(), endpoint.c_str());
+
+        sai_tunnel_api->remove_tunnel_map(srv6_tunnel_map_id);
+        return false;
+    }
+
+    srv6_p2p_tunnel_table_[endpoint].tunnel_id = tunnel_id;
+    srv6_p2p_tunnel_table_[endpoint].tunnel_map_id = srv6_tunnel_map_id;
+    return true;
+}
+
+bool Srv6Orch::deleteSrv6P2pTunnel(const std::string &endpoint)
+{
+    if (srv6_p2p_tunnel_table_.find(endpoint) == srv6_p2p_tunnel_table_.end())
+    {
+        return true;
+    }
+
+    if (srv6P2pTunnelNexthopSize(endpoint) || srv6P2pTunnelEntrySize(endpoint))
+    {
+        SWSS_LOG_INFO("There are still SRv6 VPNs or Nexthops referencing this srv6 p2p tunnel object dst %s", endpoint.c_str());
+        return true;
+    }
+
+    sai_status_t status;
+
+    // 0. remove tunnel
+    status = sai_tunnel_api->remove_tunnel(srv6_p2p_tunnel_table_[endpoint].tunnel_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove SRV6 p2p tunnel object for dst_ip: %s", endpoint.c_str());
+        return false;
+    }
+
+    // 1. remove tunnel map
+    status = sai_tunnel_api->remove_tunnel_map(srv6_p2p_tunnel_table_[endpoint].tunnel_map_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove SRV6 tunnel map object for dst_ip: %s", endpoint.c_str());
+        return false;
+    }
+
+    srv6_p2p_tunnel_table_.erase(endpoint);
+    return true;
+}
+
+void Srv6Orch::srv6P2ptunnelUpdateNexthops(const NextHopKey &nhkey, bool insert)
+{
+    if (insert)
+    {
+        srv6_p2p_tunnel_table_[nhkey.ip_address.to_string()].nexthops.insert(nhkey);
+    }
+    else
+    {
+        srv6_p2p_tunnel_table_[nhkey.ip_address.to_string()].nexthops.erase(nhkey);
+    }
+}
+
+size_t Srv6Orch::srv6P2pTunnelNexthopSize(const std::string &endpoint)
+{
+    return srv6_p2p_tunnel_table_[endpoint].nexthops.size();
+}
+
+void Srv6Orch::srv6P2pTunnelUpdateEntries(const Srv6TunnelMapEntryKey &tmek, bool insert)
+{
+    if (insert)
+        srv6_p2p_tunnel_table_[tmek.endpoint].tunnel_map_entries.insert(tmek);
+    else
+        srv6_p2p_tunnel_table_[tmek.endpoint].tunnel_map_entries.erase(tmek);
+}
+
+size_t Srv6Orch::srv6P2pTunnelEntrySize(const std::string &endpoint)
+{
+    return srv6_p2p_tunnel_table_[endpoint].tunnel_map_entries.size();
+}
+
+bool Srv6Orch::createSrv6Vpns(const Srv6PicContextInfo &pci, const std::string &context_id)
+{
+    auto agg_id = getAggId(context_id);
+    for (size_t i = 0; i < pci.nexthops.size(); ++i)
+    {
+        if (!createSrv6Vpn(pci.nexthops[i], pci.sids[i], agg_id))
+        {
+            for (size_t j = 0; j < i; ++j)
+            {
+                deleteSrv6Vpn(pci.nexthops[j], pci.sids[j], agg_id);
+            }
+            deleteAggId(context_id);
+            return false;
+        }
+    }
+
+    increasePrefixAggIdRefCount(context_id);
+
+    return true;
+}
+
+bool Srv6Orch::createSrv6Vpn(const std::string &endpoint, const std::string &sid, const uint32_t prefix_agg_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+
+    Srv6TunnelMapEntryKey tmek;
+    tmek.endpoint = endpoint;
+    tmek.vpn_sid = sid;
+    tmek.prefix_agg_id = prefix_agg_id;
+
+    if (srv6_tunnel_map_entry_table_.find(tmek) != srv6_tunnel_map_entry_table_.end())
+    {
+        srv6_tunnel_map_entry_table_[tmek].ref_count++;
+        return true;
+    }
+
+    if (srv6_p2p_tunnel_table_.find(endpoint) == srv6_p2p_tunnel_table_.end())
+    {
+        SWSS_LOG_ERROR("Tunnel map for endpoint %s does not exist", endpoint.c_str());
+        return false;
+    }
+    sai_object_id_t tunnel_map_id = srv6_p2p_tunnel_table_[endpoint].tunnel_map_id;
+
+    // 1. create vpn tunnel_map entry
+    sai_attribute_t tunnel_map_entry_attr;
+    vector<sai_attribute_t> tunnel_map_entry_attrs;
+    sai_object_id_t tunnel_entry_id;
+
+    tunnel_map_entry_attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
+    tunnel_map_entry_attr.value.u32 = SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID;
+    tunnel_map_entry_attrs.push_back(tunnel_map_entry_attr);
+
+    tunnel_map_entry_attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
+    tunnel_map_entry_attr.value.oid = tunnel_map_id;
+    tunnel_map_entry_attrs.push_back(tunnel_map_entry_attr);
+
+    tunnel_map_entry_attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_PREFIX_AGG_ID_KEY;
+    tunnel_map_entry_attr.value.u32 = tmek.prefix_agg_id;
+    tunnel_map_entry_attrs.push_back(tunnel_map_entry_attr);
+
+    IpAddress vpn_sid(tmek.vpn_sid);
+    tunnel_map_entry_attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_SRV6_VPN_SID_VALUE;
+    memcpy(tunnel_map_entry_attr.value.ip6, vpn_sid.getV6Addr(), sizeof(sai_ip6_t));
+    tunnel_map_entry_attrs.push_back(tunnel_map_entry_attr);
+
+    status = sai_tunnel_api->create_tunnel_map_entry(&tunnel_entry_id, gSwitchId,
+                                                (uint32_t)tunnel_map_entry_attrs.size(),
+                                                tunnel_map_entry_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create vpn tunnel_map entry for vpn_sid: %s", tmek.vpn_sid.c_str());
+        return false;
+    }
+
+    // add reference for tunnel map entry
+    srv6_tunnel_map_entry_table_[tmek].tunnel_map_entry_id = tunnel_entry_id;
+    srv6_tunnel_map_entry_table_[tmek].ref_count = 1;
+
+    srv6P2pTunnelUpdateEntries(tmek, true);
+    return true;
+}
+
+bool Srv6Orch::deleteSrv6Vpns(const std::string &context_id)
+{
+    const auto &it = srv6_pic_context_table_.find(context_id);
+    if (it == srv6_pic_context_table_.end())
+    {
+        SWSS_LOG_ERROR("Failed to find context id %s", context_id.c_str());
+        return false;
+    }
+
+    bool success = true;
+    auto agg_id = getAggId(context_id);
+    for (size_t i = 0; i < it->second.nexthops.size(); ++i)
+    {
+        if (!deleteSrv6Vpn(it->second.nexthops[i], it->second.sids[i], agg_id))
+        {
+            success = false;
+        }
+    }
+
+    if (success)
+    {
+        decreasePrefixAggIdRefCount(context_id);
+    }
+    deleteAggId(context_id);
+
+    return success;
+}
+
+bool Srv6Orch::deleteSrv6Vpn(const std::string &endpoint, const std::string &sid, const uint32_t prefix_agg_id)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t status;
+
+    // 1. remove tunnel_map entry if need
+    sai_object_id_t tunnel_entry_id;
+
+    Srv6TunnelMapEntryKey tmek;
+    tmek.endpoint = endpoint;
+    tmek.vpn_sid = sid;
+    tmek.prefix_agg_id = prefix_agg_id;
+
+    if (srv6_tunnel_map_entry_table_.find(tmek) == srv6_tunnel_map_entry_table_.end())
+    {
+        return true;
+    }
+
+    srv6_tunnel_map_entry_table_[tmek].ref_count--;
+    if (srv6_tunnel_map_entry_table_[tmek].ref_count == 0)
+    {
+        tunnel_entry_id = srv6_tunnel_map_entry_table_[tmek].tunnel_map_entry_id;
+        status = sai_tunnel_api->remove_tunnel_map_entry(tunnel_entry_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove nexthop tunnel map entry (endpoint: %s, sid: %s, agg_id: %u)",
+                                tmek.endpoint.c_str(), tmek.vpn_sid.c_str(), tmek.prefix_agg_id);
+            return false;
+        }
+        srv6_tunnel_map_entry_table_.erase(tmek);
+
+        srv6P2pTunnelUpdateEntries(tmek, false);
+        if (!deleteSrv6P2pTunnel(tmek.endpoint))
+        {
+            SWSS_LOG_ERROR("Failed to remove SRV6 p2p tunnel object for dst %s,", endpoint.c_str());
+            return false;
+        }
+    }
+    else
+    {
+        SWSS_LOG_INFO("Nexthops referencing this tunnel map entry endpoint %s, vpn_sid %s, prefix_agg_id %u : %u",
+            tmek.endpoint.c_str(),
+            tmek.vpn_sid.c_str(),
+            tmek.prefix_agg_id,
+            srv6_tunnel_map_entry_table_[tmek].ref_count);
+    }
+    return true;
+}
+
 void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
 {
     SWSS_LOG_ENTER();
@@ -901,9 +1530,85 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
     }
 }
 
+task_process_status Srv6Orch::doTaskPicContextTable(const KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+    string op = kfvOp(tuple);
+    string key = kfvKey(tuple);
+    const auto &it = srv6_pic_context_table_.find(key);
+    if (op == SET_COMMAND)
+    {
+        if (it != srv6_pic_context_table_.end())
+        {
+            SWSS_LOG_ERROR("update is not allowed for pic context table");
+            return task_duplicated;
+        }
+        Srv6PicContextInfo pci;
+        pci.ref_count = 0;
+        for (auto i : kfvFieldsValues(tuple))
+        {
+            if (fvField(i) == "nexthop")
+            {
+                pci.nexthops = tokenize(fvValue(i), ',');
+            }
+            else if (fvField(i) == "vpn_sid")
+            {
+                pci.sids = tokenize(fvValue(i), ',');
+            }
+        }
+        if (pci.nexthops.size() != pci.sids.size())
+        {
+            SWSS_LOG_ERROR("inconsistent number of endpoints(%lu) and vpn sids(%lu)",
+                                pci.nexthops.size(), pci.sids.size());
+            return task_failed;
+        }
+
+        if (!createSrv6Vpns(pci ,key))
+        {
+            SWSS_LOG_ERROR("Failed to create SRv6 VPNs for context id %s", key.c_str());
+            return task_need_retry;
+        }
+
+        srv6_pic_context_table_[key] = pci;
+    }
+    else if (op == DEL_COMMAND)
+    {
+        if (it == srv6_pic_context_table_.end())
+        {
+            SWSS_LOG_INFO("Unable to find pic context entry for key %s", key.c_str());
+            return task_ignore;
+        }
+        else if (it->second.ref_count != 0)
+        {
+            SWSS_LOG_INFO("Unable to delete context id %s, because it is referenced %u times", key.c_str(), it->second.ref_count);
+            return task_need_retry;
+        }
+        else if (!deleteSrv6Vpns(key))
+        {
+            SWSS_LOG_ERROR("Failed to delete SRv6 VPNs for context id %s", key.c_str());
+            return task_need_retry;
+        }
+        srv6_pic_context_table_.erase(it);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return task_ignore;
+    }
+    return task_success;
+}
+
+bool Srv6Orch::contextIdExists(const std::string &context_id)
+{
+    if (srv6_pic_context_table_.find(context_id) == srv6_pic_context_table_.end())
+        return false;
+    return true;
+}
+
 void Srv6Orch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+    task_process_status task_status;
     const string &table_name = consumer.getTableName();
     auto it = consumer.m_toSync.begin();
     while(it != consumer.m_toSync.end())
@@ -917,6 +1622,15 @@ void Srv6Orch::doTask(Consumer &consumer)
         else if (table_name == APP_SRV6_MY_SID_TABLE_NAME)
         {
             doTaskMySidTable(t);
+        }
+        else if (table_name == APP_PIC_CONTEXT_TABLE_NAME)
+        {
+            task_status = doTaskPicContextTable(t);
+            if (task_status == task_need_retry)
+            {
+                ++it;
+                continue;
+            }
         }
         else
         {
