@@ -52,7 +52,8 @@ APPLIANCE_CONFIG = {
     "sip": {
         "ipv4": socket.htonl(int(IP(SIP)))
     },
-    "vm_vni": int(VM_VNI)
+    "vm_vni": int(VM_VNI),
+    "local_region_id": 10
 }
 
 VNET_CONFIG = {
