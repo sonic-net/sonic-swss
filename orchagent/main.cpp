@@ -73,7 +73,7 @@ uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -94,6 +94,7 @@ void usage()
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
     cout << "    -t Override create switch timeout, in sec" << endl;
+    cout << "    -v vrf: VRF name (default empty)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -344,11 +345,12 @@ int main(int argc, char **argv)
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
     string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
+    string vrf;
     bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:")) != -1)
     {
         switch (opt)
         {
@@ -442,6 +444,12 @@ int main(int argc, char **argv)
         case 't':
             create_switch_timeout = atoi(optarg);
             break;
+        case 'v':
+            if (optarg)
+            {
+                vrf = optarg;
+            }
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -486,8 +494,8 @@ int main(int argc, char **argv)
     shared_ptr<ZmqServer> zmq_server = nullptr;
     if (enable_zmq)
     {
-        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s", zmq_server_address.c_str());
-        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str());
+        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
     }
     else
     {
