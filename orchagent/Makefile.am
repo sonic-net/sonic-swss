@@ -8,9 +8,7 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I pbh \
            -I nhg
 
-if GCOV_ENABLED
 SUBDIRS = p4orch/tests
-endif
 
 CFLAGS_SAI = -I /usr/include/sai
 

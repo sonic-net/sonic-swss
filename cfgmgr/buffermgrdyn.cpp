@@ -1056,14 +1056,16 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
 
     argv.emplace_back(profile.name);
     argv.emplace_back(profile.size);
+    argv.emplace_back(profile.xon);
+    argv.emplace_back(profile.xoff);
 
     if (!new_pg.empty())
     {
         argv.emplace_back(new_pg);
     }
 
-    SWSS_LOG_INFO("Checking headroom for port %s with profile %s size %s pg %s",
-                  port.c_str(), profile.name.c_str(), profile.size.c_str(), new_pg.c_str());
+    SWSS_LOG_INFO("Checking headroom for port %s with profile %s size %s xon %s xoff %s pg %s",
+                  port.c_str(), profile.name.c_str(), profile.size.c_str(), profile.xon.c_str(), profile.xoff.c_str(), new_pg.c_str());
 
     try
     {

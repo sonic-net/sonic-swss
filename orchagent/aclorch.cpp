@@ -122,6 +122,7 @@ static acl_packet_action_lookup_t aclPacketActionLookup =
 {
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
     { PACKET_ACTION_DROP,    SAI_PACKET_ACTION_DROP },
+    { PACKET_ACTION_COPY,    SAI_PACKET_ACTION_COPY },
 };
 
 static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
@@ -2023,6 +2024,23 @@ bool AclRuleMirror::validate()
     return true;
 }
 
+bool AclRuleMirror::createCounter()
+{
+    SWSS_LOG_ENTER();
+
+    bool state = false;
+
+    m_pMirrorOrch->getSessionStatus(m_sessionName, state);
+
+    // If the mirror session is active, create the ACL counter
+    if(state)
+    {
+        return AclRule::createCounter();
+    }
+
+    return true;
+}
+
 bool AclRuleMirror::createRule()
 {
     SWSS_LOG_ENTER();
@@ -2152,7 +2170,11 @@ void AclRuleMirror::onUpdate(SubjectType type, void *cntx)
     if (update->active)
     {
         SWSS_LOG_INFO("Activating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
-        activate();
+        // During mirror session activation, the newly created counter needs to be registered to the FC.
+        if(activate() && hasCounter())
+        {
+            m_pAclOrch->registerFlexCounter(*this);
+        }
     }
     else
     {

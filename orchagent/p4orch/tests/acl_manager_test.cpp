@@ -2849,6 +2849,8 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
 
+#pragma GCC diagnostic warning "-Wdisabled-optimization"
+
 TEST_F(AclManagerTest, AclRuleWithValidAction)
 {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
@@ -3201,6 +3203,8 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
+#pragma GCC diagnostic pop
+
 TEST_F(AclManagerTest, AclRuleWithVrfAction)
 {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
@@ -3409,6 +3413,8 @@ TEST_F(AclManagerTest, AclRuleWithIpTypeBitEncoding)
     acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_EQ(nullptr, acl_rule);
 }
+
+#pragma GCC diagnostic warning "-Wdisabled-optimization"
 
 TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
 {
@@ -3833,6 +3839,8 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
+
+#pragma GCC diagnostic pop
 
 TEST_F(AclManagerTest, UpdateAclRuleWithVrfActionChange)
 {

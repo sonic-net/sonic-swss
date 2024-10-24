@@ -2,6 +2,7 @@ from swsscommon import swsscommon
 from dvslib.dvs_common import wait_for_result
 import typing
 import pytest
+import time
 
 from dash_api.appliance_pb2 import *
 from dash_api.vnet_pb2 import *
@@ -15,6 +16,17 @@ from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
 from google.protobuf.json_format import ParseDict
 from google.protobuf.message import Message
+
+ASIC_DIRECTION_LOOKUP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY"
+ASIC_VIP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VIP_ENTRY"
+ASIC_VNET_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VNET"
+ASIC_ENI_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ENI"
+ASIC_ENI_ETHER_ADDR_MAP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY"
+ASIC_OUTBOUND_CA_TO_PA_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY"
+ASIC_PA_VALIDATION_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY"
+ASIC_OUTBOUND_ROUTING_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY"
+ASIC_INBOUND_ROUTING_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY"
+ASIC_OUTBOUND_ROUTING_GROUP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP"
 
 APP_DB_TO_PROTOBUF_MAP = {
     swsscommon.APP_DASH_APPLIANCE_TABLE_NAME: Appliance,
@@ -47,9 +59,11 @@ class ProducerStateTable(swsscommon.ProducerStateTable):
         for k, v in pairs:
             pairs_str.append((to_string(k), to_string(v)))
         self.set(key, pairs_str)
+        time.sleep(1)
 
     def __delitem__(self, key: str):
         self.delete(str(key))
+        time.sleep(1)
 
 
 class Table(swsscommon.Table):

@@ -396,11 +396,15 @@ bool TeamMgr::checkPortIffUp(const string &port)
     if (fd == -1 || ioctl(fd, SIOCGIFFLAGS, &ifr) == -1)
     {
         SWSS_LOG_ERROR("Failed to get port %s flags", port.c_str());
+        if (fd != -1)
+        {
+            close(fd);
+        }
         return false;
     }
 
     SWSS_LOG_INFO("Get port %s flags %i", port.c_str(), ifr.ifr_flags);
-
+    close(fd);
     return ifr.ifr_flags & IFF_UP;
 }
 

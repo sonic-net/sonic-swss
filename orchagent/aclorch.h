@@ -72,6 +72,7 @@
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
+#define PACKET_ACTION_COPY        "COPY"
 #define PACKET_ACTION_REDIRECT    "REDIRECT"
 #define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
 
@@ -343,6 +344,7 @@ public:
     AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool createCounter();
     bool createRule();
     bool removeRule();
     void onUpdate(SubjectType, void *) override;

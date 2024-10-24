@@ -2291,7 +2291,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
     // Verify that the next hop member associated with the port is pruned.
     std::string op = "port_state_change";
     std::string data = "[{\"port_id\":\"oid:0x56789abcdff\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_DOWN\"}]";
+                       "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     HandlePortStatusChangeNotification(op, data);
@@ -2314,7 +2314,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
     // restored.
     std::string op = "port_state_change";
     std::string data = "[{\"port_id\":\"oid:0x112233\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_UP\"}]";
+                       "STATUS_UP\",\"port_error_status\":\"0\"}]";
     EXPECT_CALL(mock_sai_next_hop_group_,
                 create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
@@ -2339,7 +2339,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeFromOperUnknownToDownPrunesMemberOnl
     // Verify that the pruned next hop member is not pruned again.
     std::string op = "port_state_change";
     std::string data = "[{\"port_id\":\"oid:0x56789abcfff\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_DOWN\"}]";
+                       "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
     HandlePortStatusChangeNotification(op, data);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);

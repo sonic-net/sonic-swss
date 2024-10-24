@@ -4,9 +4,9 @@ INCLUDES = -I $(top_srcdir) -I $(ORCHAGENT_DIR) -I $(P4ORCH_DIR) -I $(top_srcdir
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = p4orch_tests p4orch_tests_asan p4orch_tests_tsan p4orch_tests_usan
+TESTS = p4orch_tests
 
-noinst_PROGRAMS = p4orch_tests p4orch_tests_asan p4orch_tests_tsan p4orch_tests_usan
+noinst_PROGRAMS = p4orch_tests
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -16,11 +16,6 @@ endif
 
 CFLAGS_GTEST =
 LDADD_GTEST = -lgtest -lgtest_main -lgmock -lgmock_main
-CFLAGS_COVERAGE = --coverage -fprofile-arcs -ftest-coverage
-LDADD_COVERAGE = -lgcov
-CFLAGS_ASAN = -fsanitize=address
-CFLAGS_TSAN = -fsanitize=thread
-CFLAGS_USAN = -fsanitize=undefined
 
 p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/vrforch.cpp \
@@ -83,24 +78,6 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_switch.cpp \
 		       mock_sai_udf.cpp
 
-p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_COVERAGE) $(CFLAGS_SAI)
-p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_COVERAGE) $(CFLAGS_SAI)
-p4orch_tests_LDADD = $(LDADD_GTEST) $(LDADD_COVERAGE) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
-
-p4orch_tests_asan_SOURCES = $(p4orch_tests_SOURCES)
-p4orch_tests_asan_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_ASAN) $(CFLAGS_SAI)
-p4orch_tests_asan_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_ASAN) $(CFLAGS_SAI)
-p4orch_tests_asan_LDFLAGS = $(CFLAGS_ASAN)
-p4orch_tests_asan_LDADD = $(LDADD_GTEST) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
-
-p4orch_tests_tsan_SOURCES = $(p4orch_tests_SOURCES)
-p4orch_tests_tsan_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_TSAN) $(CFLAGS_SAI)
-p4orch_tests_tsan_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_TSAN) $(CFLAGS_SAI)
-p4orch_tests_tsan_LDFLAGS = $(CFLAGS_TSAN)
-p4orch_tests_tsan_LDADD = $(LDADD_GTEST) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
-
-p4orch_tests_usan_SOURCES = $(p4orch_tests_SOURCES)
-p4orch_tests_usan_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_USAN) $(CFLAGS_SAI)
-p4orch_tests_usan_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_USAN) $(CFLAGS_SAI)
-p4orch_tests_usan_LDFLAGS = $(CFLAGS_USAN)
-p4orch_tests_usan_LDADD = $(LDADD_GTEST) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
+p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+p4orch_tests_LDADD = $(LDADD_GTEST) $(LDFLAGS_ASAN) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
