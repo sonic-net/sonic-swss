@@ -66,7 +66,6 @@ unordered_map<string, string> flexCounterGroupMap =
 
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME),
     m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
     m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
@@ -112,14 +111,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            auto itDelay = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
-            string poll_interval;
-
-            if (itDelay != data.end())
-            {
-                consumer.m_toSync.erase(it++);
-                continue;
-            }
             for (auto valuePair:data)
             {
                 const auto &field = fvField(valuePair);
@@ -237,12 +228,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                     }
                 }
-                else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
-                {
-                    // This field is ignored since it is being used before getting into this loop.
-                    // If it is exist and the value is 'true' we need to skip the iteration in order to delay the counter creation.
-                    // The field will clear out and counter will be created when enable_counters script is called.
-                }
                 else
                 {
                     SWSS_LOG_NOTICE("Unsupported field %s", field.c_str());
@@ -291,39 +276,10 @@ bool FlexCounterOrch::bake()
      * By default, it should fetch items from the tables the sub agents listen to,
      * and then push them into m_toSync of each sub agent.
      * The motivation is to make sub agents handle the saved entries first and then handle the upcoming entries.
+     * The FCs are not data plane configuration required during reconciling process, hence don't do anything in bake.
      */
 
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    vector<string> keys;
-    m_flexCounterConfigTable.getKeys(keys);
-    for (const auto &key: keys)
-    {
-        if (!flexCounterGroupMap.count(key))
-        {
-            SWSS_LOG_NOTICE("FlexCounterOrch: Invalid flex counter group intput %s is skipped during reconciling", key.c_str());
-            continue;
-        }
-
-        if (key == BUFFER_POOL_WATERMARK_KEY)
-        {
-            SWSS_LOG_NOTICE("FlexCounterOrch: Do not handle any FLEX_COUNTER table for %s update during reconciling",
-                            BUFFER_POOL_WATERMARK_KEY);
-            continue;
-        }
-
-        KeyOpFieldsValuesTuple kco;
-
-        kfvKey(kco) = key;
-        kfvOp(kco) = SET_COMMAND;
-
-        if (!m_flexCounterConfigTable.get(key, kfvFieldsValues(kco)))
-        {
-            continue;
-        }
-        entries.push_back(kco);
-    }
-    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
-    return consumer->addToSync(entries);
+    return true;
 }
 
 static bool isCreateOnlyConfigDbBuffers(Table& deviceMetadataConfigTable)
