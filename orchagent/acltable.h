@@ -35,6 +35,11 @@ extern "C" {
 #define TABLE_TYPE_MCLAG                "MCLAG"
 #define TABLE_TYPE_MUX                  "MUX"
 #define TABLE_TYPE_DROP                 "DROP"
+#define TABLE_TYPE_MARK_META            "MARK_META"
+#define TABLE_TYPE_MARK_META_V6         "MARK_METAV6"
+#define TABLE_TYPE_EGR_SET_DSCP         "EGR_SET_DSCP"
+#define TABLE_TYPE_UNDERLAY_SET_DSCP    "UNDERLAY_SET_DSCP"
+#define TABLE_TYPE_UNDERLAY_SET_DSCPV6  "UNDERLAY_SET_DSCPV6"
 
 typedef enum
 {
