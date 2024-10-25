@@ -9,6 +9,7 @@
 #include "mock_table.h"
 #include "mock_response_publisher.h"
 #include "saihelper.h"
+#include <sys/mman.h>
 
 namespace saihelper_test
 {
@@ -23,6 +24,8 @@ namespace saihelper_test
 
     bool set_comm_mode_not_supported;
     bool use_pipeline_not_supported;
+    uint32_t *_sai_syncd_notifications_count;
+    int32_t *_sai_syncd_notification_event;
 
     sai_status_t _ut_stub_sai_set_switch_attribute(
         _In_ sai_object_id_t switch_id,
@@ -49,6 +52,10 @@ namespace saihelper_test
                 {
                     return SAI_STATUS_SUCCESS;
                 }
+                break;
+            case SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD:
+                *_sai_syncd_notifications_count = *_sai_syncd_notifications_count + 1;
+                *_sai_syncd_notification_event = attr[0].value.s32;
                 break;
             default:
                 break;
@@ -156,6 +163,114 @@ namespace saihelper_test
         // Assert that the program terminates after initSaiRedis() call
         ASSERT_DEATH({initSaiRedis();}, "");
         use_pipeline_not_supported = false;
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestCreateFailure) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
+
+        handleSaiCreateStatus(SAI_API_ROUTE, SAI_STATUS_FAILURE);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_PORT, SAI_STATUS_FAILURE);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_TUNNEL, SAI_STATUS_NOT_SUPPORTED);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_TUNNEL, SAI_STATUS_NOT_IMPLEMENTED);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_INVALID_PARAMETER);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_SWITCH, SAI_STATUS_UNINITIALIZED);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, SAI_STATUS_INVALID_OBJECT_ID);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_ACL, SAI_STATUS_MANDATORY_ATTRIBUTE_MISSING);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_QOS_MAP, SAI_STATUS_INVALID_ATTR_VALUE_MAX);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_TUNNEL, SAI_STATUS_ATTR_NOT_IMPLEMENTED_6);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, SAI_STATUS_UNKNOWN_ATTRIBUTE_0);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, SAI_STATUS_ATTR_NOT_SUPPORTED_0);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiCreateStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestSetFailure) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
+
+        handleSaiSetStatus(SAI_API_ROUTE, SAI_STATUS_FAILURE);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiSetStatus(SAI_API_ROUTE, SAI_STATUS_NOT_EXECUTED);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_FAILURE);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiSetStatus(SAI_API_TUNNEL, SAI_STATUS_NOT_IMPLEMENTED);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiSetStatus(SAI_API_HOSTIF, SAI_STATUS_INVALID_PARAMETER);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_ATTR_NOT_SUPPORTED_0);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        handleSaiSetStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
         _unhook_sai_apis();
     }
 }
