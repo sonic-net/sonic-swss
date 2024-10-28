@@ -1,0 +1,111 @@
+[
+    {
+        "COPP_TABLE:default": {
+            "queue": "0",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"600",
+            "cbs":"600",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.bfd.lacp.udld.lldp": {
+            "trap_ids": "bfd,bfdv6,lacp,udld,lldp",
+            "trap_action":"trap",
+            "trap_priority":"7",
+            "queue": "7",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"6000",
+            "cbs":"6000",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.stp.pvrst": {
+            "trap_ids": "stp,pvrst",
+            "trap_action":"trap",
+            "trap_priority":"6",
+            "queue": "6",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"16000",
+            "cbs":"16000",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.vrrp": {
+            "trap_ids": "vrrp",
+            "trap_action":"trap",
+            "trap_priority":"5",
+            "queue": "5",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"6000",
+            "cbs":"6000",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.bgp": {
+            "trap_ids": "bgp,bgpv6",
+            "trap_action":"trap",
+            "trap_priority":"4",
+            "queue": "4",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"10000",
+            "cbs":"10000",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.arp": {
+            "trap_ids": "arp_req,arp_resp,neigh_discovery",
+            "trap_action":"copy",
+            "trap_priority":"3",
+            "queue": "3",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"6000",
+            "cbs":"6000",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.ip2me.dhcp": {
+            "trap_ids": "ip2me,dhcp,dhcpv6",
+            "trap_action":"trap",
+            "trap_priority":"2",
+            "queue": "2",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"6000",
+            "cbs":"6000",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.l3mtu": {
+            "trap_ids": "l3_mtu_error",
+            "trap_action":"trap",
+            "trap_priority":"1",
+            "queue": "1",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"600",
+            "cbs":"600",
+            "red_action":"drop"
+         },
+         "OP": "SET"
+    }
+]
