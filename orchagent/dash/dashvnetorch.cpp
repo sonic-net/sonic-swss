@@ -310,7 +310,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             else
             {
                 SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
-                return false;
+                return true;
             }
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
@@ -360,7 +360,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
-    return true;
+    return false;
 }
 
 bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
@@ -401,7 +401,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     pa_refcount_table_[pa_ref_key] = 1;
     SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
                     underlay_ip_str.c_str());
-    return true;
+    return false;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -418,7 +418,7 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
             SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
             return false;
         }
-        return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
+        return addOutboundCaToPa(key, ctxt) || addPaValidation(key, ctxt);
     }
     /*
      * If the VNET map is already added, don't add it to the bulker and
