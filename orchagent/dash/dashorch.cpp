@@ -28,6 +28,7 @@ using namespace swss;
 
 extern Directory<Orch*> gDirectory;
 extern std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
+extern sai_dash_appliance_api_t* sai_dash_appliance_api;
 extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
@@ -66,15 +67,31 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     }
 
     uint32_t attr_count = 1;
+    sai_attribute_t appliance_attr;
+    sai_status_t status;
+
+    // NOTE: DASH Appliance object should be the first object pushed to SAI
+    sai_object_id_t sai_appliance_id = 0UL;
+    appliance_attr.id = SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID;
+    appliance_attr.value.u32 = entry.local_region_id();
+    status = sai_dash_appliance_api->create_dash_appliance(&sai_appliance_id, gSwitchId,
+                                                           attr_count, &appliance_attr);
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_IMPLEMENTED)
+    {
+        SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
     sai_vip_entry_t vip_entry;
     vip_entry.switch_id = gSwitchId;
     if (!to_sai(entry.sip(), vip_entry.vip))
     {
         return false;
     }
-    sai_attribute_t appliance_attr;
-    vector<sai_attribute_t> appliance_attrs;
-    sai_status_t status;
     appliance_attr.id = SAI_VIP_ENTRY_ATTR_ACTION;
     appliance_attr.value.u32 = SAI_VIP_ENTRY_ACTION_ACCEPT;
     status = sai_dash_vip_api->create_vip_entry(&vip_entry, attr_count, &appliance_attr);
@@ -103,8 +120,8 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    appliance_entries_[appliance_id] = entry;
-    SWSS_LOG_NOTICE("Created vip and direction lookup entries for %s", appliance_id.c_str());
+    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
+    SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
     return true;
 }
@@ -114,7 +131,6 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     SWSS_LOG_ENTER();
 
     sai_status_t status;
-    dash::appliance::Appliance entry;
 
     if (appliance_entries_.find(appliance_id) == appliance_entries_.end())
     {
@@ -122,7 +138,7 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
         return true;
     }
 
-    entry = appliance_entries_[appliance_id];
+    const auto& entry = appliance_entries_[appliance_id].metadata;
     sai_vip_entry_t vip_entry;
     vip_entry.switch_id = gSwitchId;
     if (!to_sai(entry.sip(), vip_entry.vip))
@@ -153,8 +169,23 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    auto sai_appliance_id = appliance_entries_[appliance_id].appliance_id;
+    if (sai_appliance_id != 0UL)
+    {
+        status = sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
+        if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            SWSS_LOG_ERROR("Failed to remove dash appliance object in SAI for %s", appliance_id.c_str());
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
     appliance_entries_.erase(appliance_id);
-    SWSS_LOG_NOTICE("Removed vip and direction lookup entries for %s", appliance_id.c_str());
+    SWSS_LOG_NOTICE("Removed appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
     return true;
 }
@@ -383,7 +414,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     eni_attrs.push_back(eni_attr);
 
     eni_attr.id = SAI_ENI_ATTR_VM_VNI;
-    auto app_entry = appliance_entries_.begin()->second;
+    auto& app_entry = appliance_entries_.begin()->second.metadata;
     eni_attr.value.u32 = app_entry.vm_vni();
     eni_attrs.push_back(eni_attr);
 
