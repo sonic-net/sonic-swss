@@ -20,6 +20,7 @@
 #include "dashorch.h"
 #include "crmorch.h"
 #include "saihelper.h"
+#include "directory.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -34,6 +35,7 @@ extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
+extern Directory<Orch*> gDirectory;
 
 DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, ZmqServer *zmqServer) :
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
@@ -272,7 +274,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
     }
 }
 
-void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -283,10 +285,69 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     auto& object_statuses = ctxt.outbound_ca_to_pa_object_statuses;
     sai_attribute_t outbound_ca_to_pa_attr;
     vector<sai_attribute_t> outbound_ca_to_pa_attrs;
+    
+    DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    dash::route_type::RouteType route_type_actions;
+    if (!dash_orch->getRouteTypeActions(ctxt.metadata.routing_type(), route_type_actions))
+    {
+        SWSS_LOG_INFO("Failed to get route type actions for %s", key.c_str());
+        return false;
+    }
 
-    outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
-    to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
-    outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    for (auto action: route_type_actions.items())
+    {
+        if (action.action_type() == dash::route_type::ACTION_TYPE_STATICENCAP)
+        {
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION;
+            if (action.encap_type() == dash::route_type::ENCAP_TYPE_VXLAN)
+            {
+                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_VXLAN;
+            }
+            else if (action.encap_type() == dash::route_type::ENCAP_TYPE_NVGRE)
+            {
+                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_NVGRE;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
+                return false;
+            }
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY;
+            outbound_ca_to_pa_attr.value.u32 = action.vni();
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
+            to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
+
+        }
+    }
+
+    if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
+    {
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
+        outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING;
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP;
+        to_sai(ctxt.metadata.overlay_dip_prefix().ip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK;
+        to_sai(ctxt.metadata.overlay_dip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP;
+        to_sai(ctxt.metadata.overlay_sip_prefix().ip(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK;
+        to_sai(ctxt.metadata.overlay_sip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    }
 
     outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
     memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
@@ -299,9 +360,10 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
+    return true;
 }
 
-void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -320,7 +382,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
         SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
                         pa_refcount_table_[pa_ref_key],
                         underlay_ip_str.c_str());
-        return;
+        return true;
     }
 
     uint32_t attr_count = 1;
@@ -339,6 +401,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     pa_refcount_table_[pa_ref_key] = 1;
     SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
                     underlay_ip_str.c_str());
+    return true;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -348,17 +411,14 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
     bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
     if (!exists)
     {
+        
         bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end());
-        if (vnet_exists)
-        {
-            addOutboundCaToPa(key, ctxt);
-            addPaValidation(key, ctxt);
-        }
-        else
+        if (!vnet_exists)
         {
             SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
+            return false;
         }
-        return false;
+        return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
     }
     /*
      * If the VNET map is already added, don't add it to the bulker and
@@ -663,6 +723,16 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                     SWSS_LOG_WARN("Requires protobuff at VnetMap :%s", key.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
+                }
+                if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_UNSPECIFIED)
+                {
+                    // VnetMapping::action_type is deprecated in favor of VnetMapping::routing_type. For messages still using the old action_type field,
+                    // copy it to the new routing_type field. All subsequent operations will use the new field.
+                    #pragma GCC diagnostic push
+                    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+                    SWSS_LOG_WARN("VnetMapping::action_type is deprecated. Use VnetMapping::routing_type instead");
+                    ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
+                    #pragma GCC diagnostic pop
                 }
                 if (addVnetMap(key, ctxt))
                 {
