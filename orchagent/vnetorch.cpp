@@ -1147,6 +1147,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
             else
             {
+                gRouteOrch->removeRouteIfExists(ipPrefix);
                 if (it_route == syncd_tunnel_routes_[vnet].end())
                 {
                     route_status = add_route(vr_id, pfx, nh_id);
@@ -2270,7 +2271,11 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
         {
             continue;
         }
-
+        // when we add the first nexthop to the route, we dont create a nexthop group, we call the updateTunnelRoute with NHG with one member.
+        // when adding the 2nd, 3rd ... members we create each NH using this create_next_hop_group_member call but give it the reference of next_hop_group_id. 
+        // this way we dont have to update the route, the syncd does it by itself. we only call the updateTunnelRoute to add/remove when adding the route and 
+        // removing it fully.
+        bool failed = false;
         if (state == SAI_BFD_SESSION_STATE_UP)
         {
             sai_object_id_t next_hop_group_member_id = SAI_NULL_OBJECT_ID;
@@ -2322,9 +2327,29 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 {
                     for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
                     {
+                        // remove the bgp learnt routr first if any and then add the tunnel route.
+                        if (!gRouteOrch->removeRouteIfExists(ip_pfx))
+                        {
+                            SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", ip_pfx.to_string().c_str());
+                            failed = true;
+                            break;
+                        }
                         string op = SET_COMMAND;
-                        updateTunnelRoute(vnet, ip_pfx, nexthops, op);
+                        SWSS_LOG_NOTICE("Adding Vnet route for prefix : %s with nexthops %s\n",
+                                        ip_pfx.to_string().c_str(),
+                                        nexthops.to_string().c_str());  
+
+                        if (!updateTunnelRoute(vnet, ip_pfx, nexthops, op))
+                        {
+                            SWSS_LOG_NOTICE("Failed to create tunnel route in hardware for prefix : %s\n", ip_pfx.to_string().c_str());
+                            failed = true;
+                        }
                     }
+                }
+                if (failed)
+                {
+                    // This is an unrecoverable error, Throw a LOG_ERROR and return
+                    SWSS_LOG_ERROR("Inconsistant Hardware State. Failed to create tunnel routes\n");
                 }
             }
             else
@@ -2366,6 +2391,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                     {
                         for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
                         {
+                            SWSS_LOG_NOTICE("Removing Vnet route for prefix : %s due to no nexthops.\n",ip_pfx.to_string().c_str());  
                             string op = DEL_COMMAND;
                             updateTunnelRoute(vnet, ip_pfx, nexthops, op);
                         }
@@ -2373,12 +2399,14 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 }
             }
         }
-
-        // Post configured in State DB
-        for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+        if (!failed)
         {
-            string profile = vrf_obj->getProfile(ip_pfx);
-            postRouteState(vnet, ip_pfx, nexthops, profile);
+            // Post configured in State DB
+            for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+            {
+                string profile = vrf_obj->getProfile(ip_pfx);
+                postRouteState(vnet, ip_pfx, nexthops, profile);
+            }
         }
     }
 }

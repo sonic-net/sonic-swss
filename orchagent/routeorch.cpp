@@ -2607,6 +2607,24 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     return true;
 }
 
+bool RouteOrch::removeRouteIfExists(const IpPrefix& prefix)
+{
+    // This function removes the route if it exists.
+
+    string key = "ROUTE_TABLE:" + prefix.to_string();
+    RouteBulkContext context(key, false);
+    context.ip_prefix = prefix;
+    context.vrf_id = gVirtualRouterId;
+    if (removeRoute(context))
+    {
+         SWSS_LOG_INFO("Could not find the route  with prefix %s", prefix.to_string().c_str());
+        return true;
+    }
+    gRouteBulker.flush();
+    return removeRoutePost(context);
+
+}
+
 bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextHop)
 {
     SWSS_LOG_ENTER();
