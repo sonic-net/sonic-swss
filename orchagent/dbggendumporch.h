@@ -16,14 +16,14 @@ extern "C" {
 class DbgGenDumpOrch : public Orch
 {
 public:
-    DbgGenDumpOrch(TableConnector stateDbConnector);
+    DbgGenDumpOrch(TableConnector dbConnector, const std::string statusTableName);
     
     ~DbgGenDumpOrch();
 
     void doTask(Consumer& consumer);
 
 private:
-    Table m_stateDbDumpStatsTable;
+    Table m_dbDumpTable;
 
 };
 

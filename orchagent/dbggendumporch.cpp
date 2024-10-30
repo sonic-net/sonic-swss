@@ -4,9 +4,9 @@
 using namespace std;
 using namespace swss;
 
-DbgGenDumpOrch::DbgGenDumpOrch(TableConnector stateDbConnector):
-        Orch(stateDbConnector.first, stateDbConnector.second),
-        m_stateDbDumpStatsTable(stateDbConnector.first, STATE_DBG_GEN_DUMP_STATS_TABLE_NAME)
+DbgGenDumpOrch::DbgGenDumpOrch(TableConnector dbConnector, const std::string statusTableName):
+        Orch(dbConnector.first, dbConnector.second),
+        m_dbDumpTable(dbConnector.first, statusTableName)
 {
     SWSS_LOG_ENTER();
 }
@@ -22,7 +22,7 @@ void DbgGenDumpOrch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        if (consumer.getTableName() == STATE_DBG_GEN_DUMP_TABLE_NAME)
+        if (consumer.getTableName() == APP_DBG_GEN_DUMP_TABLE_NAME)
         {
             KeyOpFieldsValuesTuple t = it->second;
             string op = kfvOp(t);
@@ -47,14 +47,9 @@ void DbgGenDumpOrch::doTask(Consumer &consumer)
                 string key = kfvKey(t);
                 std::vector<swss::FieldValueTuple> fvTuples;
                 fvTuples.push_back(swss::FieldValueTuple("status", ret_str));
-                m_stateDbDumpStatsTable.set(key, fvTuples);
+                m_dbDumpTable.set(key, fvTuples);
             }
         }
         consumer.m_toSync.erase(it++);
     }
 }
-
-
-
-
-

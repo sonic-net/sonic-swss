@@ -766,8 +766,8 @@ bool OrchDaemon::init()
     TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
     m_orchList.push_back(twamp_orch);
 
-    TableConnector stateDbDgbGenDumpTable(m_stateDb, STATE_DBG_GEN_DUMP_TABLE_NAME);
-    auto* gDbgGenDumpOrch = new DbgGenDumpOrch(stateDbDgbGenDumpTable);
+    TableConnector applDbDgbGenDumpTable(m_applDb, APP_DBG_GEN_DUMP_TABLE_NAME);
+    auto* gDbgGenDumpOrch = new DbgGenDumpOrch(applDbDgbGenDumpTable, APP_DBG_GEN_DUMP_STATUS_TABLE_NAME);
     m_orchList.push_back(gDbgGenDumpOrch);
 
     if (WarmStart::isWarmStart())
