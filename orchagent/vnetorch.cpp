@@ -1147,7 +1147,18 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
             else
             {
-                gRouteOrch->removeRouteIfExists(ipPrefix);
+                SWSS_LOG_INFO("Attempting to remove BGP learnt route for prefix : %s\n",
+                              ipPrefix.to_string().c_str());
+                if (!gRouteOrch->removeRouteIfExists(ipPrefix))
+                {
+                    SWSS_LOG_ERROR("Couldnt Removed existing bgp route for prefix : %s\n", ipPrefix.to_string().c_str());
+                    return false;
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Successfully Removed existing bgp route for prefix : %s \n",
+                                  ipPrefix.to_string().c_str());
+                }
                 if (it_route == syncd_tunnel_routes_[vnet].end())
                 {
                     route_status = add_route(vr_id, pfx, nh_id);
@@ -1296,6 +1307,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                     return false;
                 }
+                SWSS_LOG_INFO("Successfully deled route for %s", ipPrefix.to_string().c_str());
+
             }
         }
 
@@ -2328,6 +2341,8 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                     for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
                     {
                         // remove the bgp learnt routr first if any and then add the tunnel route.
+                        SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n",
+                                      ip_pfx.to_string().c_str());
                         if (!gRouteOrch->removeRouteIfExists(ip_pfx))
                         {
                             SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", ip_pfx.to_string().c_str());
@@ -2344,12 +2359,18 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                             SWSS_LOG_NOTICE("Failed to create tunnel route in hardware for prefix : %s\n", ip_pfx.to_string().c_str());
                             failed = true;
                         }
+                        else
+                        {
+                            SWSS_LOG_INFO("Successfully created tunnel route in hardware for prefix : %s\n",
+                                          ip_pfx.to_string().c_str()); 
+                        }
                     }
                 }
                 if (failed)
                 {
                     // This is an unrecoverable error, Throw a LOG_ERROR and return
                     SWSS_LOG_ERROR("Inconsistant Hardware State. Failed to create tunnel routes\n");
+                    return;
                 }
             }
             else
