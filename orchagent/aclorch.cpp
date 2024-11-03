@@ -3393,7 +3393,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = "0";
         m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "false";
         m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ATTR_META_CAPABLE] = "false";
-            m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "false";
+        m_switchMetaDataCapabilities[TABLE_ACL_ENTRY_ACTION_META_CAPABLE] = "false";
 
         status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE, &capability);
         if (status != SAI_STATUS_SUCCESS)
@@ -3406,7 +3406,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             {
                 sai_attribute_t attrs[1];
                 attrs[0].id = SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE;
-                sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 2, attrs);
+                sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, attrs);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_WARN("Could not get range for ACL_USER_META_DATA_RANGE %d", status);
@@ -4300,7 +4300,7 @@ EgressSetDscpTableStatus AclOrch::addEgrSetDscpTable(string table_id, AclTable &
         {
             if (updateAclTable(m_AclTables[egrSetDscp_oid], egrSetDscpTable))
             {
-                SWSS_LOG_INFO("Successfully updated existing ACL table EgressSetDSCP");
+                SWSS_LOG_NOTICE("Successfully updated existing ACL table EgressSetDSCP");
                 // We do not set the status here as we still have to update
                 // TABLE_TYPE_MARK_META/V6 table.
             }
@@ -4315,7 +4315,7 @@ EgressSetDscpTableStatus AclOrch::addEgrSetDscpTable(string table_id, AclTable &
         // keep track of the fact that this table is now associated with the EGR_SET_DSCP table.
 
         m_egrSetDscpRef.insert(table_id);
-        SWSS_LOG_INFO("Added ACL table %s to EgrSetDscpRef", table_id.c_str());
+        SWSS_LOG_NOTICE("Added ACL table %s to EgrSetDscpRef", table_id.c_str());
         status = EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_SUCCESS;
 
     }
@@ -4331,7 +4331,6 @@ bool AclOrch::removeEgrSetDscpTable(string table_id)
     {
         if (!removeAclTable(EGR_SET_DSCP_TABLE_ID))
         {
-            SWSS_LOG_INFO("Failed to remove the %s table so readding the reference of %s", EGR_SET_DSCP_TABLE_ID, table_id.c_str());
             m_egrSetDscpRef.insert(table_id);
             SWSS_LOG_ERROR("Failed to remove ACL table %s", EGR_SET_DSCP_TABLE_ID);
             return false;
@@ -4362,7 +4361,7 @@ bool AclOrch::removeEgrSetDscpTable(string table_id)
             SWSS_LOG_ERROR("Failed to remove ACL table %s", EGR_SET_DSCP_TABLE_ID);
             return false;
         }
-        SWSS_LOG_INFO("Successfully removed the %s table from the reference of %s", table_id.c_str(), EGR_SET_DSCP_TABLE_ID);
+        SWSS_LOG_NOTICE("Successfully removed the %s table from the reference of %s", table_id.c_str(), EGR_SET_DSCP_TABLE_ID);
     }
     return true;
 }
