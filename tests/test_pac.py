@@ -34,15 +34,15 @@ def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
 
-def get_port_oid(self, port_name):
-    port_map_tbl = swsscommon.Table(self.cntdb, 'COUNTERS_PORT_NAME_MAP')
+def get_port_oid(db, port_name):
+    port_map_tbl = swsscommon.Table(db, 'COUNTERS_PORT_NAME_MAP')
     for k in port_map_tbl.get('')[1]:
         if k[0] == port_name:
             return k[1]
     return None
 
-def get_bridge_port_oid(self, port_oid):
-    tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+def get_bridge_port_oid(db, port_oid):
+    tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
     for key in tbl.getKeys():
         status, data = tbl.get(key)
         assert status
@@ -51,12 +51,12 @@ def get_bridge_port_oid(self, port_oid):
             return key
     return None
 
-def check_learn_mode_in_asicdb(self, interface_oid, learn_mode):
+def check_learn_mode_in_asicdb(db, interface_oid, learn_mode):
     # Get bridge port oid
-    bridge_port_oid = self.get_bridge_port_oid(interface_oid)
+    bridge_port_oid = get_bridge_port_oid(db, interface_oid)
     assert bridge_port_oid is not None
 
-    tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+    tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
     (status, fvs) = tbl.get(bridge_port_oid)
     assert status == True
     values = dict(fvs)
@@ -164,12 +164,13 @@ class TestPac(object):
         dvs.create_vlan_member("2", "Ethernet0")
         time.sleep(1)
 
+        cntdb = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
         # get port oid
-        port_oid = self.get_port_oid("Ethernet0")
+        port_oid = get_port_oid(cntdb, "Ethernet0")
         assert port_oid is not None
 
         # check asicdb before setting mac learn mode; The default learn_mode value is SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW.
-        status = self.check_learn_mode_in_asicdb(port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")
+        status = check_learn_mode_in_asicdb(dvs.adb, port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")
         assert status == True
 
         # Set port learn mode to CPU
@@ -180,7 +181,7 @@ class TestPac(object):
                 ("learn_mode", "cpu_trap"),
             ]
         )
-        status = self.check_learn_mode_in_asicdb(port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_CPU_TRAP")
+        status = check_learn_mode_in_asicdb(dvs.adb, port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_CPU_TRAP")
         assert status == True
 
         # Set port learn mode back to default
@@ -191,7 +192,7 @@ class TestPac(object):
                 ("learn_mode", "hardware"),
             ]
         )
-        status = self.check_learn_mode_in_asicdb(port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")
+        status = check_learn_mode_in_asicdb(dvs.adb, port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")
         assert status == True
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
