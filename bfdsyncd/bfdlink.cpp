@@ -384,13 +384,11 @@ void BfdLink::handleBfdDpMessage(size_t start)
                 SWSS_LOG_ERROR("mac address length is not correct: dst_mac %s ", dst_str.c_str());
                 return;
             }
-            //dst_mac = dst_str.substr(0,17);
-            //try broadcast mac address
-            dst_mac = string("ff:ff:ff:ff:ff:ff");
+            dst_mac = dst_str.substr(0,17);
         }
         else
         {
-            SWSS_LOG_ERROR("IPv4 link-local is not supported!");
+            SWSS_LOG_ERROR("IPv4 with interface name is not supported yet!");
             return;
         }
         SWSS_LOG_INFO("dst_mac %s ,  src_mac %s", dst_mac.c_str(), src_mac.c_str());
