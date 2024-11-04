@@ -18,6 +18,7 @@
 #include "crmorch.h"
 #include "saihelper.h"
 #include "directory.h"
+#include "flex_counter_manager.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -35,10 +36,38 @@ extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
+extern bool gTraditionalFlexCounter;
 
-DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) : ZmqOrch(db, tableName, zmqServer)
+#define FLEX_COUNTER_UPD_INTERVAL 1
+
+DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) :
+    ZmqOrch(db, tableName, zmqServer),
+    m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
+
+    m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
+    m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_ENI_NAME_MAP));
+
+    if (gTraditionalFlexCounter)
+    {
+        m_vid_to_rid_table = std::make_unique<Table>(m_asic_db.get(), "VIDTORID");
+    }
+
+    auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    m_fc_update_timer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_fc_update_timer, this, "FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
+
+    /* Fetch the available counter Ids */
+    m_counter_stats.clear();
+    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_ENI);
+    for (auto &stat_enum: stat_enum_list)
+    {
+        auto counter_id = static_cast<sai_eni_stat_t>(stat_enum);
+        m_counter_stats.insert(sai_serialize_eni_stat(counter_id));
+    }
 }
 
 bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type)
@@ -448,6 +477,8 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         }
     }
 
+    addEniToFC(eni_id, eni);
+
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);
 
     SWSS_LOG_NOTICE("Created ENI object for %s", eni.c_str());
@@ -530,6 +561,9 @@ bool DashOrch::removeEniObject(const string& eni)
     SWSS_LOG_ENTER();
 
     EniEntry entry = eni_entries_[eni];
+
+    removeEniFromFC(entry.eni_id, eni);
+
     sai_status_t status = sai_dash_eni_api->remove_eni(entry.eni_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -910,5 +944,95 @@ void DashOrch::doTask(ConsumerBase& consumer)
     else
     {
         SWSS_LOG_ERROR("Unknown table: %s", tn.c_str());
+    }
+}
+
+void DashOrch::removeEniFromFC(sai_object_id_t oid, const string &name)
+{
+    SWSS_LOG_ENTER();
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Cannot remove counter on NULL OID for eni %s", name.c_str());
+        return;
+    }
+
+    if (m_eni_stat_work_queue.find(oid) != m_eni_stat_work_queue.end())
+    {
+        m_eni_stat_work_queue.erase(oid);
+        return;
+    }
+
+    m_eni_name_table->hdel("", name);
+    m_eni_stat_manager.clearCounterIdList(oid);
+    SWSS_LOG_DEBUG("Unregistered eni %s to Flex counter", name.c_str());
+}
+
+void DashOrch::clearEniFCStats()
+{
+    for (auto it = eni_entries_.begin(); it != eni_entries_.end(); it++)
+    {
+        removeEniFromFC(it->second.eni_id, it->first);
+    }
+}
+
+void DashOrch::handleFCStatusUpdate(bool enabled)
+{
+    if (!enabled && m_eni_fc_status)
+    {
+        m_fc_update_timer->stop();
+        clearEniFCStats();
+    }
+    else if (enabled && !m_eni_fc_status)
+    {
+        m_fc_update_timer->start();
+    }
+    m_eni_fc_status = enabled;
+}
+
+void DashOrch::addEniToFC(sai_object_id_t oid, const string &name)
+{
+    auto was_empty = m_eni_stat_work_queue.empty();
+    m_eni_stat_work_queue[oid] = name;
+    if (was_empty)
+    {
+        m_fc_update_timer->start();
+    }
+}
+
+void DashOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_eni_fc_status)
+    {
+        m_fc_update_timer->stop();
+        return ;
+    }
+
+    for (auto it = m_eni_stat_work_queue.begin(); it != m_eni_stat_work_queue.end(); )
+    {
+        string value;
+        const auto id = sai_serialize_object_id(it->first);
+
+        if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
+        {
+            SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
+            std::vector<FieldValueTuple> eniNameFvs;
+            eniNameFvs.emplace_back(it->second, id);
+            m_eni_name_table->set("", eniNameFvs);
+
+            m_eni_stat_manager.setCounterIdList(it->first, CounterType::ENI, m_counter_stats);
+            it = m_eni_stat_work_queue.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (m_eni_stat_work_queue.empty())
+    {
+        m_fc_update_timer->stop();
     }
 }
