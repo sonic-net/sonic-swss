@@ -78,10 +78,39 @@ class TestPac(object):
         dvs.create_vlan("2")
         time.sleep(1)
 
+        dvs.create_vlan("3")
+        time.sleep(1)
+
+        # create vlan member
+        dvs.create_vlan_member("3", "Ethernet0")
+        time.sleep(1)
+
         # Get bvid from vlanid
         ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
         assert ok, bvid
 
+        # Negative tests for adding Vlan member entry in Oper State DB
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "lan2|Ethernet0",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+        )
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+        )
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet1000",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+        )
         # create a Vlan member entry in Oper State DB
         create_entry_tbl(
             dvs.sdb,
@@ -100,6 +129,34 @@ class TestPac(object):
         assert bp_after - bp_before == 1, "The bridge port wasn't created"
         assert vm_after - vm_before == 1, "The vlan member wasn't added"
 
+        # Negative tests for adding FDb entry in Oper State DB
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "lan2|00:00:00:00:00:01",
+            [
+                ("port", "Ethernet0"),
+                ("type", "dynamic"),
+                ("discard", "false"),
+            ]
+        )
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "Vlan5000|00:00:00:00:00:01",
+            [
+                ("port", "Ethernet0"),
+                ("type", "dynamic"),
+                ("discard", "false"),
+            ]
+        )
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "Vlan20|00:00:00:00:00:01",
+            [
+                ("port", "Ethernet0"),
+                ("type", "dynamic"),
+                ("discard", "false"),
+            ]
+        )
         # Add FDB entry in Oper State DB
         create_entry_tbl(
             dvs.sdb,
@@ -133,12 +190,20 @@ class TestPac(object):
                         [("mac", "00:00:00:00:00:01"), ("bvid", bvid)], [])
         assert ok == False, "The fdb entry still exists in ASIC"
 
+        # Negative test for removing Vlan member entry in Oper State DB
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet10"
+        )
+        
         # remove Vlan member entry in Oper State DB
         remove_entry_tbl(
             dvs.sdb,
             "OPER_VLAN_MEMBER", "Vlan2|Ethernet0"
         )
         dvs.remove_vlan("2")
+        dvs.remove_vlan_member("3", "Ethernet0")
+        dvs.remove_vlan("3")
 
         vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
@@ -185,12 +250,9 @@ class TestPac(object):
         assert status == True
 
         # Set port learn mode back to default
-        create_entry_tbl(
+        remove_entry_tbl(
             dvs.sdb,
-            "OPER_PORT", "Ethernet0",
-            [
-                ("learn_mode", "hardware"),
-            ]
+            "OPER_PORT", "Ethernet0"
         )
         status = check_learn_mode_in_asicdb(dvs.adb, port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")
         assert status == True

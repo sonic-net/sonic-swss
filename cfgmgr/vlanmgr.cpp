@@ -717,11 +717,6 @@ void VlanMgr::doVlanPacPortTask(Consumer &consumer)
                 m_appPortTableProducer.set(alias, fvVector);
             }
         }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-        }
-
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -805,10 +800,6 @@ void VlanMgr::doVlanPacFdbTask(Consumer &consumer)
         {
             m_appFdbTableProducer.del(key);
         }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-        }
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -882,11 +873,6 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
                 fvVector.push_back(s1);
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
             }
-            else
-            {
-                it++;
-                continue;
-            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -913,10 +899,6 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
                     vlan_alias.c_str(), port_alias.c_str(), tagging_mode.c_str());
                 addPortToVlan(port_alias, vlan_alias, tagging_mode);
             }
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
         /* Other than the case of member port/lag is not ready, no retry will be performed */
         it = consumer.m_toSync.erase(it);
