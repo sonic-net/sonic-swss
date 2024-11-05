@@ -16,10 +16,10 @@ int main(int argc, char **argv)
 {
     Logger::linkToDbNative("fdbsyncd");
 
-    DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appDb("APPL_DB", 0);
     RedisPipeline pipelineAppDB(&appDb);
-    DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector stateDb("STATE_DB", 0);
+    DBConnector config_db("CONFIG_DB", 0);
 
     FdbSync sync(&pipelineAppDB, &stateDb, &config_db);
 

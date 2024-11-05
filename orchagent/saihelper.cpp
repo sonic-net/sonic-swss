@@ -1102,3 +1102,33 @@ void stopFlexCounterPolling(sai_object_id_t switch_oid,
 
     sai_switch_api->set_switch_attribute(switch_oid, &attr);
 }
+
+/*
+    Use metadata info of the SAI object to infer all the available stats
+    Syncd already has logic to filter out the supported stats
+*/
+std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t object_type)
+{
+    std::vector<sai_stat_id_t> stat_list;
+    auto info = sai_metadata_get_object_type_info(object_type);
+
+    if (!info)
+    {
+        SWSS_LOG_ERROR("Metadata info query failed, invalid object: %d", object_type);
+        return stat_list;
+    }
+
+    SWSS_LOG_NOTICE("SAI object %s supports stat type %s",
+            sai_serialize_object_type(object_type).c_str(),
+            info->statenum->name);
+
+    auto statenumlist = info->statenum->values;
+    auto statnumcount = (uint32_t)info->statenum->valuescount;
+    stat_list.reserve(statnumcount);
+
+    for (uint32_t i = 0; i < statnumcount; i++)
+    {
+        stat_list.push_back(static_cast<sai_stat_id_t>(statenumlist[i]));
+    }
+    return stat_list;
+}
