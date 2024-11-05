@@ -123,7 +123,7 @@ bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string &alias)
     }
     for (auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
     {
-        if (prefixIt.getSubnet() == ip_prefix)
+        if (prefixIt.isAddressInSubnet(ip_prefix.getIp()))
         {
             return true;
         }
