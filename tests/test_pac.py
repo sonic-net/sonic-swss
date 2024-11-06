@@ -73,6 +73,7 @@ class TestPac(object):
         vlan_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         bp_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
         vm_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        fdb_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB")
 
         # create vlan
         dvs.create_vlan("2")
@@ -97,6 +98,12 @@ class TestPac(object):
                 ("tagging_mode", "untagged"),
             ]
         )
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "lan2|Ethernet0"
+        )
         create_entry_tbl(
             dvs.sdb,
             "OPER_VLAN_MEMBER", "Vlan2",
@@ -104,12 +111,24 @@ class TestPac(object):
                 ("tagging_mode", "untagged"),
             ]
         )
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2"
+        )
         create_entry_tbl(
             dvs.sdb,
             "OPER_VLAN_MEMBER", "Vlan2|Ethernet1000",
             [
                 ("tagging_mode", "untagged"),
             ]
+        )
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet1000"
         )
         # create a Vlan member entry in Oper State DB
         create_entry_tbl(
@@ -125,11 +144,11 @@ class TestPac(object):
         bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
         vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
-        assert vlan_after - vlan_before == 1, "The Vlan2 wasn't created"
+        assert vlan_after - vlan_before == 2, "The Vlan2 wasn't created"
         assert bp_after - bp_before == 1, "The bridge port wasn't created"
         assert vm_after - vm_before == 1, "The vlan member wasn't added"
 
-        # Negative tests for adding FDb entry in Oper State DB
+        # Negative tests for adding FDB entry in Oper State DB
         create_entry_tbl(
             dvs.sdb,
             "OPER_FDB", "lan2|00:00:00:00:00:01",
@@ -138,6 +157,12 @@ class TestPac(object):
                 ("type", "dynamic"),
                 ("discard", "false"),
             ]
+        )
+        fdb_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB")
+        assert fdb_after - fdb_before == 0, "The FDB entry shouldn't have been created"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "lan2|00:00:00:00:00:01"
         )
         create_entry_tbl(
             dvs.sdb,
@@ -148,6 +173,12 @@ class TestPac(object):
                 ("discard", "false"),
             ]
         )
+        fdb_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB")
+        assert fdb_after - fdb_before == 0, "The FDB entry shouldn't have been created"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "Vlan5000|00:00:00:00:00:01"
+        )
         create_entry_tbl(
             dvs.sdb,
             "OPER_FDB", "Vlan20|00:00:00:00:00:01",
@@ -156,6 +187,12 @@ class TestPac(object):
                 ("type", "dynamic"),
                 ("discard", "false"),
             ]
+        )
+        fdb_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB")
+        assert fdb_after - fdb_before == 0, "The FDB entry shouldn't have been created"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "Vlan20|00:00:00:00:00:01"
         )
         # Add FDB entry in Oper State DB
         create_entry_tbl(
@@ -195,7 +232,7 @@ class TestPac(object):
             dvs.sdb,
             "OPER_VLAN_MEMBER", "Vlan2|Ethernet10"
         )
-        
+
         # remove Vlan member entry in Oper State DB
         remove_entry_tbl(
             dvs.sdb,
