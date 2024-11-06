@@ -2399,7 +2399,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 }
 
                 vrf_obj->removeTunnelNextHop(endpoint);
-                SWSS_LOG_INFO("Successfully removed Nexthop. %s\n",endpoint.to_string().c_str() );
+                SWSS_LOG_INFO("Successfully removed Nexthop: %s\n",endpoint.to_string().c_str() );
 
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
             }
@@ -2429,7 +2429,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
             for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
             {
                 string profile = vrf_obj->getProfile(ip_pfx);
-                SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
+                SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile: %s \n",
                                 ip_pfx.to_string().c_str(), profile.c_str());  
                 postRouteState(vnet, ip_pfx, nexthops, profile);
             }
@@ -2570,14 +2570,14 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                 if (active_nhg_size > 0)
                 {
                     // we need to replace the nhg in the route
-                    SWSS_LOG_NOTICE("Replacing Nexthop Group for prefix: %s \n",
+                    SWSS_LOG_NOTICE("Replacing Nexthop Group for prefix: %s , nexthop group: %s\n",
                                     prefix.to_string().c_str(), nhg_custom.to_string().c_str()); 
                     route_status = update_route(vr_id, pfx, nh_id);
                 }
                 else
                 {
                     // we need to readd the route.
-                    SWSS_LOG_NOTICE("Adding Custom monitored Route with prefix: %s and NExthop %s \n",
+                    SWSS_LOG_NOTICE("Adding Custom monitored Route with prefix: %s and Nexthop %s \n",
                                     prefix.to_string().c_str(), nhg_custom.to_string().c_str()); 
                     SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", prefix.to_string().c_str());
                     if (gRouteOrch && !gRouteOrch->removeRouteIfExists(prefix))
@@ -2640,7 +2640,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         if (nhg_custom.getSize() == 0 && active_nhg_size > 0)
         {
             vrf_obj->removeRoute(prefix);
-            SWSS_LOG_NOTICE("Route prefix id no longer active: %s \n",
+            SWSS_LOG_NOTICE("Route prefix no longer active: %s \n",
                 prefix.to_string().c_str()); 
             removeRouteState(vnet, prefix);
             if (prefix_to_adv_prefix_.find(prefix) != prefix_to_adv_prefix_.end())
@@ -2663,14 +2663,14 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
             }
             adv_prefix_refcount_[adv_prefix] += 1;
             string profile = vrf_obj->getProfile(prefix);
-            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
+            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile:%s \n",
                             prefix.to_string().c_str(), profile.c_str()); 
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
         else
         {
             string profile = vrf_obj->getProfile(prefix);
-            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
+            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile: %s\n",
                             prefix.to_string().c_str(), profile.c_str());
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
