@@ -1151,14 +1151,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                               ipPrefix.to_string().c_str());
                 if (!gRouteOrch->removeRouteIfExists(ipPrefix))
                 {
-                    SWSS_LOG_ERROR("Couldnt Removed existing bgp route for prefix : %s\n", ipPrefix.to_string().c_str());
+                    SWSS_LOG_ERROR("Couldn't Removed existing bgp route for prefix : %s\n", ipPrefix.to_string().c_str());
                     return false;
                 }
-                else
-                {
-                    SWSS_LOG_INFO("Successfully Removed existing bgp route for prefix : %s \n",
-                                  ipPrefix.to_string().c_str());
-                }
+                SWSS_LOG_INFO("Successfully Removed existing bgp route for prefix : %s \n",
+                                ipPrefix.to_string().c_str());
                 if (it_route == syncd_tunnel_routes_[vnet].end())
                 {
                     route_status = add_route(vr_id, pfx, nh_id);
@@ -1307,7 +1304,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                     return false;
                 }
-                SWSS_LOG_INFO("Successfully deled route for %s", ipPrefix.to_string().c_str());
+                SWSS_LOG_INFO("Successfully deleted the route for %s", ipPrefix.to_string().c_str());
 
             }
         }
@@ -2286,11 +2283,13 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
         }
         // when we add the first nexthop to the route, we dont create a nexthop group, we call the updateTunnelRoute with NHG with one member.
         // when adding the 2nd, 3rd ... members we create each NH using this create_next_hop_group_member call but give it the reference of next_hop_group_id. 
-        // this way we dont have to update the route, the syncd does it by itself. we only call the updateTunnelRoute to add/remove when adding the route and 
-        // removing it fully.
+        // this way we dont have to update the route, the syncd does it by itself. we only call the updateTunnelRoute to add/remove when adding or removing the
+        // route fully.
+
         bool failed = false;
         if (state == SAI_BFD_SESSION_STATE_UP)
         {
+            SWSS_LOG_INFO("Processing BFD state change to UP.\n");
             sai_object_id_t next_hop_group_member_id = SAI_NULL_OBJECT_ID;
             if (nexthops.getSize() > 1)
             {
@@ -2340,19 +2339,21 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 {
                     for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
                     {
-                        // remove the bgp learnt routr first if any and then add the tunnel route.
-                        SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n",
-                                      ip_pfx.to_string().c_str());
-                        if (!gRouteOrch->removeRouteIfExists(ip_pfx))
+                        // remove the bgp learnt route first if any exists and then add the tunnel route.
+                        auto prefixStr = ip_pfx.to_string();
+                        auto nhStr = nexthops.to_string();
+                        SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", prefixStr.c_str());
+                        if (gRouteOrch && !gRouteOrch->removeRouteIfExists(ip_pfx))
                         {
-                            SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", ip_pfx.to_string().c_str());
+                            SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", prefixStr.c_str());
                             failed = true;
                             break;
                         }
                         string op = SET_COMMAND;
+
                         SWSS_LOG_NOTICE("Adding Vnet route for prefix : %s with nexthops %s\n",
-                                        ip_pfx.to_string().c_str(),
-                                        nexthops.to_string().c_str());  
+                                        prefixStr.c_str(),
+                                        nhStr.c_str());  
 
                         if (!updateTunnelRoute(vnet, ip_pfx, nexthops, op))
                         {
@@ -2362,7 +2363,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                         else
                         {
                             SWSS_LOG_INFO("Successfully created tunnel route in hardware for prefix : %s\n",
-                                          ip_pfx.to_string().c_str()); 
+                                          prefixStr.c_str()); 
                         }
                     }
                 }
@@ -2380,6 +2381,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
         }
         else
         {
+            SWSS_LOG_INFO("Processing BFD state change to Down.\n");
             if (nexthops.getSize() > 1 && nhg_info.active_members.find(endpoint) != nhg_info.active_members.end())
             {
                 sai_object_id_t nexthop_id = nhg_info.active_members[endpoint];
@@ -2397,6 +2399,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 }
 
                 vrf_obj->removeTunnelNextHop(endpoint);
+                SWSS_LOG_INFO("Successfully removed Nexthop. %s\n",endpoint.to_string().c_str() );
 
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
             }
@@ -2426,6 +2429,8 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
             for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
             {
                 string profile = vrf_obj->getProfile(ip_pfx);
+                SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
+                                ip_pfx.to_string().c_str(), profile.c_str());  
                 postRouteState(vnet, ip_pfx, nexthops, profile);
             }
         }
@@ -2565,11 +2570,21 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                 if (active_nhg_size > 0)
                 {
                     // we need to replace the nhg in the route
+                    SWSS_LOG_NOTICE("Replacing Nexthop Group for prefix: %s \n",
+                                    prefix.to_string().c_str, nhg_custom.to_string().c_str()); 
                     route_status = update_route(vr_id, pfx, nh_id);
                 }
                 else
                 {
                     // we need to readd the route.
+                    SWSS_LOG_NOTICE("Adding Custom monitored Route with prefix: %s and NExthop %s \n",
+                                    prefix.to_string().c_str, nhg_custom.to_string().c_str()); 
+                    SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", prefixStr.c_str());
+                    if (gRouteOrch && !gRouteOrch->removeRouteIfExists(prefix))
+                    {
+                        SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", prefix.c_str());
+                        route_status = false;
+                    }
                     route_status = add_route(vr_id, pfx, nh_id);
                 }
                 if (!route_status)
@@ -2625,6 +2640,8 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         if (nhg_custom.getSize() == 0 && active_nhg_size > 0)
         {
             vrf_obj->removeRoute(prefix);
+            SWSS_LOG_NOTICE("Route prefix id no longer active: %s \n",
+                prefix.to_string().c_str()); 
             removeRouteState(vnet, prefix);
             if (prefix_to_adv_prefix_.find(prefix) != prefix_to_adv_prefix_.end())
             {
@@ -2633,6 +2650,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                 if (adv_prefix_refcount_[adv_pfx] == 0)
                 {
                     adv_prefix_refcount_.erase(adv_pfx);
+                    SWSS_LOG_NOTICE("Stopping advertisement of prefix Range: %s \n",adv_pfx.to_string().c_str()); 
                 }
             }
         }
@@ -2645,10 +2663,14 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
             }
             adv_prefix_refcount_[adv_prefix] += 1;
             string profile = vrf_obj->getProfile(prefix);
+            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
+                            prefix.to_string().c_str(), profile.c_str()); 
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
+                            prefix.to_string().c_str(), profile.c_str());
             string profile = vrf_obj->getProfile(prefix);
             postRouteState(vnet, prefix, nhg_custom, profile);
         }

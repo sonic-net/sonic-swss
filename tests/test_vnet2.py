@@ -89,8 +89,8 @@ class TestVnet2Orch(object):
     def test_vnet_orch_1(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
-        tunnel_name = 'tunnel_29'
-        vnet_name = 'Vnet29'
+        tunnel_name = 'tunnel_1'
+        vnet_name = 'Vnet1'
         self.setup_db(dvs)
         vnet_obj.fetch_exist_entries(dvs)
         # create l3 interface and bring it up
@@ -106,9 +106,9 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10029', "")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "")
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10029')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1001')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         vnet_obj.fetch_exist_entries(dvs)
@@ -213,8 +213,8 @@ class TestVnet2Orch(object):
     Test 2 - Test for vnet tunnel routes interaction with regular route with endpoints bieng up.
         Add the conflicting route and then add the vnet route with same nexthops.
         Bring up the bfd sessions and check the vnet route is programmed in hardware.
-        Add the 2nd conflicting route and then add the 2nd vnet route with same nexthops.
-        This way we check if the preceding route works of mexthops are already UP.
+        Add the 2nd conflicting route and then add the 2nd vnet route with same nexthops as first vnet route.
+        This way we check if the newly added route works when the nexthops are already UP.
         Verify the vnet routes are programmed in hardware.
         Remove all the vnet route and check the vnet route is removed.
         Remove all the conflicting route and check the conflicting route is removed.
@@ -222,8 +222,8 @@ class TestVnet2Orch(object):
     def test_vnet_orch_2(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
-        tunnel_name = 'tunnel_30'
-        vnet_name = 'Vnet30'
+        tunnel_name = 'tunnel_2'
+        vnet_name = 'Vnet2'
         self.setup_db(dvs)
         vnet_obj.fetch_exist_entries(dvs)
 
@@ -240,9 +240,9 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '9.8.8.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10030', "")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1002', "")
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10030')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1002')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.8.8.9')
         vnet_obj.fetch_exist_entries(dvs)
 
@@ -310,6 +310,126 @@ class TestVnet2Orch(object):
         # Confirm the BFD sessions are removed
         check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3'])
 
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+
+    '''
+    Test 3 - Test for vnet tunnel routes (custom monitoring) interaction with regular route.
+        Add the conflicting route and then add the vnet route with same nexthops.
+        Bring up the bfd sessions and check the vnet route is programmed in hardware.
+        Remove the vnet route and check the vnet route is removed.
+        Remove the conflicting route and check the conflicting route is removed.
+    '''
+    def test_vnet_orch_3(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_3'
+        vnet_name = 'Vnet3'
+        self.setup_db(dvs)
+        vnet_obj.fetch_exist_entries(dvs)
+        # create l3 interface and bring it up
+        self.create_l3_intf("Ethernet0", "")
+        self.add_ip_address("Ethernet0", "10.10.10.1/24")
+        self.set_admin_status("Ethernet0", "down")
+        time.sleep(1)
+        self.set_admin_status("Ethernet0", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.10.10.7/24 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.10.10.1")
+        
+        # create vxlan tunnel and verfiy it
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1003', "")
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1003')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # add conflicting route
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 105.100.1.1/32 10.10.10.7\"")
+
+        # check ASIC route database
+        self.check_route_entries(["105.100.1.1/32"])
+
+        create_vnet_routes(dvs, "105.100.1.1/32", vnet_name, '9.7.0.1,9.7.0.2,9.7.0.3,9.7.0.4', ep_monitor='9.1.2.1,9.1.2.2,9.1.2.3,9.1.2.3',primary='9.7.0.1,9.7.0.2', monitoring='custom')
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["105.100.1.1/32"], absent=True)
+        check_state_db_routes(dvs, vnet_name, "105.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "105.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.2', 'Up')
+        time.sleep(1)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.7.0.2'], tunnel_name)
+
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.3', 'Up')
+        time.sleep(1)
+       route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.7.0.2'], tunnel_name, route_ids=route1)
+
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.1', 'Up')
+        time.sleep(1)
+       route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.7.0.2,9.7.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "105.100.1.1/32", ['9.7.0.1', '9.7.0.2'])
+
+        # Remove all endpoint from group route shouldnt come back up.
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.2', 'Down')
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.1', 'Down')
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.3', 'Down')
+        time.sleep(1)
+        # after removal of vnet route, conflicting route is not getting programmed as its not a bgp learnt route.
+        self.check_route_entries(["105.100.1.1/32"], absent=True)
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "105.100.1.1/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["105.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "105.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "105.100.1.1/32")
+
+        # Check the previous nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)        
+        assert nhg1_1 not in vnet_obj.nhgs
+
+        vnet_obj.nhg_ids = {}
+        vnet_obj.fetch_exist_entries(dvs)
+        # readd the same route.
+        create_vnet_routes(dvs, "105.100.1.1/32", vnet_name, '9.7.0.1,9.7.0.2,9.7.0.3,9.7.0.4', ep_monitor='9.1.2.1,9.1.2.2,9.1.2.3,9.1.2.3',primary='9.7.0.1,9.7.0.2', monitoring='custom')
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["105.100.1.1/32"], absent=True)
+        check_state_db_routes(dvs, vnet_name, "105.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "105.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.2', 'Up')
+        time.sleep(1)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.7.0.2'], tunnel_name)
+
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.1', 'Up')
+        time.sleep(1)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.7.0.2,9.7.0.1'], tunnel_name, route_ids=route1)
+
+        # Remove all endpoint from group route shouldnt come back up.
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.2', 'Down')
+        update_monitor_session_state(dvs, "105.100.1.1/32", '9.1.2.1', 'Down')
+
+        time.sleep(1)
+        # after removal of vnet route, conflicting route is not getting programmed as its not a bgp learnt route.
+        self.check_route_entries(["105.100.1.1/32"], absent=True)
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "105.100.1.1/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["105.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "105.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "105.100.1.1/32")
+
+        # Check the previous nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 not in vnet_obj.nhgs
+
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 105.100.1.1/32\"")
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
