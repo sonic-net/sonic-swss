@@ -154,7 +154,6 @@ bool Srv6Orch::removeSrv6Nexthops(const std::vector<NextHopGroupKey> &nhgv)
                 {
                     if (!deleteSrv6Vpn(sr_nh.ip_address.to_string(), sr_nh.srv6_vpn_sid, getAggId(it_nhg)))
                     {
-                        deleteAggId(it_nhg);
                         SWSS_LOG_ERROR("Failed to delete SRV6 vpn %s", sr_nh.to_string(false, true).c_str());
                         return false;
                     }
@@ -401,9 +400,6 @@ bool Srv6Orch::srv6Nexthops(const NextHopGroupKey &nhgKey, sai_object_id_t &next
             {
                 if (!createSrv6Vpn(it->ip_address.to_string(), it->srv6_vpn_sid, getAggId(nhgKey)))
                 {
-                    for (auto itt = nexthops.begin(); itt != it; ++itt)
-                        deleteSrv6Vpn(itt->ip_address.to_string(), itt->srv6_vpn_sid, getAggId(nhgKey));
-                    deleteAggId(nhgKey);
                     SWSS_LOG_ERROR("Failed to create SRV6 vpn %s", it->to_string(false, true).c_str());
                     return false;
                 }
@@ -1558,7 +1554,7 @@ task_process_status Srv6Orch::doTaskPicContextTable(const KeyOpFieldsValuesTuple
         }
         if (pci.nexthops.size() != pci.sids.size())
         {
-            SWSS_LOG_ERROR("inconsistent number of endpoints(%lu) and vpn sids(%lu)",
+            SWSS_LOG_ERROR("inconsistent number of endpoints(%zu) and vpn sids(%zu)",
                                 pci.nexthops.size(), pci.sids.size());
             return task_failed;
         }

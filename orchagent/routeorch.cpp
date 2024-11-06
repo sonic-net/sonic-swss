@@ -691,7 +691,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 NextHopGroupKey& nhg = ctx.nhg;
                 vector<string> srv6_segv;
                 vector<string> srv6_src;
-				vector<string> srv6_vpn_sidv;
+                vector<string> srv6_vpn_sidv;
                 bool l3Vni = true;
                 uint32_t vni = 0;
 
