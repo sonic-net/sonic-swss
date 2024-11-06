@@ -2571,18 +2571,18 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                 {
                     // we need to replace the nhg in the route
                     SWSS_LOG_NOTICE("Replacing Nexthop Group for prefix: %s \n",
-                                    prefix.to_string().c_str, nhg_custom.to_string().c_str()); 
+                                    prefix.to_string().c_str(), nhg_custom.to_string().c_str()); 
                     route_status = update_route(vr_id, pfx, nh_id);
                 }
                 else
                 {
                     // we need to readd the route.
                     SWSS_LOG_NOTICE("Adding Custom monitored Route with prefix: %s and NExthop %s \n",
-                                    prefix.to_string().c_str, nhg_custom.to_string().c_str()); 
-                    SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", prefixStr.c_str());
+                                    prefix.to_string().c_str(), nhg_custom.to_string().c_str()); 
+                    SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", prefix.to_string().c_str());
                     if (gRouteOrch && !gRouteOrch->removeRouteIfExists(prefix))
                     {
-                        SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", prefix.c_str());
+                        SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", prefix.to_string().c_str());
                         route_status = false;
                     }
                     route_status = add_route(vr_id, pfx, nh_id);
@@ -2670,7 +2670,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         else
         {
             SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
-                            prefix.to_string().c_str(), profile.c_str());
+                            prefix.to_string().c_str(), profile.to_string().c_str());
             string profile = vrf_obj->getProfile(prefix);
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
