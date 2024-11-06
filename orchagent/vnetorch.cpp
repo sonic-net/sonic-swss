@@ -2671,7 +2671,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         {
             string profile = vrf_obj->getProfile(prefix);
             SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile \n",
-                            prefix.to_string().c_str(), profile.to_string().c_str());
+                            prefix.to_string().c_str(), profile.c_str());
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
     }
