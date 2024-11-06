@@ -9094,7 +9094,7 @@ bool PortsOrch::addSystemPorts()
     vector<string> keys;
     vector<FieldValueTuple> spFv;
 
-    DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appDb("APPL_DB", 0);
     Table appSystemPortTable(&appDb, APP_SYSTEM_PORT_TABLE_NAME);
 
     //Retrieve system port configurations from APP DB
