@@ -797,6 +797,9 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     sai_uint32_t range_low, range_high;
     bool need_update_sai = true;
     bool local_port = false;
+    bool counter_was_added = false;
+    bool counter_needs_to_add = false;
+    string old_buffer_profile_name;
     string local_port_name;
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
@@ -856,7 +859,6 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_failed;
         }
 
-        string old_buffer_profile_name;
         if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name)
             && (old_buffer_profile_name == buffer_profile_name))
         {
@@ -874,11 +876,14 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         SWSS_LOG_NOTICE("Set buffer queue %s to %s", key.c_str(), buffer_profile_name.c_str());
 
         setObjectReference(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, buffer_profile_name);
+
+        // Counter operation
+        counter_needs_to_add = buffer_profile_name.find("_zero_") == std::string::npos;
+        SWSS_LOG_INFO("%s to create counter for %s with new profile %s", counter_needs_to_add ? "Need" : "No need", key.c_str(), buffer_profile_name.c_str());
     }
     else if (op == DEL_COMMAND)
     {
-        auto &typemap = (*m_buffer_type_maps[APP_BUFFER_QUEUE_TABLE_NAME]);
-        if (typemap.find(key) == typemap.end())
+        if (!doesObjectExist(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name))
         {
             SWSS_LOG_INFO("%s doesn't not exist, don't need to notfiy SAI", key.c_str());
             need_update_sai = false;
@@ -887,12 +892,16 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         SWSS_LOG_NOTICE("Remove buffer queue %s", key.c_str());
         removeObject(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key);
         m_partiallyAppliedQueues.erase(key);
+        counter_needs_to_add = false;
     }
     else
     {
         SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         return task_process_status::task_invalid_entry;
     }
+
+    counter_was_added = !old_buffer_profile_name.empty() && old_buffer_profile_name.find("_zero_") == std::string::npos;
+    SWSS_LOG_INFO("%s to remove counter for %s with old profile %s", counter_was_added ? "Need" : "No need", key.c_str(), old_buffer_profile_name.c_str());
 
     sai_attribute_t attr;
     attr.id = SAI_QUEUE_ATTR_BUFFER_PROFILE_ID;
@@ -963,14 +972,16 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                     auto queues = tokens[1];
-                    if (op == SET_COMMAND &&
+                    if (!counter_was_added && counter_needs_to_add &&
                         (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
+                        SWSS_LOG_INFO("Creating counters for %s %lu", port_name.c_str(), ind);
                         gPortsOrch->createPortBufferQueueCounters(port, queues);
                     }
-                    else if (op == DEL_COMMAND &&
+                    else if (counter_was_added && !counter_needs_to_add &&
                              (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
+                        SWSS_LOG_INFO("Removing counters for %s %lu", port_name.c_str(), ind);
                         gPortsOrch->removePortBufferQueueCounters(port, queues);
                     }
                 }
@@ -1042,6 +1053,25 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     }
 
     return task_process_status::task_success;
+}
+
+void BufferOrch::getNonZeroQueues(vector<string> &nonZeroQueues)
+{
+    for (auto &&queueRef: (*m_buffer_type_maps[APP_BUFFER_QUEUE_TABLE_NAME]))
+    {
+        for (auto &&profileRef: queueRef.second.m_objsReferencingByMe)
+        {
+            if (profileRef.second.find("_zero_") == std::string::npos)
+            {
+                SWSS_LOG_INFO("Selected key %s with profile %s", queueRef.first.c_str(), profileRef.second.c_str());
+                nonZeroQueues.push_back(queueRef.first);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Skipped key %s with profile %s", queueRef.first.c_str(), profileRef.second.c_str());
+            }
+        }
+    }
 }
 
 /*

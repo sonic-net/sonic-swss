@@ -38,6 +38,7 @@ public:
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
     const object_reference_map &getBufferPoolNameOidMap(void);
+    void getNonZeroQueues(std::vector<std::string> &nonZeroQueues);
 
 private:
     typedef task_process_status (BufferOrch::*buffer_table_handler)(KeyOpFieldsValuesTuple &tuple);

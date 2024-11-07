@@ -370,11 +370,11 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
     }
 
     std::vector<std::string> portQueueKeys;
-    m_bufferQueueConfigTable.getKeys(portQueueKeys);
+    gBufferOrch->getNonZeroQueues(portQueueKeys);
 
     for (const auto& portQueueKey : portQueueKeys)
     {
-        auto toks = tokenize(portQueueKey, '|');
+        auto toks = tokenize(portQueueKey, ':');
         if (toks.size() != 2)
         {
             SWSS_LOG_ERROR("Invalid BUFFER_QUEUE key: [%s]", portQueueKey.c_str());
