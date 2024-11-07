@@ -989,6 +989,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     // This is followed by an attempt to create a NHG which can be subset of nexthops_primary
     // depending on the endpoint monitor state. If no NHG from primary is created, we attempt
     // the same for secondary.
+    SWSS_LOG_NOTICE("Route recieved with monitoring %s and secondary NHG %s.\n",monitoring.c_str(), nexthops_secondary.to_string().c_str());
     if(nexthops_secondary.getSize() != 0 && monitoring == "custom")
     {
         auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
@@ -2534,13 +2535,14 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
     else
     {
         //both HHG's are inactive, need to remove the route.
+        SWSS_LOG_INFO(" Route needs to be removed due ot no active NHG.\n");
         updateRoute = true;
     }
 
     if (nhg_custom.getSize() == 0)
     {
         // nhg_custom is empty. we shall create a dummy empty NHG for book keeping.
-        SWSS_LOG_INFO(" Neither Primary or Secondary endpoints are up.");
+        SWSS_LOG_INFO(" Neither Primary or Secondary endpoints are up.\n");
         if (!hasNextHopGroup(vnet, nhg_custom))
         {
             NextHopGroupInfo next_hop_group_entry;
@@ -2558,6 +2560,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
             {
                 if (active_nhg_size > 0)
                 {
+                    SWSS_LOG_INFO(" Removing the route for prefix %s.",prefix.to_string().c_str());
                     // we need to remove the route
                     del_route(vr_id, pfx);
                 }
@@ -2613,6 +2616,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
 
         if(--syncd_nexthop_groups_[vnet][active_nhg].ref_count == 0)
         {
+            SWSS_LOG_INFO("refcount for NHG is zero %s\n",active_nhg.to_string().c_str());
             if (active_nhg_size > 1)
             {
                 removeNextHopGroup(vnet, active_nhg, vrf_obj);
@@ -2629,8 +2633,10 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         }
         else
         {
+            SWSS_LOG_INFO("Prefix %s no longer references NHG %s \n",prefix.to_string().c_str(), active_nhg.to_string().c_str());
             syncd_nexthop_groups_[vnet][active_nhg].tunnel_routes.erase(prefix);
         }
+        SWSS_LOG_INFO("Prefix %s references NHG %s \n",prefix.to_string().c_str(), nhg_custom.to_string().c_str());
         syncd_nexthop_groups_[vnet][nhg_custom].tunnel_routes.insert(prefix);
         syncd_tunnel_routes_[vnet][prefix].nhg_key = nhg_custom;
         if (nhg_custom != active_nhg)
@@ -2640,8 +2646,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         if (nhg_custom.getSize() == 0 && active_nhg_size > 0)
         {
             vrf_obj->removeRoute(prefix);
-            SWSS_LOG_NOTICE("Route prefix no longer active: %s \n",
-                prefix.to_string().c_str()); 
+            SWSS_LOG_NOTICE("Route prefix no longer active: %s \n", prefix.to_string().c_str()); 
             removeRouteState(vnet, prefix);
             if (prefix_to_adv_prefix_.find(prefix) != prefix_to_adv_prefix_.end())
             {
