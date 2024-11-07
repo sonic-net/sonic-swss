@@ -370,7 +370,7 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
     }
 
     std::vector<std::string> portQueueKeys;
-    gBufferOrch->getNonZeroQueues(portQueueKeys);
+    gBufferOrch->getBufferObjectsWithNonZeroProfile(portQueueKeys, APP_BUFFER_QUEUE_TABLE_NAME);
 
     for (const auto& portQueueKey : portQueueKeys)
     {
@@ -439,11 +439,11 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
     }
 
     std::vector<std::string> portPgKeys;
-    m_bufferPgConfigTable.getKeys(portPgKeys);
+    gBufferOrch->getBufferObjectsWithNonZeroProfile(portPgKeys, APP_BUFFER_PG_TABLE_NAME);
 
     for (const auto& portPgKey : portPgKeys)
     {
-        auto toks = tokenize(portPgKey, '|');
+        auto toks = tokenize(portPgKey, ':');
         if (toks.size() != 2)
         {
             SWSS_LOG_ERROR("Invalid BUFFER_PG key: [%s]", portPgKey.c_str());
