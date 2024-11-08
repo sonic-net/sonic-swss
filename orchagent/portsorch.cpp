@@ -9894,3 +9894,7 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
     }
 }
 
+bool PortsOrch::isPortReady() const
+{
+    return m_initDone && m_pendingPortSet.empty();
+}

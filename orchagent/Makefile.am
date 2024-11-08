@@ -92,6 +92,7 @@ orchagent_SOURCES = \
             dtelorch.cpp \
             flexcounterorch.cpp \
             watermarkorch.cpp \
+            txmonorch.cpp \
             policerorch.cpp \
             sfloworch.cpp \
             chassisorch.cpp \

@@ -57,6 +57,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 intfsorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
+                txmonorch_ut.cpp \
                 test_failure_handling.cpp \
                 switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
@@ -114,6 +115,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dtelorch.cpp \
                 $(top_srcdir)/orchagent/flexcounterorch.cpp \
                 $(top_srcdir)/orchagent/watermarkorch.cpp \
+                $(top_srcdir)/orchagent/txmonorch.cpp \
                 $(top_srcdir)/orchagent/chassisorch.cpp \
                 $(top_srcdir)/orchagent/sfloworch.cpp \
                 $(top_srcdir)/orchagent/debugcounterorch.cpp \
