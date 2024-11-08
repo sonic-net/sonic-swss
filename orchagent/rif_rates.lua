@@ -37,12 +37,20 @@ for i = 1, n do
     local out_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_OCTETS')
     local out_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS')
 
+    if not in_octets or not in_pkts or not out_octets or not out_pkts then
+        return logtable
+    end
+
     if initialized == "DONE" or initialized == "COUNTERS_LAST" then
         -- Get old COUNTERS values
         local in_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_OCTETS_last')
         local in_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_PACKETS_last')
         local out_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_OCTETS_last')
         local out_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS_last')
+
+        if not in_octets_last or not in_pkts_last or not out_octets_last or not out_pkts_last then
+            return logtable
+        end
 
         -- Calculate new rates values
         local rx_bps_new = (in_octets - in_octets_last) / delta * 1000
