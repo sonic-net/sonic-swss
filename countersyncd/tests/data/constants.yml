@@ -1,0 +1,4 @@
+constants:
+    stream_telemetry:
+        genl_family: "sonic_stel"
+        genl_multicast_group: "ipfix"
