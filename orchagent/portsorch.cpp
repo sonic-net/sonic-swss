@@ -589,7 +589,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize counter table */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+    // m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+    m_counterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP));
     m_counterSysPortTable = unique_ptr<Table>(
                     new Table(m_counter_db.get(), COUNTERS_SYSTEM_PORT_NAME_MAP));
     m_counterLagTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_LAG_NAME_MAP));
@@ -3766,7 +3767,8 @@ bool PortsOrch::initPort(const PortConfig &port)
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
                 vector<FieldValueTuple> fields;
                 fields.push_back(tuple);
-                m_counterTable->set("", fields);
+                // m_counterTable->set("", fields);
+                m_counterNameMapUpdater->setCounterNameMap(p.m_alias, p.m_port_id);
 
                 // Install a flex counter for this port to track stats
                 auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
@@ -3871,7 +3873,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     }
 
     /* remove port name map from counter table */
-    m_counterTable->hdel("", alias);
+    // m_counterTable->hdel("", alias);
+    m_counterNameMapUpdater->delCounterNameMap(alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
