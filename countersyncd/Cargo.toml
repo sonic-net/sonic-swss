@@ -1,0 +1,55 @@
+[package]
+name = "countersyncd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Yaml paser
+yaml-rust = "0.4"
+
+# Ge-netlink
+neli = { git = "https://github.com/jbaublitz/neli.git", branch = "v0.7.0-rc2" }
+
+# IPFIX parser
+ipfix = "0.1.1"
+ipfixrw = "0.1.0"
+ahash = "0.8.11"
+binrw = "0.14.1"
+byteorder = "1.5.0"
+
+# Logging
+log = "0.4.22"
+# simplelog = "0.12"
+
+rand = "0.8.5"
+
+# Command line utils
+clap = { version = "4", features = ["derive", "cargo", "wrap_help", "unicode", "string", "unstable-styles"] }
+color-eyre = "0.6"
+
+# OTEL
+
+# tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_info"] }
+# tracing-opentelemetry = "0.26"
+# tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+# 
+# opentelemetry = { version = "0.25", features = ["trace"] }
+# opentelemetry_sdk = { version = "0.25", features = ["rt-tokio"]}
+# opentelemetry-semantic-conventions = "0.25"
+# opentelemetry-http = "0.25"
+# opentelemetry-otlp = { version = "0.25", features = ["tonic"] }
+# 
+# # gRPC and HTTP
+# tonic = "0.12"
+# tonic-health = "0.12"
+# prost = "0.13"
+# prost-types = "0.13"
+# reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# reqwest-middleware = "0.3"
+# reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_22"] }
+# 
+# # Other utilities
+# once_cell = "1"
