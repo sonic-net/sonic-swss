@@ -92,7 +92,6 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     /* fetch the MAX_ECMP_MEMBER_COUNT and for voq platform, set it to 128 */
     attr.id = SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT;
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-    SWSS_LOG_NOTICE("Switch Type: %s, Max ECMP Group Size supported: %d", gMySwitchType.c_str(), attr.value.u32);
     
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -101,6 +100,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     else
     {
         uint32_t maxEcmpGroupSize = attr.value.u32;
+        SWSS_LOG_NOTICE("Switch Type: %s, Max ECMP Group Size supported: %d", gMySwitchType.c_str(), attr.value.u32);
+
         /*If the switch type is voq, and max Ecmp group size supported is greater or equal to 128, set it to 128 */
         if (gMySwitchType == "voq" && maxEcmpGroupSize >= 128)
         {
