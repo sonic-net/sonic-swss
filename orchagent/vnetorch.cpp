@@ -1148,15 +1148,16 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
             else
             {
+                auto ipPrefixsubnet = ipPrefix.getSubnet();
                 SWSS_LOG_INFO("Attempting to remove BGP learnt route for prefix : %s\n",
-                              ipPrefix.to_string().c_str());
-                if (!gRouteOrch->removeRouteIfExists(ipPrefix))
+                              ipPrefixsubnet.to_string().c_str());
+                if (gRouteOrch && !gRouteOrch->removeRouteIfExists(ipPrefixsubnet))
                 {
-                    SWSS_LOG_ERROR("Couldn't Removed existing bgp route for prefix : %s\n", ipPrefix.to_string().c_str());
+                    SWSS_LOG_ERROR("Couldn't Removed existing bgp route for prefix : %s\n", ipPrefixsubnet.to_string().c_str());
                     return false;
                 }
                 SWSS_LOG_INFO("Successfully Removed existing bgp route for prefix : %s \n",
-                                ipPrefix.to_string().c_str());
+                                ipPrefixsubnet.to_string().c_str());
                 if (it_route == syncd_tunnel_routes_[vnet].end())
                 {
                     route_status = add_route(vr_id, pfx, nh_id);
@@ -2341,20 +2342,19 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                     for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
                     {
                         // remove the bgp learnt route first if any exists and then add the tunnel route.
-                        auto prefixStr = ip_pfx.to_string();
-                        auto nhStr = nexthops.to_string();
-                        SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", prefixStr.c_str());
-                        if (gRouteOrch && !gRouteOrch->removeRouteIfExists(ip_pfx))
+                        auto ipPrefixsubnet = ip_pfx.getSubnet();
+                        auto prefixStr = ip_pfx.to_string().c_str();
+                        auto nhStr = nexthops.to_string().c_str();
+                        SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", ipPrefixsubnet.to_string().c_str());
+                        if (gRouteOrch && !gRouteOrch->removeRouteIfExists(ipPrefixsubnet))
                         {
-                            SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", prefixStr.c_str());
+                            SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", ipPrefixsubnet.to_string().c_str());
                             failed = true;
                             break;
                         }
                         string op = SET_COMMAND;
 
-                        SWSS_LOG_NOTICE("Adding Vnet route for prefix : %s with nexthops %s\n",
-                                        prefixStr.c_str(),
-                                        nhStr.c_str());  
+                        SWSS_LOG_NOTICE("Adding Vnet route for prefix : %s with nexthops %s\n", prefixStr, nhStr);  
 
                         if (!updateTunnelRoute(vnet, ip_pfx, nexthops, op))
                         {
@@ -2363,8 +2363,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                         }
                         else
                         {
-                            SWSS_LOG_INFO("Successfully created tunnel route in hardware for prefix : %s\n",
-                                          prefixStr.c_str()); 
+                            SWSS_LOG_INFO("Successfully created tunnel route in hardware for prefix : %s\n", prefixStr); 
                         }
                     }
                 }
@@ -2582,10 +2581,11 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                     // we need to readd the route.
                     SWSS_LOG_NOTICE("Adding Custom monitored Route with prefix: %s and Nexthop %s \n",
                                     prefix.to_string().c_str(), nhg_custom.to_string().c_str()); 
-                    SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", prefix.to_string().c_str());
-                    if (gRouteOrch && !gRouteOrch->removeRouteIfExists(prefix))
+                    auto ipPrefixsubnet = prefix.getSubnet();
+                    SWSS_LOG_INFO("Attempting to remove BGP learnt route if it exists for prefix: %s\n", ipPrefixsubnet.to_string().c_str());
+                    if (gRouteOrch && !gRouteOrch->removeRouteIfExists(ipPrefixsubnet))
                     {
-                        SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", prefix.to_string().c_str());
+                        SWSS_LOG_NOTICE("Couldnt Removed bgp route for prefix : %s\n", ipPrefixsubnet.to_string().c_str());
                         route_status = false;
                     }
                     route_status = add_route(vr_id, pfx, nh_id);
