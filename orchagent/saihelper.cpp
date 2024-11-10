@@ -854,7 +854,7 @@ static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_grou
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugin_name);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugins);
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_size);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size);
 }
 
 static inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, const std::string &str)
@@ -939,7 +939,7 @@ void setFlexCounterGroupParameter(const string &group,
     attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
     attr.value.ptr = &flex_counter_group_param;
 
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_size);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.poll_interval, poll_interval);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.operation, operation);
@@ -1019,9 +1019,9 @@ void setFlexCounterGroupStatsMode(const std::string &group,
     notifySyncdCounterOperation(is_gearbox, attr);
 }
 
-void setFlexCounterGroupBulkSize(const std::string &group,
-                                 const std::string &bulk_size,
-                                 bool is_gearbox)
+void setFlexCounterGroupBulkChunkSize(const std::string &group,
+                                      const std::string &bulk_chunk_size,
+                                      bool is_gearbox)
 {
     sai_attribute_t attr;
     sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
@@ -1031,7 +1031,7 @@ void setFlexCounterGroupBulkSize(const std::string &group,
 
     initSaiRedisCounterEmptyParameter(flex_counter_group_param);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
-    initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_size, bulk_size);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_chunk_size, bulk_chunk_size);
 
     notifySyncdCounterOperation(is_gearbox, attr);
 }
