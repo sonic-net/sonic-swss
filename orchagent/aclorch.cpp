@@ -4746,28 +4746,6 @@ bool AclOrch::removeAclTableType(const string& tableTypeName)
 
 bool AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id)
 {
-    sai_object_id_t table_oid = getTableById(table_id);
-    if (table_oid == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_ERROR("Failed to add ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
-        return false;
-    }
-
-    if (!m_AclTables[table_oid].add(newRule))
-    {
-        return false;
-    }
-
-    if (newRule->hasCounter())
-    {
-        registerFlexCounter(*newRule);
-    }
-
-    return true;
-}
-
-bool AclOrch::addAclRuleWithEgrSetDscp(shared_ptr<AclRule> newRule, string table_id)
-{
     SWSS_LOG_ENTER();
     bool needsEgrSetDscp = false;
     string key = table_id + ":" + newRule->getId();
@@ -4784,18 +4762,40 @@ bool AclOrch::addAclRuleWithEgrSetDscp(shared_ptr<AclRule> newRule, string table
         }
     }
     // add the regular rule.
-    bool status = addAclRule(newRule, table_id);
+    bool status = true;
+    sai_object_id_t table_oid = getTableById(table_id);
+    if (table_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to add ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
+        status = false;
+    }
+    if (status && !m_AclTables[table_oid].add(newRule))
+    {
+        status = false;
+    }
+
+    if (status && newRule->hasCounter())
+    {
+        registerFlexCounter(*newRule);
+    }
     if(!status && needsEgrSetDscp)
     {
         removeEgrSetDscpRule(key);
         return false;
     }
-
     return status;
 }
 
 bool AclOrch::removeAclRule(string table_id, string rule_id)
 {
+    string key = table_id + ":" + rule_id;
+    if (m_egrDscpRuleMetadata.find(key) != m_egrDscpRuleMetadata.end())
+    {
+        if (!removeEgrSetDscpRule(key))
+        {
+            return false;
+        }
+    }
     sai_object_id_t table_oid = getTableById(table_id);
     if (table_oid == SAI_NULL_OBJECT_ID)
     {
@@ -4817,19 +4817,6 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     }
 
     return m_AclTables[table_oid].remove(rule_id);
-}
-
-bool AclOrch::removeAclRuleWithEgrSetDscp(string table_id, string rule_id)
-{
-    string key = table_id + ":" + rule_id;
-    if (m_egrDscpRuleMetadata.find(key) != m_egrDscpRuleMetadata.end())
-    {
-        if (!removeEgrSetDscpRule(key))
-        {
-            return false;
-        }
-    }
-    return removeAclRule(table_id, rule_id);
 }
 
 AclRule* AclOrch::getAclRule(string table_id, string rule_id)
@@ -5475,7 +5462,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
             {
-                if (addAclRuleWithEgrSetDscp(newRule, table_id))
+                if (addAclRule(newRule, table_id))
                 {
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);
                     it = consumer.m_toSync.erase(it);
@@ -5496,7 +5483,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (removeAclRuleWithEgrSetDscp(table_id, rule_id))
+            if (removeAclRule(table_id, rule_id))
             {
                 removeAclRuleStatus(table_id, rule_id);
                 it = consumer.m_toSync.erase(it);

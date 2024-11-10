@@ -559,8 +559,6 @@ public:
     bool removeEgrSetDscpTable(string table_id);
     bool addEgrSetDscpRule(string key, string dscpAction);
     bool removeEgrSetDscpRule(string key);
-    bool addAclRuleWithEgrSetDscp(shared_ptr<AclRule> aclRule, string table_id);
-    bool removeAclRuleWithEgrSetDscp(string table_id, string rule_id);
 
     bool addAclTableType(const AclTableType& tableType);
     bool removeAclTableType(const string& tableTypeName);
