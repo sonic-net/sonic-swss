@@ -1117,8 +1117,8 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_METADATA)
         {
-            matchData.data.u16 = to_uint<uint16_t>(attr_value);
-            matchData.mask.u16 = 0xFF;
+            matchData.data.u32 = to_uint<uint32_t>(attr_value);
+            matchData.mask.u32 = 0xFFFFFFFF;
 
             if (matchData.data.u16 < m_pAclOrch->getAclMetaDataMin() || matchData.data.u16 > m_pAclOrch->getAclMetaDataMax())
             {
@@ -3749,6 +3749,7 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
                 .build()
         );
 
