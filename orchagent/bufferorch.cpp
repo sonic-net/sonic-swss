@@ -1139,8 +1139,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     }
     else if (op == DEL_COMMAND)
     {
-        auto &typemap = (*m_buffer_type_maps[APP_BUFFER_PG_TABLE_NAME]);
-        if (typemap.find(key) == typemap.end())
+        if (!doesObjectExist(m_buffer_type_maps, APP_BUFFER_PG_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name))
         {
             SWSS_LOG_INFO("%s doesn't not exist, don't need to notfiy SAI", key.c_str());
             need_update_sai = false;
