@@ -4618,6 +4618,15 @@ bool AclOrch::removeAclTable(string table_id)
 {
     SWSS_LOG_ENTER();
 
+    if (m_egrSetDscpRef.find(table_id) != m_egrSetDscpRef.end())
+    {
+        if (!removeEgrSetDscpTable(table_id))
+        {
+            SWSS_LOG_ERROR("Failed to remove Egress Set DSCP table associated with ACL table %s", table_id.c_str());
+            return false;
+        }
+    }
+
     sai_object_id_t table_oid = getTableById(table_id);
     if (table_oid == SAI_NULL_OBJECT_ID)
     {
@@ -4686,25 +4695,6 @@ bool AclOrch::removeAclTable(string table_id)
         SWSS_LOG_ERROR("Failed to delete ACL table %s.", table_id.c_str());
         return false;
     }
-}
-
-bool AclOrch::removeAclTableWithEgrDscp(string table_id)
-{
-    SWSS_LOG_ENTER();
-    if (m_egrSetDscpRef.find(table_id) != m_egrSetDscpRef.end())
-    {
-        if (!removeEgrSetDscpTable(table_id))
-        {
-            SWSS_LOG_ERROR("Failed to remove Egress Set DSCP table associated with ACL table %s", table_id.c_str());
-            return false;
-        }
-    }
-    bool status = removeAclTable(table_id);
-    if (!status)
-    {
-        return false;
-    }
-    return true;
 }
 
 bool AclOrch::addAclTableType(const AclTableType& tableType)
@@ -5294,7 +5284,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (removeAclTableWithEgrDscp(table_id))
+            if (removeAclTable(table_id))
             {
                 // Remove ACL table status from STATE_DB
                 removeAclTableStatus(table_id);

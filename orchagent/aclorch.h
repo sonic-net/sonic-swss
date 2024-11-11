@@ -552,7 +552,6 @@ public:
     bool addAclTable(AclTable &aclTable);
     bool removeAclTable(string table_id);
     bool addAclTable(string table_id, AclTable &aclTable, string orignalTableTypeName);
-    bool removeAclTableWithEgrDscp(string table_id);
     bool updateAclTable(string table_id, AclTable &table, string orignalTableTypeName);
     EgressSetDscpTableStatus addEgrSetDscpTable(string table_id, AclTable &table, string orignalTableTypeName);
 
