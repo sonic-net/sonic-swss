@@ -83,6 +83,47 @@ class TestPac(object):
         ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
         assert ok, bvid
 
+        # Negative tests for adding Vlan member entry in Oper State DB
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "lan2|Ethernet0",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+            
+        )
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "lan2|Ethernet0"
+        )
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+        )
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2"
+        )
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet1000",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+        )
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet1000"
+        )
         # create a Vlan member entry in Oper State DB
         create_entry_tbl(
             dvs.sdb,
@@ -133,6 +174,12 @@ class TestPac(object):
         ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
                         [("mac", "00:00:00:00:00:01"), ("bvid", bvid)], [])
         assert ok == False, "The fdb entry still exists in ASIC"
+
+        # Negative test for removing Vlan member entry in Oper State DB
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet10"
+        )
 
         # remove Vlan member entry in Oper State DB
         remove_entry_tbl(
