@@ -10,8 +10,10 @@ extern "C" {
 #include <vector>
 #include <map>
 #include <bitset>
+#include <chrono>
 #include <unordered_set>
-
+#include <iomanip>
+#include <sstream>
 #include <macaddress.h>
 #include <sairedis.h>
 
@@ -72,6 +74,42 @@ struct SystemLagInfo
     std::string alias = "";
     int32_t switch_id = -1;
     int32_t spa_id = 0;
+};
+
+class PortOperErrorEvent
+{
+public:
+    PortOperErrorEvent() = default;
+    PortOperErrorEvent(const sai_port_error_status_t error, std::string key) : m_errorFlag(error), m_dbKeyError(key){}
+    ~PortOperErrorEvent() = default;
+
+    inline void incrementErrorCount(void) { m_errorCount++; }
+    
+    inline size_t getErrorCount(void) const { return m_errorCount; }
+    
+    void recordEventTime(void) {
+        auto now = std::chrono::system_clock::now();
+        m_eventTime = std::chrono::system_clock::to_time_t(now);
+    }
+    
+    std::string getEventTime(void) {
+        std::ostringstream oss;
+        oss << std::put_time(std::gmtime(&m_eventTime), "%Y-%m-%d %H:%M:%S");
+        return oss.str();
+    }
+
+    inline std::string getDbKey(void) const { return m_dbKeyError; }
+    
+    // Returns true if port oper error flag in sai_port_error_status_t is set
+    bool isErrorSet(sai_port_error_status_t errstatus) const { return (m_errorFlag & errstatus);}
+
+    static const std::unordered_map<sai_port_error_status_t, std::string> db_key_errors;
+
+private:
+    sai_port_error_status_t m_errorFlag = SAI_PORT_ERROR_STATUS_CLEAR;
+    size_t m_errorCount = 0;
+    std::string m_dbKeyError; // DB key for this port error
+    std::time_t m_eventTime = 0;
 };
 
 class Port
@@ -155,6 +193,7 @@ public:
     sai_object_id_t     m_parent_port_id = 0;
     uint32_t            m_dependency_bitmap = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
+    sai_port_error_status_t m_oper_error_status = SAI_PORT_ERROR_STATUS_CLEAR; //Bitmap of last port oper error status
     std::set<std::string> m_members;
     std::set<std::string> m_child_ports;
     std::vector<sai_object_id_t> m_queue_ids;
@@ -192,6 +231,9 @@ public:
     sai_object_id_t  m_switch_id = 0;
     sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
+
+    /* Port oper error status to event map*/
+    std::unordered_map<sai_port_error_status_t, PortOperErrorEvent> m_portOperErrorToEvent;
 
     /* pre-emphasis */
     std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;

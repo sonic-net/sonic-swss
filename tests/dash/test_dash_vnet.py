@@ -8,6 +8,7 @@ from dash_api.route_rule_pb2 import *
 from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
+from dvslib.dvs_flex_counter import TestFlexCountersBase
 
 from dash_db import *
 from dash_configs import *
@@ -19,10 +20,17 @@ import socket
 
 from dvslib.sai_utils import assert_sai_attribute_exists
 
+eni_counter_group_meta = {
+    'key': 'ENI',
+    'group_name': 'ENI_STAT_COUNTER',
+    'name_map': 'COUNTERS_ENI_NAME_MAP',
+    'post_test': 'post_eni_counter_test'
+}
+
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
-class TestDash(object):
+class TestDash(TestFlexCountersBase):
     def test_appliance(self, dash_db: DashDB):
         self.appliance_id = "100"
         self.sip = "10.0.0.1"
@@ -55,6 +63,14 @@ class TestDash(object):
         vnet_attr = dash_db.get_asic_db_entry(ASIC_VNET_TABLE, self.vnet_oid)
         assert_sai_attribute_exists("SAI_VNET_ATTR_VNI", vnet_attr, self.vni)
 
+    def post_eni_counter_test(self, meta_data):
+        counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
+
+        for counter_entry in counters_keys.items():
+            self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
+        self.wait_for_table_empty(meta_data['name_map'])
+
     def test_eni(self, dash_db: DashDB):
         self.vnet = "Vnet1"
         self.mac_string = "F4939FEFC47E"
@@ -78,6 +94,9 @@ class TestDash(object):
 
         assert_sai_attribute_exists("SAI_ENI_ATTR_VNET_ID", attrs, str(self.vnet_oid))
         assert_sai_attribute_exists("SAI_ENI_ATTR_ADMIN_STATE", attrs, "true")
+
+        time.sleep(1)
+        self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
 
         eni_addr_maps = dash_db.wait_for_asic_db_keys(ASIC_ENI_ETHER_ADDR_MAP_TABLE)
         attrs = dash_db.get_asic_db_entry(ASIC_ENI_ETHER_ADDR_MAP_TABLE, eni_addr_maps[0])
