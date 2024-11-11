@@ -9,6 +9,7 @@
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "macaddress.h"
+#include "schema.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
