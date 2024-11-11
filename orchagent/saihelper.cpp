@@ -74,6 +74,7 @@ sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
 sai_my_mac_api_t*           sai_my_mac_api;
 sai_generic_programmable_api_t* sai_generic_programmable_api;
+sai_dash_appliance_api_t*           sai_dash_appliance_api;
 sai_dash_acl_api_t*                 sai_dash_acl_api;
 sai_dash_vnet_api_t                 sai_dash_vnet_api;
 sai_dash_outbound_ca_to_pa_api_t*   sai_dash_outbound_ca_to_pa_api;
@@ -221,6 +222,7 @@ void initSaiApi()
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
     sai_api_query(SAI_API_MY_MAC,               (void **)&sai_my_mac_api);
     sai_api_query(SAI_API_GENERIC_PROGRAMMABLE, (void **)&sai_generic_programmable_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_APPLIANCE,            (void**)&sai_dash_appliance_api);
     sai_api_query((sai_api_t)SAI_API_DASH_ACL,                  (void**)&sai_dash_acl_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VNET,                 (void**)&sai_dash_vnet_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_CA_TO_PA,    (void**)&sai_dash_outbound_ca_to_pa_api);
@@ -1099,4 +1101,34 @@ void stopFlexCounterPolling(sai_object_id_t switch_oid,
     initSaiRedisCounterEmptyParameter(flex_counter_param.stats_mode);
 
     sai_switch_api->set_switch_attribute(switch_oid, &attr);
+}
+
+/*
+    Use metadata info of the SAI object to infer all the available stats
+    Syncd already has logic to filter out the supported stats
+*/
+std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t object_type)
+{
+    std::vector<sai_stat_id_t> stat_list;
+    auto info = sai_metadata_get_object_type_info(object_type);
+
+    if (!info)
+    {
+        SWSS_LOG_ERROR("Metadata info query failed, invalid object: %d", object_type);
+        return stat_list;
+    }
+
+    SWSS_LOG_NOTICE("SAI object %s supports stat type %s",
+            sai_serialize_object_type(object_type).c_str(),
+            info->statenum->name);
+
+    auto statenumlist = info->statenum->values;
+    auto statnumcount = (uint32_t)info->statenum->valuescount;
+    stat_list.reserve(statnumcount);
+
+    for (uint32_t i = 0; i < statnumcount; i++)
+    {
+        stat_list.push_back(static_cast<sai_stat_id_t>(statenumlist[i]));
+    }
+    return stat_list;
 }
