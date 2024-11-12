@@ -113,7 +113,7 @@ class TestPac(object):
         )
         create_entry_tbl(
             dvs.sdb,
-            "OPER_VLAN_MEMBER", "Vlan2|Ethernet1000",
+            "OPER_VLAN_MEMBER", "Vlan5000|Ethernet0",
             [
                 ("tagging_mode", "untagged"),
             ]
@@ -122,7 +122,7 @@ class TestPac(object):
         assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
         remove_entry_tbl(
             dvs.sdb,
-            "OPER_VLAN_MEMBER", "Vlan2|Ethernet1000"
+            "OPER_VLAN_MEMBER", "Vlan5000|Ethernet0"
         )
         # create a Vlan member entry in Oper State DB
         create_entry_tbl(
