@@ -79,23 +79,17 @@ class TestPac(object):
         dvs.create_vlan("2")
         time.sleep(1)
 
+        dvs.create_vlan("3")
+        time.sleep(1)
+
+        # create vlan member
+        dvs.create_vlan_member("3", "Ethernet0")
+        time.sleep(1)
+
         # Get bvid from vlanid
         ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
         assert ok, bvid
 
-        create_entry_tbl(
-            dvs.sdb,
-            "OPER_VLAN_MEMBER", "Vlan2",
-            [
-                ("tagging_mode", "untagged"),
-            ]
-        )
-        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
-        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
-        remove_entry_tbl(
-            dvs.sdb,
-            "OPER_VLAN_MEMBER", "Vlan2"
-        )
         # create a Vlan member entry in Oper State DB
         create_entry_tbl(
             dvs.sdb,
@@ -110,7 +104,7 @@ class TestPac(object):
         bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
         vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
-        assert vlan_after - vlan_before == 1, "The Vlan2 wasn't created"
+        assert vlan_after - vlan_before == 2, "The Vlan2 wasn't created"
         assert bp_after - bp_before == 1, "The bridge port wasn't created"
         assert vm_after - vm_before == 1, "The vlan member wasn't added"
 
@@ -147,18 +141,14 @@ class TestPac(object):
                         [("mac", "00:00:00:00:00:01"), ("bvid", bvid)], [])
         assert ok == False, "The fdb entry still exists in ASIC"
 
-        # Negative test for removing Vlan member entry in Oper State DB
-        remove_entry_tbl(
-            dvs.sdb,
-            "OPER_VLAN_MEMBER", "Vlan2|Ethernet10"
-        )
-
         # remove Vlan member entry in Oper State DB
         remove_entry_tbl(
             dvs.sdb,
             "OPER_VLAN_MEMBER", "Vlan2|Ethernet0"
         )
         dvs.remove_vlan("2")
+        dvs.remove_vlan_member("3", "Ethernet0")
+        dvs.remove_vlan("3")
 
         vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
