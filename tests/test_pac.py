@@ -83,6 +83,19 @@ class TestPac(object):
         ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
         assert ok, bvid
 
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+        )
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        assert vm_after - vm_before == 1, "The vlan member shouldn't have been added"
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2"
+        )
         # create a Vlan member entry in Oper State DB
         create_entry_tbl(
             dvs.sdb,
