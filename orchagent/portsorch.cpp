@@ -3570,7 +3570,8 @@ bool PortsOrch::initPort(const PortConfig &port)
                     m_recircPortRole[alias] = role;
                 }
 
-                if (p.m_host_tx_queue_configured)
+                // We have to test the size of m_queue_ids here since it isn't initialized on some platforms (like DPU)
+                if (p.m_host_tx_queue_configured && p.m_queue_ids.size() > p.m_host_tx_queue)
                 {
                     createPortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
                 }
@@ -3605,7 +3606,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
         return;
     }
 
-    if (p.m_host_tx_queue_configured)
+    if (p.m_host_tx_queue_configured && p.m_queue_ids.size() > p.m_host_tx_queue)
     {
         removePortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
     }
