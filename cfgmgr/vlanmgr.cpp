@@ -736,23 +736,9 @@ void VlanMgr::doVlanPacFdbTask(Consumer &consumer)
 
         SWSS_LOG_NOTICE("VlanMgr process static MAC vlan: %s mac: %s ", keys[0].c_str(), keys[1].c_str());
 
-        /* Ensure the key starts with "Vlan" otherwise ignore */
-        if (strncmp(keys[0].c_str(), VLAN_PREFIX, 4))
-        {
-            SWSS_LOG_ERROR("Invalid key format. No 'Vlan' prefix: %s", keys[0].c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-
         int vlan_id;
         vlan_id = stoi(keys[0].substr(4));
 
-        if ((vlan_id <= 0) || (vlan_id > 4095))
-        {
-            SWSS_LOG_ERROR("Invalid key format. Vlan is out of range: %s", keys[0].c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
         if (!m_vlans.count(keys[0]))
         {
             SWSS_LOG_NOTICE("Vlan %s not available yet, mac %s", keys[0].c_str(), keys[1].c_str());
@@ -813,14 +799,6 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
 
         string key = kfvKey(t);
 
-        /* Ensure the key starts with "Vlan" otherwise ignore */
-        if (strncmp(key.c_str(), VLAN_PREFIX, 4))
-        {
-            SWSS_LOG_ERROR("Invalid key format. No 'Vlan' prefix: %s", key.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-
         key = key.substr(4);
         size_t found = key.find(CONFIGDB_KEY_SEPARATOR);
         int vlan_id;
@@ -829,13 +807,6 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
         {
             vlan_id = stoi(key.substr(0, found));
             port_alias = key.substr(found+1);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Invalid key format. No member port is presented: %s",
-                           kfvKey(t).c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
         }
 
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
@@ -886,10 +857,7 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
                 m_appVlanMemberTableProducer.del(key);
                 m_stateVlanMemberTable.del(kfvKey(t));
             }
-            else
-            {
-                SWSS_LOG_DEBUG("%s doesn't exist", kfvKey(t).c_str());
-            }
+
             auto vlans = m_PortVlanMember[port_alias];
             for (const auto& vlan : vlans)
             {
