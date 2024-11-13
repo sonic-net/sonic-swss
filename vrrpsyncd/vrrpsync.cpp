@@ -69,7 +69,7 @@ bool VrrpIsVrrpIntf(const char *ifname)
     if (!ifname)
         return false;
     
-    if (strncmp(ifname, "vrrp", 4))
+    if (strncmp(ifname, "Vrrp", 4))
         return false;
 
     return true;
@@ -438,16 +438,11 @@ void VrrpSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int    if_flags = 0;
     int l_link;
     
-    bool delete_key = false;
-
     m_netLinkOnMsg++;
 
     if ((nlmsg_type != RTM_NEWLINK) && (nlmsg_type != RTM_DELLINK) &&
         (nlmsg_type != RTM_NEWADDR) && (nlmsg_type != RTM_DELADDR))
         return;
-
-    if ((nlmsg_type == RTM_DELLINK) || (nlmsg_type == RTM_DELADDR))
-        delete_key = true;
 
     switch (nlmsg_type) 
     {
