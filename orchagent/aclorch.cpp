@@ -45,6 +45,7 @@ extern string gMySwitchType;
 
 
 #define EGR_SET_DSCP_TABLE_ID "EgressSetDSCP"
+#define MAX_META_DATA_VALUE 4095
 
 const int TCP_PROTOCOL_NUM = 6; // TCP protocol number
 
@@ -1125,7 +1126,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             matchData.data.u32 = to_uint<uint32_t>(attr_value);
             matchData.mask.u32 = 0xFFFFFFFF;
 
-            if (matchData.data.u16 < m_pAclOrch->getAclMetaDataMin() || matchData.data.u16 > m_pAclOrch->getAclMetaDataMax())
+            if (matchData.data.u32 < m_pAclOrch->getAclMetaDataMin() || matchData.data.u32 > m_pAclOrch->getAclMetaDataMax())
             {
                 SWSS_LOG_ERROR("Invalid MATCH_METADATA configuration: %s, expected value between %d - %d", attr_value.c_str(),
                     m_pAclOrch->getAclMetaDataMin(), m_pAclOrch->getAclMetaDataMax());
@@ -3420,10 +3421,25 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
                 {
                     SWSS_LOG_NOTICE("ACL_USER_META_DATA_RANGE, min: %u, max: %u", attrs[0].value.u32range.min, attrs[0].value.u32range.max);
                     m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_RANGE_CAPABLE] = "true";
-                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = std::to_string(attrs[0].value.u32range.min);
-                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = std::to_string(attrs[0].value.u32range.max);
-                    metadataMin = uint16_t(attrs[0].value.u32range.min);
-                    metadataMax = uint16_t(attrs[0].value.u32range.max);
+                    if (attrs[0].value.u32range.min > MAX_META_DATA_VALUE)
+                    {
+                        SWSS_LOG_ERROR("Unsupported ACL_USER_META_DATA_RANGE min value");
+                        metadataMin = 0;
+                    }
+                    else
+                    {
+                        metadataMin = uint16_t(attrs[0].value.u32range.min);
+                    }
+                    if (attrs[0].value.u32range.max > MAX_META_DATA_VALUE)
+                    {
+                        metadataMax = MAX_META_DATA_VALUE;
+                    }
+                    else
+                    {
+                        metadataMax = uint16_t(attrs[0].value.u32range.max);
+                    }
+                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = metadataMin;
+                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = metadataMax;
                 }
 
             }
@@ -5447,13 +5463,13 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
 
             if (bHasIPV4 && bHasIPV6)
-	        {
-		        if (type == TABLE_TYPE_L3V4V6)
-		        {
-			        SWSS_LOG_ERROR("Rule '%s' is invalid since it has both v4 and v6 matchfields.", rule_id.c_str());
-			        bAllAttributesOk = false;
-		        }
-	        }
+            {
+                if (type == TABLE_TYPE_L3V4V6)
+                {
+                    SWSS_LOG_ERROR("Rule '%s' is invalid since it has both v4 and v6 matchfields.", rule_id.c_str());
+                    bAllAttributesOk = false;
+                }
+            }
 
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
