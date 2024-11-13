@@ -146,7 +146,7 @@ bool VrrpOrch::addOperation(const Request& request)
             sai_status_t rif_status = sai_router_intfs_api->remove_router_interface (vrrp_rif_id);
             if (rif_status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to delete rif %lx added for Vrrp Mac on interface %s, rv:%d",
+                SWSS_LOG_ERROR("Failed to delete rif 0x%" PRIx64 " added for Vrrp Mac on interface %s, rv:%d",
                         vrrp_rif_id, port.m_alias.c_str(), rif_status);
             }
             SWSS_LOG_ERROR("Failed to program Vrrp IP on interface %s, rv:%d",
