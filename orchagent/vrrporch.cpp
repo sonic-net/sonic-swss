@@ -121,9 +121,9 @@ bool VrrpOrch::addOperation(const Request& request)
     attr.value.booldata =  true;
     vmac_attrs.push_back(attr);
     //program VRRPMAC.
-    SWSS_LOG_INFO("vrrp orch add, before create_router_interface : port name %s, rif_id %lx, &rif_id %p",request.getKeyString(0).c_str(),vrrp_rif_id,&vrrp_rif_id);
+    SWSS_LOG_INFO("vrrp orch add, before create_router_interface : port name %s, 0x%" PRIx64 " &rif_id %p",request.getKeyString(0).c_str(),vrrp_rif_id,&vrrp_rif_id);
     sai_status_t vmac_status = sai_router_intfs_api->create_router_interface(&vrrp_rif_id, gSwitchId, (uint32_t)vmac_attrs.size(), vmac_attrs.data());
-    SWSS_LOG_NOTICE("vrrp orch add, after create_router_interface : port name %s, rif_id %lx",request.getKeyString(0).c_str(),vrrp_rif_id);
+    SWSS_LOG_NOTICE("vrrp orch add, after create_router_interface : port name %s, rif_id 0x%" PRIx64, request.getKeyString(0).c_str(),vrrp_rif_id);
     if (vmac_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to program Vrrp Mac on interface %s, rv:%d",
@@ -159,12 +159,12 @@ bool VrrpOrch::addOperation(const Request& request)
     if (it == vrrp_table_.end())
     {
         vrrp_table_[key] = {request.getAttrMacAddress("vmac"),vrrp_rif_id};
-        SWSS_LOG_NOTICE("_vrrp_table add port %s, ip %s, vmac %s, rif_id %lx",request.getKeyString(0).c_str(),
+        SWSS_LOG_NOTICE("_vrrp_table add port %s, ip %s, vmac %s, rif_id 0x%" PRIx64, request.getKeyString(0).c_str(),
                                 ip_pfx.to_string().c_str(),mac.to_string().c_str(),vrrp_rif_id);
     }
     else
     {
-        SWSS_LOG_NOTICE("_vrrp_table entry already exists with vmac %s, rif_id %lx, update vmac to %s, rifid to %lx",
+        SWSS_LOG_NOTICE("_vrrp_table entry already exists with vmac %s, rif_id 0x%" PRIx64 " update vmac to %s, rifid to 0x%" PRIx64,
                 vrrp_table_[key].vmac.to_string().c_str(),vrrp_table_[key].rifid,
                 request.getAttrMacAddress("vmac").to_string().c_str(),vrrp_rif_id);
         vrrp_table_.erase(key);
@@ -237,7 +237,7 @@ bool VrrpOrch::delOperation(const Request& request)
                  port.m_alias.c_str(), vmac_status);
         throw runtime_error("Failed to remove Vrrp Mac on interface.");
     }
-    SWSS_LOG_NOTICE("vrrp orch del success,port %s vip %s vmac %s rifid %lx",request.getKeyString(0).c_str(),
+    SWSS_LOG_NOTICE("vrrp orch del success,port %s vip %s vmac %s rifid 0x%" PRIx64, request.getKeyString(0).c_str(),
         ip_pfx.to_string().c_str(),vrrp_table_[key].vmac.to_string().c_str(),vrrp_table_[key].rifid);
     vrrp_table_.erase(key);
     return true;
