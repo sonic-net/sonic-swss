@@ -381,6 +381,9 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 {
     SWSS_LOG_ENTER();
 
+    bool src_ip_initialized = false;
+    bool dst_ip_initialized = false;
+
     auto session = m_syncdMirrors.find(key);
     if (session != m_syncdMirrors.end())
     {
@@ -397,10 +400,12 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             if (fvField(i) == MIRROR_SESSION_SRC_IP)
             {
                 entry.srcIp = fvValue(i);
+                src_ip_initialized = true;
             }
             else if (fvField(i) == MIRROR_SESSION_DST_IP)
             {
                 entry.dstIp = fvValue(i);
+                dst_ip_initialized = true;
             }
             else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
             {
@@ -485,7 +490,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         }
     }
     // Entry validation as a whole
-    if (entry.srcIp.getIp().family != entry.dstIp.getIp().family)
+    if (src_ip_initialized && dst_ip_initialized && entry.srcIp.getIp().family != entry.dstIp.getIp().family)
     {
         SWSS_LOG_ERROR("Address family of source and destination IPs is different");
         return task_process_status::task_invalid_entry;
