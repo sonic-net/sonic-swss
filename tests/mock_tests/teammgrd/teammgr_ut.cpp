@@ -14,7 +14,12 @@ static std::pair<bool, FILE*> (*callback_fopen)(const char *pathname, const char
 static int cb_kill(pid_t pid, int sig)
 {
     mockKillCommands.push_back(std::make_pair(pid, sig));
-    return 0;
+    if (!sig) {
+        errno = ESRCH;
+        return -1;
+    } else {
+        return 0;
+    }
 }
 
 int kill(pid_t pid, int sig)
@@ -169,8 +174,9 @@ namespace teammgr_ut
         ASSERT_NE(mockCallArgs.size(), 0);
         EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel382"), std::string::npos);
         EXPECT_EQ(mockCallArgs.size(), 1);
-        EXPECT_EQ(mockKillCommands.front().first, 1234);
         EXPECT_EQ(mockKillCommands.size(), 1);
+        EXPECT_EQ(mockKillCommands.front().first, 1234);
+        EXPECT_EQ(mockKillCommands.front().second, SIGTERM);
     }
 
     TEST_F(TeamMgrTest, testProcessPidFileMissingAfterAddLagFailure)
@@ -203,8 +209,9 @@ namespace teammgr_ut
         ASSERT_EQ(mockCallArgs.size(), 3);
         ASSERT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel495"), std::string::npos);
         teammgr.cleanTeamProcesses();
-        EXPECT_EQ(mockKillCommands.size(), 1);
+        EXPECT_EQ(mockKillCommands.size(), 2);
         EXPECT_EQ(mockKillCommands.front().first, 5678);
+        EXPECT_EQ(mockKillCommands.front().second, SIGTERM);
     }
 
     TEST_F(TeamMgrTest, testProcessPidFileMissingDuringCleanup)
@@ -242,6 +249,6 @@ namespace teammgr_ut
         teammgr.cleanTeamProcesses();
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
         EXPECT_EQ(mockKillCommands.size(), 0);
-        EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count(), 200);
+        EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count(), 400);
     }
 }

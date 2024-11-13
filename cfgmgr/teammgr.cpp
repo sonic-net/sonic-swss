@@ -173,7 +173,7 @@ void TeamMgr::cleanTeamProcesses()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
 
-    std::unordered_map<std::string, pid_t> aliasPidMap;
+    std::unordered_map<std::string, int> aliasPidMap;
     uint32_t sleepCounter = 0;
 
     for (const auto& alias: m_lagList)
@@ -182,7 +182,7 @@ void TeamMgr::cleanTeamProcesses()
         if (++sleepCounter % 10 == 0) {
             // Sleep for 100 milliseconds so as to not overwhelm the netlink
             // socket buffers with events about interfaces going down
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
             sleepCounter = 0;
         }
 
@@ -218,11 +218,11 @@ void TeamMgr::cleanTeamProcesses()
         const auto &alias = cit.first;
         const auto &pid = cit.second;
 
-        std::stringstream cmd;
-        std::string res;
-
         SWSS_LOG_NOTICE("Waiting for port channel %s pid %d to stop...", alias.c_str(), pid);
-        waitpid(pid, NULL, 0);
+
+        while (!kill(pid, 0)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
     }
 
     SWSS_LOG_NOTICE("LAGs cleanup is done");
@@ -650,8 +650,6 @@ bool TeamMgr::removeLag(const string &alias)
 {
     SWSS_LOG_ENTER();
 
-    stringstream cmd;
-    string res;
     pid_t pid;
 
     {
