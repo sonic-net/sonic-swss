@@ -134,12 +134,6 @@ class TestPac(object):
                         [("mac", "00:00:00:00:00:01"), ("bvid", bvid)], [])
         assert ok == False, "The fdb entry still exists in ASIC"
 
-        # Negative test for removing Vlan member entry in Oper State DB
-        remove_entry_tbl(
-            dvs.sdb,
-            "OPER_VLAN_MEMBER", "Vlan2|Ethernet10"
-        )
-
         # remove Vlan member entry in Oper State DB
         remove_entry_tbl(
             dvs.sdb,

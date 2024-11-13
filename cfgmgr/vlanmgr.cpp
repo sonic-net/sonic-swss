@@ -801,7 +801,7 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
 
         key = key.substr(4);
         size_t found = key.find(CONFIGDB_KEY_SEPARATOR);
-        int vlan_id;
+        int vlan_id = 0;
         string vlan_alias, port_alias;
         if (found != string::npos)
         {
