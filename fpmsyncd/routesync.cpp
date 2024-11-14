@@ -98,8 +98,8 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     catch (const exception &e)
     {
         cout << "Exception \"" << e.what() << "\" had been thrown in daemon in loading constants.yml" << endl;
-        route_tag_not_to_appdb = 0;
-        route_tag_fallback_to_default_route = 0;
+        route_tag_not_to_appdb = 0xffffffff;
+        route_tag_fallback_to_default_route = 0xffffffff;
     }
 }
 
