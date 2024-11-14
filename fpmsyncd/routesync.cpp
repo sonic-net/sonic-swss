@@ -715,7 +715,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     if (tag == route_tag_not_to_appdb)
         return;
     else if (tag == route_tag_fallback_to_default_route)
-       route_eligible_for_fallback_to_default_route = true;
+        route_eligible_for_fallback_to_default_route = true;
 
     dip = rtnl_route_get_dst(route_obj);
     nl_addr2str(dip, destipprefix + strlen(destipprefix), MAX_ADDR_SIZE);
