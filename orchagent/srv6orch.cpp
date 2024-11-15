@@ -280,7 +280,7 @@ bool Srv6Orch::srv6Nexthops(const NextHopGroupKey &nhgKey, sai_object_id_t &next
 bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list, const string sidlist_type)
 {
     SWSS_LOG_ENTER();
-    bool exists = (sid_table_.find(sid_name) != sid_table_.end());
+    bool exists = (sid_table_.find(sid_name) != sid_table_.end()) && sid_table_[sid_name].sid_object_id;
     sai_segment_list_t segment_list;
     vector<string>sid_ips = tokenize(sid_list, SID_LIST_DELIMITER);
     sai_object_id_t segment_oid;
@@ -352,34 +352,34 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list,
     return true;
 }
 
-bool Srv6Orch::deleteSidList(const string sid_name)
+task_process_status Srv6Orch::deleteSidList(const string sid_name)
 {
     SWSS_LOG_ENTER();
     sai_status_t status = SAI_STATUS_SUCCESS;
     if (sid_table_.find(sid_name) == sid_table_.end())
     {
         SWSS_LOG_ERROR("segment name %s doesn't exist", sid_name.c_str());
-        return false;
+        return task_process_status::task_failed;
     }
 
-    if (sid_table_[sid_name].nexthops.size() > 1)
+    if (sid_table_[sid_name].nexthops.size() > 0)
     {
         SWSS_LOG_NOTICE("segment object %s referenced by other nexthops: count %zu, not deleting",
                       sid_name.c_str(), sid_table_[sid_name].nexthops.size());
-        return false;
+        return task_process_status::task_need_retry;
     }
     SWSS_LOG_INFO("Remove sid list, segname %s", sid_name.c_str());
     status = sai_srv6_api->remove_srv6_sidlist(sid_table_[sid_name].sid_object_id);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete SRV6 sidlist object for %s", sid_name.c_str());
-        return false;
+        return task_process_status::task_failed;
     }
     sid_table_.erase(sid_name);
-    return true;
+    return task_process_status::task_success;
 }
 
-void Srv6Orch::doTaskSidTable(const KeyOpFieldsValuesTuple & tuple)
+task_process_status Srv6Orch::doTaskSidTable(const KeyOpFieldsValuesTuple & tuple)
 {
     SWSS_LOG_ENTER();
     string sid_name = kfvKey(tuple);
@@ -402,17 +402,23 @@ void Srv6Orch::doTaskSidTable(const KeyOpFieldsValuesTuple & tuple)
         if (!createUpdateSidList(sid_name, sid_list, sidlist_type))
         {
           SWSS_LOG_ERROR("Failed to process sid %s", sid_name.c_str());
+          return task_process_status::task_failed;
         }
     }
     else if (op == DEL_COMMAND)
     {
-        if (!deleteSidList(sid_name))
+        task_process_status status = deleteSidList(sid_name);
+        if (status != task_process_status::task_success)
         {
             SWSS_LOG_ERROR("Failed to delete sid %s", sid_name.c_str());
+            return status;
         }
     } else {
         SWSS_LOG_ERROR("Invalid command");
+        return task_process_status::task_failed;
     }
+
+    return task_process_status::task_success;
 }
 
 bool Srv6Orch::mySidExists(string my_sid_string)
@@ -904,6 +910,7 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
 void Srv6Orch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+    task_process_status status;
     const string &table_name = consumer.getTableName();
     auto it = consumer.m_toSync.begin();
     while(it != consumer.m_toSync.end())
@@ -912,7 +919,12 @@ void Srv6Orch::doTask(Consumer &consumer)
         SWSS_LOG_INFO("table name : %s",table_name.c_str());
         if (table_name == APP_SRV6_SID_LIST_TABLE_NAME)
         {
-            doTaskSidTable(t);
+            status = doTaskSidTable(t);
+            if (status == task_process_status::task_need_retry)
+            {
+                it++;
+                continue;
+            }
         }
         else if (table_name == APP_SRV6_MY_SID_TABLE_NAME)
         {
