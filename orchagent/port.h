@@ -126,6 +126,7 @@ public:
         VLAN,
         LAG,
         TUNNEL,
+        L2_ECMP_GROUP,
         SUBPORT,
         SYSTEM,
         UNKNOWN
@@ -188,6 +189,7 @@ public:
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
     sai_object_id_t     m_tunnel_id = 0;
+    sai_object_id_t     m_l2_ecmp_group_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
     sai_object_id_t     m_parent_port_id = 0;

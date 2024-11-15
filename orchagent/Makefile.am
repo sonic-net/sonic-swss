@@ -99,6 +99,9 @@ orchagent_SOURCES = \
             natorch.cpp \
             mlagorch.cpp \
             isolationgrouporch.cpp \
+            shlorch.cpp \
+            l2nhgorch.cpp \
+            evpnmhorch.cpp \
             muxorch.cpp \
             macsecorch.cpp \
             lagid.cpp \

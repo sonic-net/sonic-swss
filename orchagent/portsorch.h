@@ -212,6 +212,10 @@ public:
 
     bool addTunnel(string tunnel,sai_object_id_t, bool learning=true);
     bool removeTunnel(Port tunnel);
+
+    bool addL2EcmpGroup(string alias, sai_object_id_t oid);
+    bool removeL2EcmpGroup(Port l2_ecmp_group);
+
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode, string end_point_ip = "");

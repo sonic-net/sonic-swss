@@ -2555,7 +2555,7 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     SWSS_LOG_ENTER();
     vector<Port> portv;
 
-    if(port.m_type == Port::TUNNEL)
+    if (port.m_type == Port::TUNNEL || port.m_type == Port::L2_ECMP_GROUP)
     {
         return true;
     }
@@ -6166,6 +6166,20 @@ bool PortsOrch::addBridgePort(Port &port)
         attr.value.oid = m_default1QBridge;
         attrs.push_back(attr);
     }
+    else if  (port.m_type == Port::L2_ECMP_GROUP)
+    {
+        attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attr.value.s32 = SAI_BRIDGE_PORT_TYPE_L2_ECMP_GROUP;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_L2_ECMP_GROUP_ID;
+        attr.value.oid = port.m_l2_ecmp_group_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
+        attr.value.oid = m_default1QBridge;
+        attrs.push_back(attr);
+    }
     else
     {
         SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, invalid port type %d",
@@ -7289,6 +7303,30 @@ bool PortsOrch::removeTunnel(Port tunnel)
     SWSS_LOG_ENTER();
 
     m_portList.erase(tunnel.m_alias);
+
+    return true;
+}
+
+bool PortsOrch::addL2EcmpGroup(string alias, sai_object_id_t oid)
+{
+    SWSS_LOG_ENTER();
+
+    Port l2_ecmp_group(alias, Port::L2_ECMP_GROUP);
+
+    l2_ecmp_group.m_l2_ecmp_group_id = oid;
+    l2_ecmp_group.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+    m_portList[alias] = l2_ecmp_group;
+
+    SWSS_LOG_INFO("Create a port for L2 ECMP Group %s oid:%" PRIx64, alias.c_str(), oid);
+
+    return true;
+}
+
+bool PortsOrch::removeL2EcmpGroup(Port l2_ecmp_group)
+{
+    SWSS_LOG_ENTER();
+
+    m_portList.erase(l2_ecmp_group.m_alias);
 
     return true;
 }

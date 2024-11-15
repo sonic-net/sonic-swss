@@ -26,13 +26,15 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
-    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
+    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
+    m_l2nhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
     {
         m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
         m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
+        m_AppRestartAssist->registerAppTable(APP_L2_NEXTHOP_GROUP_TABLE_NAME, &m_l2nhgTable);
     }
 }
 
@@ -275,11 +277,11 @@ bool FdbSync::macCheckSrcDB(struct m_fdb_info *info)
 
 void FdbSync::macDelVxlanEntry(string auxkey, struct m_fdb_info *info)
 {
-    std::string vtep = m_mac[auxkey].vtep;
+    std::string nh = m_mac[auxkey].nh;
 
     const std::string cmds = std::string("")
         + " bridge fdb del " + info->mac + " dev " 
-        + m_mac[auxkey].ifname + " dst " + vtep + " vlan " + info->vid.substr(4);
+        + m_mac[auxkey].ifname + " dst " + nh + " vlan " + info->vid.substr(4);
 
     std::string res;
     int ret = swss::exec(cmds, res);
@@ -618,22 +620,23 @@ void FdbSync::imetDelRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
 
 void FdbSync::macDelVxlanDB(string key)
 {
-    string vtep = m_mac[key].vtep;
+    string nh_type = m_mac[key].nh_type;
+    string snh = m_mac[key].nh;
     string type;
     string vni = to_string(m_mac[key].vni);
     type = m_mac[key].type;
 
     std::vector<FieldValueTuple> fvVector;
-    FieldValueTuple rv("remote_vtep", vtep);
+    FieldValueTuple nh(nh_type, snh);
     FieldValueTuple t("type", type);
     FieldValueTuple v("vni", vni);
-    fvVector.push_back(rv);
+    fvVector.push_back(nh);
     fvVector.push_back(t);
     fvVector.push_back(v);
 
-    SWSS_LOG_NOTICE("%sVXLAN_FDB_TABLE: DEL_KEY %s vtep:%s type:%s", 
+    SWSS_LOG_NOTICE("%sVXLAN_FDB_TABLE: DEL_KEY %s %s:%s type:%s", 
             m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
-            key.c_str(), vtep.c_str(), type.c_str());
+            key.c_str(), nh_type.c_str(), snh.c_str(), type.c_str());
 
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
@@ -647,25 +650,26 @@ void FdbSync::macDelVxlanDB(string key)
 
 }
 
-void FdbSync::macAddVxlan(string key, struct in_addr vtep, string type, uint32_t vni, string intf_name)
+void FdbSync::macAddVxlan(string key, struct in_addr vtep, uint32_t nh_id, string type, uint32_t vni, string intf_name)
 {
-    string svtep = inet_ntoa(vtep);
+    string nh_type = (vtep.s_addr != 0) ? "remote_vtep" : "nexthop_group";
+    string snh = (vtep.s_addr != 0) ? inet_ntoa(vtep) : std::to_string(nh_id);
     string svni = to_string(vni);
 
     /* Update the DB with Vxlan MAC */
-    m_mac[key] = {svtep, type, vni, intf_name};
+    m_mac[key] = {snh, nh_type, type, vni, intf_name};
 
     std::vector<FieldValueTuple> fvVector;
-    FieldValueTuple rv("remote_vtep", svtep);
+    FieldValueTuple nh(nh_type, snh);
     FieldValueTuple t("type", type);
     FieldValueTuple v("vni", svni);
-    fvVector.push_back(rv);
+    fvVector.push_back(nh);
     fvVector.push_back(t);
     fvVector.push_back(v);
 
-    SWSS_LOG_INFO("%sVXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s", 
+    SWSS_LOG_INFO("%sVXLAN_FDB_TABLE: ADD_KEY %s %s:%s type:%s", 
             m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
-            key.c_str(), svtep.c_str(), type.c_str());
+            key.c_str(), nh_type.c_str(), snh.c_str(), type.c_str());
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
     {
@@ -682,7 +686,7 @@ void FdbSync::macDelVxlan(string key)
 {
     if (m_mac.find(key) != m_mac.end())
     {
-        SWSS_LOG_INFO("DEL_KEY %s vtep:%s type:%s", key.c_str(), m_mac[key].vtep.c_str(), m_mac[key].type.c_str());
+        SWSS_LOG_INFO("DEL_KEY %s %s:%s type:%s", key.c_str(), m_mac[key].nh_type.c_str(), m_mac[key].nh.c_str(), m_mac[key].type.c_str());
         macDelVxlanDB(key);
         m_mac.erase(key);
     }
@@ -695,7 +699,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
     struct rtnl_neigh *neigh = (struct rtnl_neigh *)obj;
     struct in_addr vtep = {0};
     int vlan = 0, ifindex = 0;
-    uint32_t vni = 0;
+    uint32_t vni = 0, nh_id = 0;
     nl_addr *vtep_addr;
     string ifname;
     string key;
@@ -775,7 +779,11 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
     vtep_addr = rtnl_neigh_get_dst(neigh);
     if (vtep_addr == NULL)
     {
-        return;
+        if (rtnl_neigh_get_nhid(neigh, &nh_id))
+        {
+            return;
+        }
+        SWSS_LOG_INFO("Tunnel NH_ID %u", nh_id);
     }
     else
     {
@@ -826,7 +834,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
 
     if (!delete_key)
     {
-        macAddVxlan(key, vtep, type, vni, ifname);
+        macAddVxlan(key, vtep, nh_id, type, vni, ifname);
     }
     else
     {
@@ -865,10 +873,168 @@ void FdbSync::onMsgLink(int nlmsg_type, struct nl_object *obj)
     return;
 }
 
+void FdbSync::onMsgNexthop(int nlmsg_type, struct nl_object *obj)
+{
+    struct rtnl_nh *nh = (struct rtnl_nh *)obj;
+    bool del_op = (nlmsg_type == RTM_DELNEXTHOP);
+
+    if (rtnl_nh_get_id(nh) < 0)
+    {
+        SWSS_LOG_ERROR("Nexthop %d < 0", rtnl_nh_get_id(nh));
+        return;
+    }
+
+    if (!rtnl_nh_get_fdb(nh))
+    {
+        SWSS_LOG_INFO("Unhandled non-fdb nexthop %d", rtnl_nh_get_id(nh));
+        return;
+    }
+
+    if (rtnl_nh_get_group_size(nh) >= 0)
+    {
+        if (del_op) {
+            delL2NexthopGroup(nh);
+        }
+        else
+        {
+            addL2NexthopGroup(nh);
+        }
+    }
+    else
+    {
+        if (del_op) {
+            delL2Nexthop(nh);
+        }
+        else
+        {
+            addL2Nexthop(nh);
+        }
+    }
+}
+
+void FdbSync::delL2NexthopGroup(struct rtnl_nh *nh)
+{
+    std::vector<FieldValueTuple> fvVector;
+    int id = rtnl_nh_get_id(nh);
+    string key = to_string(id);
+
+    flushNhgFDB(id);
+    SWSS_LOG_INFO("%sNEXTHOP_GROUP_TABLE: DEL key:%s",
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "",
+            key.c_str());
+
+    if (m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_AppRestartAssist->insertToMap(APP_L2_NEXTHOP_GROUP_TABLE_NAME, key, fvVector, true);
+    }
+    else
+    {
+        m_l2nhgTable.del(key);
+    }
+}
+
+void FdbSync::flushNhgFDB(int id)
+{
+    for (auto it = m_mac.begin(); it != m_mac.end(); )
+    {
+        const std::string& key = it->first;
+        const m_mac_info& value = it->second;
+
+        if (value.nh_type == "nexthop_group" && value.nh == std::to_string(id))
+        {
+            SWSS_LOG_INFO("DEL_KEY %s %s:%s type:%s", key.c_str(), m_mac[key].nh_type.c_str(),
+                          m_mac[key].nh.c_str(), m_mac[key].type.c_str());
+            macDelVxlanDB(key);
+            it = m_mac.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+void FdbSync::addL2NexthopGroup(struct rtnl_nh *nh)
+{
+    string ip_str;
+    string ifname_str;
+    std::vector<FieldValueTuple> fvVector;
+    int nhg_size = rtnl_nh_get_group_size(nh);
+    int id = rtnl_nh_get_id(nh);
+    string key = to_string(id);
+    string nhg_str = to_string(rtnl_nh_get_group_entry(nh, 0));
+
+    for (int i = 1; i < nhg_size; i++)
+    {
+        int nh_id = rtnl_nh_get_group_entry(nh, i);
+        nhg_str += "," + to_string(nh_id);
+    }
+
+    FieldValueTuple fvnhg("nexthop_group", nhg_str);
+    fvVector.push_back(fvnhg);
+
+    SWSS_LOG_INFO("%sL2_NEXTHOP_GROUP_TABLE: SET key:%s nexthop_group:%s",
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "",
+            key.c_str(), nhg_str.c_str());
+
+    if (m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_AppRestartAssist->insertToMap(APP_L2_NEXTHOP_GROUP_TABLE_NAME, key, fvVector, false);
+    }
+    else
+    {
+        m_l2nhgTable.set(key, fvVector);
+    }
+}
+
+void FdbSync::delL2Nexthop(struct rtnl_nh *nh)
+{
+    std::vector<FieldValueTuple> fvVector;
+    int id = rtnl_nh_get_id(nh);
+    string key = to_string(id);
+
+    SWSS_LOG_INFO("%ssAPP_L2_NEXTHOP_GROUP_TABLE_NAME: DEL key:%s",
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "", key.c_str());
+
+    if (m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_AppRestartAssist->insertToMap(APP_L2_NEXTHOP_GROUP_TABLE_NAME, key, fvVector, true);
+    }
+    else
+    {
+        m_l2nhgTable.del(key);
+    }
+}
+
+void FdbSync::addL2Nexthop(struct rtnl_nh *nh)
+{
+    char gw_str[MAX_ADDR_SIZE + 1] = {0};
+    std::vector<FieldValueTuple> fvVector;
+    int id = rtnl_nh_get_id(nh);
+    string key = to_string(id);
+
+    nl_addr2str(rtnl_nh_get_gateway(nh), gw_str, MAX_ADDR_SIZE);
+    FieldValueTuple fvremote_vtep("remote_vtep", gw_str);
+    fvVector.push_back(fvremote_vtep);
+
+    SWSS_LOG_INFO("%sAPP_L2_NEXTHOP_GROUP_TABLE_NAME: SET key:%s",
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "", key.c_str());
+
+    if (m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_AppRestartAssist->insertToMap(APP_L2_NEXTHOP_GROUP_TABLE_NAME, key, fvVector, false);
+    }
+    else
+    {
+        m_l2nhgTable.set(key, fvVector);
+    }
+}
+
 void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     if ((nlmsg_type != RTM_NEWLINK) &&
-        (nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_DELNEIGH))
+        (nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_DELNEIGH) &&
+        (nlmsg_type != RTM_NEWNEXTHOP) && (nlmsg_type != RTM_DELNEXTHOP))
     {
         SWSS_LOG_DEBUG("netlink: unhandled event: %d", nlmsg_type);
         return;
@@ -877,9 +1043,13 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         onMsgLink(nlmsg_type, obj);
     }
-    else
+    else if (nlmsg_type == RTM_NEWNEIGH || nlmsg_type == RTM_DELNEIGH)
     {
         onMsgNbr(nlmsg_type, obj);
+    }
+    else if (nlmsg_type == RTM_NEWNEXTHOP || nlmsg_type == RTM_DELNEXTHOP)
+    {
+        onMsgNexthop(nlmsg_type, obj);
     }
 }
 

@@ -8,6 +8,7 @@
 #include "subscriberstatetable.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
+#include <netlink/route/nh.h>
 
 /*
  * Default timer interval for fdbsyncd reconcillation 
@@ -91,6 +92,7 @@ private:
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
     SubscriberStateTable m_cfgEvpnNvoTable;
+    ProducerStateTable  m_l2nhgTable;
 
     struct m_local_fdb_info
     {
@@ -125,7 +127,8 @@ private:
 
     struct m_mac_info
     {
-        std::string vtep;
+        std::string nh;
+        std::string nh_type;
         std::string type;
         unsigned int vni;
         std::string  ifname;
@@ -146,13 +149,19 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct in_addr vtep, std::string type, uint32_t vni, std::string intf_name);
+    void macAddVxlan(std::string key, struct in_addr vtep, uint32_t nh_id, std::string type, uint32_t vni, std::string intf_name);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
     void imetDelRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
+    void onMsgNexthop(int nlmsg_type, struct nl_object *obj);
     void onMsgNbr(int nlmsg_type, struct nl_object *obj);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
+    void flushNhgFDB(int id);
+    void delL2NexthopGroup(struct rtnl_nh *nh);
+    void addL2NexthopGroup(struct rtnl_nh *nh);
+    void delL2Nexthop(struct rtnl_nh *nh);
+    void addL2Nexthop(struct rtnl_nh *nh);
 };
 
 }
