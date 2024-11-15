@@ -66,6 +66,89 @@ def check_learn_mode_in_asicdb(db, interface_oid, learn_mode):
         return False
 
 class TestPac(object):
+    def test_PacvlanMemberAndFDBAddRemove(self, dvs, testlog):
+        dvs.setup_db()
+        time.sleep(2)
+
+        vlan_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        bp_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        vm_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        fdb_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB")
+
+        # create vlan
+        dvs.create_vlan("2")
+        time.sleep(1)
+
+        # Get bvid from vlanid
+        ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
+        assert ok, bvid
+
+        # create a Vlan member entry in Oper State DB
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet0",
+            [
+                ("tagging_mode", "untagged"),
+            ]
+        )
+        
+        # check that the vlan information was propagated
+        vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+
+        assert vlan_after - vlan_before == 1, "The Vlan2 wasn't created"
+        assert bp_after - bp_before == 1, "The bridge port wasn't created"
+        assert vm_after - vm_before == 1, "The vlan member wasn't added"
+
+        # Add FDB entry in Oper State DB
+        create_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "Vlan2|00:00:00:00:00:01",
+            [
+                ("port", "Ethernet0"),
+                ("type", "dynamic"),
+                ("discard", "false"),
+            ]
+        )
+        # Get mapping between interface name and its bridge port_id
+        iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
+
+        # check that the FDB entry was inserted into ASIC DB
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "00:00:00:00:00:01"), ("bvid", bvid)],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                         ("SAI_FDB_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_FORWARD"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"])])
+
+        assert ok, str(extra)
+
+        # Remove FDB entry in Oper State DB
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_FDB", "Vlan2|00:00:00:00:00:01"
+        )
+
+        # check that the FDB entry was removed from ASIC DB
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "00:00:00:00:00:01"), ("bvid", bvid)], [])
+        assert ok == False, "The fdb entry still exists in ASIC"
+
+        # remove Vlan member entry in Oper State DB
+        remove_entry_tbl(
+            dvs.sdb,
+            "OPER_VLAN_MEMBER", "Vlan2|Ethernet0"
+        )
+        dvs.remove_vlan("2")
+
+        vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+
+        assert vlan_after - vlan_before == 0, "The Vlan2 wasn't removed"
+        assert bp_after - bp_before == 0, "The bridge port wasn't removed"
+        assert vm_after - vm_before == 0, "The vlan member wasn't removed"
+
     def test_PacPortLearnMode(self, dvs, testlog):
         dvs.setup_db()
         time.sleep(2)
