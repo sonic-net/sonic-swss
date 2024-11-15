@@ -83,6 +83,13 @@ class TestPac(object):
         ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
         assert ok, bvid
 
+        dvs.create_vlan("3")
+        time.sleep(1)
+
+        # create vlan member
+        dvs.create_vlan_member("3", "Ethernet0")
+        time.sleep(1)
+
         # create a Vlan member entry in Oper State DB
         create_entry_tbl(
             dvs.sdb,
@@ -97,7 +104,7 @@ class TestPac(object):
         bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
         vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
-        assert vlan_after - vlan_before == 1, "The Vlan2 wasn't created"
+        assert vlan_after - vlan_before == 2, "The Vlan2 wasn't created"
         assert bp_after - bp_before == 1, "The bridge port wasn't created"
         assert vm_after - vm_before == 1, "The vlan member wasn't added"
 
@@ -106,7 +113,18 @@ class TestPac(object):
             dvs.sdb,
             "OPER_VLAN_MEMBER", "Vlan2|Ethernet0"
         )
+        # check that the vlan information was propagated
+        vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+
+        assert vlan_after - vlan_before == 2, "The Vlan2 wasn't created"
+        assert bp_after - bp_before == 1, "The bridge port wasn't created"
+        assert vm_after - vm_before == 1, "The vlan member wasn't added"
+        
         dvs.remove_vlan("2")
+        dvs.remove_vlan_member("3", "Ethernet0")
+        dvs.remove_vlan("3")
 
         vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
