@@ -230,7 +230,7 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
         if (!isMemberStateOk(port_alias))
             return false;
         else
-            throw;
+            EXEC_WITH_ERROR_THROW(cmds.str(), res);
     }
 
     return true;
