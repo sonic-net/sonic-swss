@@ -43,6 +43,11 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
 
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
+    if (h->nlmsg_type == RTM_NEWSRV6LOCALSID || h->nlmsg_type == RTM_DELSRV6LOCALSID)
+    {
+        return true;
+    }
+
     if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
     {
         return false;
