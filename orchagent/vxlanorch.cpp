@@ -1329,10 +1329,6 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
         return SAI_NULL_OBJECT_ID;
     }
 
-    SWSS_LOG_NOTICE("NH tunnel create for %s, ip %s, mac %s, vni %d",
-                     tunnelName.c_str(), ipAddr.to_string().c_str(), 
-                     macAddress.to_string().c_str(), vni);
-
     auto tunnel_obj = getVxlanTunnel(tunnelName);
     sai_object_id_t nh_id, tunnel_id = tunnel_obj->getTunnelId();
 
@@ -1341,6 +1337,10 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
         tunnel_obj->incNextHopRefCount(ipAddr, macAddress, vni);
         return nh_id;
     }
+
+    SWSS_LOG_NOTICE("NH tunnel create for %s, ip %s, mac %s, vni %d",
+                    tunnelName.c_str(), ipAddr.to_string().c_str(), 
+                    macAddress.to_string().c_str(), vni);
 
     sai_ip_address_t host_ip;
     swss::copy(host_ip, ipAddr);
