@@ -103,9 +103,24 @@ class TestMirror(object):
         assert len(fvs) > 0
         return { fv[0]: fv[1] for fv in fvs }
 
+    def mirror_session_entry_exists(self, name):
+        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION_TABLE")
+        (status, _) = tbl.get(name)
+        return status
+
     def check_syslog(self, dvs, marker, log, expected_cnt):
         (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" % (marker, log)])
         assert out.strip() == str(expected_cnt)
+
+    def test_MirrorInvalidEntry(self):
+        """
+        This test ensures that an invalid mirror session entry is not created.
+        Here, "invalid" means an entry in which src IP is IPv4 while dst IP is IPv6
+        (or vice versa).
+        """
+        session = "TEST_SESSION"
+        self.create_mirror_session(session, "1.1.1.1", "fc00::2:2:2:2", "0x6558", "8", "100", "0")
+        assert self.mirror_session_entry_exists(session) == False
 
     def _test_MirrorAddRemove(self, dvs, testlog, v6_encap=False):
         """
