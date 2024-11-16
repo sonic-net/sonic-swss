@@ -2125,7 +2125,10 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
             route_state = "active";
             prefix_to_use = adv_pfx;
         }
-     }
+    }
+    SWSS_LOG_NOTICE("advertisement of prefix: %s with profile: %s  %s via %s\n",
+                                ipPrefix.to_string().c_str(), profile.c_str(),
+                                route_state.c_str(), prefix_to_use.to_string().c_str());
     if (vnet_orch_->getAdvertisePrefix(vnet))
     {
         if (route_state == "active")
@@ -2151,6 +2154,7 @@ void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     state_vnet_rt_tunnel_table_->del(state_db_key);
+    SWSS_LOG_NOTICE("Stopping advertisement of prefix: %s\n", ipPrefix.to_string().c_str());
 
     if(prefix_to_adv_prefix_.find(ipPrefix) !=prefix_to_adv_prefix_.end())
     {
@@ -2429,8 +2433,6 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
             for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
             {
                 string profile = vrf_obj->getProfile(ip_pfx);
-                SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile: %s \n",
-                                ip_pfx.to_string().c_str(), profile.c_str());  
                 postRouteState(vnet, ip_pfx, nexthops, profile);
             }
         }
@@ -2668,15 +2670,11 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
             }
             adv_prefix_refcount_[adv_prefix] += 1;
             string profile = vrf_obj->getProfile(prefix);
-            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile:%s \n",
-                            prefix.to_string().c_str(), profile.c_str()); 
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
         else
         {
             string profile = vrf_obj->getProfile(prefix);
-            SWSS_LOG_NOTICE("Starting advertisement of prefix: %s with profile: %s\n",
-                            prefix.to_string().c_str(), profile.c_str());
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
     }
