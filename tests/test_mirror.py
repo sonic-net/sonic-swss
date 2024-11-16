@@ -112,12 +112,13 @@ class TestMirror(object):
         (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" % (marker, log)])
         assert out.strip() == str(expected_cnt)
 
-    def test_MirrorInvalidEntry(self):
+    def test_MirrorInvalidEntry(self, dvs):
         """
         This test ensures that an invalid mirror session entry is not created.
         Here, "invalid" means an entry in which src IP is IPv4 while dst IP is IPv6
         (or vice versa).
         """
+        self.setup_db(dvs)
         session = "TEST_SESSION"
         self.create_mirror_session(session, "1.1.1.1", "fc00::2:2:2:2", "0x6558", "8", "100", "0")
         assert self.mirror_session_entry_exists(session) == False
