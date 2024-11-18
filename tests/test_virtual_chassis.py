@@ -1172,6 +1172,8 @@ class TestVirtualChassis(object):
         nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
         ip = nexthop_entry.get("SAI_NEXT_HOP_ATTR_IP")
         assert ip != "", "Ip address not found for nexthop entry in asic db"
+        rif1 = nexthop_entry.get("SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID")
+
 
         # add route of LC1(pretend learnt via bgp)
         _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
@@ -1200,6 +1202,13 @@ class TestVirtualChassis(object):
 
         assert remote_neigh != "", "Remote neigh not found in ASIC_DB"
 
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)
+        assert len(nexthop_keys), "No Nexthop entries in ASIC_DB"
+        nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
+        print("2:nexthop_entrty:",nexthop_entry)
+        rif2 = nexthop_entry.get("SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID")
+        assert rif1 == rif2, "Neighbor is already replaced with new rif"
+
         #del the route
         _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} "])
         assert res == "", "Error configuring route"
@@ -1220,13 +1229,23 @@ class TestVirtualChassis(object):
                break
         assert remote_neigh != "", "Remote neigh not found in ASIC_DB"
 
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)
+        assert len(nexthop_keys), "No Nexthop entries in ASIC_DB"
+        nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
+        print("3:nexthop_entrty:",nexthop_entry)
+        rif3 = nexthop_entry.get("SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID")
+        assert rif1 != rif3, "Neighbor is not replaced with new rif"
+
         #del the neighbor
         self.configure_neighbor(local_lc_dvs, "del", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_2)
         time.sleep(10)
         asic_db = remote_lc_dvs.get_asic_db()
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 0)
         neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
-        assert len(neighkeys) == 0, "No neigh entries in ASIC_DB"
+        assert len(neighkeys) == 0, "Neigh entries still in ASIC_DB"
+
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 0)
+        assert len(nexthop_keys) == 0, "Nexthop entries in still ASIC_DB"
 
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
