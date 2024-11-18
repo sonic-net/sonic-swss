@@ -3438,8 +3438,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
                     {
                         metadataMax = uint16_t(attrs[0].value.u32range.max);
                     }
-                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = metadataMin;
-                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = metadataMax;
+                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MIN] = std::to_string(metadataMin);
+                    m_switchMetaDataCapabilities[TABLE_ACL_USER_META_DATA_MAX] = std::to_string(metadataMax);
                 }
 
             }
