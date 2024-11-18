@@ -14,7 +14,9 @@ extern "C"
 
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
                      DBConnector *chassisAppDb)
-    : Orch(db, tableNames), m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
+    : Orch(db, tableNames),
+      m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
+      m_portOpErrTable(stateDb, STATE_PORT_OPER_ERR_TABLE_NAME),
       port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                         PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
       port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ,

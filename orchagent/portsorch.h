@@ -146,12 +146,14 @@ public:
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
     void initHostTxReadyState(Port &port);
+    void initializePortOperErrors(Port &port);
     bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
     void updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus);
+    void updateDbPortOperError(Port& port, PortOperErrorEvent *pevent);
 
     bool createVlanHostIntf(Port& vl, string hostif_name);
     bool removeVlanHostIntf(Port vl);
@@ -263,6 +265,7 @@ private:
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
     Table m_portStateTable;
+    Table m_portOpErrTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
@@ -502,6 +505,7 @@ private:
     bool initGearboxPort(Port &port);
     bool getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) const;
     void updateDbPortOperFec(Port &port, string fec_str);
+    void updatePortErrorStatus(Port &port, sai_port_error_status_t port_oper_eror);
 
     map<string, Port::Role> m_recircPortRole;
 
