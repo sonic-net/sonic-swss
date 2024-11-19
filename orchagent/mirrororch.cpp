@@ -39,6 +39,8 @@
 #define MIRROR_SESSION_DSCP_MIN         0
 #define MIRROR_SESSION_DSCP_MAX         63
 
+// This is a test.
+
 // 15 is a typical value, but if vendor's SAI does not supply the maximum value,
 // allow all 8-bit numbers, effectively cancelling validation by orchagent.
 #define MIRROR_SESSION_DEFAULT_NUM_TC   255
