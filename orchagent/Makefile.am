@@ -8,9 +8,7 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I pbh \
            -I nhg
 
-if GCOV_ENABLED
 SUBDIRS = p4orch/tests
-endif
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -19,7 +17,7 @@ swssdir = $(datadir)/swss
 dist_swss_DATA = \
 		 eliminate_events.lua \
 		 rif_rates.lua \
-		 pfc_detect_innovium.lua  \
+		 pfc_detect_marvell_teralynx.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_marvell.lua \

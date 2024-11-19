@@ -2,6 +2,7 @@ from swsscommon import swsscommon
 from dvslib.dvs_common import wait_for_result
 import typing
 import pytest
+import time
 
 from dash_api.appliance_pb2 import *
 from dash_api.vnet_pb2 import *
@@ -58,9 +59,11 @@ class ProducerStateTable(swsscommon.ProducerStateTable):
         for k, v in pairs:
             pairs_str.append((to_string(k), to_string(v)))
         self.set(key, pairs_str)
+        time.sleep(1)
 
     def __delitem__(self, key: str):
         self.delete(str(key))
+        time.sleep(1)
 
 
 class Table(swsscommon.Table):
