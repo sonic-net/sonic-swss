@@ -65,6 +65,7 @@ MonitorOrch *gMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
+STelOrch *gSTelOrch = nullptr;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -847,6 +848,14 @@ bool OrchDaemon::init()
     TableConnector stateDbTwampTable(m_stateDb, STATE_TWAMP_SESSION_TABLE_NAME);
     TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
     m_orchList.push_back(twamp_orch);
+
+
+    const vector<string> stel_tables = {
+        CFG_STREAM_TELEMETRY_PROFILE_TABLE_NAME,
+        CFG_STREAM_TELEMETRY_GROUP_TABLE_NAME
+    };
+    gSTelOrch = new STelOrch(m_configDb, m_stateDb, stel_tables);
+    m_orchList.push_back(gSTelOrch);
 
     if (WarmStart::isWarmStart())
     {
