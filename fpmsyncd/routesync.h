@@ -137,7 +137,7 @@ private:
     void onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet);
 
     /* Get interface name based on interface index */
-    bool getIfName(int if_index, char *if_name, size_t name_len);
+    virtual bool getIfName(int if_index, char *if_name, size_t name_len);
 
     /* Get interface if_index based on interface name */
     rtnl_link* getLinkByName(const char *name);
