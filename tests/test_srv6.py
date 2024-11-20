@@ -250,7 +250,7 @@ class TestSrv6Mysid(object):
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X"
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
 
         # create MySID END.DX4
         fvs = swsscommon.FieldValuePairs([('action', 'end.dx4'), ('adj', '192.0.2.1')])
@@ -435,7 +435,7 @@ class TestSrv6Mysid(object):
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X"
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
 
         # remove neighbor
         self.remove_neighbor("Ethernet104", "2001::1")
@@ -636,6 +636,7 @@ class TestSrv6(object):
         assert tunnel_entries == get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
         assert nexthop_entries == get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
         assert route_entries == get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+
 
 class TestSrv6MySidFpmsyncd(object):
     """ Functionality tests for Srv6 MySid handling in fpmsyncd """
@@ -1626,7 +1627,6 @@ class TestSrv6Vpn(object):
         pictbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "PIC_CONTEXT_TABLE")
         pictbl._del(pic_ctx_id)
 
-
     def check_deleted_route_entries(self, destinations):
         def _access_function():
             route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -1892,11 +1892,9 @@ class TestSrv6Vpn(object):
         ifname_list.append('unknown')
         ifname_list.append('unknown')
 
-
         nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
         pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
         route_key = self.create_srv6_vpn_route_with_nhg('5000::/64', nhg_index, pic_ctx_index)
-        
         
         nhg_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nexthop_group_entries)
         prefix_agg_id = "1"
@@ -1910,7 +1908,6 @@ class TestSrv6Vpn(object):
                 assert fv[1] == nhg_id
             if fv[0] == "SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID":
                 assert fv[1] == prefix_agg_id
-
 
         route_key_new = self.create_srv6_vpn_route_with_nhg('5001::/64', nhg_index, pic_ctx_index)
         
@@ -2011,7 +2008,6 @@ class TestSrv6Vpn(object):
         nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
         pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
         self.update_srv6_vpn_route_attribute_with_nhg('5000::/64', nhg_index, pic_ctx_index)
-        
 
         time.sleep(5)
         nh_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_entries, 2)

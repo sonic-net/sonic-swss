@@ -48,8 +48,8 @@ const map<string, sai_my_sid_entry_endpoint_behavior_t> end_behavior_map =
 
 const map<string, sai_my_sid_entry_endpoint_behavior_flavor_t> end_flavor_map =
 {
-    {"end",                SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP},
-    {"end.x",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USP},
+    {"end",                SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+    {"end.x",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
     {"end.t",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
     {"un",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
     {"ua",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD}
@@ -378,8 +378,6 @@ bool Srv6Orch::srv6Nexthops(const NextHopGroupKey &nhgKey, sai_object_id_t &next
 {
     SWSS_LOG_ENTER();
     set<NextHopKey> nexthops = nhgKey.getNextHops();
-    string srv6_source;
-    string srv6_segment;
 
     for (auto nh : nexthops)
     { 

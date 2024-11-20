@@ -199,7 +199,7 @@ void NhgOrch::doTask(Consumer& consumer)
                 }
 
                 if (srv6_nh)
-                    nhg_key = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh, weights);
+                    nhg_key = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
                 else
                     nhg_key = NextHopGroupKey(nhg_str, weights);
             }
@@ -216,12 +216,12 @@ void NhgOrch::doTask(Consumer& consumer)
                     for (uint32_t i = 0; i < ipv.size(); i++)
                     {
                         if (i) nhg_str += NHG_DELIMITER;
-                        nhg_str += ipv[i] + NH_DELIMITER;      // ip address
-                        nhg_str += NH_DELIMITER;                // srv6 vpn sid
+                        nhg_str += ipv[i] + NH_DELIMITER;       // ip address
+                        nhg_str += NH_DELIMITER;                // srv6 segment
                         nhg_str += srv6_srcv[i] + NH_DELIMITER; // srv6 source
-                        nhg_str += NH_DELIMITER;     // srv6 segment
+                        nhg_str += NH_DELIMITER;                // srv6 vpn sid
                     }
-                    nhg_key = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh, weights);
+                    nhg_key = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
                 }
                 else
                 {

@@ -54,41 +54,6 @@ public:
         }
     }
 
-    NextHopGroupKey(const std::string &nexthops, bool overlay_nh, bool srv6_nh, const std::string& weights)
-    {
-        auto nhv = tokenize(nexthops, NHG_DELIMITER);
-        auto wtv = tokenize(weights, NHG_DELIMITER);
-        bool set_weight = wtv.size() == nhv.size();
-        if (overlay_nh)
-        {
-            m_overlay_nexthops = true;
-            m_srv6_nexthops = false;
-            m_srv6_vpn = false;
-            for (uint32_t i = 0; i < nhv.size(); ++i)
-            {
-                auto nh = NextHopKey(nhv[i], overlay_nh, srv6_nh);
-                nh.weight = set_weight ? (uint32_t)std::stoi(wtv[i]) : 0;
-                m_nexthops.insert(nh);
-            }
-        }
-        else if (srv6_nh)
-        {
-            m_overlay_nexthops = false;
-            m_srv6_nexthops = true;
-            m_srv6_vpn = false;
-            for (uint32_t i = 0; i < nhv.size(); ++i)
-            {
-                auto nh = NextHopKey(nhv[i], overlay_nh, srv6_nh);
-                nh.weight = set_weight ? (uint32_t)std::stoi(wtv[i]) : 0;
-                m_nexthops.insert(nh);
-                if (nh.isSrv6Vpn())
-                {
-                    m_srv6_vpn = true;
-                }
-            }
-        }
-    }
-
     NextHopGroupKey(const std::string &nexthops, const std::string &weights)
     {
         m_overlay_nexthops = false;
@@ -103,16 +68,6 @@ public:
             nh.weight = set_weight? (uint32_t)std::stoi(wtv[i]) : 0;
             m_nexthops.insert(nh);
         }
-    }
-
-    inline bool is_srv6_nexthop() const
-    {
-        return m_srv6_nexthops;
-    }
-
-    inline bool is_srv6_vpn() const
-    {
-        return m_srv6_vpn;
     }
 
     inline const std::set<NextHopKey> &getNextHops() const
@@ -269,6 +224,16 @@ public:
         return m_overlay_nexthops;
     }
 
+    inline bool is_srv6_nexthop() const
+    {
+        return m_srv6_nexthops;
+    }
+
+    inline bool is_srv6_vpn() const
+    {
+        return m_srv6_vpn;
+    }
+
     void clear()
     {
         m_nexthops.clear();
@@ -276,9 +241,9 @@ public:
 
 private:
     std::set<NextHopKey> m_nexthops;
-    bool m_overlay_nexthops;
-    bool m_srv6_nexthops;
-    bool m_srv6_vpn;
+    bool m_overlay_nexthops = false;
+    bool m_srv6_nexthops = false;
+    bool m_srv6_vpn = false;
 };
 
 #endif /* SWSS_NEXTHOPGROUPKEY_H */
