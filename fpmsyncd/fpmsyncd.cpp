@@ -17,8 +17,8 @@
 using namespace std;
 using namespace swss;
 
-// SELECT_TIMEOUT specifies the maximum wait time in milliseconds (-1 == infinite)
-static int SELECT_TIMEOUT;
+// gSelectTimeout specifies the maximum wait time in milliseconds (-1 == infinite)
+static int gSelectTimeout;
 #define INFINITE -1
 #define FLUSH_TIMEOUT 500  // 500 milliseconds
 static int gFlushTimeout = FLUSH_TIMEOUT;
@@ -31,12 +31,11 @@ static int gFlushTimeout = FLUSH_TIMEOUT;
  * redispipeline would automatically flush itself when full,
  * but fpmsyncd can invoke pipeline's flush even if it's not full yet.
  * 
- * By setting SELECT_TIMEOUT, fpmsyncd controls the flush interval.
+ * By setting gSelectTimeout, fpmsyncd controls the flush interval.
  * 
  * @param pipeline reference to the pipeline to be flushed
- * @param scheduled if true, timer for fpmsyncd flush expired
  */
-void flushPipeline(RedisPipeline& pipeline, bool scheduled);
+void flushPipeline(RedisPipeline& pipeline);
 
 /*
  * Default warm-restart timer interval for routing-stack app. To be used only if
@@ -174,14 +173,14 @@ int main(int argc, char **argv)
                 sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
             }
 
-            SELECT_TIMEOUT = INFINITE;
+            gSelectTimeout = INFINITE;
 
             while (true)
             {
                 Selectable *temps;
 
                 /* Reading FPM messages forever (and calling "readMe" to read them) */
-                auto ret = s.select(&temps, SELECT_TIMEOUT);
+                s.select(&temps, gSelectTimeout);
 
                 /*
                  * Upon expiration of the warm-restart timer or eoiu Hold Timer, proceed to run the
@@ -310,7 +309,7 @@ int main(int argc, char **argv)
                 }
                 else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
                 {
-                    flushPipeline(pipeline, ret==Select::TIMEOUT);
+                    flushPipeline(pipeline);
                 }
             }
         }
@@ -328,23 +327,23 @@ int main(int argc, char **argv)
     return 1;
 }
 
-void flushPipeline(RedisPipeline& pipeline, bool scheduled) {
+void flushPipeline(RedisPipeline& pipeline) {
 
     size_t remaining = pipeline.size();
 
     if (remaining == 0) {
-        SELECT_TIMEOUT = INFINITE;
+        gSelectTimeout = INFINITE;
         return;
     }
 
     int idle = pipeline.getIdleTime();
 
     // flush right away
-    if (remaining < SMALL_TRAFFIC || idle >= gFlushTimeout || idle <= 0 || scheduled) {
+    if (remaining < SMALL_TRAFFIC || idle >= gFlushTimeout || idle <= 0) {
 
         pipeline.flush();
 
-        SELECT_TIMEOUT = INFINITE;
+        gSelectTimeout = INFINITE;
 
         SWSS_LOG_DEBUG("Pipeline flushed");
     
@@ -352,5 +351,5 @@ void flushPipeline(RedisPipeline& pipeline, bool scheduled) {
     }
 
     // postpone the flush
-    SELECT_TIMEOUT = gFlushTimeout - idle;
+    gSelectTimeout = gFlushTimeout - idle;
 }
