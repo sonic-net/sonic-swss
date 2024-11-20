@@ -275,7 +275,7 @@ create_tunnel(
     sai_ip_address_t *dst_ip,
     sai_object_id_t underlay_rif,
     bool p2p,
-    sai_uint8_t encap_ttl=0)
+    sai_uint8_t encap_ttl)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -349,16 +349,13 @@ create_tunnel(
         tunnel_attrs.push_back(attr);
     }
 
-    if (encap_ttl != 0)
-    {
-        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
-        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
-        tunnel_attrs.push_back(attr);
+    attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
+    attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+    tunnel_attrs.push_back(attr);
 
-        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_VAL;
-        attr.value.u8 = encap_ttl;
-        tunnel_attrs.push_back(attr);
-    }
+    attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_VAL;
+    attr.value.u8 = encap_ttl;
+    tunnel_attrs.push_back(attr);
 
     sai_object_id_t tunnel_id;
     sai_status_t status = sai_tunnel_api->create_tunnel(
