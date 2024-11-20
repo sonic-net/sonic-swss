@@ -1,5 +1,5 @@
 #include "redisutility.h"
-
+#include "ut_helpers_fpmsyncd.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "mock_table.h"
@@ -7,7 +7,17 @@
 #include "fpmsyncd/routesync.h"
 #undef private
 
+#include <arpa/inet.h>
+#include <linux/rtnetlink.h>
+#include <netlink/route/link.h>
+#include <netlink/route/nexthop.h>
+#include <linux/nexthop.h>
+
+#include <sstream>
+
 using namespace swss;
+using namespace testing;
+
 #define MAX_PAYLOAD 1024
 
 using ::testing::_;
@@ -28,6 +38,7 @@ public:
                                rtattr *[], std::string&,
                                std::string& , std::string&,
                                std::string&), (override));
+    MOCK_METHOD(bool, getIfName, (int, char *, size_t), (override));
 };
 class MockFpm : public FpmInterface
 {
@@ -224,6 +235,7 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
         return true;
     });
     m_mockRouteSync.onMsgRaw(nlh);
+    
     vector<string> keys;
     vector<FieldValueTuple> fieldValues;
     app_route_table.getKeys(keys);
@@ -237,15 +249,148 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
 
 TEST_F(FpmSyncdResponseTest, testSendOffloadReply)
 {
-
     rt_build_ret = 1;
     rtnl_route* routeObject{};
-
 
     ASSERT_EQ(m_routeSync.sendOffloadReply(routeObject), false);
     rt_build_ret = 0;
     nlmsg_alloc_ret = false;
     ASSERT_EQ(m_routeSync.sendOffloadReply(routeObject), false);
     nlmsg_alloc_ret = true;
+}
 
+struct nlmsghdr* createNewNextHopMsgHdr(int32_t ifindex, const char* gateway, uint32_t id) {
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+
+    // 设置基本header
+    nlh->nlmsg_type = RTM_NEWNEXTHOP;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+    
+    printf("After header setup - nlmsg_len: %d\n", nlh->nlmsg_len);
+
+    // 设置nhmsg
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(nlh);
+    nhm->nh_family = AF_INET;
+
+    // 先添加 NHA_ID
+    struct rtattr *rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = NHA_ID;
+    rta->rta_len = RTA_LENGTH(sizeof(uint32_t));
+    *(uint32_t *)RTA_DATA(rta) = id;
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+    
+    printf("After NHA_ID - nlmsg_len: %d\n", nlh->nlmsg_len);
+
+    // 添加 NHA_GATEWAY
+    rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    struct in_addr gw_addr;
+    inet_pton(AF_INET, gateway, &gw_addr);
+    rta->rta_type = NHA_GATEWAY;
+    rta->rta_len = RTA_LENGTH(sizeof(struct in_addr));
+    memcpy(RTA_DATA(rta), &gw_addr, sizeof(struct in_addr));
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+    
+    printf("After NHA_GATEWAY - nlmsg_len: %d\n", nlh->nlmsg_len);
+
+    // 添加 NHA_OIF
+    rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = NHA_OIF;
+    rta->rta_len = RTA_LENGTH(sizeof(int32_t));
+    *(int32_t *)RTA_DATA(rta) = ifindex;
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+    
+    printf("After NHA_OIF - final nlmsg_len: %d\n", nlh->nlmsg_len);
+
+    return nlh;
+}
+
+void dump_nexthop_msg(struct nlmsghdr *nlh) {
+    printf("\nDumping nexthop message:\n");
+    printf("nlmsg_len: %d\n", nlh->nlmsg_len);
+    printf("nlmsg_type: %d\n", nlh->nlmsg_type);
+    
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(nlh);
+    printf("nh_family: %d\n", nhm->nh_family);
+    
+    struct rtattr *rta = (struct rtattr *)((char *)nhm + NLMSG_ALIGN(sizeof(*nhm)));
+    int len = nlh->nlmsg_len - (int)NLMSG_LENGTH(sizeof(*nhm));
+    
+    while (RTA_OK(rta, len)) {
+        printf("Attribute type: %d, len: %d\n", rta->rta_type, rta->rta_len);
+        if (rta->rta_type == NHA_OIF) {
+            printf("  OIF value: %d\n", *(int32_t *)RTA_DATA(rta));
+        }
+        rta = RTA_NEXT(rta, len);
+    }
+}
+TEST_F(FpmSyncdResponseTest, TestNoNHAId)
+{
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+
+    nlh->nlmsg_type = RTM_NEWNEXTHOP;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(nlh);
+    nhm->nh_family = AF_INET;
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(_, _, _))
+    .Times(0);
+
+    m_mockRouteSync.onNextHopMsg(nlh, 0);
+
+    free(nlh);
+}
+
+TEST_F(FpmSyncdResponseTest, TestSingleNextHopAdd)
+{
+    uint32_t test_id = 10;
+    const char* test_gateway = "192.168.1.1";
+    int32_t test_ifindex = 5;
+
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(test_ifindex, test_gateway, test_id);
+    int expected_length = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(test_ifindex, _, _))
+    .WillOnce(DoAll(
+        [](int32_t, char* ifname, size_t size) {
+            strncpy(ifname, "Ethernet1", size);
+            ifname[size-1] = '\0';
+        },
+        Return(true)
+    ));
+
+    m_mockRouteSync.onNextHopMsg(nlh, expected_length);
+
+    auto it = m_mockRouteSync.m_nh_groups.find(test_id);
+    ASSERT_NE(it, m_mockRouteSync.m_nh_groups.end()) << "Failed to add new nexthop";
+
+    free(nlh);
+}
+
+TEST_F(FpmSyncdResponseTest, TestSkipSpecialInterfaces)
+{
+    uint32_t test_id = 11;
+    const char* test_gateway = "192.168.1.1";
+    int32_t test_ifindex = 6;
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(test_ifindex, _, _))
+    .WillOnce(DoAll(
+        [](int32_t ifidx, char* ifname, size_t size) {
+            strncpy(ifname, "eth0", size);
+        },
+        Return(true)
+    ));
+
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(test_ifindex, test_gateway, test_id);
+    int expected_length = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+    dump_nexthop_msg(nlh);
+    m_mockRouteSync.onNextHopMsg(nlh, expected_length);
+
+    auto it = m_mockRouteSync.m_nh_groups.find(test_id);
+    EXPECT_EQ(it, m_mockRouteSync.m_nh_groups.end()) << "Should skip eth0 interface";
+
+    free(nlh);
 }
