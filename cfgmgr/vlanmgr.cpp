@@ -224,7 +224,17 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     cmds << BASH_CMD " -c " << shellquote(inner.str());
 
     std::string res;
-    EXEC_WITH_ERROR_THROW(cmds.str(), res);
+    try
+    {
+        EXEC_WITH_ERROR_THROW(cmds.str(), res);
+    }
+    catch (const std::runtime_error& e)
+    {
+        if (!isMemberStateOk(port_alias))
+            return false;
+        else
+            EXEC_WITH_ERROR_THROW(cmds.str(), res);
+    }
 
     return true;
 }
@@ -635,6 +645,12 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
 
                 m_vlanMemberReplay.erase(kfvKey(t));
                 m_PortVlanMember[port_alias][vlan_alias] = tagging_mode;
+            }
+            else
+            {
+                SWSS_LOG_INFO("Netdevice for  %s not ready, delaying", kfvKey(t).c_str());
+                it++;
+                continue;
             }
         }
         else if (op == DEL_COMMAND)
