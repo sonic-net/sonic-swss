@@ -76,10 +76,10 @@ class Srv6Orch : public Orch, public Observer
 
     private:
         void doTask(Consumer &consumer);
-        void doTaskSidTable(const KeyOpFieldsValuesTuple &tuple);
+        task_process_status doTaskSidTable(const KeyOpFieldsValuesTuple &tuple);
         void doTaskMySidTable(const KeyOpFieldsValuesTuple &tuple);
         bool createUpdateSidList(const string seg_name, const string ips, const string sidlist_type);
-        bool deleteSidList(const string seg_name);
+        task_process_status deleteSidList(const string seg_name);
         bool createSrv6Tunnel(const string srv6_source);
         bool createSrv6Nexthop(const NextHopKey &nh);
         bool srv6NexthopExists(const NextHopKey &nh);
