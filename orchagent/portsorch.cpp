@@ -308,6 +308,25 @@ static char* hostif_vlan_tag[] = {
     [SAI_HOSTIF_VLAN_TAG_ORIGINAL]  = "SAI_HOSTIF_VLAN_TAG_ORIGINAL"
 };
 
+const std::unordered_map<sai_port_error_status_t, std::string> PortOperErrorEvent::db_key_errors =
+{
+    // SAI port oper error status to error name mapping
+    { SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT, "mac_local_fault"},
+    { SAI_PORT_ERROR_STATUS_MAC_REMOTE_FAULT, "mac_remote_fault"},
+    { SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS, "fec_sync_loss"},
+    { SAI_PORT_ERROR_STATUS_FEC_LOSS_ALIGNMENT_MARKER, "fec_alignment_loss"},
+    { SAI_PORT_ERROR_STATUS_HIGH_SER,  "high_ser_error"},
+    { SAI_PORT_ERROR_STATUS_HIGH_BER, "high ber_error"},
+    { SAI_PORT_ERROR_STATUS_CRC_RATE, "crc_rate"},
+    { SAI_PORT_ERROR_STATUS_DATA_UNIT_CRC_ERROR, "data_unit_crc_error"},
+    { SAI_PORT_ERROR_STATUS_DATA_UNIT_SIZE, "data_unit_size"},
+    { SAI_PORT_ERROR_STATUS_DATA_UNIT_MISALIGNMENT_ERROR, "data_unit_misalignment_error"},
+    { SAI_PORT_ERROR_STATUS_CODE_GROUP_ERROR, "code_group_error"},
+    { SAI_PORT_ERROR_STATUS_SIGNAL_LOCAL_ERROR, "signal_local_error"},
+    { SAI_PORT_ERROR_STATUS_NO_RX_REACHABILITY, "no_rx_reachability"}
+};
+
+
 // functions ----------------------------------------------------------------------------------------------------------
 
 static bool isValidPortTypeForLagMember(const Port& port)
@@ -509,6 +528,7 @@ bool PortsOrch::checkPathTracingCapability()
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_portOpErrTable(stateDb, STATE_PORT_OPER_ERR_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager(true,
                 PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
@@ -806,6 +826,26 @@ void PortsOrch::initializeCpuPort()
     this->m_port_ref_count[m_cpuPort.m_alias] = 0;
 
     SWSS_LOG_NOTICE("Get CPU port pid:%" PRIx64, this->m_cpuPort.m_port_id);
+}
+
+// Creating mapping of various port oper errors for error handling
+void PortsOrch::initializePortOperErrors(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_NOTICE("Initialize port oper errors for port %s", port.m_alias.c_str());
+
+    for (auto& error : PortOperErrorEvent::db_key_errors)
+    {
+        const sai_port_error_status_t error_status = error.first;
+        std::string error_name = error.second;
+
+        port.m_portOperErrorToEvent[error_status] = PortOperErrorEvent(error_status, error_name);
+        SWSS_LOG_NOTICE("Initialize port %s error %s flag=0x%" PRIx32,
+                                        port.m_alias.c_str(),
+                                        error_name.c_str(),
+                                        error_status);
+    }
 }
 
 void PortsOrch::initializePorts()
@@ -3351,6 +3391,26 @@ void PortsOrch::updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus
     m_portTable->set(port.m_alias, tuples);
 }
 
+void PortsOrch::updateDbPortOperError(Port& port, PortOperErrorEvent *pevent)
+{
+    SWSS_LOG_ENTER();
+
+    auto key = pevent->getDbKey();
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tup1("oper_error_status", std::to_string(port.m_oper_error_status));
+    tuples.push_back(tup1);
+
+    size_t count = pevent->getErrorCount();
+    FieldValueTuple tup2(key + "_count", std::to_string(count));
+    tuples.push_back(tup2);
+
+    auto time = pevent->getEventTime();
+    FieldValueTuple tup3(key + "_time", time);
+    tuples.push_back(tup3);
+
+    m_portOpErrTable.set(port.m_alias, tuples);
+}
+
 void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
     SWSS_LOG_ENTER();
@@ -4612,6 +4672,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* create host_tx_ready field in state-db */
                 initHostTxReadyState(p);
+
+                initializePortOperErrors(p);
 
                 // Restore admin status if the port was brought down
                 if (admin_status != p.m_admin_state_up)
@@ -8019,12 +8081,14 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
         for (uint32_t i = 0; i < count; i++)
         {
+            Port port;
             sai_object_id_t id = portoperstatus[i].port_id;
             sai_port_oper_status_t status = portoperstatus[i].port_state;
+            sai_port_error_status_t port_oper_err = portoperstatus[i].port_error_status;
 
-            SWSS_LOG_NOTICE("Get port state change notification id:%" PRIx64 " status:%d", id, status);
-
-            Port port;
+            SWSS_LOG_NOTICE("Get port state change notification id:%" PRIx64 " status:%d "
+                                "oper_error_status:0x%" PRIx32,
+                                id, status, port_oper_err);
 
             if (!getPort(id, port))
             {
@@ -8061,6 +8125,11 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                 {
                     updateDbPortOperFec(port, "N/A");
                 }
+            } else {
+                if (port_oper_err)
+                {
+                    updatePortErrorStatus(port, port_oper_err);
+                }
             }
 
             /* update m_portList */
@@ -8087,6 +8156,53 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
         setHostTxReady(p, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
     }
 
+}
+
+void PortsOrch::updatePortErrorStatus(Port &port, sai_port_error_status_t errstatus)
+{
+    size_t errors = 0;
+    string db_port_error_name;
+    PortOperErrorEvent *portOperErrorEvent = nullptr;
+    size_t error_count = PortOperErrorEvent::db_key_errors.size();
+
+    SWSS_LOG_NOTICE("Port %s error state set from 0x%" PRIx32 "-> 0x%" PRIx32,
+                        port.m_alias.c_str(),
+                        port.m_oper_error_status,
+                        errstatus);
+
+    port.m_oper_error_status = errstatus;
+
+    // Iterate through all the port oper errors
+    while ((errstatus >> errors) && (errors < error_count))
+    {
+        sai_port_error_status_t error_status = static_cast<sai_port_error_status_t>(errstatus & (1 << errors));
+
+        if (port.m_portOperErrorToEvent.find(error_status) == port.m_portOperErrorToEvent.end())
+        {
+            ++errors;
+            continue;
+        }
+
+        portOperErrorEvent = &port.m_portOperErrorToEvent[error_status];
+
+        if (portOperErrorEvent->isErrorSet(errstatus))
+        {
+            SWSS_LOG_NOTICE("Port %s oper error event: %s occurred",
+                                port.m_alias.c_str(),
+                                portOperErrorEvent->getDbKey().c_str());
+            portOperErrorEvent->recordEventTime();
+            portOperErrorEvent->incrementErrorCount();
+            updateDbPortOperError(port, portOperErrorEvent);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Port %s port oper error %s not updated in DB",
+                                port.m_alias.c_str(),
+                                portOperErrorEvent->getDbKey().c_str());
+        }
+
+        ++errors;
+    }
 }
 
 void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)

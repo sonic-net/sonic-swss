@@ -680,6 +680,163 @@ namespace portsorch_test
         cleanupPorts(gPortsOrch);
     }
 
+   /*
+    * Test port oper error count
+    */
+    TEST_F(PortsOrchTest, PortOperErrorStatus)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table portTableOpErrState = Table(m_state_db.get(), STATE_PORT_OPER_ERR_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Get first port, expect the oper status is not UP
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_TRUE(port.m_oper_status != SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(port.m_flap_count == 0);
+
+        auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
+        auto consumer = exec->getNotificationConsumer();
+
+        std::vector<sai_port_error_status_t> errors = {
+            SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT,
+            SAI_PORT_ERROR_STATUS_MAC_REMOTE_FAULT,
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS |
+                SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT),
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_LOSS_ALIGNMENT_MARKER |
+                SAI_PORT_ERROR_STATUS_HIGH_SER |
+                SAI_PORT_ERROR_STATUS_HIGH_BER |
+                SAI_PORT_ERROR_STATUS_CRC_RATE),
+            SAI_PORT_ERROR_STATUS_DATA_UNIT_CRC_ERROR,
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS |
+                SAI_PORT_ERROR_STATUS_DATA_UNIT_SIZE |
+                SAI_PORT_ERROR_STATUS_DATA_UNIT_MISALIGNMENT_ERROR),
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_CODE_GROUP_ERROR |
+                SAI_PORT_ERROR_STATUS_SIGNAL_LOCAL_ERROR |
+                SAI_PORT_ERROR_STATUS_NO_RX_REACHABILITY),
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS |
+                SAI_PORT_ERROR_STATUS_MAC_REMOTE_FAULT)
+        };
+
+        // mock a redis reply for notification, it notifies that Ehernet0 is going to up
+        for (uint32_t count=0; count < errors.size(); count++) {
+            sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
+            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+            sai_port_oper_status_notification_t port_oper_status;
+            memset(&port_oper_status, 0, sizeof(port_oper_status));
+            port_oper_status.port_error_status = errors[count];
+            port_oper_status.port_state = oper_status;
+            port_oper_status.port_id = port.m_port_id;
+            std::string data = sai_serialize_port_oper_status_ntf(1, &port_oper_status);
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata("port_state_change", data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            // trigger the notification
+            consumer->readData();
+            gPortsOrch->doTask(*consumer);
+            mockReply = nullptr;
+            gPortsOrch->getPort("Ethernet0", port);
+            gPortsOrch->updatePortErrorStatus(port, errors[count]);
+            ASSERT_TRUE(port.m_oper_error_status == errors[count]);
+        }
+
+        std::vector<FieldValueTuple> values;
+        portTableOpErrState.get("Ethernet0", values);
+
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "mac_local_fault_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "2");
+            }
+            else if (fvField(valueTuple) == "mac_remote_fault_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "2");
+            }
+            else if (fvField(valueTuple) == "oper_error_status")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "3");
+            }
+            else if (fvField(valueTuple) == "fec_sync_loss_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "3");
+            }
+            else if (fvField(valueTuple) == "fec_alignment_loss_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "high_ser_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "high ber_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "crc_rate_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "data_unit_crc_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "data_unit_size_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "data_unit_misalignment_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "code_group_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "signal_local_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "no_rx_reachability_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+        }
+
+        cleanupPorts(gPortsOrch);
+    }
+
     TEST_F(PortsOrchTest, PortBulkCreateRemove)
     {
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
