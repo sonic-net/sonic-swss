@@ -824,14 +824,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     }
                     else if (srv6_nh == true)
                     {
-                        if (ipv.size() != srv6_src.size())
-                        {
-                            SWSS_LOG_ERROR("inconsistent number of endpoints and srv6_srcs.");
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-
-                        if (srv6_vpn && (ipv.size() != srv6_vpn_sidv.size()))
+                        if (srv6_vpn && (srv6_vpn_sidv.size() != srv6_src.size()))
                         {
                             SWSS_LOG_ERROR("inconsistent number of endpoints and srv6 vpn sids.");
                             it = consumer.m_toSync.erase(it);
@@ -845,10 +838,10 @@ void RouteOrch::doTask(Consumer& consumer)
                             continue;
                         }
 
-                        for (uint32_t i = 0; i < ipv.size(); i++)
+                        for (uint32_t i = 0; i < srv6_src.size(); i++)
                         {
                             if (i) nhg_str += NHG_DELIMITER;
-                            nhg_str += ipv[i] + NH_DELIMITER;      // ip address
+                            nhg_str += (ipv.size() > i ? ipv[i] : "0.0.0.0") + NH_DELIMITER;  // ip address
                             nhg_str += (srv6_seg ? srv6_segv[i] : "") + NH_DELIMITER;     // srv6 segment
                             nhg_str += srv6_src[i] + NH_DELIMITER; // srv6 source
                             nhg_str += (srv6_vpn ? srv6_vpn_sidv[i] : "") + NH_DELIMITER; // srv6 vpn sid

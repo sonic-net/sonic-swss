@@ -485,7 +485,7 @@ class TestSrv6(object):
         table = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
         existed_entries = get_exist_entries(self.adb.db_connection, table)
 
-        fvs=swsscommon.FieldValuePairs([('seg_src',segsrc), ('segment',segname), ('nexthop','0.0.0.0'), ('ifname','unknown')])
+        fvs=swsscommon.FieldValuePairs([('seg_src',segsrc), ('segment',segname)])
         routetbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
         routetbl.set(routeip,fvs)
 
