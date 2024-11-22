@@ -773,6 +773,8 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         {
             continue;
         }
+        SWSS_LOG_INFO("monitoring(%s), nexthop exists %d", it.ip_address.to_string().c_str(),
+                                            nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() );
         sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
@@ -926,6 +928,7 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
         next_hop_group_entry.ref_count = 0;
         if (monitoring == "custom" || nexthop_info_[vnet].find(nexthop.ip_address) == nexthop_info_[vnet].end() || nexthop_info_[vnet][nexthop.ip_address].bfd_state == SAI_BFD_SESSION_STATE_UP)
         {
+            SWSS_LOG_INFO("Adding next hop to the active group %s", nexthop.ip_address.to_string().c_str());
             next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
         }
         syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
@@ -1893,6 +1896,7 @@ void VNetRouteOrch::removeBfdSession(const string& vnet, const NextHopKey& endpo
     {
         SWSS_LOG_ERROR("BFD session for endpoint %s does not exist", endpoint_addr.to_string().c_str());
     }
+    SWSS_LOG_INFO("removing nexthop info for endpoint %s", endpoint_addr.to_string().c_str());
     nexthop_info_[vnet].erase(endpoint_addr);
 
     string key = "default:default:" + monitor_addr.to_string();
@@ -2118,15 +2122,17 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
     auto prefix_to_use = ipPrefix;
     if (prefix_to_adv_prefix_.find(ipPrefix) != prefix_to_adv_prefix_.end())
     {
-        route_state = "";
         auto adv_pfx = prefix_to_adv_prefix_[ipPrefix];
-        if (adv_prefix_refcount_[adv_pfx] == 1)
+        if (route_state == "active" and adv_prefix_refcount_[adv_pfx] == 1)
         {
-            route_state = "active";
             prefix_to_use = adv_pfx;
         }
+        else
+        {
+            route_state = "";
+        }
     }
-    SWSS_LOG_NOTICE("advertisement of prefix: %s with profile: %s  %s via %s\n",
+    SWSS_LOG_NOTICE("advertisement of prefix: %s with profile:%s, status: %s via %s\n",
                                 ipPrefix.to_string().c_str(), profile.c_str(),
                                 route_state.c_str(), prefix_to_use.to_string().c_str());
     if (vnet_orch_->getAdvertisePrefix(vnet))
