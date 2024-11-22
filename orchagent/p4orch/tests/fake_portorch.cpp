@@ -191,11 +191,11 @@ void PortsOrch::generateQueueMapPerPort(const Port &port, FlexCounterQueueStates
 {
 }
 
-void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
+void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue)
 {
 }
 
-void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
+void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue)
 {
 }
 

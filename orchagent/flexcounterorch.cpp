@@ -408,6 +408,13 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
                 {
                     queuesStateVector.at(configPortName).enableQueueCounter(startIndex);
                 }
+
+                Port port;
+                gPortsOrch->getPort(configPortName, port);
+                if (port.m_host_tx_queue_configured && port.m_host_tx_queue <= maxQueueIndex)
+                {
+                    queuesStateVector.at(configPortName).enableQueueCounter(port.m_host_tx_queue);
+                }
             } catch (std::invalid_argument const& e) {
                     SWSS_LOG_ERROR("Invalid queue index [%s] for port [%s]", configPortQueues.c_str(), configPortName.c_str());
                     continue;
