@@ -19,7 +19,6 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "warm_restart.h"
-#include "stp_ipc.h"
 
 #include <iostream>
 #include <algorithm>
