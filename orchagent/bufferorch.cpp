@@ -994,13 +994,13 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                     if (!counter_was_added && counter_needs_to_add &&
                         (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
-                        SWSS_LOG_INFO("Creating counters for %s %lu", port_name.c_str(), ind);
+                        SWSS_LOG_INFO("Creating counters for %s %zd", port_name.c_str(), ind);
                         gPortsOrch->createPortBufferQueueCounters(port, queues);
                     }
                     else if (counter_was_added && !counter_needs_to_add &&
                              (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
-                        SWSS_LOG_INFO("Removing counters for %s %lu", port_name.c_str(), ind);
+                        SWSS_LOG_INFO("Removing counters for %s %zd", port_name.c_str(), ind);
                         gPortsOrch->removePortBufferQueueCounters(port, queues);
                     }
                 }
@@ -1202,13 +1202,13 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                         if (!counter_was_added && counter_needs_to_add &&
                             (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
                         {
-                            SWSS_LOG_INFO("Creating counters for priority group %s %lu", port_name.c_str(), ind);
+                            SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
                             gPortsOrch->createPortBufferPgCounters(port, pgs);
                         }
                         else if (counter_was_added && !counter_needs_to_add &&
                                  (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
                         {
-                            SWSS_LOG_INFO("Removing counters for priority group %s %lu", port_name.c_str(), ind);
+                            SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
                             gPortsOrch->removePortBufferPgCounters(port, pgs);
                         }
                     }
