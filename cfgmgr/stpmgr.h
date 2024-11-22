@@ -28,7 +28,6 @@
 #include "netmsg.h"
 #include "orch.h"
 #include "producerstatetable.h"
-#include <stp_ipc.h>
 #include <stddef.h>
 #include <algorithm>
 
