@@ -123,7 +123,8 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
-                    else if (fvValue(i) == "mstp") {  // New branch for MSTP
+                    else if (fvValue(i) == "mstp") 
+                    {  // New branch for MSTP
 
                         if (l2ProtoEnabled == L2_NONE) 
                         {
@@ -137,6 +138,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                             l2ProtoEnabled = L2_MSTP;
                         }
                         msg.stp_mode = L2_MSTP;
+                    }
                     else
                         SWSS_LOG_ERROR("Error invalid mode %s", fvValue(i).c_str());
                 }
