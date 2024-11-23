@@ -186,8 +186,8 @@ public:
 
     void generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector);
     uint32_t getNumberOfPortSupportedQueueCounters(string port);
-    void createPortBufferQueueCounters(const Port &port, string queues);
-    void removePortBufferQueueCounters(const Port &port, string queues);
+    void createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void removePortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
     void addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
 
