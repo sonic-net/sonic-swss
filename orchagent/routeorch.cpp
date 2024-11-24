@@ -381,6 +381,133 @@ void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr, sai_object_
     }
 }
 
+void RouteOrch::updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops)
+{
+    std::set<NextHopKey> current_default_route_nhops;
+    current_default_route_nhops.clear();
+
+    if (default_nhg_key.getSize() == 1)
+    {
+       current_default_route_nhops.insert(*default_nhg_key.getNextHops().begin());
+    }
+    else
+    {
+        auto nhgm = m_syncdNextHopGroups[default_nhg_key].nhopgroup_members;
+        for (auto nhop = nhgm.begin(); nhop != nhgm.end(); ++nhop)
+        {
+            current_default_route_nhops.insert(nhop->first);
+        }
+    }
+
+    if (!active_default_route_nhops.empty())
+    {
+        // Not empty . For all the NexhopGroup that are still present with swap to default property
+        // we need to remove the nexthops that are no more present and add the one that are new.
+        compareAndResolveDefaultRouteNhSwapNextHopGroup(active_default_route_nhops, current_default_route_nhops);
+    }
+    active_default_route_nhops.clear();
+    std::copy(current_default_route_nhops.begin(), current_default_route_nhops.end(), std::inserter(active_default_route_nhops, active_default_route_nhops.begin()));
+}
+
+bool RouteOrch::compareAndResolveDefaultRouteNhSwapNextHopGroup(const std::set<NextHopKey>& prev_default_route_next_hop_set, 
+                                                                const std::set<NextHopKey>& curr_default_route_next_hop_set)
+{
+   std::set<NextHopKey> default_route_nh_delete_set;
+   std::set<NextHopKey> default_route_nh_create_set;
+
+   std::set_difference(prev_default_route_next_hop_set.begin(), prev_default_route_next_hop_set.end(), 
+                       curr_default_route_next_hop_set.begin(), curr_default_route_next_hop_set.end(),
+                       std::inserter(default_route_nh_delete_set, default_route_nh_delete_set.begin()));
+
+   std::set_difference(curr_default_route_next_hop_set.begin(), curr_default_route_next_hop_set.end(), 
+                       prev_default_route_next_hop_set.begin(), prev_default_route_next_hop_set.end(),
+                       std::inserter(default_route_nh_create_set, default_route_nh_create_set.begin()));
+
+
+    for (auto nhopgroup = m_syncdNextHopGroups.begin(); nhopgroup != m_syncdNextHopGroups.end(); ++nhopgroup)
+    {
+        if (!nhopgroup->second.is_default_route_nh_swap)
+        {
+            continue;
+        }
+
+        addDefaultRouteNexthopsInNextHopGroup(nhopgroup->second, default_route_nh_create_set);
+        removeDefaultRouteNexthopsInNextHopGroup(nhopgroup->second, default_route_nh_delete_set);
+    }
+    return true;
+}
+
+bool RouteOrch::addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set)
+{
+    SWSS_LOG_ENTER();
+    sai_object_id_t nexthop_group_member_id;
+    sai_status_t status;
+
+    for (auto it : default_route_next_hop_set)
+    {
+        vector<sai_attribute_t> nhgm_attrs;
+        sai_attribute_t nhgm_attr;
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+        nhgm_attr.value.oid = original_next_hop_group.next_hop_group_id;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+        nhgm_attr.value.oid = m_neighOrch->getNextHopId(it);
+        nhgm_attrs.push_back(nhgm_attr);
+
+        status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_group_member_id, gSwitchId,
+                                                                     (uint32_t)nhgm_attrs.size(),
+                                                                     nhgm_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Default Route Swap Failed to add next hop member to group %" PRIx64 ": %d\n",
+                           original_next_hop_group.next_hop_group_id, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+        // Increment the Default Route Active NH Reference Count
+        m_neighOrch->increaseNextHopRefCount(it);
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+        original_next_hop_group.default_route_nhopgroup_members[it].next_hop_id = nexthop_group_member_id;
+        original_next_hop_group.default_route_nhopgroup_members[it].seq_id = 0;
+    }
+    return true;
+}
+
+bool RouteOrch::removeDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t status;
+
+    for (auto it : default_route_next_hop_set)
+    {
+        if (original_next_hop_group.default_route_nhopgroup_members.find(it) == original_next_hop_group.default_route_nhopgroup_members.end())
+        {
+            continue;
+        }
+        status = sai_next_hop_group_api->remove_next_hop_group_member(original_next_hop_group.default_route_nhopgroup_members[it].next_hop_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove next hop member %" PRIx64 " from group %" PRIx64 ": %d\n",
+                           original_next_hop_group.default_route_nhopgroup_members[it].next_hop_id, original_next_hop_group.next_hop_group_id, status);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+        
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+        m_neighOrch->decreaseNextHopRefCount(it);
+        original_next_hop_group.default_route_nhopgroup_members.erase(it);
+    }
+    return true;
+}
+
 bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& count)
 {
     SWSS_LOG_ENTER();
@@ -398,6 +525,13 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
             continue;
         }
 
+       // AZNG Route NHOP Group is swapped by default route nh memeber . do not add Nexthop again.
+       // Wait for Nexthop Group Cleanup
+        if (nhopgroup->second.is_default_route_nh_swap)
+        {
+           continue;
+        }
+        
         vector<sai_attribute_t> nhgm_attrs;
         sai_attribute_t nhgm_attr;
 
@@ -444,6 +578,7 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         ++count;
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         nhopgroup->second.nhopgroup_members[nexthop].next_hop_id = nexthop_id;
+        nhopgroup->second.nh_member_install_count++;
     }
 
     if (!m_fgNhgOrch->validNextHopInNextHopGroup(nexthop))
@@ -484,7 +619,23 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
-
+        if (nhopgroup->second.nh_member_install_count)
+        {
+            nhopgroup->second.nh_member_install_count--;
+        }
+        
+        if (nhopgroup->second.nh_member_install_count == 0 && nhopgroup->second.eligible_for_default_route_nh_swap && !nhopgroup->second.is_default_route_nh_swap)
+        {
+            if(nexthop.ip_address.isV4())
+            { 
+                addDefaultRouteNexthopsInNextHopGroup(nhopgroup->second, v4_active_default_route_nhops);
+            }
+            else
+            {
+                addDefaultRouteNexthopsInNextHopGroup(nhopgroup->second, v6_active_default_route_nhops);
+            }
+            nhopgroup->second.is_default_route_nh_swap = true;
+        }
         ++count;
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
@@ -632,6 +783,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 string srv6_segments;
                 string srv6_source;
                 bool srv6_nh = false;
+                bool fallback_to_default_route = false;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -673,6 +825,10 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                         ctx.protocol = fvValue(i);
                     }
+                    if (fvField(i) == "fallback_to_default_route")
+		    {
+                        fallback_to_default_route = fvValue(i) == "true";
+		    }
                 }
 
                 /*
@@ -687,6 +843,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
 
                 ctx.nhg_index = nhg_index;
+                ctx.fallback_to_default_route = fallback_to_default_route;
 
                 /*
                  * If the nexthop_group is empty, create the next hop group key
@@ -975,6 +1132,8 @@ void RouteOrch::doTask(Consumer& consumer)
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
         m_bulkNhgReducedRefCnt.clear();
+        NextHopGroupKey v4_default_nhg_key;
+        NextHopGroupKey v6_default_nhg_key;
         while (it_prev != it)
         {
             KeyOpFieldsValuesTuple t = it_prev->second;
@@ -1032,6 +1191,18 @@ void RouteOrch::doTask(Consumer& consumer)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
+
+                    if (ip_prefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
+                    {
+                       if (ip_prefix.isV4())
+                       {
+                          v4_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                       }
+                       else
+                       {
+                           v6_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                       }
+                    }
                 }
             }
             else if (op == DEL_COMMAND)
@@ -1067,9 +1238,19 @@ void RouteOrch::doTask(Consumer& consumer)
             }
             else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
             {
-                removeNextHopGroup(it_nhg.first);
+               // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
+               removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
             }
         }
+
+        if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
+            return;
+
+        if (v4_default_nhg_key.getSize())
+            updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
+        
+        if (v6_default_nhg_key.getSize())
+           updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
     }
 }
 
@@ -1363,6 +1544,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     NextHopGroupEntry next_hop_group_entry;
     next_hop_group_entry.next_hop_group_id = next_hop_group_id;
+    next_hop_group_entry.nh_member_install_count = 0;
 
     size_t npid_count = next_hop_ids.size();
     vector<sai_object_id_t> nhgm_ids(npid_count);
@@ -1433,6 +1615,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         {
             next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].next_hop_id = nhgm_id;
             next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].seq_id = ((uint32_t)i) + 1;
+            next_hop_group_entry.nh_member_install_count++;
         }
     }
 
@@ -1450,7 +1633,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     return true;
 }
 
-bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
+bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool is_default_route_nh_swap)
 {
     SWSS_LOG_ENTER();
 
@@ -1471,10 +1654,10 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
     vector<sai_object_id_t> next_hop_ids;
-    auto& nhgm = next_hop_group_entry->second.nhopgroup_members;
+    auto &nhgm = is_default_route_nh_swap ? next_hop_group_entry->second.default_route_nhopgroup_members : next_hop_group_entry->second.nhopgroup_members;
     for (auto nhop = nhgm.begin(); nhop != nhgm.end();)
     {
-        if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN))
+        if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN) && (!is_default_route_nh_swap))
         {
             SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
                            nhop->first.to_string().c_str(), nhop->second.next_hop_id);
@@ -1565,6 +1748,16 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         }
     }
 
+    // Decrement Nexthop Reference Count for Default Route NH Member used as swapped
+    if (is_default_route_nh_swap)
+    {
+        auto& nhgm = next_hop_group_entry->second.default_route_nhopgroup_members;
+        for (auto nhop = nhgm.begin(); nhop != nhgm.end(); ++nhop)
+        {
+            m_neighOrch->decreaseNextHopRefCount(nhop->first);
+        }
+    }
+ 
     m_syncdNextHopGroups.erase(nexthops);
 
     return true;
@@ -1715,6 +1908,11 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
         {
             SWSS_LOG_INFO("Failed to get next hop %s for %s",
                    (*it).to_string().c_str(), ipPrefix.to_string().c_str());
+            it = next_hop_set.erase(it);
+        }
+        else if(m_neighOrch->isNextHopFlagSet(*it, NHFLAGS_IFDOWN))
+        {
+            SWSS_LOG_INFO("Interface down for NH %s, skip this NH", (*it).to_string().c_str());
             it = next_hop_set.erase(it);
         }
         else
@@ -1948,6 +2146,11 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 addTempRoute(ctx, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
+            }
+            else
+            {
+                m_syncdNextHopGroups[nextHops].eligible_for_default_route_nh_swap = ctx.fallback_to_default_route;
+                m_syncdNextHopGroups[nextHops].is_default_route_nh_swap = false;
             }
         }
 
@@ -2504,6 +2707,11 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         updateDefRouteState(ipPrefix.to_string());
 
         SWSS_LOG_INFO("Set route %s next hop ID to NULL", ipPrefix.to_string().c_str());
+
+        if (ipPrefix.isV4())
+            v4_active_default_route_nhops.clear();
+        else
+            v6_active_default_route_nhops.clear();
     }
     else
     {
