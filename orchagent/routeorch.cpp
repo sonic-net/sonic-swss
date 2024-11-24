@@ -399,42 +399,8 @@ void RouteOrch::updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key,
         }
     }
 
-    if (!active_default_route_nhops.empty())
-    {
-        // Not empty . For all the NexhopGroup that are still present with swap to default property
-        // we need to remove the nexthops that are no more present and add the one that are new.
-        compareAndResolveDefaultRouteNhSwapNextHopGroup(active_default_route_nhops, current_default_route_nhops);
-    }
     active_default_route_nhops.clear();
     std::copy(current_default_route_nhops.begin(), current_default_route_nhops.end(), std::inserter(active_default_route_nhops, active_default_route_nhops.begin()));
-}
-
-bool RouteOrch::compareAndResolveDefaultRouteNhSwapNextHopGroup(const std::set<NextHopKey>& prev_default_route_next_hop_set, 
-                                                                const std::set<NextHopKey>& curr_default_route_next_hop_set)
-{
-   std::set<NextHopKey> default_route_nh_delete_set;
-   std::set<NextHopKey> default_route_nh_create_set;
-
-   std::set_difference(prev_default_route_next_hop_set.begin(), prev_default_route_next_hop_set.end(), 
-                       curr_default_route_next_hop_set.begin(), curr_default_route_next_hop_set.end(),
-                       std::inserter(default_route_nh_delete_set, default_route_nh_delete_set.begin()));
-
-   std::set_difference(curr_default_route_next_hop_set.begin(), curr_default_route_next_hop_set.end(), 
-                       prev_default_route_next_hop_set.begin(), prev_default_route_next_hop_set.end(),
-                       std::inserter(default_route_nh_create_set, default_route_nh_create_set.begin()));
-
-
-    for (auto nhopgroup = m_syncdNextHopGroups.begin(); nhopgroup != m_syncdNextHopGroups.end(); ++nhopgroup)
-    {
-        if (!nhopgroup->second.is_default_route_nh_swap)
-        {
-            continue;
-        }
-
-        addDefaultRouteNexthopsInNextHopGroup(nhopgroup->second, default_route_nh_create_set);
-        removeDefaultRouteNexthopsInNextHopGroup(nhopgroup->second, default_route_nh_delete_set);
-    }
-    return true;
 }
 
 bool RouteOrch::addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set)
@@ -474,36 +440,6 @@ bool RouteOrch::addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& origina
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         original_next_hop_group.default_route_nhopgroup_members[it].next_hop_id = nexthop_group_member_id;
         original_next_hop_group.default_route_nhopgroup_members[it].seq_id = 0;
-    }
-    return true;
-}
-
-bool RouteOrch::removeDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set)
-{
-    SWSS_LOG_ENTER();
-    sai_status_t status;
-
-    for (auto it : default_route_next_hop_set)
-    {
-        if (original_next_hop_group.default_route_nhopgroup_members.find(it) == original_next_hop_group.default_route_nhopgroup_members.end())
-        {
-            continue;
-        }
-        status = sai_next_hop_group_api->remove_next_hop_group_member(original_next_hop_group.default_route_nhopgroup_members[it].next_hop_id);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove next hop member %" PRIx64 " from group %" PRIx64 ": %d\n",
-                           original_next_hop_group.default_route_nhopgroup_members[it].next_hop_id, original_next_hop_group.next_hop_group_id, status);
-            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
-            if (handle_status != task_success)
-            {
-                return parseHandleSaiStatusFailure(handle_status);
-            }
-        }
-        
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-        m_neighOrch->decreaseNextHopRefCount(it);
-        original_next_hop_group.default_route_nhopgroup_members.erase(it);
     }
     return true;
 }

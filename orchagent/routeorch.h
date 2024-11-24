@@ -297,10 +297,6 @@ private:
     void createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     bool addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set);
-    bool removeDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set);
-    bool compareAndResolveDefaultRouteNhSwapNextHopGroup(const std::set<NextHopKey>& prev_default_route_next_hop_set, 
-		                                         const std::set<NextHopKey>& curr_default_route_next_hop_set);
-
     void updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops);
 
 };
