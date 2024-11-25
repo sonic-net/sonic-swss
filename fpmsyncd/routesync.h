@@ -137,7 +137,7 @@ private:
     void onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet);
 
     /* Get interface name based on interface index */
-    bool getIfName(int if_index, char *if_name, size_t name_len);
+    virtual bool getIfName(int if_index, char *if_name, size_t name_len);
 
     /* Get interface if_index based on interface name */
     rtnl_link* getLinkByName(const char *name);
@@ -185,7 +185,7 @@ private:
     const char *mySidAction2Str(uint32_t action);
 
     /* Handle Nexthop message */
-    void onNextHopMsg(struct nlmsghdr *h, int len);
+    virtual void onNextHopMsg(struct nlmsghdr *h, int len);
     /* Get next hop group key */
     const string getNextHopGroupKeyAsString(uint32_t id) const;
     void updateNextHopGroup(uint32_t nh_id);
