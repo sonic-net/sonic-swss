@@ -338,7 +338,10 @@ void flushPipeline(RedisPipeline& pipeline) {
 
     int idle = pipeline.getIdleTime();
 
-    // flush right away
+    // flush the pipeline if
+    // 1. traffic is not scaled (only prevent fpmsyncd from flushing ppl too frequently in the scaled case)
+    // 2. the idle time since last flush has exceeded gFlushTimeout
+    // 3. idle <= 0, due to system clock drift, should not happen since we already use steady_clock for timing
     if (remaining < SMALL_TRAFFIC || idle >= gFlushTimeout || idle <= 0) {
 
         pipeline.flush();
@@ -346,10 +349,12 @@ void flushPipeline(RedisPipeline& pipeline) {
         gSelectTimeout = INFINITE;
 
         SWSS_LOG_DEBUG("Pipeline flushed");
-    
-        return;
     }
-
-    // postpone the flush
-    gSelectTimeout = gFlushTimeout - idle;
+    else
+    {
+        // skip flushing ppl and set the timeout of fpmsyncd select function to be (gFlushTimeout - idle)
+        // so that fpmsyncd select function would block at most for (gFlushTimeout - idle)
+        // by doing this, we make sure every entry eventually gets flushed
+        gSelectTimeout = gFlushTimeout - idle;
+    }
 }
