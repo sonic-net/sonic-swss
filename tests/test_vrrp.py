@@ -10,6 +10,25 @@ class TestVrrp(object):
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
+    def set_admin_status(self, dvs, interface, status):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN"
+        else:
+            tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("admin_status", status)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+        # when using FRR, route cannot be inserted if the neighbor is not
+        # connected. thus it is mandatory to force the interface up manually
+        if interface.startswith("PortChannel"):
+            dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") +\
+                    " > /sys/class/net/" + interface + "/carrier'")
+        time.sleep(1)
+
     def create_vrf(self, vrf_name):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         initial_entries = set(tbl.getKeys())
