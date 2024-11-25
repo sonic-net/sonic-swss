@@ -388,7 +388,7 @@ void RouteOrch::updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key,
 
     if (default_nhg_key.getSize() == 1)
     {
-       current_default_route_nhops.insert(*default_nhg_key.getNextHops().begin());
+        current_default_route_nhops.insert(*default_nhg_key.getNextHops().begin());
     }
     else
     {
@@ -462,7 +462,7 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
             continue;
         }
 
-       // AZNG Route NHOP Group is swapped by default route nh memeber . do not add Nexthop again.
+       // Route NHOP Group is swapped by default route nh memeber . do not add Nexthop again.
        // Wait for Nexthop Group Cleanup
         if (nhopgroup->second.is_default_route_nh_swap)
         {
@@ -762,9 +762,9 @@ void RouteOrch::doTask(Consumer& consumer)
                         ctx.protocol = fvValue(i);
                     }
                     if (fvField(i) == "fallback_to_default_route")
-		    {
+		            {
                         fallback_to_default_route = fvValue(i) == "true";
-		    }
+		            }
                 }
 
                 /*
@@ -1132,11 +1132,11 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                        if (ip_prefix.isV4())
                        {
-                          v4_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                            v4_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
                        }
                        else
                        {
-                           v6_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                            v6_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
                        }
                     }
                 }
@@ -1174,8 +1174,8 @@ void RouteOrch::doTask(Consumer& consumer)
             }
             else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
             {
-               // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
-               removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
+                // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
+                removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
             }
         }
 
@@ -1186,7 +1186,7 @@ void RouteOrch::doTask(Consumer& consumer)
             updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
         
         if (v6_default_nhg_key.getSize())
-           updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
+            updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
     }
 }
 
@@ -1590,7 +1590,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
     vector<sai_object_id_t> next_hop_ids;
-    auto &nhgm = is_default_route_nh_swap ? next_hop_group_entry->second.default_route_nhopgroup_members : next_hop_group_entry->second.nhopgroup_members;
+    auto& nhgm = is_default_route_nh_swap ? next_hop_group_entry->second.default_route_nhopgroup_members : next_hop_group_entry->second.nhopgroup_members;
     for (auto nhop = nhgm.begin(); nhop != nhgm.end();)
     {
         if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN) && (!is_default_route_nh_swap))

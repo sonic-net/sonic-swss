@@ -134,7 +134,7 @@ struct RouteBulkContext
 
     RouteBulkContext(const std::string& key, bool is_set)
         : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set),
-	  fallback_to_default_route(false)
+	      fallback_to_default_route(false)
     {
     }
 
@@ -152,7 +152,7 @@ struct RouteBulkContext
         using_temp_nhg = false;
         key.clear();
         protocol.clear();
-	fallback_to_default_route = false;
+	    fallback_to_default_route = false;
     }
 };
 
@@ -298,7 +298,6 @@ private:
     void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     bool addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set);
     void updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops);
-
 };
 
 #endif /* SWSS_ROUTEORCH_H */
