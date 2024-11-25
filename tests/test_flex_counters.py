@@ -609,12 +609,12 @@ class TestFlexCounters(TestFlexCountersBase):
     def set_admin_status(self, interface, status):
         self.config_db.update_entry("PORT", interface, {"admin_status": status})
 
-    @pytest.mark.parametrize('counter_type', [('queue_counter'), ('pg_drop_counter')])
-    def test_create_only_config_db_buffers_false(self, dvs, counter_type):
+    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7')])
+    def test_create_only_config_db_buffers_false(self, dvs, counter_type_id):
         """
         Test steps:
             1. By default the configuration knob 'create_only_config_db_value' is missing.
-            2. Get the counter OID for the interface 'Ethernet0:7' from the counters database.
+            2. Get the counter OID for the interface 'Ethernet0', queue 8 or PG 7, from the counters database.
             3. Perform assertions based on the 'create_only_config_db_value':
                 - If 'create_only_config_db_value' is 'false' or does not exist, assert that the counter OID has a valid OID value.
 
@@ -623,10 +623,11 @@ class TestFlexCounters(TestFlexCountersBase):
             counter_type (str): The type of counter being tested
         """
         self.setup_dbs(dvs)
+        counter_type, index = counter_type_id
         meta_data = counter_group_meta[counter_type]
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
-        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:7')
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:' + index)
         assert counter_oid is not None, "Counter OID should have a valid OID value when create_only_config_db_value is 'false' or does not exist"
 
     def test_create_remove_buffer_pg_watermark_counter(self, dvs):
@@ -658,12 +659,12 @@ class TestFlexCounters(TestFlexCountersBase):
         self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '1', False)
         self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
 
-    @pytest.mark.parametrize('counter_type', [('queue_counter'), ('pg_drop_counter')])
-    def test_create_only_config_db_buffers_true(self, dvs, counter_type):
+    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7')])
+    def test_create_only_config_db_buffers_true(self, dvs, counter_type_id):
         """
         Test steps:
             1. The 'create_only_config_db_buffers' was set to 'true' by previous test.
-            2. Get the counter OID for the interface 'Ethernet0:7' from the counters database.
+            2. Get the counter OID for the interface 'Ethernet0', queue 8 or PG 7, from the counters database.
             3. Perform assertions based on the 'create_only_config_db_value':
                 - If 'create_only_config_db_value' is 'true', assert that the counter OID is None.
 
@@ -671,11 +672,12 @@ class TestFlexCounters(TestFlexCountersBase):
             dvs (object): virtual switch object
             counter_type (str): The type of counter being tested
         """
+        counter_type, index = counter_type_id
         self.setup_dbs(dvs)
         meta_data = counter_group_meta[counter_type]
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
-        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:7')
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:' + index)
         assert counter_oid is None, "Counter OID should be None when create_only_config_db_value is 'true'"
 
     def test_create_remove_buffer_queue_counter(self, dvs):
@@ -695,12 +697,12 @@ class TestFlexCounters(TestFlexCountersBase):
 
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
-        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|7', {'profile': 'egress_lossless_profile'})
-        counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', True)
+        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|8', {'profile': 'egress_lossless_profile'})
+        counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '8', True)
         self.wait_for_id_list(meta_data['group_name'], "Ethernet0", counter_oid)
 
-        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
-        self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', False)
+        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|8')
+        self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '8', False)
         self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
 
     def test_create_remove_buffer_watermark_queue_pg_counter(self, dvs):
@@ -723,16 +725,18 @@ class TestFlexCounters(TestFlexCountersBase):
                 self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|7', {'profile': 'ingress_lossy_profile'})
-        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|7', {'profile': 'egress_lossless_profile'})
+        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|8', {'profile': 'egress_lossless_profile'})
 
         for counterpoll_type, meta_data in counter_group_meta.items():
             if 'queue' in counterpoll_type or 'pg' in counterpoll_type:
-                counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', True)
+                index = '8' if 'queue' in counterpoll_type else '7'
+                counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', index, True)
                 self.wait_for_id_list(meta_data['group_name'], "Ethernet0", counter_oid)
 
-        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
+        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|8')
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|7')
         for counterpoll_type, meta_data in counter_group_meta.items():
             if 'queue' in counterpoll_type or 'pg' in counterpoll_type:
-                self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', False)
+                index = '8' if 'queue' in counterpoll_type else '7'
+                self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', index, False)
                 self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
