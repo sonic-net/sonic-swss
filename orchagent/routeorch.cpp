@@ -1305,7 +1305,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         else if (it.isMplsNextHop() &&
                  m_neighOrch->hasNextHop(NextHopKey(it.ip_address, it.alias)))
         {
-            m_neighOrch->addNextHop(it);
+            NeighborContext ctx = NeighborContext(it);
+            m_neighOrch->addNextHop(ctx);
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         else
@@ -1839,7 +1840,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                      m_neighOrch->isNeighborResolved(nexthop))
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
-                m_neighOrch->addNextHop(nexthop);
+                NeighborContext ctx = NeighborContext(nexthop);
+                m_neighOrch->addNextHop(ctx);
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
             /* IP neighbor is not yet resolved */
