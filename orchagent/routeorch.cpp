@@ -762,9 +762,9 @@ void RouteOrch::doTask(Consumer& consumer)
                         ctx.protocol = fvValue(i);
                     }
                     if (fvField(i) == "fallback_to_default_route")
-		            {
+                    {
                         fallback_to_default_route = fvValue(i) == "true";
-		            }
+                    }
                 }
 
                 /*
