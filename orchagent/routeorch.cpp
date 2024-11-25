@@ -440,6 +440,7 @@ bool RouteOrch::addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& origina
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         original_next_hop_group.default_route_nhopgroup_members[it].next_hop_id = nexthop_group_member_id;
         original_next_hop_group.default_route_nhopgroup_members[it].seq_id = 0;
+        original_next_hop_group.is_default_route_nh_swap = true;
     }
     return true;
 }
@@ -570,7 +571,6 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
             {
                 addDefaultRouteNexthopsInNextHopGroup(nhopgroup->second, v6_active_default_route_nhops);
             }
-            nhopgroup->second.is_default_route_nh_swap = true;
         }
         ++count;
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
