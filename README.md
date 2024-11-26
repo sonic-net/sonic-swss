@@ -102,24 +102,6 @@ If the version is not `1.17-6ubuntu4.7`, then you need to install the correct ve
 
 If you run into dependency issues during the installation of a package, you can run `sudo apt -f install` to fix the issue. But note that if `apt` is unable to fix the dependency problem, it will attempt to remove the broken package(s).
 
-#### Conversion error during compilation
-
-If you are using the default version of g++ in Ubuntu 20.04 (which is 9.4.0 as of November 2024), you may get unavoidable compilation errors like this:
-```
-error: conversion from ‘int’ to ‘std::map<short unsigned int, short unsigned int>::mapped_type’ {aka ‘short unsigned int’} may change value [-Werror=conversion]
-```
-It is unavoidable because of integral promotion in C++ and our use of `-Werror` and `-Wconversion` flags.
-g++ 10 does not have this issue. So you need to make sure that `g++` resolves to `g++-10` on your system:
-```
-sudo apt install g++-10
-printf "\nalias g++=g++-10\nalias gcc=gcc-10\n" >>~/.bashrc
-source ~/.bashrc
-```
-Verify that g++ now refers to g++ 10:
-```
-g++ --version
-```
-
 ## Need Help?
 
 For general questions, setup help, or troubleshooting:
