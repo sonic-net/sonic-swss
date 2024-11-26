@@ -109,26 +109,26 @@ class TestVrrp(object):
         tbl_name = "VRRP"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("vip", vip)])
-        tbl.set(interface + "|" + vid, fvs)
+        tbl.set(interface + "|" + str(vid), fvs)
         time.sleep(1)
 
     def addremove_vrrp6_instance_vip(self, interface, vid, vip):
         tbl_name = "VRRP6"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("vip", vip)])
-        tbl.set(interface + "|" + vid, fvs)
+        tbl.set(interface + "|" + str(vid), fvs)
         time.sleep(1)
 
     def remove_vrrp_instance(self, interface, vid):
         tbl_name = "VRRP"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        tbl._del(interface + "|" + vid)
+        tbl._del(interface + "|" + str(vid))
         time.sleep(1)
 
     def remove_vrrp6_instance(self, interface, vid):
         tbl_name = "VRRP6"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        tbl._del(interface + "|" + vid)
+        tbl._del(interface + "|" + str(vid))
         time.sleep(1)
 
     def test_VrrpAddRemoveIpv6Address(self, dvs, testlog):
@@ -214,6 +214,4 @@ class TestVrrp(object):
 
         # remove interface
         self.remove_l3_intf("Ethernet8")
-
-
 
