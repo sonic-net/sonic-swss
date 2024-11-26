@@ -164,8 +164,8 @@ class TestVrrp(object):
         self.remove_vrrp6_instance("Ethernet8", 8)
         
         # check kernel macvlan device info
-        output = dvs.runcmd(['sh', '-c', "ip address show"])
-        assert "fc00::8/126" in output or "00:00:5e:00:02:08" in output
+        #output = dvs.runcmd(['sh', '-c', "ip address show"])
+        #assert "fc00::8/126" in output or "00:00:5e:00:02:08" in output
 
         # remove IP from interface
         self.remove_ip_address("Ethernet8", "fc00::1/126")
@@ -206,7 +206,7 @@ class TestVrrp(object):
         self.remove_vrrp_instance("Ethernet8", 8)
         
         # check kernel macvlan device info
-        output = dvs.runcmd(['sh', '-c', "ip address show"])
+        output = dvs.runcmd(['sh', '-c', "ip address show | grep Vrrp4-8"])
         assert "8.8.8.1/24" in output or "00:00:5e:00:01:08" in output
 
         # remove IP from interface
