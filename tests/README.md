@@ -228,4 +228,14 @@ For those developing new features for SWSS or the DVS framework, you might find 
 
 - Currently when pytest is run using `--force-flaky` and the last test case fails, then pytest tears down the module before retrying the failed test case and invokes the module setup again to run the failed test case. This is a known issue with [flaky](https://github.com/box/flaky/issues/128) and [pytest](https://github.com/pytest-dev/pytest-rerunfailures/issues/51).
     
-    Because of this issue, all the logs are lost except for the last test case as modules are torn down and set up again. The workaround for this is to include a dummy test case that always passes at the end of all test files/modules. 
+    Because of this issue, all the logs are lost except for the last test case as modules are torn down and set up again. The workaround for this is to include a dummy test case that always passes at the end of all test files/modules.
+
+- Too many open files
+
+    If some tests end with the error "Too many open files", you should check the maximum number of open files that are permitted on your system:
+    ```
+    ulimit -a | grep "open files"
+    ```
+    You can increase it by executing this command: `ulimit -n 8192`. Feel free to change `8192`. This value worked fine for me.
+
+    **Note:** This change is only valid for the current terminal session. If you want a persistent change, append `ulimit -n 8192` to `~/.bashrc`.
