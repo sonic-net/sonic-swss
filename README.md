@@ -43,6 +43,7 @@ Extract the downloaded zip file using `unzip sonic-buildimage.vs.zip`. Then navi
 ```
 sudo dpkg -i libdashapi_1.0.0_amd64.deb libnl-3-200_3.5.0-1_amd64.deb libnl-3-dev_3.5.0-1_amd64.deb libnl-cli-3-200_3.5.0-1_amd64.deb libnl-cli-3-dev_3.5.0-1_amd64.deb libnl-genl-3-200_3.5.0-1_amd64.deb libnl-genl-3-dev_3.5.0-1_amd64.deb libnl-nf-3-200_3.5.0-1_amd64.deb libnl-nf-3-dev_3.5.0-1_amd64.deb libnl-route-3-200_3.5.0-1_amd64.deb libnl-route-3-dev_3.5.0-1_amd64.deb libprotobuf32_3.21.12-3_amd64.deb libsaimetadata_1.0.0_amd64.deb  libsaimetadata-dev_1.0.0_amd64.deb libsairedis_1.0.0_amd64.deb libsairedis-dev_1.0.0_amd64.deb libsaivs_1.0.0_amd64.deb libsaivs-dev_1.0.0_amd64.deb  libswsscommon_1.0.0_amd64.deb libswsscommon-dev_1.0.0_amd64.deb libteam5_1.31-1_amd64.deb libteamdctl0_1.31-1_amd64.deb libyang_1.0.73_amd64.deb libyang-dev_1.0.73_amd64.deb python3-swsscommon_1.0.0_amd64.deb
 ```
+**Note:** You can also [build these packages yourself (for the VS platform)](https://github.com/sonic-net/sonic-buildimage/blob/master/README.md).
 
 Now, you can either directly install the SONiC SWSS package or you can build it from source and then install it. To install the SONiC SWSS package that is already in `sonic-buildimage.vs/target/debs/{Debian code name}/`, simply run the following command:
 ```
