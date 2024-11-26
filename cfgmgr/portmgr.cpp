@@ -82,19 +82,17 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     stringstream cmd;
     string res, cmd_str;
     int ret;
-    int byte_rate = stoi(dhcp_rate_limit) * 406;
+    int byte_rate = stoi(dhcp_rate_limit) * DHCP_PACKET_SIZE;
 
     if (dhcp_rate_limit != "0")
     {
-        // tc qdisc add dev <port_name> handle ffff: ingress
-        // &&
-        // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
+        /* tc qdisc add dev <port_name> handle ffff: ingress
+        &&
+        tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop*/
         cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
             << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
-        SWSS_LOG_WARN("ret Value in setPortDHCPMitigationRate is  ret:%d,", ret);
-
         if (!ret)
         {   
             SWSS_LOG_INFO("writing dhcp_rate_limit to appl_db");
@@ -113,6 +111,12 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
+        if (ret)
+    {
+        // Log the failure and return false to indicate an issue
+        SWSS_LOG_WARN("Failed to delete ingress qdisc for alias:%s with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
     }
 
     return true;
@@ -255,7 +259,6 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 writeConfigToAppDb(alias, field_values);
             }
-
             if (!portOk)
             {
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
@@ -263,7 +266,6 @@ void PortMgr::doTask(Consumer &consumer)
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();

@@ -14,6 +14,7 @@ namespace swss {
 #define DEFAULT_ADMIN_STATUS_STR    "down"
 #define DEFAULT_MTU_STR             "9100"
 #define DEFAULT_DHCP_RATE_LIMIT_STR "300"
+#define DHCP_PACKET_SIZE 406
 
 class PortMgr : public Orch
 {
@@ -40,5 +41,4 @@ private:
     bool setPortDHCPMitigationRate(const std::string &alias, const std::string &dhcp_rate_limit);
     bool isPortStateOk(const std::string &alias);
 };
-
 }

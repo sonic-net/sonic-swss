@@ -242,7 +242,6 @@ class DVSDatabase:
         status, result = wait_for_result(
             access_function, self._disable_strict_polling(polling_config)
         )
-        
         if not status:
             message = failure_message or (
                 f"Expected field/value pairs not found: expected={expected_fields}, "
