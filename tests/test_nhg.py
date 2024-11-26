@@ -1744,7 +1744,11 @@ class TestNextHopGroup(TestNextHopGroupBase):
                 self.flap_intf(i, 'up')
                 time.sleep(1)
                 keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
-                assert len(keys) == 3
+                assert len(keys) == i + 1
+            
+            rt_nhops.clear()
+            rt_nhgmids.clear()
+            rt_nhopsids.clear()
 
             for k in keys:
                 fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
