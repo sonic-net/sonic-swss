@@ -103,6 +103,16 @@ If the version is not `1.17-6ubuntu4.7`, then you need to install the correct ve
 
 If you run into dependency issues during the installation of a package, you can run `sudo apt -f install` to fix the issue. But note that if `apt` is unable to fix the dependency problem, it will attempt to remove the broken package(s).
 
+#### Too many open files
+
+If you get a C++ exception with the description "Too many open files" during the mock tests, you should check the maximum number of open files that are permitted on your system:
+```
+ulimit -a | grep "open files"
+```
+You can increase it by executing this command: `ulimit -n 8192`. Feel free to change `8192`. This value worked fine for me.
+
+**Note:** This change is only valid for the current terminal session. If you want a persistent change, append `ulimit -n 8192` to `~/.bashrc`.
+
 ## Need Help?
 
 For general questions, setup help, or troubleshooting:
