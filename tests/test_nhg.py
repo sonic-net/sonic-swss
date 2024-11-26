@@ -1226,6 +1226,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
         
             assert len(keys) == 0
 
+            self.rt_ps._del(rtprefix)
+
         finally:
             # bring links down one-by-one
             for i in [0, 1, 2]:
