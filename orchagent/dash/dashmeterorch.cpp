@@ -26,7 +26,7 @@ extern bool gTraditionalFlexCounter;
 #define METER_FLEX_COUNTER_UPD_INTERVAL 1
 
 //1234567
-#if 0 //B4C-->1
+#if 1 //B4C-->1
 const vector<sai_meter_bucket_entry_stat_t> meter_bucket_entry_stat_ids =
 {
     SAI_METER_BUCKET_ENTRY_STAT_OUTBOUND_BYTES,
@@ -83,7 +83,7 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, Dash
     m_meter_counter_stats.clear();
     for (const auto& it: meter_bucket_entry_stat_ids)
     {
-#if 0 //B4C-->1
+#if 1 //B4C-->1
         m_meter_counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(it));
         //m_meter_counter_stats = DashMeterOrch::generateMeterCounterStats();
 #else

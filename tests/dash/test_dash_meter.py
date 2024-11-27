@@ -101,18 +101,17 @@ class TestDashMeter(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_METER_RULE_ATTR_DIP_MASK", rule_attrs, METER_RULE_2_IP_MASK)
 
     def post_eni_counter_test(self, meta_data):
-        #counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
-        #self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
+        counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
 
-        #for counter_entry in counters_keys.items():
-        #    self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
-        #self.wait_for_table_empty(meta_data['name_map'])
-        pass
+        for counter_entry in counters_keys.items():
+            self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
+        self.wait_for_table_empty(meta_data['name_map'])
 
     def post_meter_counter_test(self, meta_data):
         counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
-        
+
         for counter_entry in counters_keys.items():
             self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
         self.wait_for_table_empty(meta_data['name_map'])
@@ -139,6 +138,8 @@ class TestDashMeter(TestFlexCountersBase):
 
         time.sleep(1)
         self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
+        self.setup_dbs(dash_db.dvs)
+        self.set_flex_counter_group_status(eni_counter_group_meta['key'], eni_counter_group_meta['name_map'], 'enable')
         time.sleep(1)
         self.verify_flex_counter_flow(dash_db.dvs, meter_counter_group_meta)
 
