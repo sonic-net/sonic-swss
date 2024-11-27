@@ -686,6 +686,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     }
 
     addEniToFC(eni_id, eni);
+    dash_meter_orch->addEniToMeterFC(eni_id,  eni);
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);
 
@@ -823,8 +824,10 @@ bool DashOrch::removeEniObject(const string& eni)
     SWSS_LOG_ENTER();
 
     EniEntry entry = eni_entries_[eni];
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
 
     removeEniFromFC(entry.eni_id, eni);
+    dash_meter_orch->removeEniFromMeterFC(entry.eni_id, eni);
 
     sai_status_t status = sai_dash_eni_api->remove_eni(entry.eni_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -842,7 +845,6 @@ bool DashOrch::removeEniObject(const string& eni)
         }
     }
 
-    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
                                      entry.metadata.v4_meter_policy_id() : "";
     const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
@@ -1307,6 +1309,15 @@ void DashOrch::refreshEniFCStats(bool install)
         {
             removeEniFromFC(it->second.eni_id, it->first);
         }
+    }
+}
+
+void DashOrch::clearMeterFCStats()
+{
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+    for (auto it = eni_entries_.begin(); it != eni_entries_.end(); it++)
+    {
+        dash_meter_orch->removeEniFromMeterFC(it->second.eni_id, it->first);
     }
 }
 

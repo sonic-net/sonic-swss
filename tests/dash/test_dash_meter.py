@@ -32,6 +32,20 @@ from swsscommon.swsscommon import (
     APP_DASH_APPLIANCE_TABLE_NAME,
 )
 
+eni_counter_group_meta = {
+    'key': 'ENI',
+    'group_name': 'ENI_STAT_COUNTER',
+    'name_map': 'COUNTERS_ENI_NAME_MAP',
+    'post_test': 'post_eni_counter_test'
+}
+
+meter_counter_group_meta = {
+    'key': 'DASH_METER',
+    'group_name': 'METER_STAT_COUNTER',
+    'name_map': 'COUNTERS_ENI_NAME_MAP',
+    'post_test': 'post_meter_counter_test'
+}
+
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
@@ -86,6 +100,23 @@ class TestDashMeter(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_METER_RULE_ATTR_DIP", rule_attrs, METER_RULE_2_IP)
         assert_sai_attribute_exists("SAI_METER_RULE_ATTR_DIP_MASK", rule_attrs, METER_RULE_2_IP_MASK)
 
+    def post_eni_counter_test(self, meta_data):
+        #counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
+        #self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
+
+        #for counter_entry in counters_keys.items():
+        #    self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
+        #self.wait_for_table_empty(meta_data['name_map'])
+        pass
+
+    def post_meter_counter_test(self, meta_data):
+        counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
+        
+        for counter_entry in counters_keys.items():
+            self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
+        self.wait_for_table_empty(meta_data['name_map'])
+
     def test_eni(self, dash_db: DashDB):
         dash_db.set_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID, APPLIANCE_CONFIG)
         dash_db.set_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1, VNET_CONFIG)
@@ -105,6 +136,11 @@ class TestDashMeter(TestFlexCountersBase):
         attrs = dash_db.get_asic_db_entry(ASIC_ENI_TABLE, eni_oid)
         assert_sai_attribute_exists("SAI_ENI_ATTR_V4_METER_POLICY_ID", attrs, policy_v4_oid);
         assert_sai_attribute_exists("SAI_ENI_ATTR_V6_METER_POLICY_ID", attrs, policy_v6_oid);
+
+        time.sleep(1)
+        self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
+        time.sleep(1)
+        self.verify_flex_counter_flow(dash_db.dvs, meter_counter_group_meta)
 
     def test_remove(self, dash_db: DashDB):
         self.meter_policy_id = METER_POLICY_V4

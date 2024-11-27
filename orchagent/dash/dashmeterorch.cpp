@@ -4,6 +4,7 @@
 #include <swss/ipaddress.h>
 #include <swssnet.h>
 
+#include "directory.h"
 #include "dashmeterorch.h"
 #include "taskworker.h"
 #include "pbutils.h"
@@ -19,14 +20,76 @@ extern sai_dash_meter_api_t* sai_dash_meter_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
+extern Directory<Orch*> gDirectory;
+extern bool gTraditionalFlexCounter;
+
+#define METER_FLEX_COUNTER_UPD_INTERVAL 1
+
+//1234567
+#if 1 //B4C-->1
+const vector<sai_meter_bucket_entry_stat_t> meter_bucket_entry_stat_ids =
+{
+    SAI_METER_BUCKET_ENTRY_STAT_OUTBOUND_BYTES,
+    SAI_METER_BUCKET_ENTRY_STAT_INBOUND_BYTES
+};
+#else
+const vector<sai_eni_stat_t> meter_bucket_entry_stat_ids =
+{
+    SAI_ENI_STAT_TX_BYTES,
+    SAI_ENI_STAT_RX_BYTES
+};
+#endif
+
+
+#if 0
+std::unordered_set<std::string> DashMeterOrch::generateMeterCounterStats()
+{
+    std::unordered_set<std::string> counter_stats;
+
+    for (const auto& it: meter_bucket_entry_stat_ids)
+    {
+        //counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(it));
+        counter_stats.emplace(sai_serialize_eni_stat(it));
+    }
+    return counter_stats;
+}
+#endif
 
 
 DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
+    m_meter_stat_manager(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
     meter_rule_bulker_(sai_dash_meter_api, gSwitchId, gMaxBulkSize),
     ZmqOrch(db, tables, zmqServer),
     m_dash_orch(dash_orch)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_ERROR("gsm dbg31");
+
+    m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_ENI_NAME_MAP));
+    m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
+
+    if (gTraditionalFlexCounter)
+    {
+        m_vid_to_rid_table = std::make_unique<Table>(m_asic_db.get(), "VIDTORID");
+    }
+
+    auto intervT = timespec { .tv_sec = METER_FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    m_meter_fc_update_timer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_meter_fc_update_timer, this, "METER_FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
+
+    /* Fetch the meter bucket counter Ids */
+    m_meter_counter_stats.clear();
+    for (const auto& it: meter_bucket_entry_stat_ids)
+    {
+#if 1 //B4C-->1
+        m_meter_counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(it));
+        //m_meter_counter_stats = DashMeterOrch::generateMeterCounterStats();
+#else
+        m_meter_counter_stats.emplace(sai_serialize_eni_stat(it));
+#endif
+    }
 }
 
 sai_object_id_t DashMeterOrch::getMeterPolicyOid(const string& meter_policy) const
@@ -588,5 +651,88 @@ void DashMeterOrch::doTask(ConsumerBase& consumer)
     else
     {
         SWSS_LOG_ERROR("Unknown table: %s", tn.c_str());
+    }
+}
+
+void DashMeterOrch::addEniToMeterFC(sai_object_id_t oid, const string &name)
+{
+    auto was_empty = m_meter_stat_work_queue.empty();
+    m_meter_stat_work_queue[oid] = name;
+    if (was_empty)
+    {
+        m_meter_fc_update_timer->start();
+    }
+}
+
+void DashMeterOrch::removeEniFromMeterFC(sai_object_id_t oid, const string &name)
+{
+    SWSS_LOG_ENTER();
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Cannot remove meter counter on NULL OID for eni %s", name.c_str());
+        return;
+    }
+    if (m_meter_stat_work_queue.find(oid) != m_meter_stat_work_queue.end())
+    {
+        m_meter_stat_work_queue.erase(oid);
+        return;
+    }
+
+    // Deleting eni_name_map key is done in DashOrch
+    m_meter_stat_manager.clearCounterIdList(oid);
+    SWSS_LOG_DEBUG("Unregistered eni %s from meter Flex counter", name.c_str());
+}
+
+
+void DashMeterOrch::clearMeterFCStats()
+{
+    DashOrch *dash_orch = gDirectory.get<DashOrch*>();
+    dash_orch->clearMeterFCStats();
+}
+
+void DashMeterOrch::handleMeterFCStatusUpdate(bool enabled)
+{
+    if (!enabled && m_meter_fc_status)
+    {
+        m_meter_fc_update_timer->stop();
+        clearMeterFCStats();
+    }
+    else if (enabled && !m_meter_fc_status)
+    {
+        m_meter_fc_update_timer->start();
+    }
+    m_meter_fc_status = enabled;
+}
+
+void DashMeterOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_meter_fc_status)
+    {
+        m_meter_fc_update_timer->stop();
+        return ;
+    }
+
+    for (auto it = m_meter_stat_work_queue.begin(); it != m_meter_stat_work_queue.end(); )
+    {
+        string value;
+        const auto id = sai_serialize_object_id(it->first);
+        if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
+        {
+            // TBD.. ENI_NAME_MAP entry is added/deleted by DashOrch Code.
+            m_meter_stat_manager.setCounterIdList(it->first, CounterType::DASH_METER, m_meter_counter_stats);
+            it = m_meter_stat_work_queue.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (m_meter_stat_work_queue.empty())
+    {
+        m_meter_fc_update_timer->stop();
     }
 }

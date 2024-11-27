@@ -8,6 +8,9 @@
 
 #include <macsecorch.h>
 
+//B4C
+////#define DASH_METER_COUNTER_ID_LIST "DASH_METER_COUNTER_ID_LIST"
+
 using std::shared_ptr;
 using std::string;
 using std::unordered_map;
@@ -50,6 +53,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::HOSTIF_TRAP,     FLOW_COUNTER_ID_LIST },
     { CounterType::ROUTE,           FLOW_COUNTER_ID_LIST },
     { CounterType::ENI,             ENI_COUNTER_ID_LIST },
+    { CounterType::DASH_METER,      DASH_METER_COUNTER_ID_LIST },
     { CounterType::SRV6,            SRV6_COUNTER_ID_LIST },
 };
 
