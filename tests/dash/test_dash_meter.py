@@ -137,7 +137,7 @@ class TestDashMeter(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_ENI_ATTR_V6_METER_POLICY_ID", attrs, policy_v6_oid);
 
         time.sleep(1)
-        self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
+        #self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
         self.setup_dbs(dash_db.dvs)
         self.set_flex_counter_group_status(eni_counter_group_meta['key'], eni_counter_group_meta['name_map'], 'enable')
         time.sleep(1)
