@@ -97,5 +97,5 @@ private:
     void doTask(swss::SelectableTimer&);
     void addEniToFC(sai_object_id_t oid, const std::string& name);
     void removeEniFromFC(sai_object_id_t oid, const std::string& name);
-    void clearEniFCStats();
+    void refreshEniFCStats(bool);
 };
