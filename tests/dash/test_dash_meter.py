@@ -138,8 +138,8 @@ class TestDashMeter(TestFlexCountersBase):
 
         time.sleep(1)
         #self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
-        self.setup_dbs(dash_db.dvs)
-        self.set_flex_counter_group_status(eni_counter_group_meta['key'], eni_counter_group_meta['name_map'], 'enable')
+        #self.setup_dbs(dash_db.dvs)
+        #self.set_flex_counter_group_status(eni_counter_group_meta['key'], eni_counter_group_meta['name_map'], 'enable')
         time.sleep(1)
         self.verify_flex_counter_flow(dash_db.dvs, meter_counter_group_meta)
 

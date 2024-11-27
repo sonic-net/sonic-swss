@@ -680,6 +680,8 @@ void DashMeterOrch::removeEniFromMeterFC(sai_object_id_t oid, const string &name
     }
 
     // Deleting eni_name_map key is done in DashOrch
+
+    m_eni_name_table->hdel("", name);
     m_meter_stat_manager.clearCounterIdList(oid);
     SWSS_LOG_DEBUG("Unregistered eni %s from meter Flex counter", name.c_str());
 }
@@ -722,6 +724,12 @@ void DashMeterOrch::doTask(SelectableTimer &timer)
         if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
         {
             // TBD.. ENI_NAME_MAP entry is added/deleted by DashOrch Code.
+
+            SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
+            std::vector<FieldValueTuple> eniNameFvs;
+            eniNameFvs.emplace_back(it->second, id);
+            m_eni_name_table->set("", eniNameFvs);
+
             m_meter_stat_manager.setCounterIdList(it->first, CounterType::DASH_METER, m_meter_counter_stats);
             it = m_meter_stat_work_queue.erase(it);
         }
