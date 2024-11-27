@@ -255,6 +255,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 {
                     setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key], value, false);
                 }
+                else if (field == BULK_CHUNK_SIZE_PER_PREFIX_FIELD)
+                {
+                    setFlexCounterGroupBulkChunkSizePerPrefix(flexCounterGroupMap[key], value, false);
+                }
                 else
                 {
                     SWSS_LOG_NOTICE("Unsupported field %s", field.c_str());
