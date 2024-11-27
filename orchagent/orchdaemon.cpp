@@ -64,6 +64,7 @@ FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
+MuxOrch *gMuxOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -390,8 +391,8 @@ bool OrchDaemon::init()
         CFG_MUX_CABLE_TABLE_NAME,
         CFG_PEER_SWITCH_TABLE_NAME
     };
-    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
-    gDirectory.set(mux_orch);
+    gMuxOrch = new MuxOrch(m_configDb, mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
+    gDirectory.set(gMuxOrch);
 
     MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, m_stateDb, APP_MUX_CABLE_TABLE_NAME);
     gDirectory.set(mux_cb_orch);
@@ -419,7 +420,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch, gMonitorOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -934,6 +935,10 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         o->bake();
     }
 
+    // let's cache the neighbor updates in mux orch and
+    // process them after everything being settled.
+    gMuxOrch->enableCachingNeighborUpdate();
+
     /*
      * Three iterations are needed.
      *
@@ -959,6 +964,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
             o->doTask();
         }
     }
+
+    gMuxOrch->updateCachedNeighbors();
+    gMuxOrch->disableCachingNeighborUpdate();
 
     // MirrorOrch depends on everything else being settled before it can run,
     // and mirror ACL rules depend on MirrorOrch, so run these two at the end
