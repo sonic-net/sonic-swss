@@ -144,7 +144,7 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_ENI_ATTR_ADMIN_STATE", attrs, "true")
 
         time.sleep(1)
-        #self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
+        self.verify_flex_counter_flow(dash_db.dvs, eni_counter_group_meta)
 
         eni_addr_maps = dash_db.wait_for_asic_db_keys(ASIC_ENI_ETHER_ADDR_MAP_TABLE)
         attrs = dash_db.get_asic_db_entry(ASIC_ENI_ETHER_ADDR_MAP_TABLE, eni_addr_maps[0])

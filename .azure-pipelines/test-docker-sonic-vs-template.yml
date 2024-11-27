@@ -145,8 +145,8 @@ jobs:
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
-      all_tests=$(ls test_none*.py | xargs)
-      all_tests="${all_tests} dash"
+      all_tests=$(ls test_*.py | xargs)
+      all_tests="${all_tests} p4rt dash"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then
         all_tests=" $(ls ${{ parameters.run_tests_pattern }} | xargs) "
