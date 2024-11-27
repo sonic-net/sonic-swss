@@ -5938,7 +5938,7 @@ bool MetaDataMgr::isValidMetaData(uint16_t metadata)
 
 uint16_t MetaDataMgr::getFreeMetaData(uint8_t dscp)
 {
-    uint16_t metadata = metaMax + 1;
+    uint16_t metadata = (uint16_t)(metaMax + 1);
     SWSS_LOG_INFO("Metadata Request for dscp %d", dscp);
 
     if (initComplete)
@@ -5962,7 +5962,7 @@ uint16_t MetaDataMgr::getFreeMetaData(uint8_t dscp)
             m_dscpMetadata[dscp] = metadata;
             SWSS_LOG_INFO("New Metadata %d allocated for dscp %d", metadata, dscp);
         }
-        m_MetadataRef[metadata] += 1;
+        m_MetadataRef[metadata] = (uint16_t)(m_MetadataRef[metadata] + 1);
     }
     else
     {
@@ -5975,7 +5975,7 @@ void MetaDataMgr::recycleMetaData(uint16_t metadata)
 {
     if (initComplete)
     {
-        m_MetadataRef[metadata] -= 1;
+        m_MetadataRef[metadata] = (uint16_t)(m_MetadataRef[metadata] - 1);
         SWSS_LOG_INFO("Freeing Metadata %d refcount %d", metadata, m_MetadataRef[metadata]);
         if (m_MetadataRef[metadata] == 0)
         {
