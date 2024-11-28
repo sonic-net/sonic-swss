@@ -35,7 +35,6 @@
 #define DPU_NPU_V6   "npu_ipv6"
 
 #define DPU_LOCAL      "local"
-#define DPU_ADMIN_UP   "up"
 #define OUT_MAC_DIR    "dst"
 
 
@@ -101,6 +100,7 @@ typedef enum
     OUTBOUND_TERM
 } rule_type_t;
 
+
 class DpuRegistry;
 class EniNH; 
 class LocalEniNH;
@@ -109,6 +109,7 @@ class EniAclRule;
 class EniInfo;
 class EniFwdCtxBase;
 class EniFwdCtx;
+
 
 class DashEniFwdOrch : public Orch2, public Observer
 {
@@ -133,7 +134,6 @@ private:
     void lazyInit();
     void initAclTableCfg();
     void initLocalEndpoints();
-
     void handleNeighUpdate(const NeighborUpdate& update);
     void handleEniDpuMapping(uint64_t id, MacAddress mac, bool add = true);
 
@@ -157,7 +157,6 @@ public:
     struct DpuData
     {
         dpu_type_t type;
-        std::string state;
         swss::IpAddress pa_v4;
         swss::IpAddress npu_v4;
     };
@@ -167,44 +166,11 @@ public:
         DpuRequest() : Request(dpu_table_desc, '|' ) { }
     };
 
-    DpuRegistry() = default;
-    ~DpuRegistry() = default;
-
     void populate(Table*);
-
-    std::vector<uint64_t> getIds()
-    {
-        return dpus_ids_;
-    }
-
-    bool getType(uint64_t id, dpu_type_t& val)
-    {
-        auto itr = dpus_.find(id);
-        if (itr == dpus_.end()) return false;
-        val = itr->second.type;
-        return true;
-    }
-    bool getAdminState(uint64_t id, string& val)
-    {
-        auto itr = dpus_.find(id);
-        if (itr == dpus_.end()) return false;
-        val = itr->second.state;
-        return true;
-    }
-    bool getPaV4(uint64_t id, swss::IpAddress& val)
-    {
-        auto itr = dpus_.find(id);
-        if (itr == dpus_.end()) return false;
-        val = itr->second.pa_v4;
-        return true;
-    }
-    bool getNpuV4(uint64_t id, swss::IpAddress& val)
-    {
-        auto itr = dpus_.find(id);
-        if (itr == dpus_.end()) return false;
-        val = itr->second.npu_v4;
-        return true;
-    }
+    std::vector<uint64_t> getIds();
+    bool getType(uint64_t id, dpu_type_t& val);
+    bool getPaV4(uint64_t id, swss::IpAddress& val);
+    bool getNpuV4(uint64_t id, swss::IpAddress& val);
 
 private:
     void processDpuTable(const KeyOpFieldsValuesTuple& );
@@ -223,7 +189,6 @@ public:
     EniNH(const swss::IpAddress& ip) : endpoint_(ip) {}
     void setStatus(endpoint_status_t status) {status_ = status;}
     void setType(dpu_type_t type) {type_ = type;}
-
     endpoint_status_t getStatus() {return status_;}
     dpu_type_t getType() {return type_;}
     swss::IpAddress getEp() {return endpoint_;}
@@ -249,7 +214,7 @@ public:
     }
     void resolve(EniInfo& eni) override;
     void destroy(EniInfo& eni) {}
-    string getRedirectVal() { return endpoint_.to_string(); }
+    string getRedirectVal() override;
 };
 
 
@@ -264,7 +229,7 @@ public:
     }
     void resolve(EniInfo& eni) override;
     void destroy(EniInfo& eni) override;
-    string getRedirectVal() { return endpoint_.to_string() + "@" + tunnel_name_; }
+    string getRedirectVal() override;
 
 private:
     string tunnel_name_;
@@ -280,26 +245,17 @@ public:
     EniAclRule(rule_type_t type, EniInfo& eni) :
         type_(type),
         state_(rule_state_t::PENDING) { setKey(eni); }
-    ~EniAclRule() = default;
 
     void destroy(EniInfo&);
     void fire(EniInfo&);
 
     update_type_t processUpdate(EniInfo& eni);
-
     std::string getKey() {return name_; }
     string getMacMatchDirection(EniInfo& eni);
-
-    void setState(rule_state_t state)
-    {
-        SWSS_LOG_ENTER();
-        SWSS_LOG_INFO("EniFwd ACL Rule: %s State Change %d -> %d", getKey().c_str(), state_, state);
-        state_ = state;
-    }
+    void setState(rule_state_t state);
 
 private:
     void setKey(EniInfo&);
-
     std::unique_ptr<EniNH> nh_ = nullptr;
     std::string name_;
     rule_type_t type_;
@@ -312,19 +268,13 @@ class EniInfo
 public:
     friend class DashEniFwdOrch; /* Only orch is expected to call create/update/fire */
 
-    EniInfo(const std::string& mac_str, const std::string& vnet, const shared_ptr<EniFwdCtxBase>& ctx) :
-        mac_(mac_str), vnet_name_(vnet), ctx(ctx) { formatMac(); }
-    ~EniInfo() = default;
+    EniInfo(const std::string&, const std::string&, const shared_ptr<EniFwdCtxBase>&);
     EniInfo(const EniInfo&) = delete;
     EniInfo& operator=(const EniInfo&) = delete;
     EniInfo(EniInfo&&) = delete;
     EniInfo& operator=(EniInfo&&) = delete;
     
-    string toKey() const
-    {
-        return vnet_name_ + "_" + mac_key_;
-    }
-
+    string toKey() const;
     std::shared_ptr<EniFwdCtxBase>& getCtx() {return ctx;}
     bool findLocalEp(uint64_t&) const;
     swss::MacAddress getMac() const { return mac_; } // Can only be set during object creation
@@ -362,16 +312,13 @@ class EniFwdCtxBase
 {
 public:
     EniFwdCtxBase(DBConnector* cfgDb, DBConnector* applDb);
-    ~EniFwdCtxBase() = default;
-
-    void populateDpuRegistry() {dpu_info_.populate(dpu_tbl_.get());}
+    void populateDpuRegistry();
     std::vector<std::string> getBindPoints();
     std::string getNbrAlias(const swss::IpAddress& ip);
     bool handleTunnelNH(const std::string&, swss::IpAddress, bool);
     swss::IpPrefix getVip();
 
     virtual void initialize() = 0;
-
     /* API's that call other orchagents */
     virtual std::map<std::string, Port>& getAllPorts() = 0;
     virtual bool isNeighborResolved(const NextHopKey&) = 0;
@@ -382,9 +329,8 @@ public:
     virtual sai_object_id_t createNextHopTunnel(string, IpAddress) = 0;
     virtual bool removeNextHopTunnel(string, IpAddress) = 0;
 
-    DpuRegistry dpu_info_;
-    unique_ptr<swss::ProducerStateTable> rule_table_;
-
+    DpuRegistry dpu_info;
+    unique_ptr<swss::ProducerStateTable> rule_table;
 protected:
     std::set<std::string> findInternalPorts();
 
@@ -432,48 +378,12 @@ public:
 
     /* Setup pointers to other orchagents */
     void initialize() override;
-
-    bool isNeighborResolved(const NextHopKey& nh) override
-    {
-       return neighorch_->isNeighborResolved(nh);
-    }
-
-    void resolveNeighbor(const NeighborEntry& nh) override
-    {
-        /*  Neighorch already has the logic to handle the duplicate requests */
-        neighorch_->resolveNeighbor(nh);
-    }
-
-    std::string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "") override
-    {
-        return intfsorch_->getRouterIntfsAlias(ip, vrf_name);
-    }
-
-    bool findVnetVni(const std::string& vnet_name, uint64_t& vni) override
-    {
-        if (vnetorch_->isVnetExists(vnet_name))
-        {
-            vni = vnetorch_->getTypePtr<VNetObject>(vnet_name)->getVni();
-            return true;
-        }
-        return false;
-    }
-
-    bool findVnetTunnel(const std::string& vnet_name, string& tunnel) override
-    {
-        if (vnetorch_->isVnetExists(vnet_name))
-        {
-            tunnel = vnetorch_->getTunnelName(vnet_name);
-            return true;
-        }
-        return false;
-    }
-
-    std::map<std::string, Port>& getAllPorts() override
-    {
-        return portsorch_->getAllPorts();
-    }
-
+    bool isNeighborResolved(const NextHopKey&) override;
+    void resolveNeighbor(const NeighborEntry&) override;
+    std::string getRouterIntfsAlias(const IpAddress &, const string & = "") override;
+    bool findVnetVni(const std::string&, uint64_t&) override;
+    bool findVnetTunnel(const std::string&, string&) override;
+    std::map<std::string, Port>& getAllPorts() override;
     virtual sai_object_id_t createNextHopTunnel(string, IpAddress) override;
     virtual bool removeNextHopTunnel(string, IpAddress) override;
 

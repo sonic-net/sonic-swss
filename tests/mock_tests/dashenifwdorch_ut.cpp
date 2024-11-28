@@ -66,7 +66,6 @@ namespace dashenifwdorch_ut
                      dpuTable->set("1", 
                      {
                             { DPU_TYPE, "local" },
-                            { DPU_STATE, "up" },
                             { DPU_PA_V4, local_pav4 },
                             { DPU_NPU_V4, local_npuv4 },
                      }, SET_COMMAND);
@@ -74,7 +73,6 @@ namespace dashenifwdorch_ut
                      dpuTable->set("2", 
                      {
                             { DPU_TYPE, "cluster" },
-                            { DPU_STATE, "up" },
                             { DPU_PA_V4, remote_pav4 },
                             { DPU_NPU_V4, remote_npuv4 },
                      }, SET_COMMAND);
@@ -82,7 +80,6 @@ namespace dashenifwdorch_ut
                      dpuTable->set("3", 
                      {
                             { DPU_TYPE, "cluster" },
-                            { DPU_STATE, "up" },
                             { DPU_PA_V4, remote_2_pav4 },
                             { DPU_NPU_V4, remote_2_npuv4 },
                      }, SET_COMMAND);
@@ -156,23 +153,26 @@ namespace dashenifwdorch_ut
               swss::IpAddress pa_v4;
               swss::IpAddress npu_v4;
               
-              EXPECT_TRUE(eniOrch->ctx->dpu_info_.getType(1, type));
+              EniFwdCtx ctx(cfgDb.get(), applDb.get());
+              ctx.populateDpuRegistry();
+
+              EXPECT_TRUE(ctx.dpu_info.getType(1, type));
               EXPECT_EQ(type, dpu_type_t::LOCAL);
-              EXPECT_TRUE(eniOrch->ctx->dpu_info_.getType(2, type));
+              EXPECT_TRUE(ctx.dpu_info.getType(2, type));
               EXPECT_EQ(type, dpu_type_t::CLUSTER);
 
-              EXPECT_TRUE(eniOrch->ctx->dpu_info_.getPaV4(1, pa_v4));
+              EXPECT_TRUE(ctx.dpu_info.getPaV4(1, pa_v4));
               EXPECT_EQ(pa_v4.to_string(), local_pav4);
-              EXPECT_TRUE(eniOrch->ctx->dpu_info_.getPaV4(2, pa_v4));
+              EXPECT_TRUE(ctx.dpu_info.getPaV4(2, pa_v4));
               EXPECT_EQ(pa_v4.to_string(), remote_pav4);
 
-              EXPECT_TRUE(eniOrch->ctx->dpu_info_.getNpuV4(1, npu_v4));
+              EXPECT_TRUE(ctx.dpu_info.getNpuV4(1, npu_v4));
               EXPECT_EQ(npu_v4.to_string(), local_npuv4);
-              EXPECT_TRUE(eniOrch->ctx->dpu_info_.getNpuV4(2, npu_v4));
+              EXPECT_TRUE(ctx.dpu_info.getNpuV4(2, npu_v4));
               EXPECT_EQ(npu_v4.to_string(), remote_npuv4);
               
               vector<uint64_t> ids = {1, 2, 3};
-              EXPECT_EQ(eniOrch->ctx->dpu_info_.getIds(), ids);
+              EXPECT_EQ(ctx.dpu_info.getIds(), ids);
        }
 
        /* 
@@ -638,5 +638,27 @@ namespace dashenifwdorch_ut
                      { ACL_TABLE_STAGE, STAGE_INGRESS },
                      { ACL_TABLE_PORTS, "Ethernet0,PortChannel1011,PortChannel1012" }
               });
+       }
+}
+
+namespace mock_orch_test
+{
+       TEST_F(MockOrchTest, EniFwdCtx)
+       {
+              EniFwdCtx ctx(m_config_db.get(), m_app_db.get());
+              ASSERT_NO_THROW(ctx.initialize());
+
+              NextHopKey nh(IpAddress("10.0.0.1"), "Ethernet0");
+              ASSERT_NO_THROW(ctx.isNeighborResolved(nh));
+              ASSERT_NO_THROW(ctx.resolveNeighbor(nh));
+              ASSERT_NO_THROW(ctx.getRouterIntfsAlias(IpAddress("10.0.0.1")));
+
+              uint64_t vni;
+              ASSERT_NO_THROW(ctx.findVnetVni("Vnet_1000", vni));
+              string tunnel;
+              ASSERT_NO_THROW(ctx.findVnetTunnel("Vnet_1000", tunnel));
+              ASSERT_NO_THROW(ctx.getAllPorts());
+              ASSERT_NO_THROW(ctx.createNextHopTunnel("tunnel0", IpAddress("10.0.0.1")));
+              ASSERT_NO_THROW(ctx.removeNextHopTunnel("tunnel0", IpAddress("10.0.0.1")));
        }
 }
