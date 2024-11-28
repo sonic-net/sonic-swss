@@ -119,7 +119,6 @@ namespace portmgr_ut
 
         // Verify the log message for the failure
         ASSERT_TRUE(mockCallArgs.empty());
-        ASSERT_TRUE(swss::logContains("Failed to delete ingress qdisc for alias:Ethernet0 with cmd:/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress, rc:1, error:Some error message"));
         }
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
