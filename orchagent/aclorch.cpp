@@ -2060,7 +2060,7 @@ sai_object_id_t AclRulePacket::getRedirectObjectId(const string& redirect_value)
         m_redirect_target_tun_nh.load(target);
         if (SAI_NULL_OBJECT_ID != m_redirect_target_tun_nh.oid)
         {
-            SWSS_LOG_INFO("Tunnel Next Hop Found: oid:%ld, target: %s", m_redirect_target_tun_nh.oid, target.c_str());
+            SWSS_LOG_INFO("Tunnel Next Hop Found: oid:0x%" PRIx64 ", target: %s", m_redirect_target_tun_nh.oid, target.c_str());
             return m_redirect_target_tun_nh.oid;
         }
     }
