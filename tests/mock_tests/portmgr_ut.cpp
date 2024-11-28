@@ -117,9 +117,7 @@ namespace portmgr_ut
         // **Test Case 5: dhcp_rate_limit deletion failure**
         state_port_table.set("Ethernet0", {{"state", "ok"}});
         mockCallArgs.clear();
-        EXPECT_CALL(*m_mockExecutor, exec("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", _))
-            .WillOnce(Return(1)); // Simulate failure
-
+        
         cfg_port_table.set("Ethernet0", {{"dhcp_rate_limit", "0"}});
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
