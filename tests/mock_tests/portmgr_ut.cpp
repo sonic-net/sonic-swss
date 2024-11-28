@@ -93,6 +93,35 @@ namespace portmgr_ut
         ASSERT_EQ("up", value_opt.get());
     }
 
+    TEST_F(PortMgrTest, DeleteIngressQdiscFailure)
+        {
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+
+        // Set port state to ok
+        state_port_table.set("Ethernet0", {
+            {"state", "ok"}
+        });
+
+        // Configure the port with dhcp_rate_limit = 0 to trigger qdisc deletion
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "0"}
+        });
+        m_portMgr->addExistingData(&cfg_port_table);
+
+        // Mock command execution to simulate failure
+        mockCallArgs.clear();
+        mockSetCommandReturnValue("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", 1, "Some error message");
+
+        // Execute the doTask function
+        m_portMgr->doTask();
+
+        // Verify the log message for the failure
+        ASSERT_TRUE(mockCallArgs.empty());
+        ASSERT_TRUE(swss::logContains("Failed to delete ingress qdisc for alias:Ethernet0 with cmd:/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress, rc:1, error:Some error message"));
+        }
+
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
