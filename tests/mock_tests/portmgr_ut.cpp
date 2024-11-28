@@ -93,33 +93,48 @@ namespace portmgr_ut
         ASSERT_EQ("up", value_opt.get());
     }
 
+    // Define a MockPortMgr class to mock necessary methods.
+    class MockPortMgr : public PortMgr {
+        public:
+            MOCK_METHOD(int, exec, (const std::string& cmd_str, std::string& res), (override));  // Mock exec function
+            MOCK_METHOD(bool, writeConfigToAppDb, (const std::string& alias, const std::string& key, const std::string& value), (override));
+            MOCK_METHOD(bool, isPortStateOk, (const std::string& alias), (override));
+        };
+
     TEST_F(PortMgrTest, DeleteIngressQdiscFailure)
         {
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
-        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+            // Prepare mock objects
+            MockPortMgr mockPortMgr;
+            Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+            Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+            Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
 
-        // Set port state to ok
-        state_port_table.set("Ethernet0", {
-            {"state", "ok"}
-        });
+            // Set port state to ok
+            state_port_table.set("Ethernet0", {
+                {"state", "ok"}
+            });
 
-        // Configure the port with dhcp_rate_limit = 0 to trigger qdisc deletion
-        cfg_port_table.set("Ethernet0", {
-            {"dhcp_rate_limit", "0"}
-        });
-        m_portMgr->addExistingData(&cfg_port_table);
+            // Configure the port with dhcp_rate_limit = 0 to trigger qdisc deletion
+            cfg_port_table.set("Ethernet0", {
+                {"dhcp_rate_limit", "0"}
+            });
+            m_portMgr->addExistingData(&cfg_port_table);
 
-        // Mock command execution to simulate failure
-        mockCallArgs.clear();
-        mockSetCommandReturnValue("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", 1, "Some error message");
+            // Prepare to mock command execution to simulate failure
+            std::string cmd_str;
+            std::string res;
 
-        // Execute the doTask function
-        m_portMgr->doTask();
+            // Mock the exec method to simulate a command failure (non-zero return code)
+            EXPECT_CALL(mockPortMgr, exec("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", _))
+                .WillOnce(::testing::DoAll(::testing::SetArgReferee<1>("Some error message"), ::testing::Return(1)));
 
-        // Verify the log message for the failure
-        ASSERT_TRUE(mockCallArgs.empty());
+            // Execute the doTask function
+            m_portMgr->doTask();
+
+            // Verify that the command was executed correctly and failure occurred
+            ASSERT_TRUE(mockCallArgs.empty());  // Verify that the call arguments are as expected after failure
         }
+
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {

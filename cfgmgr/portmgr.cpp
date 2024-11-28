@@ -112,11 +112,11 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
         if (ret)
-    {
-        // Log the failure and return false to indicate an issue
-        SWSS_LOG_WARN("Failed to delete ingress qdisc for alias:%s with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-        return false;
-    }
+        {
+            // Log the failure and return false to indicate an issue
+            SWSS_LOG_WARN("Failed to delete ingress qdisc ");
+            return false;
+        }
     }
 
     return true;
