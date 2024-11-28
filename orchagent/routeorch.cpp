@@ -1720,9 +1720,15 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
             SWSS_LOG_INFO("Failed to get next hop %s for %s",
                    (*it).to_string().c_str(), ipPrefix.to_string().c_str());
             it = next_hop_set.erase(it);
+            continue;
         }
-        else
-            it++;
+        if(m_neighOrch->isNextHopFlagSet(*it, NHFLAGS_IFDOWN))
+        {
+            SWSS_LOG_INFO("Interface down for NH %s, skip this NH", (*it).to_string().c_str());
+            it = next_hop_set.erase(it);
+            continue;
+        }
+        it++;
     }
 
     /* Return if next_hop_set is empty */
