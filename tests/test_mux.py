@@ -1350,8 +1350,8 @@ class TestMuxTunnelBase():
             self.DEFAULT_PEER_SWITCH_PARAMS
         )
 
-    @pytest.fixture
-    def remove_peer_switch(self, dvs):
+        yield
+
         config_db = dvs.get_config_db()
         config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
 
@@ -1612,7 +1612,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_neighbor_miss_no_peer(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            remove_peer_switch, neighbor_cleanup, testlog
+            neighbor_cleanup, testlog
     ):
         """
         test neighbor miss with no peer switch configured
@@ -1634,7 +1634,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_warm_boot_mux_state(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            remove_peer_switch, neighbor_cleanup, testlog
+            setup_peer_switch, neighbor_cleanup, testlog
     ):
         """
         test mux initialization during warm boot.
@@ -1648,6 +1648,77 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         # Execute the warm reboot
         dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+
+        time.sleep(5)
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
+
+    def test_warm_boot_neighbor_restore(
+        self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
+        setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """Test neighbors could be restored to correct state based on mux state after warm boot."""
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        apdb = dvs.get_app_db()
+        asicdb = dvs.get_asic_db()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.set_mux_state(appdb, "Ethernet8", "standby")
+
+        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-00-01")
+        self.add_fdb(dvs, "Ethernet4", "00-00-00-00-00-02")
+        self.add_fdb(dvs, "Ethernet8", "00-00-00-00-00-03")
+
+        self.add_neighbor(dvs, self.SERV1_IPV4, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.NEIGH1_IPV4, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.NEIGH1_IPV6, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.SERV2_IPV6, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.NEIGH2_IPV4, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.NEIGH2_IPV6, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.SERV3_IPV4, "00:00:00:00:00:03")
+        self.add_neighbor(dvs, self.SERV3_IPV6, "00:00:00:00:00:03")
+        self.add_neighbor(dvs, self.NEIGH3_IPV4, "00:00:00:00:00:03")
+        self.add_neighbor(dvs, self.NEIGH3_IPV6, "00:00:00:00:00:03")
+
+        time.sleep(5)
+
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV6)
+        dvs_route.check_asicdb_route_entries(
+            [
+                self.SERV3_IPV4 + self.IPV4_MASK,
+                self.SERV3_IPV6 + self.IPV6_MASK,
+                self.NEIGH3_IPV4 + self.IPV4_MASK,
+                self.NEIGH3_IPV6 + self.IPV6_MASK
+            ]
+        )
+        # Execute the warm reboot
+        dvs.runcmd("config warm_restart enable system")
         dvs.stop_swss()
         dvs.start_swss()
 
@@ -1668,6 +1739,22 @@ class TestMuxTunnel(TestMuxTunnelBase):
             if key == "state":
                 assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
 
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV6)
+        dvs_route.check_asicdb_route_entries(
+            [
+                self.SERV3_IPV4 + self.IPV4_MASK,
+                self.SERV3_IPV6 + self.IPV6_MASK,
+                self.NEIGH3_IPV4 + self.IPV4_MASK,
+                self.NEIGH3_IPV6 + self.IPV6_MASK
+            ]
+        )
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
