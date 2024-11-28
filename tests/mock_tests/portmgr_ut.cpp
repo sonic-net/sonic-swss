@@ -111,7 +111,7 @@ namespace portmgr_ut
         mockCallArgs.clear();
         m_portMgr->doTask();
 
-        ASSERT_EQ(size_t(1), mockCallArgs.size());
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[0]);
 
         // **Test Case 5: dhcp_rate_limit deletion failure**
