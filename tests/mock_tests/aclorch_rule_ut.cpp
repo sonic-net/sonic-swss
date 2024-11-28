@@ -70,6 +70,8 @@ namespace aclorch_rule_test
         {
             aclMockState.reset();
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(next_hop);
+            DEINIT_SAI_API_MOCK(acl);
         }
 
         void doAclTableTypeTask(const deque<KeyOpFieldsValuesTuple> &entries)
