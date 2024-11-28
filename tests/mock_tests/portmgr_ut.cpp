@@ -112,7 +112,7 @@ namespace portmgr_ut
         m_portMgr->doTask();
 
         ASSERT_EQ(size_t(0), 0);
-        ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[5]);
+        ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[4]);
 
         // **Test Case 5: dhcp_rate_limit deletion failure**
         state_port_table.set("Ethernet0", {{"state", "ok"}});
