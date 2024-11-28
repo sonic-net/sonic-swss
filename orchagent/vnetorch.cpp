@@ -2393,7 +2393,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 if (failed)
                 {
                     // This is an unrecoverable error, Throw a LOG_ERROR and return
-                    SWSS_LOG_ERROR("Inconsistant Hardware State. Failed to create tunnel routes.\n");
+                    SWSS_LOG_ERROR("Inconsistent hardware State. Failed to create tunnel routes.\n");
                     return;
                 }
             }
