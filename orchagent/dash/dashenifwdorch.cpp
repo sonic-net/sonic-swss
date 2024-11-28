@@ -279,8 +279,7 @@ void DpuRegistry::populate(Table* dpuTable)
             SWSS_LOG_ERROR("Failed to parse key:%s in the %s", key.c_str(), CFG_DPU_TABLE);
         }
     }
-
-    SWSS_LOG_INFO("DPU data read. %ld dpus found", dpus_.size());
+    SWSS_LOG_INFO("DPU data read. %zu dpus found", dpus_.size());
 }
 
 void DpuRegistry::processDpuTable(const KeyOpFieldsValuesTuple& kvo)

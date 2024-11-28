@@ -106,7 +106,7 @@ update_type_t EniAclRule::processUpdate(EniInfo& eni)
 
     if (!ctx->dpu_info.getType(primary_id, primary_type))
     {
-        SWSS_LOG_ERROR("No primaryId in DPU Table %ld", primary_id);
+        SWSS_LOG_ERROR("No primaryId in DPU Table %" PRIu64 "", primary_id);
         return update_type_t::INVALID;
     }
 
@@ -440,7 +440,7 @@ bool EniInfo::findLocalEp(uint64_t& local_endpoint) const
             }
             else
             {
-                SWSS_LOG_WARN("Multiple Local Endpoints for the ENI %s found, proceeding with %ld",
+                SWSS_LOG_WARN("Multiple Local Endpoints for the ENI %s found, proceeding with %" PRIu64 ""  ,
                                 mac_.to_string().c_str(), local_endpoint);
             }
         }
