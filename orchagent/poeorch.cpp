@@ -252,6 +252,13 @@ bool PoeOrch::initPoePort(const sai_object_id_t &switchOid, const sai_object_id_
         attrs.push_back(attr);
     }
 
+    if (port.enable)
+    {
+        attr.id = SAI_POE_PORT_ATTR_ADMIN_ENABLED_STATE;
+        attr.value.booldata = port.enable;
+        attrs.push_back(attr);
+    }
+
     status = sai_poe_api->create_poe_port(&portOid, switchOid, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {

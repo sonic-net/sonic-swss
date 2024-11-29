@@ -146,13 +146,13 @@ bool PoeParser::storeConfigToDb()
 
             if (port.find("power_limit") != port.end())
             {
-                attr = std::make_pair("power_limit", std::to_string(port["power_limit"].get<uint32_t>()));
+                attr = std::make_pair("pwr_limit", std::to_string(port["power_limit"].get<uint32_t>()));
                 attrs.push_back(attr);
             }
 
             if (port.find("power_priority") != port.end())
             {
-                attr = std::make_pair("power_priority", port["power_priority"]);
+                attr = std::make_pair("priority", port["power_priority"]);
                 attrs.push_back(attr);
             }
 

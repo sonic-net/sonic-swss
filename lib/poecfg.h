@@ -42,6 +42,7 @@ typedef struct {
     uint32_t deviceId;
     uint32_t frontPanelIndex;
     std::string interface;
+    bool enable;
     uint32_t powerLimit;
     std::string powerPriority;
 } poe_port_t;

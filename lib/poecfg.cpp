@@ -208,13 +208,17 @@ bool PoeConfig::loadPortConfig(const std::vector<FieldValueTuple> &ovalues)
             {
                 port.interface = val.second;
             }
-            else if (val.first == "power_limit")
+            else if (val.first == "pwr_limit")
             {
                 port.powerLimit = (uint32_t)std::stoul(val.second);
             }
-            else if (val.first == "power_priority")
+            else if (val.first == "priority")
             {
                 port.powerPriority = val.second;
+            }
+            else if (val.first == "enabled")
+            {
+                port.enable = val.second == "enable";
             }
             else
             {
