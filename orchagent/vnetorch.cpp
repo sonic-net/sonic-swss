@@ -1155,7 +1155,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     prefixToRemove = adv_prefix;                        
                 }
                 auto prefixSubnet = prefixToRemove.getSubnet();
-                if(gRouteOrch && gRouteOrch->isBgpRouteExists(prefixSubnet))
+                if(gRouteOrch && gRouteOrch->hasBgpRoute(prefixSubnet))
                 {
                     if (!gRouteOrch->removeRoutePrefix(prefixSubnet))
                     {
@@ -2366,7 +2366,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                                 ipPrefixsubnet = adv_prefix.getSubnet();
                             }
                         }
-                        if(gRouteOrch && gRouteOrch->isBgpRouteExists(ipPrefixsubnet))
+                        if(gRouteOrch && gRouteOrch->hasBgpRoute(ipPrefixsubnet))
                         {
                             if (!gRouteOrch->removeRoutePrefix(ipPrefixsubnet))
                             {
@@ -2608,7 +2608,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                             prefixsubnet = adv_prefix.getSubnet();
                         }
                     }
-                    if (gRouteOrch && gRouteOrch->isBgpRouteExists(prefixsubnet))
+                    if (gRouteOrch && gRouteOrch->hasBgpRoute(prefixsubnet))
                     {
                         if (!gRouteOrch->removeRoutePrefix(prefixsubnet))
                         {

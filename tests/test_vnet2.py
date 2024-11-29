@@ -341,11 +341,11 @@ class TestVnet2Orch(object):
         dvs.servers[0].runcmd("ip route add default via 20.20.20.1")
         
         # create vxlan tunnel and verfiy it
-        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '1003', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        create_vxlan_tunnel(dvs, tunnel_name, '19.19.19.19')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1003', "", '', advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
         vnet_obj.check_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1003')
-        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '19.19.19.19')
 
         vnet_obj.fetch_exist_entries(dvs)
 

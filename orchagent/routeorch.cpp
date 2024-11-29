@@ -2639,7 +2639,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     return true;
 }
 
-bool RouteOrch::isBgpRouteExists(const IpPrefix& prefix)
+bool RouteOrch::hasBgpRoute(const IpPrefix& prefix)
 {
     SWSS_LOG_ENTER();
 
