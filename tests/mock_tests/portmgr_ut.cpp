@@ -141,7 +141,7 @@ namespace portmgr_ut
         state_port_table.set("Ethernet1", {{"state", "ok"}});
         m_portMgr->doTask();
 
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" down", mockCallArgs[0]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" down", mockCallArgs[1]);
         ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet1\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet1\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 81200bps burst 81200b conform-exceed drop", mockCallArgs[1]);
     }
 
