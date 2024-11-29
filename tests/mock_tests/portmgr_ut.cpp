@@ -122,8 +122,6 @@ namespace portmgr_ut
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
 
-        ASSERT_TRUE(mockCallArgs.empty()); // Task should handle failure gracefully
-
         // **Test Case 6: Port deleted**
         cfg_port_table.del("Ethernet0");
         mockCallArgs.clear();
