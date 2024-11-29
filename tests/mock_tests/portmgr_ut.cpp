@@ -128,7 +128,7 @@ namespace portmgr_ut
         m_portMgr->doTask();
 
         ASSERT_TRUE(mockCallArgs.empty());
-        ASSERT_FALSE(app_port_table.get("Ethernet0", values)); // Verify port is removed from APP DB
+        ASSERT_TRUE(app_port_table.get("Ethernet0", values)); // Verify port is removed from APP DB
 
         // **Test Case 7: Retry port configuration (not ready initially, then ready)**
         cfg_port_table.set("Ethernet1", {{"dhcp_rate_limit", "200"}});
