@@ -1418,7 +1418,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
             assert len(keys) == 0
 
         finally:
-            dvs.start_fpmsyncd()
+            dvs.start_swss()
 
     @pytest.mark.parametrize('is_ipv6_needed', [False, True])
     def test_route_fallback_to_default_update(self, is_ipv6_needed, dvs, dvs_route, testlog):
@@ -1666,7 +1666,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
             assert len(keys) == 0
 
         finally:
-            dvs.start_fpmsyncd()
+            dvs.start_swss()
 
     @pytest.mark.parametrize('is_ipv6_needed', [False, True])
     def test_route_fallback_to_default_negative(self, is_ipv6_needed, dvs, dvs_route, testlog):
@@ -1778,7 +1778,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
             assert len(keys) == 0
 
         finally:
-            dvs.start_fpmsyncd()
+            dvs.start_swss()
 
     def test_route_fallback_to_default_bothv4v6(self, dvs, dvs_route, testlog):
         self.init_test(dvs, 6, True)
@@ -2004,7 +2004,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
             assert len(keys) == 0
 
         finally:
-            dvs.start_fpmsyncd()
+            dvs.start_swss()
 
 
     def test_label_route_nhg(self, dvs, testlog):
