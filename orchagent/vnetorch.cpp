@@ -990,8 +990,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     // This is followed by an attempt to create a NHG which can be subset of nexthops_primary
     // depending on the endpoint monitor state. If no NHG from primary is created, we attempt
     // the same for secondary.
-    SWSS_LOG_NOTICE("Route recieved with monitoring (%s) and secondary nexthop group: %s.\n",monitoring.c_str(),
-                    nexthops_secondary.to_string().c_str());
+
     if(nexthops_secondary.getSize() != 0 && monitoring == "custom")
     {
         auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
