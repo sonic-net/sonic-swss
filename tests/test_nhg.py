@@ -1214,6 +1214,633 @@ class TestNextHopGroup(TestNextHopGroupBase):
         if ordered_ecmp == 'true':
            self.disble_ordered_ecmp()
 
+    def test_label_route_nhg(self, dvs, testlog):
+        self.init_test(dvs, 3)
+
+        # add label route
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
+                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+        self.lr_ps.set("10", fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count + 1)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+
+        k = self.get_inseg_id('10')
+        assert k is not None
+
+        # assert the route points to next hop group
+        fvs = self.asic_db.get_entry(self.ASIC_INSEG_STR, k)
+        nhgid = fvs["SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID"]
+        fvs = self.asic_db.get_entry(self.ASIC_NHG_STR, nhgid)
+        assert bool(fvs)
+
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        assert len(keys) == 3
+        for k in keys:
+            fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+        # bring links down one-by-one
+        for i in [0, 1, 2]:
+            self.flap_intf(i, 'down')
+            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+            assert len(keys) == 2 - i
+
+        # bring links up one-by-one
+        for i in [0, 1, 2]:
+            self.flap_intf(i, 'up')
+            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+            assert len(keys) == i + 1
+            for k in keys:
+                fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+                assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+        # Remove label route 10
+        self.lr_ps._del("10")
+
+        # Wait for label route 10 to be removed
+        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+
+    def test_nhgorch_labeled_nhs(self, dvs, testlog):
+        # Test scenario:
+        # - create a NHG with all labeled and weighted NHs and assert 2 new NHs are created
+        # - create a NHG with an existing label and assert no new NHs are created
+        # - create a NHG with a new label and assert a new NH is created
+        # - remove the third NHG and assert the NH is deleted
+        # - delete the second group and assert no NH is deleted because it is still referenced by the first group
+        # - remove the weights from the first NHG and change the labels, leaving one NH unlabeled; assert one NH is
+        #   deleted
+        # - delete the first NHG and perform cleanup
+        def mainline_labeled_nhs_test():
+            # Add a group containing labeled weighted NHs
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('mpls_nh', 'push1,push3'),
+                                                ('ifname', 'Ethernet0,Ethernet4'),
+                                                ('weight', '2,4')])
+            self.nhg_ps.set('group1', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+
+            # NhgOrch should create two next hops for the labeled ones
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
+
+            # Assert the weights are properly set
+            nhgm_ids = self.get_nhgm_ids('group1')
+            weights = []
+            for k in nhgm_ids:
+                fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+                weights.append(fvs['SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT'])
+            assert set(weights) == set(['2', '4'])
+
+            # Create a new single next hop with the same label
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
+                                            ('mpls_nh', 'push1'),
+                                                ('ifname', 'Ethernet0')])
+            self.nhg_ps.set('group2', fvs)
+
+            # No new next hop should be added
+            time.sleep(1)
+            assert len(self.asic_db.get_keys(self.ASIC_NHS_STR)) == self.asic_nhs_count + 2
+
+            # Create a new single next hop with a different label
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
+                                            ('mpls_nh', 'push2'),
+                                                ('ifname', 'Ethernet0')])
+            self.nhg_ps.set('group3', fvs)
+
+            # A new next hop should be added
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 3)
+
+            # Delete group3
+            self.nhg_ps._del('group3')
+
+            # Group3's NH should be deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
+
+            # Delete group2
+            self.nhg_ps._del('group2')
+
+            # The number of NHs should be the same as they are still referenced by
+            # group1
+            time.sleep(1)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
+
+            # Update group1 with no weights and both labeled and unlabeled NHs
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('mpls_nh', 'push2,na'),
+                                                ('ifname', 'Ethernet0,Ethernet4')])
+            self.nhg_ps.set('group1', fvs)
+
+            # Group members should be replaced and one NH should get deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 1)
+
+            # Delete group1
+            self.nhg_ps._del('group1')
+
+            # Wait for the group and it's members to be deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+            # The two next hops should also get deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count)
+
+        # Test scenario:
+        # - create a route with labeled and weighted NHs and assert a NHG and 2 NHs are created
+        # - create a NHG with the same details as the one being used by the route and assert a NHG is created and no
+        #   new NHs are added
+        # - update the NHG by changing the first NH's label and assert a new NH is created
+        # - remove the route and assert that only one (now unreferenced) NH is removed
+        # - remove the NHG and perform cleanup
+        def routeorch_nhgorch_interop_test():
+            # Create a route with labeled NHs
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                        ('mpls_nh', 'push1,push3'),
+                                        ('ifname', 'Ethernet0,Ethernet4'),
+                                        ('weight', '2,4')])
+            self.rt_ps.set('2.2.2.0/24', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count + 1)
+
+            # A NHG should be created
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+
+            # Two new next hops should be created
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
+
+            # Create a NHG with the same details
+            self.nhg_ps.set('group1', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
+
+            # No new next hops should be created
+            assert len(self.asic_db.get_keys(self.ASIC_NHS_STR)) == self.asic_nhs_count + 2
+
+            # Update the group with a different NH
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('mpls_nh', 'push2,push3'),
+                                                ('ifname', 'Ethernet0,Ethernet4'),
+                                                ('weight', '2,4')])
+            self.nhg_ps.set('group1', fvs)
+
+            # A new next hop should be created
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 3)
+
+            # group1 should be updated and a new NHG shouldn't be created
+            time.sleep(1)
+            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count + 2
+
+            # Remove the route
+            self.rt_ps._del('2.2.2.0/24')
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+
+            # One NH should become unreferenced and should be deleted.  The other
+            # one is still referenced by NhgOrch's owned NHG.
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
+
+            # Remove the group
+            self.nhg_ps._del('group1')
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+
+            # Both new next hops should be deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count)
+
+        self.init_test(dvs, 2)
+
+        mainline_labeled_nhs_test()
+        routeorch_nhgorch_interop_test()
+
+    def test_nhgorch_excp_group_cases(self, dvs, testlog):
+        # Test scenario:
+        # - remove a NHG that does not exist and assert the number of NHGs in ASIC DB remains the same
+        def remove_inexistent_nhg_test():
+            # Remove a group that does not exist
+            self.nhg_ps._del("group1")
+            time.sleep(1)
+            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count
+
+        # Test scenario:
+        # - create a NHG with a member which does not exist and assert no NHG is created
+        # - update the NHG to contain all valid members and assert the NHG is created and it has 2 members
+        def nhg_members_validation_test():
+            # Create a next hop group with a member that does not exist - should fail
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.63'),
+                                            ("ifname", "Ethernet0,Ethernet4,Ethernet124")])
+            self.nhg_ps.set("group1", fvs)
+            time.sleep(1)
+            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count
+
+            # Issue an update for this next hop group that doesn't yet exist,
+            # which contains only valid NHs.  This will overwrite the previous
+            # operation and create the group.
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.5'),
+                                            ("ifname", "Ethernet0,Ethernet8")])
+            self.nhg_ps.set("group1", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+
+            # Check the group has its two members
+            assert len(self.get_nhgm_ids('group1')) == 2
+
+        # Test scenario:
+        # - create a route pointing to the NHG created in `test_nhg_members_validation` and assert it is being created
+        # - remove the NHG and assert it fails as it is being referenced
+        # - create a new NHG and assert it and its members are being created
+        # - update the route to point to the new NHG and assert the first NHG is now deleted as it's not referenced
+        #   anymore
+        def remove_referenced_nhg_test():
+        # Add a route referencing the new group
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group1')])
+            self.rt_ps.set('2.2.2.0/24', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count + 1)
+
+            # Try removing the group while it still has references - should fail
+            self.nhg_ps._del('group1')
+            time.sleep(1)
+            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count + 1
+
+            # Create a new group
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('ifname', 'Ethernet0,Ethernet4')])
+            self.nhg_ps.set("group2", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
+
+            # Update the route to point to the new group
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group2')])
+            self.rt_ps.set('2.2.2.0/24', fvs)
+
+            # The first group should have got deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+
+            # The route's group should have changed to the new one
+            assert self.asic_db.get_entry(self.ASIC_RT_STR, self.get_route_id('2.2.2.0/24'))['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] == self.get_nhg_id('group2')
+
+        # Test scenario:
+        # - update the route created in `test_remove_referenced_nhg` to own the NHG with the same details as the
+        #   previous one and assert a new NHG and 2 new NHGMs are added
+        # - update the route to point back to the original NHG and assert the routeOrch's owned NHG is deleted
+        def routeorch_nhgorch_interop_test():
+            rt_id = self.get_route_id('2.2.2.0/24')
+            assert rt_id is not None
+
+            # Update the route with routeOrch's owned next hop group
+            nhgid = self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('ifname', 'Ethernet0,Ethernet4')])
+            self.rt_ps.set('2.2.2.0/24', fvs)
+
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
+
+            # Assert the next hop group ID changed
+            time.sleep(1)
+            assert self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] != nhgid
+            nhgid = self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
+
+            # Update the route to point back to group2
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group2')])
+            self.rt_ps.set('2.2.2.0/24', fvs)
+
+            # The routeOrch's owned next hop group should get deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+
+            # Assert the route points back to group2
+            assert self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] != nhgid
+
+        # Test scenario:
+        # - create a new NHG with the same details as the previous NHG and assert a new NHG and 2 new NHGMs are created
+        # - update the route to point to the new NHG and assert its SAI NHG ID changes
+        def identical_nhgs_test():
+            rt_id = self.get_route_id('2.2.2.0/24')
+            assert rt_id is not None
+
+            # Create a new group with the same members as group2
+            nhgid = self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('ifname', 'Ethernet0,Ethernet4')])
+            self.nhg_ps.set("group1", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
+
+            # Update the route to point to the new group
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group1')])
+            self.rt_ps.set('2.2.2.0/24', fvs)
+            time.sleep(1)
+
+            # Assert the next hop group ID changed
+            assert self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] != nhgid
+
+        # Test scenario:
+        # - create a route referencing a NHG that does not exist and assert it is not created
+        def create_route_inexistent_nhg_test():
+            # Add a route with a NHG that does not exist
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group3')])
+            self.rt_ps.set('2.2.3.0/24', fvs)
+            time.sleep(1)
+            assert self.get_route_id('2.2.3.0/24') is None
+
+            # Remove the pending route
+            self.rt_ps._del('2.2.3.0/24')
+
+        self.init_test(dvs, 3)
+
+        remove_inexistent_nhg_test()
+        nhg_members_validation_test()
+        remove_referenced_nhg_test()
+        routeorch_nhgorch_interop_test()
+        identical_nhgs_test()
+        create_route_inexistent_nhg_test()
+
+        # Cleanup
+
+        # Remove the route
+        self.rt_ps._del('2.2.2.0/24')
+        self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count)
+
+        # Remove the groups
+        self.nhg_ps._del('group1')
+        self.nhg_ps._del('group2')
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+    def test_nhgorch_nh_group(self, dvs, testlog):
+        # Test scenario:
+        # - create recursive nhg - rec_grp1 with two members - grp1 and grp2 only one of which exists
+        # - create singleton nhg grp2 and check if the rec_grp1 is updated with both the members
+        # - create a recursive nhg - rec_grp2 with another recursive nhg - rec_grp1 as member. Assert that the nhg is not created.
+        def create_recursive_nhg_test():
+            # create next hop group in APPL DB
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("grp1", fvs)
+
+            # create a recursive nexthop group with two members
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if group was propagated to ASIC DB with the existing member
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('rec_grp1')
+
+            # check if the existing member was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 1
+
+            # add another singleton nexthop group - grp2
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3'), ('ifname', 'Ethernet4')])
+            self.nhg_ps.set("grp2", fvs)
+
+            # check if both the members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # update the recursive nexthop group with another member not yet existing
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2,grp3')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if only two members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # add another singleton nexthop group - grp3
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.5'), ('ifname', 'Ethernet8')])
+            self.nhg_ps.set("grp3", fvs)
+
+            # check if all members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 3
+
+            # create a recursive nhg with another recursive nhg as member
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'rec_grp1')])
+            self.nhg_ps.set("rec_grp2", fvs)
+
+            # check that the group was not propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert not self.nhg_exists('rec_grp2')
+
+            self.nhg_ps._del("rec_grp2")
+            self.nhg_ps._del("rec_grp1")
+            self.nhg_ps._del("grp1")
+            self.nhg_ps._del("grp2")
+            self.nhg_ps._del("grp3")
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+        # Test scenario:
+        # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
+        def create_nhg_test():
+            # create next hop group in APPL DB
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
+                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+            self.nhg_ps.set("group1", fvs)
+
+            # check if group was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('group1')
+
+            # check if members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('group1')) == 3
+
+        # Test scenario:
+        # - create a route pointing to `group1` and assert it is being added to ASIC DB and pointing to its SAI ID
+        # - delete the route and assert it is being removed
+        def create_route_nhg_test():
+            # create route in APPL DB
+            fvs = swsscommon.FieldValuePairs([("nexthop_group", "group1")])
+            self.rt_ps.set("2.2.2.0/24", fvs)
+
+            # check if route was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count + 1)
+
+            k = self.get_route_id('2.2.2.0/24')
+            assert k is not None
+
+            # assert the route points to next hop group
+            fvs = self.asic_db.get_entry(self.ASIC_RT_STR, k)
+            assert fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == self.get_nhg_id('group1')
+
+            # Remove route 2.2.2.0/24
+            self.rt_ps._del("2.2.2.0/24")
+            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count)
+
+        # Test scenario:
+        # - bring the links down one by one and assert the group1's members are subsequently removed and the group
+        #   still exists
+        # - bring the liks up one by one and assert the group1's members are subsequently added back
+        def link_flap_test():
+            # bring links down one-by-one
+            for i in [0, 1, 2]:
+                self.flap_intf(i, 'down')
+                self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2 - i)
+                assert len(self.get_nhgm_ids('group1')) == 2 - i
+                assert self.nhg_exists('group1')
+
+            # bring links up one-by-one
+            for i in [0, 1, 2]:
+                self.flap_intf(i, 'up')
+                self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + i + 1)
+                assert len(self.get_nhgm_ids('group1')) == i + 1
+
+        # Test scenario:
+        # - bring a link down and assert a NHGM of `group1` is removed
+        # - create NHG `group2` which has a member pointing to the link being down and assert the group gets created
+        #   but the member referencing the link is not added
+        # - update `group1` by removing a member while having another member referencing the link which is down and
+        #   assert it'll only have a member added in ASIC DB
+        # - bring the link back up and assert the missing 2 members of `group1` and `group2` are added
+        # - remove `group2` and assert it and its members are removed
+        def validate_invalidate_group_member_test():
+            # Bring an interface down
+            self.flap_intf(1, 'down')
+
+            # One group member will get deleted
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+
+            # Create a group that contains a NH that uses the down link
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ("ifname", "Ethernet0,Ethernet4")])
+            self.nhg_ps.set('group2', fvs)
+
+            # The group should get created, but it will not contained the NH that
+            # has the link down
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('group2')) == 1
+
+            # Update the NHG with one interface down
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3,10.0.0.1'),
+                                            ("ifname", "Ethernet4,Ethernet0")])
+            self.nhg_ps.set("group1", fvs)
+
+            # Wait for group members to update - the group will contain only the
+            # members that have their links up
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('group1')) == 1
+
+            # Bring the interface up
+            self.flap_intf(1, 'up')
+
+            # Check that the missing member of group1 and group2 is being added
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
+
+            # Remove group2
+            self.nhg_ps._del('group2')
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+
+        # Test scenario:
+        # - create NHG `group2` with a NH that does not exist and assert it isn't created
+        # - update `group1` to contain the invalid NH and assert it remains only with the unremoved members
+        # - configure the invalid NH's interface and assert `group2` gets created and `group1`'s NH is added
+        # - delete `group` and assert it is being removed
+        def inexistent_group_member_test():
+            # Create group2 with a NH that does not exist
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3,10.0.0.63'),
+                                            ("ifname", "Ethernet4,Ethernet124")])
+            self.nhg_ps.set("group2", fvs)
+
+            # The groups should not be created
+            time.sleep(1)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+
+            # Update group1 with a NH that does not exist
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3,10.0.0.63'),
+                                            ("ifname", "Ethernet4,Ethernet124")])
+            self.nhg_ps.set("group1", fvs)
+
+            # The update should fail, leaving group1 with only the unremoved
+            # members
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert len(self.get_nhgm_ids('group1')) == 1
+
+            # Configure the missing NH's interface
+            self.config_intf(31)
+
+            # A couple more routes will be added to ASIC DB
+            self.asic_rts_count += 2
+
+            # Group2 should get created and group1 should be updated
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
+            assert len(self.get_nhgm_ids('group1')) == 2
+            assert len(self.get_nhgm_ids('group2')) == 2
+
+            # Delete group2
+            self.nhg_ps._del('group2')
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+
+        # Test scenario:
+        # - update `group1` to have 4 members and assert they are all added
+        # - update `group1` to have only 1 member and assert the other 3 are removed
+        # - update `group1` to have 2 members and assert a new one is added
+        def update_nhgm_count_test():
+            # Update the NHG, adding two new members
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7'),
+                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12")])
+            self.nhg_ps.set("group1", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
+            assert len(self.get_nhgm_ids('group1')) == 4
+
+            # Update the group to one NH only
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
+            self.nhg_ps.set("group1", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+            assert len(self.get_nhgm_ids('group1')) == 0
+
+            # Update the group to 2 NHs
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])
+            self.nhg_ps.set("group1", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('group1')) == 2
+
+        self.init_test(dvs, 4)
+
+        create_recursive_nhg_test()
+        create_nhg_test()
+        create_route_nhg_test()
+        link_flap_test()
+        validate_invalidate_group_member_test()
+        inexistent_group_member_test()
+        update_nhgm_count_test()
+
+        # Cleanup
+
+        # Remove group1
+        self.nhg_ps._del("group1")
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+
+    def test_nhgorch_label_route(self, dvs, testlog):
+        self.init_test(dvs, 4)
+
+        # create next hop group in APPL DB
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
+                                        ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+        self.nhg_ps.set("group1", fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+
+        # create label route in APPL DB pointing to the NHG
+        fvs = swsscommon.FieldValuePairs([("nexthop_group", "group1")])
+        self.lr_ps.set("20", fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count + 1)
+
+        k = self.get_inseg_id('20')
+        assert k is not None
+
+        # assert the route points to next hop group
+        fvs = self.asic_db.get_entry(self.ASIC_INSEG_STR, k)
+        assert fvs["SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID"] == self.get_nhg_id('group1')
+
+        # Remove label route 20
+        self.lr_ps._del("20")
+        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count)
+
+        # Remove group1
+        self.nhg_ps._del("group1")
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+    
     @pytest.mark.parametrize('is_ipv6_needed', [False, True])
     def test_route_fallback_to_default(self, is_ipv6_needed, dvs, dvs_route, testlog):
         self.init_test(dvs, 6, True)
@@ -2006,633 +2633,6 @@ class TestNextHopGroup(TestNextHopGroupBase):
         finally:
             dvs.start_fpmsyncd()
 
-
-    def test_label_route_nhg(self, dvs, testlog):
-        self.init_test(dvs, 3)
-
-        # add label route
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
-                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
-        self.lr_ps.set("10", fvs)
-        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count + 1)
-        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
-
-        k = self.get_inseg_id('10')
-        assert k is not None
-
-        # assert the route points to next hop group
-        fvs = self.asic_db.get_entry(self.ASIC_INSEG_STR, k)
-        nhgid = fvs["SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID"]
-        fvs = self.asic_db.get_entry(self.ASIC_NHG_STR, nhgid)
-        assert bool(fvs)
-
-        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
-        assert len(keys) == 3
-        for k in keys:
-            fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
-            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
-
-        # bring links down one-by-one
-        for i in [0, 1, 2]:
-            self.flap_intf(i, 'down')
-            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
-            assert len(keys) == 2 - i
-
-        # bring links up one-by-one
-        for i in [0, 1, 2]:
-            self.flap_intf(i, 'up')
-            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
-            assert len(keys) == i + 1
-            for k in keys:
-                fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
-                assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
-
-        # Remove label route 10
-        self.lr_ps._del("10")
-
-        # Wait for label route 10 to be removed
-        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count)
-        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
-
-    def test_nhgorch_labeled_nhs(self, dvs, testlog):
-        # Test scenario:
-        # - create a NHG with all labeled and weighted NHs and assert 2 new NHs are created
-        # - create a NHG with an existing label and assert no new NHs are created
-        # - create a NHG with a new label and assert a new NH is created
-        # - remove the third NHG and assert the NH is deleted
-        # - delete the second group and assert no NH is deleted because it is still referenced by the first group
-        # - remove the weights from the first NHG and change the labels, leaving one NH unlabeled; assert one NH is
-        #   deleted
-        # - delete the first NHG and perform cleanup
-        def mainline_labeled_nhs_test():
-            # Add a group containing labeled weighted NHs
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                            ('mpls_nh', 'push1,push3'),
-                                                ('ifname', 'Ethernet0,Ethernet4'),
-                                                ('weight', '2,4')])
-            self.nhg_ps.set('group1', fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-
-            # NhgOrch should create two next hops for the labeled ones
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
-
-            # Assert the weights are properly set
-            nhgm_ids = self.get_nhgm_ids('group1')
-            weights = []
-            for k in nhgm_ids:
-                fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
-                weights.append(fvs['SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT'])
-            assert set(weights) == set(['2', '4'])
-
-            # Create a new single next hop with the same label
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
-                                            ('mpls_nh', 'push1'),
-                                                ('ifname', 'Ethernet0')])
-            self.nhg_ps.set('group2', fvs)
-
-            # No new next hop should be added
-            time.sleep(1)
-            assert len(self.asic_db.get_keys(self.ASIC_NHS_STR)) == self.asic_nhs_count + 2
-
-            # Create a new single next hop with a different label
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
-                                            ('mpls_nh', 'push2'),
-                                                ('ifname', 'Ethernet0')])
-            self.nhg_ps.set('group3', fvs)
-
-            # A new next hop should be added
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 3)
-
-            # Delete group3
-            self.nhg_ps._del('group3')
-
-            # Group3's NH should be deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
-
-            # Delete group2
-            self.nhg_ps._del('group2')
-
-            # The number of NHs should be the same as they are still referenced by
-            # group1
-            time.sleep(1)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
-
-            # Update group1 with no weights and both labeled and unlabeled NHs
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                            ('mpls_nh', 'push2,na'),
-                                                ('ifname', 'Ethernet0,Ethernet4')])
-            self.nhg_ps.set('group1', fvs)
-
-            # Group members should be replaced and one NH should get deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 1)
-
-            # Delete group1
-            self.nhg_ps._del('group1')
-
-            # Wait for the group and it's members to be deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
-
-            # The two next hops should also get deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count)
-
-        # Test scenario:
-        # - create a route with labeled and weighted NHs and assert a NHG and 2 NHs are created
-        # - create a NHG with the same details as the one being used by the route and assert a NHG is created and no
-        #   new NHs are added
-        # - update the NHG by changing the first NH's label and assert a new NH is created
-        # - remove the route and assert that only one (now unreferenced) NH is removed
-        # - remove the NHG and perform cleanup
-        def routeorch_nhgorch_interop_test():
-            # Create a route with labeled NHs
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                        ('mpls_nh', 'push1,push3'),
-                                        ('ifname', 'Ethernet0,Ethernet4'),
-                                        ('weight', '2,4')])
-            self.rt_ps.set('2.2.2.0/24', fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count + 1)
-
-            # A NHG should be created
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-
-            # Two new next hops should be created
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
-
-            # Create a NHG with the same details
-            self.nhg_ps.set('group1', fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
-
-            # No new next hops should be created
-            assert len(self.asic_db.get_keys(self.ASIC_NHS_STR)) == self.asic_nhs_count + 2
-
-            # Update the group with a different NH
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                            ('mpls_nh', 'push2,push3'),
-                                                ('ifname', 'Ethernet0,Ethernet4'),
-                                                ('weight', '2,4')])
-            self.nhg_ps.set('group1', fvs)
-
-            # A new next hop should be created
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 3)
-
-            # group1 should be updated and a new NHG shouldn't be created
-            time.sleep(1)
-            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count + 2
-
-            # Remove the route
-            self.rt_ps._del('2.2.2.0/24')
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-
-            # One NH should become unreferenced and should be deleted.  The other
-            # one is still referenced by NhgOrch's owned NHG.
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
-
-            # Remove the group
-            self.nhg_ps._del('group1')
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
-
-            # Both new next hops should be deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count)
-
-        self.init_test(dvs, 2)
-
-        mainline_labeled_nhs_test()
-        routeorch_nhgorch_interop_test()
-
-    def test_nhgorch_excp_group_cases(self, dvs, testlog):
-        # Test scenario:
-        # - remove a NHG that does not exist and assert the number of NHGs in ASIC DB remains the same
-        def remove_inexistent_nhg_test():
-            # Remove a group that does not exist
-            self.nhg_ps._del("group1")
-            time.sleep(1)
-            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count
-
-        # Test scenario:
-        # - create a NHG with a member which does not exist and assert no NHG is created
-        # - update the NHG to contain all valid members and assert the NHG is created and it has 2 members
-        def nhg_members_validation_test():
-            # Create a next hop group with a member that does not exist - should fail
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.63'),
-                                            ("ifname", "Ethernet0,Ethernet4,Ethernet124")])
-            self.nhg_ps.set("group1", fvs)
-            time.sleep(1)
-            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count
-
-            # Issue an update for this next hop group that doesn't yet exist,
-            # which contains only valid NHs.  This will overwrite the previous
-            # operation and create the group.
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.5'),
-                                            ("ifname", "Ethernet0,Ethernet8")])
-            self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-
-            # Check the group has its two members
-            assert len(self.get_nhgm_ids('group1')) == 2
-
-        # Test scenario:
-        # - create a route pointing to the NHG created in `test_nhg_members_validation` and assert it is being created
-        # - remove the NHG and assert it fails as it is being referenced
-        # - create a new NHG and assert it and its members are being created
-        # - update the route to point to the new NHG and assert the first NHG is now deleted as it's not referenced
-        #   anymore
-        def remove_referenced_nhg_test():
-        # Add a route referencing the new group
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group1')])
-            self.rt_ps.set('2.2.2.0/24', fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count + 1)
-
-            # Try removing the group while it still has references - should fail
-            self.nhg_ps._del('group1')
-            time.sleep(1)
-            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count + 1
-
-            # Create a new group
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                            ('ifname', 'Ethernet0,Ethernet4')])
-            self.nhg_ps.set("group2", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
-
-            # Update the route to point to the new group
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group2')])
-            self.rt_ps.set('2.2.2.0/24', fvs)
-
-            # The first group should have got deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-
-            # The route's group should have changed to the new one
-            assert self.asic_db.get_entry(self.ASIC_RT_STR, self.get_route_id('2.2.2.0/24'))['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] == self.get_nhg_id('group2')
-
-        # Test scenario:
-        # - update the route created in `test_remove_referenced_nhg` to own the NHG with the same details as the
-        #   previous one and assert a new NHG and 2 new NHGMs are added
-        # - update the route to point back to the original NHG and assert the routeOrch's owned NHG is deleted
-        def routeorch_nhgorch_interop_test():
-            rt_id = self.get_route_id('2.2.2.0/24')
-            assert rt_id is not None
-
-            # Update the route with routeOrch's owned next hop group
-            nhgid = self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                            ('ifname', 'Ethernet0,Ethernet4')])
-            self.rt_ps.set('2.2.2.0/24', fvs)
-
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
-
-            # Assert the next hop group ID changed
-            time.sleep(1)
-            assert self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] != nhgid
-            nhgid = self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
-
-            # Update the route to point back to group2
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group2')])
-            self.rt_ps.set('2.2.2.0/24', fvs)
-
-            # The routeOrch's owned next hop group should get deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-
-            # Assert the route points back to group2
-            assert self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] != nhgid
-
-        # Test scenario:
-        # - create a new NHG with the same details as the previous NHG and assert a new NHG and 2 new NHGMs are created
-        # - update the route to point to the new NHG and assert its SAI NHG ID changes
-        def identical_nhgs_test():
-            rt_id = self.get_route_id('2.2.2.0/24')
-            assert rt_id is not None
-
-            # Create a new group with the same members as group2
-            nhgid = self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                            ('ifname', 'Ethernet0,Ethernet4')])
-            self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
-
-            # Update the route to point to the new group
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group1')])
-            self.rt_ps.set('2.2.2.0/24', fvs)
-            time.sleep(1)
-
-            # Assert the next hop group ID changed
-            assert self.asic_db.get_entry(self.ASIC_RT_STR, rt_id)['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID'] != nhgid
-
-        # Test scenario:
-        # - create a route referencing a NHG that does not exist and assert it is not created
-        def create_route_inexistent_nhg_test():
-            # Add a route with a NHG that does not exist
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group3')])
-            self.rt_ps.set('2.2.3.0/24', fvs)
-            time.sleep(1)
-            assert self.get_route_id('2.2.3.0/24') is None
-
-            # Remove the pending route
-            self.rt_ps._del('2.2.3.0/24')
-
-        self.init_test(dvs, 3)
-
-        remove_inexistent_nhg_test()
-        nhg_members_validation_test()
-        remove_referenced_nhg_test()
-        routeorch_nhgorch_interop_test()
-        identical_nhgs_test()
-        create_route_inexistent_nhg_test()
-
-        # Cleanup
-
-        # Remove the route
-        self.rt_ps._del('2.2.2.0/24')
-        self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count)
-
-        # Remove the groups
-        self.nhg_ps._del('group1')
-        self.nhg_ps._del('group2')
-        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
-        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
-
-    def test_nhgorch_nh_group(self, dvs, testlog):
-        # Test scenario:
-        # - create recursive nhg - rec_grp1 with two members - grp1 and grp2 only one of which exists
-        # - create singleton nhg grp2 and check if the rec_grp1 is updated with both the members
-        # - create a recursive nhg - rec_grp2 with another recursive nhg - rec_grp1 as member. Assert that the nhg is not created.
-        def create_recursive_nhg_test():
-            # create next hop group in APPL DB
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
-            self.nhg_ps.set("grp1", fvs)
-
-            # create a recursive nexthop group with two members
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2')])
-            self.nhg_ps.set("rec_grp1", fvs)
-
-            # check if group was propagated to ASIC DB with the existing member
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            assert self.nhg_exists('rec_grp1')
-
-            # check if the existing member was propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
-            assert len(self.get_nhgm_ids('rec_grp1')) == 1
-
-            # add another singleton nexthop group - grp2
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3'), ('ifname', 'Ethernet4')])
-            self.nhg_ps.set("grp2", fvs)
-
-            # check if both the members were propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-            assert len(self.get_nhgm_ids('rec_grp1')) == 2
-
-            # update the recursive nexthop group with another member not yet existing
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2,grp3')])
-            self.nhg_ps.set("rec_grp1", fvs)
-
-            # check if only two members were propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-            assert len(self.get_nhgm_ids('rec_grp1')) == 2
-
-            # add another singleton nexthop group - grp3
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.5'), ('ifname', 'Ethernet8')])
-            self.nhg_ps.set("grp3", fvs)
-
-            # check if all members were propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
-            assert len(self.get_nhgm_ids('rec_grp1')) == 3
-
-            # create a recursive nhg with another recursive nhg as member
-            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'rec_grp1')])
-            self.nhg_ps.set("rec_grp2", fvs)
-
-            # check that the group was not propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            assert not self.nhg_exists('rec_grp2')
-
-            self.nhg_ps._del("rec_grp2")
-            self.nhg_ps._del("rec_grp1")
-            self.nhg_ps._del("grp1")
-            self.nhg_ps._del("grp2")
-            self.nhg_ps._del("grp3")
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
-
-        # Test scenario:
-        # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
-        def create_nhg_test():
-            # create next hop group in APPL DB
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
-                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
-            self.nhg_ps.set("group1", fvs)
-
-            # check if group was propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            assert self.nhg_exists('group1')
-
-            # check if members were propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
-            assert len(self.get_nhgm_ids('group1')) == 3
-
-        # Test scenario:
-        # - create a route pointing to `group1` and assert it is being added to ASIC DB and pointing to its SAI ID
-        # - delete the route and assert it is being removed
-        def create_route_nhg_test():
-            # create route in APPL DB
-            fvs = swsscommon.FieldValuePairs([("nexthop_group", "group1")])
-            self.rt_ps.set("2.2.2.0/24", fvs)
-
-            # check if route was propagated to ASIC DB
-            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count + 1)
-
-            k = self.get_route_id('2.2.2.0/24')
-            assert k is not None
-
-            # assert the route points to next hop group
-            fvs = self.asic_db.get_entry(self.ASIC_RT_STR, k)
-            assert fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == self.get_nhg_id('group1')
-
-            # Remove route 2.2.2.0/24
-            self.rt_ps._del("2.2.2.0/24")
-            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count)
-
-        # Test scenario:
-        # - bring the links down one by one and assert the group1's members are subsequently removed and the group
-        #   still exists
-        # - bring the liks up one by one and assert the group1's members are subsequently added back
-        def link_flap_test():
-            # bring links down one-by-one
-            for i in [0, 1, 2]:
-                self.flap_intf(i, 'down')
-                self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2 - i)
-                assert len(self.get_nhgm_ids('group1')) == 2 - i
-                assert self.nhg_exists('group1')
-
-            # bring links up one-by-one
-            for i in [0, 1, 2]:
-                self.flap_intf(i, 'up')
-                self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + i + 1)
-                assert len(self.get_nhgm_ids('group1')) == i + 1
-
-        # Test scenario:
-        # - bring a link down and assert a NHGM of `group1` is removed
-        # - create NHG `group2` which has a member pointing to the link being down and assert the group gets created
-        #   but the member referencing the link is not added
-        # - update `group1` by removing a member while having another member referencing the link which is down and
-        #   assert it'll only have a member added in ASIC DB
-        # - bring the link back up and assert the missing 2 members of `group1` and `group2` are added
-        # - remove `group2` and assert it and its members are removed
-        def validate_invalidate_group_member_test():
-            # Bring an interface down
-            self.flap_intf(1, 'down')
-
-            # One group member will get deleted
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-
-            # Create a group that contains a NH that uses the down link
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
-                                            ("ifname", "Ethernet0,Ethernet4")])
-            self.nhg_ps.set('group2', fvs)
-
-            # The group should get created, but it will not contained the NH that
-            # has the link down
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
-            assert len(self.get_nhgm_ids('group2')) == 1
-
-            # Update the NHG with one interface down
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3,10.0.0.1'),
-                                            ("ifname", "Ethernet4,Ethernet0")])
-            self.nhg_ps.set("group1", fvs)
-
-            # Wait for group members to update - the group will contain only the
-            # members that have their links up
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-            assert len(self.get_nhgm_ids('group1')) == 1
-
-            # Bring the interface up
-            self.flap_intf(1, 'up')
-
-            # Check that the missing member of group1 and group2 is being added
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
-
-            # Remove group2
-            self.nhg_ps._del('group2')
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-
-        # Test scenario:
-        # - create NHG `group2` with a NH that does not exist and assert it isn't created
-        # - update `group1` to contain the invalid NH and assert it remains only with the unremoved members
-        # - configure the invalid NH's interface and assert `group2` gets created and `group1`'s NH is added
-        # - delete `group` and assert it is being removed
-        def inexistent_group_member_test():
-            # Create group2 with a NH that does not exist
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3,10.0.0.63'),
-                                            ("ifname", "Ethernet4,Ethernet124")])
-            self.nhg_ps.set("group2", fvs)
-
-            # The groups should not be created
-            time.sleep(1)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-
-            # Update group1 with a NH that does not exist
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3,10.0.0.63'),
-                                            ("ifname", "Ethernet4,Ethernet124")])
-            self.nhg_ps.set("group1", fvs)
-
-            # The update should fail, leaving group1 with only the unremoved
-            # members
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
-            assert len(self.get_nhgm_ids('group1')) == 1
-
-            # Configure the missing NH's interface
-            self.config_intf(31)
-
-            # A couple more routes will be added to ASIC DB
-            self.asic_rts_count += 2
-
-            # Group2 should get created and group1 should be updated
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
-            assert len(self.get_nhgm_ids('group1')) == 2
-            assert len(self.get_nhgm_ids('group2')) == 2
-
-            # Delete group2
-            self.nhg_ps._del('group2')
-            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-
-        # Test scenario:
-        # - update `group1` to have 4 members and assert they are all added
-        # - update `group1` to have only 1 member and assert the other 3 are removed
-        # - update `group1` to have 2 members and assert a new one is added
-        def update_nhgm_count_test():
-            # Update the NHG, adding two new members
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7'),
-                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12")])
-            self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
-            assert len(self.get_nhgm_ids('group1')) == 4
-
-            # Update the group to one NH only
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
-            self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
-            assert len(self.get_nhgm_ids('group1')) == 0
-
-            # Update the group to 2 NHs
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])
-            self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
-            assert len(self.get_nhgm_ids('group1')) == 2
-
-        self.init_test(dvs, 4)
-
-        create_recursive_nhg_test()
-        create_nhg_test()
-        create_route_nhg_test()
-        link_flap_test()
-        validate_invalidate_group_member_test()
-        inexistent_group_member_test()
-        update_nhgm_count_test()
-
-        # Cleanup
-
-        # Remove group1
-        self.nhg_ps._del("group1")
-        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
-
-    def test_nhgorch_label_route(self, dvs, testlog):
-        self.init_test(dvs, 4)
-
-        # create next hop group in APPL DB
-        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
-                                        ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
-        self.nhg_ps.set("group1", fvs)
-        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
-        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
-
-        # create label route in APPL DB pointing to the NHG
-        fvs = swsscommon.FieldValuePairs([("nexthop_group", "group1")])
-        self.lr_ps.set("20", fvs)
-        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count + 1)
-
-        k = self.get_inseg_id('20')
-        assert k is not None
-
-        # assert the route points to next hop group
-        fvs = self.asic_db.get_entry(self.ASIC_INSEG_STR, k)
-        assert fvs["SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID"] == self.get_nhg_id('group1')
-
-        # Remove label route 20
-        self.lr_ps._del("20")
-        self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count)
-
-        # Remove group1
-        self.nhg_ps._del("group1")
-        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
 
 class TestCbfNextHopGroup(TestNextHopGroupBase):
     MAX_NHG_MAP_COUNT = 512

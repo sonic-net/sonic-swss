@@ -742,7 +742,7 @@ class DockerVirtualSwitch:
         self.runcmd(['sh', '-c', 'supervisorctl start fpmsyncd'])
 
         # Let's give fpmsyncd a chance to connect to Zebra.
-        time.sleep(5)
+        time.sleep(10)
 
     # deps: warm_reboot
     def stop_fpmsyncd(self):
