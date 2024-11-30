@@ -913,7 +913,7 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
                                        VNetVrfObject *vrf_obj,
                                        const string& monitoring)
 {
-
+    SWSS_LOG_INFO("Creating nexthop group from nexthops(%s)\n", nexthops.to_string().c_str());
     if (nexthops.getSize() == 0)
     {
         return true;
@@ -2512,6 +2512,8 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
     copy(pfx, prefix);
     NextHopGroupKey nhg_custom_primary = getActiveNHSet( vnet, primary, prefix);
     NextHopGroupKey nhg_custom_secondary = getActiveNHSet( vnet, secondary, prefix);
+    SWSS_LOG_INFO("Primary active(%s), Secondary active (%s), Current active(%s)\n", nhg_custom_primary.to_string().c_str(),
+                  nhg_custom_secondary.to_string().c_str(), active_nhg.to_string().c_str()); 
     if (nhg_custom_primary.getSize() > 0)
     {
         if (nhg_custom_primary != active_nhg )
@@ -2599,15 +2601,16 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                     // we need to readd the route.
                     SWSS_LOG_NOTICE("Adding Custom monitored Route with prefix: %s and nexthop group: %s\n",
                                     prefix.to_string().c_str(), nhg_custom.to_string().c_str()); 
-                    auto prefixsubnet = prefix.getSubnet();
+                    auto prefixToUse = prefix;
                     if (prefix_to_adv_prefix_.find(prefix) != prefix_to_adv_prefix_.end())
                     {
                         auto adv_prefix = prefix_to_adv_prefix_[prefix];
                         if(adv_prefix.to_string() != prefix.to_string())
                         {
-                            prefixsubnet = adv_prefix.getSubnet();
+                            prefixToUse = adv_prefix;
                         }
                     }
+                    auto prefixsubnet = prefixToUse.getSubnet();
                     if (gRouteOrch && gRouteOrch->hasBgpRoute(prefixsubnet))
                     {
                         if (!gRouteOrch->removeRoutePrefix(prefixsubnet))
@@ -2687,12 +2690,15 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         }
         else if (nhg_custom.getSize() > 0 && active_nhg_size == 0)
         {
-            auto adv_prefix = prefix_to_adv_prefix_[prefix];
-            if (adv_prefix_refcount_.find(adv_prefix) == adv_prefix_refcount_.end())
+            if (prefix_to_adv_prefix_.find(prefix) != prefix_to_adv_prefix_.end())
             {
-                adv_prefix_refcount_[adv_prefix] = 0;
+                auto adv_prefix = prefix_to_adv_prefix_[prefix];
+                if (adv_prefix_refcount_.find(adv_prefix) == adv_prefix_refcount_.end())
+                {
+                    adv_prefix_refcount_[adv_prefix] = 0;
+                }
+                adv_prefix_refcount_[adv_prefix] += 1;
             }
-            adv_prefix_refcount_[adv_prefix] += 1;
             string profile = vrf_obj->getProfile(prefix);
             postRouteState(vnet, prefix, nhg_custom, profile);
         }
