@@ -9,11 +9,12 @@ extern "C" {
 
 // TODO: Move the rest of AclTable implementation out of AclOrch
 
-#define ACL_TABLE_DESCRIPTION  "POLICY_DESC"
-#define ACL_TABLE_STAGE        "STAGE"
-#define ACL_TABLE_TYPE         "TYPE"
-#define ACL_TABLE_PORTS        "PORTS"
-#define ACL_TABLE_SERVICES     "SERVICES"
+#define ACL_TABLE_DESCRIPTION       "POLICY_DESC"
+#define ACL_TABLE_STAGE             "STAGE"
+#define ACL_TABLE_TYPE              "TYPE"
+#define ACL_TABLE_PORTS             "PORTS"
+#define ACL_TABLE_SERVICES          "SERVICES"
+#define ACL_TABLE_EXT_ACTION_LIST   "EXT_ACTION_LIST"
 
 #define ACL_TABLE_TYPE_MATCHES      "MATCHES"
 #define ACL_TABLE_TYPE_BPOINT_TYPES "BIND_POINTS"

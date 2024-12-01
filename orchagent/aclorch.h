@@ -60,6 +60,7 @@
 
 #define ACTION_PACKET_ACTION                "PACKET_ACTION"
 #define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
+#define ACTION_POLICER_ACTION               "POLICER_NAME"
 #define ACTION_DO_NOT_NAT_ACTION            "DO_NOT_NAT_ACTION"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
@@ -73,6 +74,8 @@
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
+
+#define TABLE_ACTION_CAPABILITY_POLICER     "POLICER"
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
@@ -213,6 +216,7 @@ public:
     const set<sai_acl_action_type_t>& getActions() const;
 
     bool addAction(sai_acl_action_type_t action);
+    bool addActions(set<sai_acl_action_type_t> actions);
     bool addMatch(shared_ptr<AclTableMatchInterface> match);
 
 private:
@@ -462,6 +466,8 @@ public:
 
     // Add actions to ACL table if mandatory action list is required on table creation.
     bool addMandatoryActions();
+    // Add extended actions to ACL table
+    bool addExtActions();
 
     // Add stage mandatory matching fields to ACL table
     bool addStageMandatoryMatchFields();
@@ -512,6 +518,8 @@ public:
     set<string> portSet;
     // Set to store the not configured ACL table port alias
     set<string> pendingPortSet;
+    // Set to store the supported ACL table actions
+    set<_sai_acl_action_type_t> extActionList;
 
     // Is the ACL table bound to switch?
     bool bindToSwitch = false;
@@ -636,6 +644,7 @@ private:
     bool isAclTableStageUpdated(acl_stage_type_t acl_stage, AclTable &aclTable);
     bool processAclTableStage(string stage, acl_stage_type_t &acl_stage);
     bool processAclTableType(string type, string &out_table_type);
+    bool processAclTableActionsList(string actions, vector<string> &action_list);
     bool processAclTablePorts(string portList, AclTable &aclTable);
     bool validateAclTable(AclTable &aclTable);
     bool updateAclTablePorts(AclTable &newTable, AclTable &curTable);
@@ -656,6 +665,9 @@ private:
 
     void removeAllAclTableStatus();
     void removeAllAclRuleStatus();
+
+    bool AclOrch::processAclTableActionsList(const string& actions, AclTable &aclTable);
+    bool AclOrch::validateExtAction(string action);
 
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance

@@ -122,7 +122,8 @@ static acl_rule_attr_lookup_t aclDTelActionLookup =
 
 static acl_rule_attr_lookup_t aclOtherActionLookup =
 {
-    { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
+    { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER },
+    { ACTION_POLICER_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER }
 };
 
 static acl_packet_action_lookup_t aclPacketActionLookup =
@@ -509,6 +510,11 @@ static map<AclObjectStatus, string> aclObjectStatusLookup =
     {AclObjectStatus::PENDING_REMOVAL, "Pending removal"}
 };
 
+static map<string, sai_acl_action_type_t> aclTableActionCapabilityLookup =
+{
+    {TABLE_ACTION_CAPABILITY_POLICER, SAI_ACL_ACTION_TYPE_SET_POLICER},
+};
+
 static sai_acl_table_attr_t AclEntryFieldToAclTableField(sai_acl_entry_attr_t attr)
 {
     if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, FIELD))
@@ -640,6 +646,12 @@ const set<sai_acl_action_type_t>& AclTableType::getActions() const
 bool AclTableType::addAction(sai_acl_action_type_t action)
 {
     m_aclAcitons.insert(action);
+    return true;
+}
+
+bool AclTableType::addActions(set<sai_acl_action_type_t> actions)
+{
+    m_aclAcitons.insert(actions.begin(), actions.end());
     return true;
 }
 
@@ -2635,6 +2647,8 @@ bool AclTable::create()
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
     vector<int32_t> action_types_list {type.getActions().begin(), type.getActions().end()};
+    // insert the additional actions
+    action_types_list.insert(action_types_list.end(), extActionList.begin(), extActionList.end());
     vector<int32_t> bpoint_list {type.getBindPointTypes().begin(), type.getBindPointTypes().end()};
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
@@ -4602,6 +4616,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
         }
 
         return true;
+        // add policer_action for mirror table?
     }
     else
     {
@@ -5221,6 +5236,17 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     // TODO: validate control plane ACL table has this attribute
                     continue;
                 }
+                else if (attr_name == ACL_TABLE_EXT_ACTION_LIST)
+                {
+                    if (!processAclExtActionsList(attr_value, newTable))
+                    {
+                        SWSS_LOG_ERROR("Failed to process ACL table %s, ext actions '%s'",
+                                       table_id.c_str(),
+                                       attr_value);
+                        bAllAttributesOk = false;
+                        break;
+                    }
+                }
                 else
                 {
                     SWSS_LOG_ERROR("Unknown table attribute '%s'", attr_name.c_str());
@@ -5248,6 +5274,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             newTable.validateAddType(*tableType);
             // Add mandatory ACL action if not present
             newTable.addMandatoryActions();
+
+            newTable.type.addActions(newTable.extActionList);
             // validate and create/update ACL Table
             if (bAllAttributesOk && newTable.validate())
             {
@@ -5581,6 +5609,44 @@ bool AclOrch::processAclTablePorts(string portList, AclTable &aclTable)
 
         aclTable.link(bind_port_id);
         aclTable.portSet.emplace(alias);
+    }
+
+    return true;
+}
+
+bool AclOrch::processAclExtActionsList(const string& actions_str, AclTable &aclTable)
+{
+    SWSS_LOG_ENTER("[Shay] ");
+
+    vector<string> action_list = tokenize(actions_str, ',');
+    for (auto action : action_list)
+    {
+        tring trimmed_action = trim(action);
+        sai_acl_action_type_t sai_action = aclTableActionCapabilityLookup.find(trimmed_action);
+        if (sai_action == aclTableActionCapabilityLookup.end())
+        {
+            SWSS_LOG_ERROR("Invalid ACL action '%s', table '%s', type %s, stage %s",
+                           trimmed_action.c_str(),
+                           aclTable.id.c_str(),
+                           type.getName().c_str(),
+                           ((stage == ACL_STAGE_INGRESS)? "INGRESS":"EGRESS"));
+        }
+        if (!isAclActionSupported(stage, sai_action))
+        {
+            SWSS_LOG_ERROR("Unsupported ACL action '%s', table '%s', type %s, stage %s",
+                           sai_serialize_enum(sai_action, &sai_metadata_enum_sai_acl_action_type_t).c_str(),
+                           aclTable.id.c_str(),
+                           type.getName().c_str(),
+                           ((stage == ACL_STAGE_INGRESS)? "INGRESS":"EGRESS"));
+            return false;
+        }
+
+        aclTable.extActionList.insert(sai_action);
+        SWSS_LOG_INFO("Action '%s' added to ACL table '%s' type %s stage %s",
+                      sai_serialize_enum(sai_action, &sai_metadata_enum_sai_acl_action_type_t).c_str(),
+                      aclTable.id.c_str(),
+                      type.getName().c_str(),
+                      ((stage == ACL_STAGE_INGRESS)? "INGRESS":"EGRESS"));
     }
 
     return true;
