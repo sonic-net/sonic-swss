@@ -343,6 +343,20 @@ struct SaiBulkerTraits<sai_next_hop_group_api_t>
 };
 
 template<>
+struct SaiBulkerTraits<sai_next_hop_api_t>
+{
+    using entry_t = sai_object_id_t;
+    using api_t = sai_next_hop_api_t;
+    using create_entry_fn = sai_create_next_hop_fn;
+    using remove_entry_fn = sai_remove_next_hop_fn;
+    using set_entry_attribute_fn = sai_set_next_hop_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_object_create_fn;
+    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    // TODO: wait until available in SAI
+    //using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+};
+
+template<>
 struct SaiBulkerTraits<sai_mpls_api_t>
 {
     using entry_t = sai_inseg_entry_t;
@@ -989,6 +1003,7 @@ public:
         // Creating
         if (!creating_entries.empty())
         {
+            create_statuses.clear();
             std::vector<sai_object_id_t *> rs;
             std::vector<sai_attribute_t const*> tss;
             std::vector<uint32_t> cs;
@@ -1066,6 +1081,10 @@ public:
         return removing_entries.size();
     }
 
+    sai_status_t create_status(sai_object_id_t object) {
+        return create_statuses[object];
+    }
+
 private:
     struct object_entry
     {
@@ -1104,6 +1123,8 @@ private:
     typename Ts::bulk_remove_entry_fn                       remove_entries;
     // TODO: wait until available in SAI
     //typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
+
+    std::unordered_map<sai_object_id_t, sai_status_t>       create_statuses;
 
     sai_status_t flush_removing_entries(
         _Inout_ std::vector<sai_object_id_t> &rs)
@@ -1163,6 +1184,7 @@ private:
 
         for (size_t i = 0; i < count; i++)
         {
+            create_statuses.emplace(object_ids[i], statuses[i]);
             sai_object_id_t *pid = rs[i];
             *pid = (statuses[i] == SAI_STATUS_SUCCESS) ? object_ids[i] : SAI_NULL_OBJECT_ID;
         }
@@ -1213,6 +1235,17 @@ inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_
 {
     create_entries = api->create_next_hop_group_members;
     remove_entries = api->remove_next_hop_group_members;
+    // TODO: wait until available in SAI
+    //set_entries_attribute = ;
+}
+
+template <>
+inline ObjectBulker<sai_next_hop_api_t>::ObjectBulker(SaiBulkerTraits<sai_next_hop_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_next_hops;
+    remove_entries = api->remove_next_hops;
     // TODO: wait until available in SAI
     //set_entries_attribute = ;
 }
