@@ -60,6 +60,7 @@ public:
     dash::types::IpAddress getApplianceVip();
     bool hasApplianceEntry();
     void clearMeterFCStats();
+    void refreshMeterFCStats(bool);
 
 private:
     ApplianceTable appliance_entries_;

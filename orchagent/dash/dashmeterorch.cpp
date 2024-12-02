@@ -656,6 +656,10 @@ void DashMeterOrch::doTask(ConsumerBase& consumer)
 
 void DashMeterOrch::addEniToMeterFC(sai_object_id_t oid, const string &name)
 {
+    if (!m_meter_fc_status) 
+    {
+        return;
+    }
     auto was_empty = m_meter_stat_work_queue.empty();
     m_meter_stat_work_queue[oid] = name;
     if (was_empty)
@@ -683,28 +687,32 @@ void DashMeterOrch::removeEniFromMeterFC(sai_object_id_t oid, const string &name
 
     m_eni_name_table->hdel("", name);
     m_meter_stat_manager.clearCounterIdList(oid);
-    SWSS_LOG_DEBUG("Unregistered eni %s from meter Flex counter", name.c_str());
+    SWSS_LOG_INFO("Unregistering FC for ENI %s, oid %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
 
-
-void DashMeterOrch::clearMeterFCStats()
+#if 0
+void DashMeterOrch::refreshMeterFCStats(bool install)
 {
     DashOrch *dash_orch = gDirectory.get<DashOrch*>();
-    dash_orch->clearMeterFCStats();
+    dash_orch->refreshMeterFCStats(install);
 }
+#endif
 
 void DashMeterOrch::handleMeterFCStatusUpdate(bool enabled)
 {
-    if (!enabled && m_meter_fc_status)
+    DashOrch *dash_orch = gDirectory.get<DashOrch*>();
+    bool prev_enabled = m_meter_fc_status;
+    m_meter_fc_status = enabled; /* Update the status */
+    if (!enabled && prev_enabled)
     {
         m_meter_fc_update_timer->stop();
-        clearMeterFCStats();
+        dash_orch->refreshMeterFCStats(false); /* Clear any existing FC entries */
     }
-    else if (enabled && !m_meter_fc_status)
+    else if (enabled && !prev_enabled)
     {
+        dash_orch->refreshMeterFCStats(true);
         m_meter_fc_update_timer->start();
     }
-    m_meter_fc_status = enabled;
 }
 
 void DashMeterOrch::doTask(SelectableTimer &timer)
@@ -725,7 +733,7 @@ void DashMeterOrch::doTask(SelectableTimer &timer)
         {
             // TBD.. ENI_NAME_MAP entry is added/deleted by DashOrch Code.
 
-            SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
+            SWSS_LOG_INFO("Registering FC for ENI %s, oid %s", it->second.c_str(), id.c_str());
             std::vector<FieldValueTuple> eniNameFvs;
             eniNameFvs.emplace_back(it->second, id);
             m_eni_name_table->set("", eniNameFvs);

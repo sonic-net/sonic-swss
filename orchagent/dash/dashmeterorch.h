@@ -120,5 +120,5 @@ private:
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
     swss::SelectableTimer* m_meter_fc_update_timer = nullptr;
-    void clearMeterFCStats();
+    //void refreshMeterFCStats(bool install);
 };

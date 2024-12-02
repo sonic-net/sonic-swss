@@ -1312,12 +1312,19 @@ void DashOrch::refreshEniFCStats(bool install)
     }
 }
 
-void DashOrch::clearMeterFCStats()
+void DashOrch::refreshMeterFCStats(bool install)
 {
     DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     for (auto it = eni_entries_.begin(); it != eni_entries_.end(); it++)
     {
-        dash_meter_orch->removeEniFromMeterFC(it->second.eni_id, it->first);
+        if (install)
+        {
+            dash_meter_orch->addEniToMeterFC(it->second.eni_id, it->first);
+        }
+        else
+        {
+            dash_meter_orch->removeEniFromMeterFC(it->second.eni_id, it->first);
+        }
     }
 }
 
