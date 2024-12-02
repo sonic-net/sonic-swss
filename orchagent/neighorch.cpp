@@ -1755,8 +1755,8 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 NextHopKey nexthop = { ip_address, ibif.m_alias};
                 if (hasNextHop(nexthop))
                 {
-                   it++;
-                   continue;
+                    it++;
+                    continue;
                 }
             }
 
