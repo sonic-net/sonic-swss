@@ -21,55 +21,97 @@ The SWitch State Service (SWSS) is a collection of software that provides a data
 
 ## Getting Started
 
-### Install
+### Prerequisites
 
-Before installing, add key and package sources:
+Install the following dependencies:
+```
+sudo apt install redis-server
+sudo apt install libhiredis0.14
+sudo apt install libzmq5 libzmq3-dev
+sudo apt install libboost-serialization1.74.0
+sudo apt install libboost1.71-dev
+sudo apt install libasan6
+```
+**Note:** If your are using Ubuntu 18.04, install `libhiredis0.13` instead.
 
-    sudo apt-key adv --keyserver apt-mo.trafficmanager.net --recv-keys 417A0893
-    echo 'deb http://apt-mo.trafficmanager.net/repos/sonic/ trusty main' | sudo tee -a /etc/apt/sources.list.d/sonic.list
-    sudo apt-get update
+Visit the [official sonic-buildimage Azure pipeline for the VS platform](https://dev.azure.com/mssonic/build/_build?definitionId=142&view=branches) and choose the branch that matches the sonic-swss branch you are trying to build or install. Then select the latest successful build.
+From the Summary tab, access build artifacts.
+<img width="1048" alt="image" src="https://github.com/user-attachments/assets/faa6f08d-788b-4801-8439-3f31a52efaa1">
+Download the folder `sonic-buildimage.vs/target/debs/{your host machine's Debian code name}`. You can check the Debian code name of your machine by running `cat /etc/debian_version`.
+<img width="1022" alt="image" src="https://github.com/user-attachments/assets/1ad750eb-252c-4913-b14f-91b5533a1295">
+Extract the downloaded zip file using `unzip sonic-buildimage.vs.zip`. Then navigate to `sonic-buildimage.vs/target/debs/{Debian code name}/` and install the following Debian packages:
+```
+sudo dpkg -i libdashapi_1.0.0_amd64.deb libnl-3-200_3.5.0-1_amd64.deb libnl-3-dev_3.5.0-1_amd64.deb libnl-cli-3-200_3.5.0-1_amd64.deb libnl-cli-3-dev_3.5.0-1_amd64.deb libnl-genl-3-200_3.5.0-1_amd64.deb libnl-genl-3-dev_3.5.0-1_amd64.deb libnl-nf-3-200_3.5.0-1_amd64.deb libnl-nf-3-dev_3.5.0-1_amd64.deb libnl-route-3-200_3.5.0-1_amd64.deb libnl-route-3-dev_3.5.0-1_amd64.deb libprotobuf32_3.21.12-3_amd64.deb libsaimetadata_1.0.0_amd64.deb  libsaimetadata-dev_1.0.0_amd64.deb libsairedis_1.0.0_amd64.deb libsairedis-dev_1.0.0_amd64.deb libsaivs_1.0.0_amd64.deb libsaivs-dev_1.0.0_amd64.deb  libswsscommon_1.0.0_amd64.deb libswsscommon-dev_1.0.0_amd64.deb libteam5_1.31-1_amd64.deb libteamdctl0_1.31-1_amd64.deb libyang_1.0.73_amd64.deb libyang-dev_1.0.73_amd64.deb python3-swsscommon_1.0.0_amd64.deb
+```
+**Note:** You can also [build these packages yourself (for the VS platform)](https://github.com/sonic-net/sonic-buildimage/blob/master/README.md).
 
-Install dependencies:
-
-    sudo apt-get install redis-server -t trusty
-    sudo apt-get install libhiredis0.13 -t trusty
-    sudo apt-get install libzmq5 libzmq3-dev
-    
-Install building dependencies:
-
-    sudo apt-get install libtool
-    sudo apt-get install autoconf automake
-    sudo apt-get install dh-exec
-
-There are a few different ways you can install SONiC-SWSS.
-
-#### Install from Debian Repo
-
-For your convenience, you can install prepared packages on Debian Jessie:
-
-    sudo apt-get install swss
+Now, you can either directly install the SONiC SWSS package or you can build it from source and then install it. To install the SONiC SWSS package that is already in `sonic-buildimage.vs/target/debs/{Debian code name}/`, simply run the following command:
+```
+sudo dpkg -i swss_1.0.0_amd64.deb
+```
 
 #### Install from Source
 
-Checkout the source: `git clone https://github.com/sonic-net/sonic-swss.git` and install it yourself.
+Install build dependencies:
+```
+sudo apt install libtool
+sudo apt install autoconf automake
+sudo apt install dh-exec
+sudo apt install nlohmann-json3-dev
+sudo apt install libgmock-dev
+```
 
-Get SAI header files into /usr/include/sai. Put the SAI header files that you use to compile
-libsairedis into /usr/include/sai
+Clone the `sonic-swss` repository on your host machine: `git clone https://github.com/sonic-net/sonic-swss.git`.
 
-Install prerequisite packages:
-
-    sudo apt-get install libswsscommon libswsscommon-dev libsairedis libsairedis-dev
+Make sure that SAI header files exist in `/usr/include/sai`. Since you have already installed `libsairedis-dev`, `libsaimetadata-dev`, and `libsaivs-dev`, this should already be the case. If you have compiled `libsairedis` yourself, make sure that the SAI header files are copied to `/usr/include/sai`.
 
 You can compile and install from source using:
-
-    ./autogen.sh
-    ./configure
-    make && sudo make install
+```
+./autogen.sh
+./configure
+make && sudo make install
+```
+**Note:** This will NOT run the mock tests located under `tests/mock_tests`.
 
 You can also build a debian package using:
+```
+./autogen.sh
+fakeroot debian/rules binary
+```
+## Common issues
 
-    ./autogen.sh
-    fakeroot debian/rules binary
+#### Cannot find `libboost-serialization1.74.0`
+
+Unfortunately, `libboost-serialization1.74.0` is not officially supported on Ubuntu 20.04 (focal) even though it is supported on Debian 11 (bullseye). Therefore, you must build this package from source. You can use a script similar to [this one](https://github.com/ulikoehler/deb-buildscripts/blob/master/deb-boost.sh), but you only need to create a package for the Boost serialization library. You should also make sure that the generated package is named `libboost-serialization1.74.0`. After the package is created, you can install it by running `sudo dpkg -i libboost-serialization1.74.0_1.74.0_amd64.deb`.
+
+#### Dependency issue when installing `libzmq3-dev`
+
+If you cannot install `libzmq3-dev` because of dependency issues, please check the version of `libkrb5` packages installed on your host machine:
+```
+    sudo dpkg -l | grep "libkrb5"
+```
+If the version is not `1.17-6ubuntu4.7`, then you need to install the correct version:
+
+    sudo apt install libkrb5support0=1.17-6ubuntu4.7
+    sudo apt install libzmq3-dev
+
+**Warning:** This may remove many packages that are already installed on your system. Please take note of what is being removed.
+
+**Note:** Do NOT install `*krb5*` packages that are located in the `sonic-buildimage.vs` folder that you downloaded. These packages have a higher version and will cause dependency issues.
+
+#### Dependency issues when installing some package
+
+If you run into dependency issues during the installation of a package, you can run `sudo apt -f install` to fix the issue. But note that if `apt` is unable to fix the dependency problem, it will attempt to remove the broken package(s).
+
+#### Too many open files
+
+If you get a C++ exception with the description "Too many open files" during the mock tests, you should check the maximum number of open files that are permitted on your system:
+```
+ulimit -a | grep "open files"
+```
+You can increase it by executing this command: `ulimit -n 8192`. Feel free to change `8192`. This value worked fine for me.
+
+**Note:** This change is only valid for the current terminal session. If you want a persistent change, append `ulimit -n 8192` to `~/.bashrc`.
 
 ## Need Help?
 
