@@ -125,6 +125,7 @@ class TestDash(TestFlexCountersBase):
         pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
         pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
+        pb.use_dst_vni = False
 
         dash_db.create_vnet_mapping(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
         dash_db.create_vnet_mapping(self.vnet, self.ip2, {"pb": pb.SerializeToString()})
