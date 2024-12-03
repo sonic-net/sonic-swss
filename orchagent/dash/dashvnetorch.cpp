@@ -349,13 +349,19 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 
-    outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
-    memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
-    outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    if (ctxt.metadata.has_mac_address())
+    {
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
+        memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    }
 
-    outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
-    outbound_ca_to_pa_attr.value.booldata = ctxt.metadata.use_dst_vni();
-    outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    if (ctxt.metadata.has_use_dst_vni())
+    {
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
+        outbound_ca_to_pa_attr.value.booldata = ctxt.metadata.use_dst_vni();
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    }
 
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,

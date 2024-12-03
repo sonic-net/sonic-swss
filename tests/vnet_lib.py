@@ -599,6 +599,10 @@ def delete_subnet_decap_tunnel(dvs, tunnel_name):
 loopback_id = 0
 def_vr_id = 0
 switch_mac = None
+# Creation of a physical interface should only add one route to 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY' (i.e., a route to the interface's IP).
+# But after creating a VLAN interface, two entries should be added to this table: One for the VLAN interface's IP and one for the VLAN's subnet.
+# Creating a VLAN in a VNet that is peered with another Vnet will create an additional entry for the VLAN's subnet in the peer Vnet.
+intf_route_count = {"physical": 1, "vlan": 2, "vlan-one-peer": 3}
 
 def update_bgp_global_dev_state(dvs, state):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -893,10 +897,18 @@ class VnetVxlanVrfTunnel(object):
 
         return vr_set
 
-    def check_router_interface(self, dvs, intf_name, name, vlan_oid=0):
+    def check_router_interface(self, dvs, intf_name, name, vlan_oid=0, intf_type="physical"):
+        '''
+            :param str intf_type Indicates whether the interface named 'intf_name' is a physical interface,
+            a VLAN interface in a peerless VNet, or a VLAN interface in a VNet with one peer. This is important since
+            it determines how many new routes we should expect to be added to the 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY'
+            table after the creation of the interface. Entries for more than one peers are currently not added
+            to the 'intf_route_count' dictionary since no test uses them.
+        '''
         # Check RIF in ingress VRF
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         global switch_mac
+        global intf_route_count
 
         expected_attr = {
                         "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": self.vr_map[name].get('ing'),
@@ -914,7 +926,7 @@ class VnetVxlanVrfTunnel(object):
         check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attr)
 
         #IP2ME route will be created with every router interface
-        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 1)
+        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, intf_route_count[intf_type])
 
         if vlan_oid:
             expected_attr = { 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
@@ -936,20 +948,22 @@ class VnetVxlanVrfTunnel(object):
 
         self.rifs.remove(old_rif[0])
 
-    def check_vnet_local_routes(self, dvs, name):
+    def check_vnet_local_routes(self, dvs, name, vlan_subnet_route=False):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vr_ids = self.vnet_route_ids(dvs, name, True)
         count = len(vr_ids)
-
-        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
+        # The route to the VLAN subnet must have been added when the VLAN was created.
+        # We are not expecting any new routes in that case.
+        expected_route_count = 0 if vlan_subnet_route else count
+        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, expected_route_count)
 
         #Routes are not replicated to egress VRF, return if count is 0, else check peering
-        if not count:
+        if not expected_route_count:
             return
 
         asic_vrs = set()
-        for idx in range(count):
+        for idx in range(expected_route_count):
             rt_key = json.loads(new_route[idx])
             asic_vrs.add(rt_key['vr'])
 

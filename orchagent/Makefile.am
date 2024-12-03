@@ -20,7 +20,7 @@ dist_swss_DATA = \
 		 pfc_detect_marvell_teralynx.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
-		 pfc_detect_marvell.lua \
+		 pfc_detect_marvell_prestera.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \

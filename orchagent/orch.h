@@ -35,13 +35,13 @@ const char config_db_key_delimiter = '|';
 const char state_db_key_delimiter  = '|';
 
 #define MRVL_TL_PLATFORM_SUBSTRING "marvell-teralynx"
+#define MRVL_PRST_PLATFORM_SUBSTRING "marvell-prestera"
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
 #define BRCM_DNX_PLATFORM_SUBSTRING "broadcom-dnx"
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
 #define VS_PLATFORM_SUBSTRING   "vs"
 #define NPS_PLATFORM_SUBSTRING  "nephos"
-#define MRVL_PLATFORM_SUBSTRING "marvell"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 
