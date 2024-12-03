@@ -662,6 +662,15 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         }
     }
 
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
+    {
+        m_supportsHostIfTxQueue = true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Hostif queue attribute not supported");
+    }
+
     // Query whether SAI supports Host Tx Signal and Host Tx Notification
 
     sai_attr_capability_t capability;
@@ -3320,17 +3329,7 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    bool set_hostif_tx_queue = false;
-    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
-    {
-        set_hostif_tx_queue = true;
-    }
-    else
-    {
-        SWSS_LOG_WARN("Hostif queue attribute not supported");
-    }
-
-    if (set_hostif_tx_queue)
+    if (m_supportsHostIfTxQueue)
     {
         attr.id = SAI_HOSTIF_ATTR_QUEUE;
         attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
@@ -6009,17 +6008,7 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    bool set_hostif_tx_queue = false;
-    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
-    {
-        set_hostif_tx_queue = true;
-    }
-    else
-    {
-        SWSS_LOG_WARN("Hostif queue attribute not supported");
-    }
-
-    if (set_hostif_tx_queue)
+    if (m_supportsHostIfTxQueue)
     {
         attr.id = SAI_HOSTIF_ATTR_QUEUE;
         attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
@@ -10045,4 +10034,3 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
         m_port_state_poller->stop();
     }
 }
-

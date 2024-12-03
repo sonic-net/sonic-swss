@@ -93,7 +93,6 @@ VNET_MAPPING_CONFIG_VNET_ENCAP = {
 }
 
 VNET_MAPPING_CONFIG_PRIVATELINK = {
-    "mac_address": bytes.fromhex(MAC_STRING),
     "action_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
     "underlay_ip": {
         "ipv4": socket.htonl(int(IP(UNDERLAY_IP)))

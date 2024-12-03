@@ -79,7 +79,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     //               /sbin/bridge vlan del vid 1 dev Bridge self;
     //               /sbin/ip link del dummy 2>/dev/null;
     //               /sbin/ip link add dummy type dummy &&
-    //               /sbin/ip link set dummy master Bridge"
+    //               /sbin/ip link set dummy master Bridge &&
+    //               /sbin/ip link set dummy up"
 
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
@@ -90,7 +91,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
       + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self; "
       + IP_CMD + " link del dev dummy 2>/dev/null; "
       + IP_CMD + " link add dummy type dummy && "
-      + IP_CMD + " link set dummy master " + DOT1Q_BRIDGE_NAME + "\"";
+      + IP_CMD + " link set dummy master " + DOT1Q_BRIDGE_NAME + " && "
+      + IP_CMD + " link set dummy up" + "\"";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
