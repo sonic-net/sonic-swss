@@ -80,6 +80,16 @@ size_t Srv6Orch::srv6TunnelNexthopSize(const string srv6_source)
     return srv6_tunnel_table_[srv6_source].nexthops.size();
 }
 
+bool Srv6Orch::sidListExists(const string &segment_name)
+{
+    SWSS_LOG_ENTER();
+    if (sid_table_.find(segment_name) != sid_table_.end())
+    {
+        return true;
+    }
+    return false;
+}
+
 bool Srv6Orch::createSrv6Tunnel(const string srv6_source)
 {
     SWSS_LOG_ENTER();
@@ -202,6 +212,11 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
     }
     else
     {
+        if (!sidListExists(srv6_segment))
+        {
+            SWSS_LOG_ERROR("Segment %s does not exist", srv6_segment.c_str());
+            return false;
+        }
         srv6_segment_id = sid_table_[srv6_segment].sid_object_id;
     }
 

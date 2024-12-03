@@ -172,6 +172,7 @@ class Srv6Orch : public Orch, public Observer
         bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         void srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert);
         size_t srv6TunnelNexthopSize(const string srv6_source);
+        bool sidListExists(const string &segment_name);
         bool srv6P2pTunnelExists(const string &endpoint);
         bool createSrv6P2pTunnel(const string &src, const string &endpoint);
         bool deleteSrv6P2pTunnel(const string &endpoint);
