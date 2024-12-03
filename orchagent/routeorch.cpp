@@ -29,6 +29,7 @@ extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 
 extern size_t gMaxBulkSize;
+extern string gMySwitchType;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -87,6 +88,37 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     m_switchOrch->set_switch_capability(fvTuple);
 
     SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
+
+    /* fetch the MAX_ECMP_MEMBER_COUNT and for voq platform, set it to 128 */
+    attr.id = SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get switch attribute max ECMP Group size. rv:%d", status);
+    }
+    else
+    {
+        uint32_t maxEcmpGroupSize = attr.value.u32;
+        SWSS_LOG_NOTICE("Switch Type: %s, Max ECMP Group Size supported: %d", gMySwitchType.c_str(), attr.value.u32);
+
+        /*If the switch type is voq, and max Ecmp group size supported is greater or equal to 128, set it to 128 */
+        if (gMySwitchType == "voq" && maxEcmpGroupSize >= 128)
+        {
+            maxEcmpGroupSize = 128;
+            attr.id = SAI_SWITCH_ATTR_ECMP_MEMBER_COUNT;
+            attr.value.s32 = maxEcmpGroupSize;
+            status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set switch attribute ECMP member count to 128. rv:%d", status);
+            }
+            else 
+            {
+                SWSS_LOG_NOTICE("Set switch attribute ECMP member count to 128");
+            }
+        }
+    }
 
     m_stateDb = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateDefaultRouteTb = unique_ptr<swss::Table>(new Table(m_stateDb.get(), STATE_ROUTE_TABLE_NAME));
@@ -1273,7 +1305,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         else if (it.isMplsNextHop() &&
                  m_neighOrch->hasNextHop(NextHopKey(it.ip_address, it.alias)))
         {
-            m_neighOrch->addNextHop(it);
+            NeighborContext ctx = NeighborContext(it);
+            m_neighOrch->addNextHop(ctx);
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         else
@@ -1807,7 +1840,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                      m_neighOrch->isNeighborResolved(nexthop))
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
-                m_neighOrch->addNextHop(nexthop);
+                NeighborContext ctx = NeighborContext(nexthop);
+                m_neighOrch->addNextHop(ctx);
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
             /* IP neighbor is not yet resolved */
@@ -2605,6 +2639,51 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
 
     return true;
+}
+
+bool RouteOrch::hasBgpRoute(const IpPrefix& prefix)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t& vrf_id = gVirtualRouterId;
+
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vrf_id;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, prefix);
+    auto it_route_table = m_syncdRoutes.find(vrf_id);
+    if (it_route_table == m_syncdRoutes.end())
+    {
+        SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%" PRIx64 "\n", vrf_id);
+        return true;
+    }
+    auto it_route = it_route_table->second.find(prefix);
+    size_t creating = gRouteBulker.creating_entries_count(route_entry);
+    if (it_route == it_route_table->second.end() && creating == 0)
+    {
+        SWSS_LOG_INFO("No Route exists for vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
+                      prefix.to_string().c_str());
+        return false;
+    }
+    return true;
+}
+
+bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
+{
+    // This function removes the route if it exists.
+
+    string key = "ROUTE_TABLE:" + prefix.to_string();
+    RouteBulkContext context(key, false);
+    context.ip_prefix = prefix;
+    context.vrf_id = gVirtualRouterId;
+    if (removeRoute(context))
+    {
+        SWSS_LOG_INFO("Could not find the route  with prefix %s", prefix.to_string().c_str());
+        return true;
+    }
+    gRouteBulker.flush();
+    return removeRoutePost(context);
+
 }
 
 bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextHop)

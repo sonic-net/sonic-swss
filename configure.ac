@@ -136,7 +136,7 @@ if test "x$asan_enabled" = "xtrue"; then
     CFLAGS_ASAN+=" -Wno-maybe-uninitialized"
     AC_SUBST(CFLAGS_ASAN)
 
-    LDFLAGS_ASAN+=" -lasan"
+    LDFLAGS_ASAN+=" -fsanitize=address"
     AC_SUBST(LDFLAGS_ASAN)
 fi
 

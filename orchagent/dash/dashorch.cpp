@@ -965,33 +965,46 @@ void DashOrch::removeEniFromFC(sai_object_id_t oid, const string &name)
 
     m_eni_name_table->hdel("", name);
     m_eni_stat_manager.clearCounterIdList(oid);
-    SWSS_LOG_DEBUG("Unregistered eni %s to Flex counter", name.c_str());
+    SWSS_LOG_INFO("Unregistering FC for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
 
-void DashOrch::clearEniFCStats()
+void DashOrch::refreshEniFCStats(bool install)
 {
     for (auto it = eni_entries_.begin(); it != eni_entries_.end(); it++)
     {
-        removeEniFromFC(it->second.eni_id, it->first);
+        if (install)
+        {
+            addEniToFC(it->second.eni_id, it->first);
+        }
+        else
+        {
+            removeEniFromFC(it->second.eni_id, it->first);
+        }
     }
 }
 
 void DashOrch::handleFCStatusUpdate(bool enabled)
 {
-    if (!enabled && m_eni_fc_status)
+    bool prev_enabled = m_eni_fc_status;
+    m_eni_fc_status = enabled; /* Update the status */
+    if (!enabled && prev_enabled)
     {
         m_fc_update_timer->stop();
-        clearEniFCStats();
+        refreshEniFCStats(false); /* Clear any existing FC entries */
     }
-    else if (enabled && !m_eni_fc_status)
+    else if (enabled && !prev_enabled)
     {
+        refreshEniFCStats(true);
         m_fc_update_timer->start();
     }
-    m_eni_fc_status = enabled;
 }
 
 void DashOrch::addEniToFC(sai_object_id_t oid, const string &name)
 {
+    if (!m_eni_fc_status) 
+    {
+       return ;
+    }
     auto was_empty = m_eni_stat_work_queue.empty();
     m_eni_stat_work_queue[oid] = name;
     if (was_empty)
@@ -1017,7 +1030,7 @@ void DashOrch::doTask(SelectableTimer &timer)
 
         if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
         {
-            SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
+            SWSS_LOG_INFO("Registering FC for ENI: %s, id %s", it->second.c_str(), id.c_str());
             std::vector<FieldValueTuple> eniNameFvs;
             eniNameFvs.emplace_back(it->second, id);
             m_eni_name_table->set("", eniNameFvs);
