@@ -766,6 +766,20 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_defaultVlan = attrs[1].value.oid;
     }
 
+    attr.id = SAI_VLAN_ATTR_VLAN_ID;
+
+    status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+     {
+        SWSS_LOG_ERROR("Failed to Get Default VLAN ID , status = %d", status);
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_VLAN, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
+    }
+    m_defaultVlanId = attr.value.u16;
+
     /* Get System ports */
     getSystemPorts();
 
@@ -6311,21 +6325,26 @@ bool PortsOrch::addVlan(string vlan_alias)
     SWSS_LOG_ENTER();
 
     sai_object_id_t vlan_oid;
-
     sai_vlan_id_t vlan_id = (uint16_t)stoi(vlan_alias.substr(4));
     sai_attribute_t attr;
-    attr.id = SAI_VLAN_ATTR_VLAN_ID;
-    attr.value.u16 = vlan_id;
 
-    sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
-
-    if (status != SAI_STATUS_SUCCESS)
+    if (vlan_id == m_defaultVlanId)
     {
-        SWSS_LOG_ERROR("Failed to create VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
-        if (handle_status != task_success)
+        vlan_oid = m_defaultVlan;
+    }
+    else
+    {
+        attr.id = SAI_VLAN_ATTR_VLAN_ID;
+        attr.value.u16 = vlan_id;
+        sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to create VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
 
@@ -6387,15 +6406,18 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
-    sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
-    if (status != SAI_STATUS_SUCCESS)
+    if (vlan.m_vlan_info.vlan_id != m_defaultVlanId)
     {
-        SWSS_LOG_ERROR("Failed to remove VLAN %s vid:%hu",
-                vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id);
-        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_VLAN, status);
-        if (handle_status != task_success)
+        sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to remove VLAN %s vid:%hu",
+                    vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
 
