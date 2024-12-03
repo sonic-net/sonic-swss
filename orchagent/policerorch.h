@@ -29,10 +29,8 @@ public:
     task_process_status handlePortStormControlTable(swss::KeyOpFieldsValuesTuple tuple);
     void generatePolicerCounterMap();
     void addPolicerToFlexCounter(sai_object_id_t oid, const string &name);
-    sai_object_id_t getCounterOid() const;
 private:
     PortsOrch *m_portsOrch;
-    // void PolicerOrch::getstats(sai_object_id_t policer_id);
     virtual void doTask(Consumer& consumer);
     void doTask(swss::SelectableTimer&) override;
 
@@ -44,7 +42,6 @@ private:
     void getPolicerCounter(void);
     void initPolicerCounterPlugin(void);
     void removePCFromFlexCounter(sai_object_id_t id, const string &name);
-    void generatePolicerCounterStats(std::unordered_set<std::string>& counter_stats);
     string getPolicerFlexCounterTableKey(string key);
     std::unordered_set<std::string> generatePCounterStats();
 

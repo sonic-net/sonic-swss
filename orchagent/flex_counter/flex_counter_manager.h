@@ -32,7 +32,7 @@ enum class CounterType
     TUNNEL,
     HOSTIF_TRAP,
     ROUTE,
-    ENI
+    ENI,
     POLICER,
 };
 

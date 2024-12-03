@@ -131,10 +131,6 @@ bool PolicerOrch::decreaseRefCount(const string &name)
     return true;
 }
 
-// PolicerOrch::PolicerOrch(vector<TableConnector> &tableNames, PortsOrch *portOrch) : Orch(tableNames), m_portsOrch(portOrch)
-// {
-//     SWSS_LOG_ENTER();
-// }
 
 PolicerOrch::PolicerOrch( vector<TableConnector> &tableNames, PortsOrch *portOrch) :
     Orch(tableNames), 
@@ -274,9 +270,6 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             SWSS_LOG_DEBUG("Created storm-control policer %s", storm_policer_name.c_str());
             m_syncdPolicers[storm_policer_name] = policer_id;
             m_policerRefCounts[storm_policer_name] = 0;
-
-
-            // addPolicerToFlexCounter(policer_id, key.c_str());
             
         }
         // Update an existing policer
@@ -307,8 +300,6 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
 
                 }
             }
-
-            // addPolicerToFlexCounter(policer_id, key.c_str());
         }
         policer_id = m_syncdPolicers[storm_policer_name];
 
@@ -413,19 +404,6 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
     return task_process_status::task_success;
 }
 
-// sai_object_id_t PolicerOrch::getCounterOid() const
-// {
-//     return m_counterOid;
-// }
-
-void PolicerOrch::generatePolicerCounterStats(std::unordered_set<std::string>& counter_stats)
-{
-    for (const auto& it: policer_stat_ids)
-    {
-        counter_stats.emplace(sai_serialize_policer_stat(it));
-    }
-}
-
 string PolicerOrch::getPolicerFlexCounterTableKey(string key)
 {
     return string(POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
@@ -451,9 +429,6 @@ void PolicerOrch::removePCFromFlexCounter(sai_object_id_t id, const string &name
     /* remove it from COUNTERS_DB maps */
     m_counter_table->hdel("", name);
     m_vidToRidTable->hdel("", counter_oid_str);
-
-    // /* remove it from FLEX_COUNTER_DB */
-    // string key = getPolicerFlexCounterTableKey(counter_oid_str);
 
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
