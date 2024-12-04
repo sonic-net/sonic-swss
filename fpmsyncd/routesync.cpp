@@ -35,6 +35,11 @@ using namespace swss;
     ((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct ndmsg))))
 #endif
 
+#ifndef NHA__RTA
+#define NHA_RTA(r)                                                             \
+    ((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct nhmsg))))
+#endif
+
 #define VXLAN_VNI             0
 #define VXLAN_RMAC            1
 #define NH_ENCAP_VXLAN      100
@@ -1833,12 +1838,13 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
 
     nhm = (struct nhmsg *)NLMSG_DATA(h);
 
-    struct rtattr* rta;
-    char* nhm_ptr = (char *)(nhm) + NLMSG_ALIGN(sizeof(struct nhmsg));
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    struct rtattr* rta = NHA_RTA(nhm);
+    #pragma GCC diagnostic pop
 
-    memcpy(&rta, nhm_ptr, sizeof(struct rtattr));
     netlink_parse_rtattr(tb, NHA_MAX, rta, len);
-    
+
     if (!tb[NHA_ID]) {
         SWSS_LOG_ERROR(
             "Nexthop group without an ID received from the zebra");
