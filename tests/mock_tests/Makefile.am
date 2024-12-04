@@ -6,9 +6,9 @@ DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_dashoffloadmanager
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_dashoffloadmanager
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
@@ -268,3 +268,27 @@ tests_response_publisher_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CF
 tests_response_publisher_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_response_publisher_INCLUDES)
 tests_response_publisher_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread
+
+## dashoffloadmanager unit tests
+
+tests_dashoffloadmanager_SOURCES = dashoffloadmanager/dashoffloadmanager_ut.cpp \
+                                   $(top_srcdir)/dashoffloadmanager/dpuinfoprovider.cpp \
+                                   $(top_srcdir)/dashoffloadmanager/dashoffloadmanager.cpp \
+                                   $(top_srcdir)/dashoffloadmanager/dashoffloadpavalidation.cpp \
+                                   $(top_srcdir)/orchagent/orch.cpp \
+                                   $(top_srcdir)/orchagent/request_parser.cpp \
+                                   $(top_srcdir)/lib/recorder.cpp \
+                                   mock_dbconnector.cpp \
+                                   mock_table.cpp \
+                                   mock_hiredis.cpp \
+                                   mock_redisreply.cpp \
+                                   mock_subscriberstatetable.cpp \
+                                   fake_response_publisher.cpp \
+                                   fake_zmq_orch.cpp \
+                                   fake_zmq_server.cpp
+
+tests_dashoffloadmanager_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/dashoffloadmanager
+tests_dashoffloadmanager_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_dashoffloadmanager_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_dashoffloadmanager_INCLUDES)
+tests_dashoffloadmanager_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lprotobuf -ldashapi -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main

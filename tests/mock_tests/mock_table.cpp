@@ -99,6 +99,16 @@ namespace swss
         }
     }
 
+    void Table::hset(const std::string &key,
+                     const std::string &field,
+                     const std::string &value,
+                     const std::string &op,
+                     const std::string &prefix)
+    {
+        FieldValueTuple fv(field, value);
+        return set(key, std::vector<FieldValueTuple>{fv}, op, prefix);
+    }
+
     void Table::getKeys(std::vector<std::string> &keys)
     {
         keys.clear();
