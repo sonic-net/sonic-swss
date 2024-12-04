@@ -81,6 +81,8 @@ private:
     ProducerStateTable m_srv6SidListTable; 
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
+    uint32_t route_tag_not_to_appdb;
+    uint32_t route_tag_fallback_to_default_route;
 
     bool                m_isSuppressionEnabled{false};
     FpmInterface*       m_fpmInterface {nullptr};
