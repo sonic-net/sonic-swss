@@ -49,3 +49,5 @@ void startFlexCounterPolling(sai_object_id_t switch_oid,
                              const std::string &stats_mode="");
 void stopFlexCounterPolling(sai_object_id_t switch_oid,
                             const std::string &key);
+
+std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t);
