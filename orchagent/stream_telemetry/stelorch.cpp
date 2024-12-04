@@ -1,10 +1,12 @@
 #include "stelorch.h"
+#include "stelutils.h"
 
 #include <swss/schema.h>
 #include <swss/redisutility.h>
 #include <swss/stringutility.h>
 #include <swss/tokenize.h>
 #include <saihelper.h>
+#include <notifier.h>
 
 #include <yaml-cpp/yaml.h>
 
@@ -31,17 +33,17 @@ namespace swss
 {
 
     template <>
-    inline void lexical_convert(const string &buffer, ::STelProfile::STREAM_STATE &stage)
+    inline void lexical_convert(const string &buffer, sai_tam_tel_type_state_t &stage)
     {
         SWSS_LOG_ENTER();
 
         if (buffer == "enable")
         {
-            stage = STelProfile::STREAM_STATE::STREAM_STATE_ENABLED;
+            stage = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
         }
         else if (buffer == "disable")
         {
-            stage = STelProfile::STREAM_STATE::STREAM_STATE_DISABLED;
+            stage = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
         }
         else
         {
@@ -57,7 +59,7 @@ STelOrch::STelOrch(
     const vector<string> &tables)
     : Orch(cfg_db, tables),
       m_state_telemetry_session(state_db, STREAM_TELEMETRY_SESSION),
-      m_cfg_stream_telemetry_group(state_db, CFG_STREAM_TELEMETRY_GROUP_TABLE_NAME),
+      m_asic_db("ASIC_DB", 0),
       m_sai_hostif_obj(SAI_NULL_OBJECT_ID),
       m_sai_hostif_trap_group_obj(SAI_NULL_OBJECT_ID),
       m_sai_hostif_user_defined_trap_obj(SAI_NULL_OBJECT_ID),
@@ -69,11 +71,18 @@ STelOrch::STelOrch(
 
     createNetlinkChannel("stel", "ipfix");
     createTAM();
+
+    m_asic_notification_consumer = make_shared<NotificationConsumer>(&m_asic_db, "NOTIFICATIONS");
+    auto notifier = new Notifier(m_asic_notification_consumer.get(), this, "TAM_TEL_TYPE_STATE");
+    Orch::addExecutor(notifier);
 }
 
 STelOrch::~STelOrch()
 {
     SWSS_LOG_ENTER();
+
+    m_name_profile_mapping.clear();
+    m_type_profile_mapping.clear();
 
     deleteTAM();
     deleteNetlinkChannel();
@@ -109,13 +118,22 @@ void STelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     for (auto itr3 = itr2->second.begin(); itr3 != itr2->second.end(); itr3++)
     {
         auto profile = *itr3;
+        const char *counter_name = msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name;
+
+        if (!profile->canBeUpdated(itr->second))
+        {
+            // TODO: Here is a potential issue, we may need to retry the task.
+            SWSS_LOG_WARN("The profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name);
+            continue;
+        }
+
         if (msg.m_operation == CounterNameMapUpdater::SET)
         {
-            profile->setObjectSAIID(itr->second, msg.m_set.m_counter_name, msg.m_set.m_oid);
+            profile->setObjectSAIID(itr->second, counter_name, msg.m_set.m_oid);
         }
         else if (msg.m_operation == CounterNameMapUpdater::DEL)
         {
-            profile->delObjectSAIID(itr->second, msg.m_del.m_counter_name);
+            profile->delObjectSAIID(itr->second, counter_name);
         }
         else
         {
@@ -124,15 +142,20 @@ void STelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     }
 }
 
-void STelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)
+task_process_status STelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)
 {
     SWSS_LOG_ENTER();
     auto profile = getProfile(profile_name);
 
+    if (!profile->canBeUpdated())
+    {
+        return task_process_status::task_need_retry;
+    }
+
     auto value_opt = fvsGetValue(values, "stream_state", true);
     if (value_opt)
     {
-        STelProfile::STREAM_STATE state;
+        sai_tam_tel_type_state_t state;
         lexical_convert(*value_opt, state);
         profile->setStreamState(state);
     }
@@ -145,47 +168,55 @@ void STelOrch::profileTableSet(const string &profile_name, const vector<FieldVal
         profile->setPollInterval(poll_interval);
     }
 
-    value_opt = fvsGetValue(values, "bulk_size", true);
-    if (value_opt)
-    {
-        uint32_t bulk_size;
-        lexical_convert(*value_opt, bulk_size);
-        profile->setBulkSize(bulk_size);
-    }
-
     // Map the profile to types
     // This profile may be inserted by group table
     for (auto type : profile->getObjectTypes())
     {
         m_type_profile_mapping[type].insert(profile);
+        profile->tryCommitConfig(type);
     }
+
+    return task_process_status::task_success;
 }
 
-void STelOrch::profileTableDel(const std::string &profile_name)
+task_process_status STelOrch::profileTableDel(const std::string &profile_name)
 {
     SWSS_LOG_ENTER();
 
     auto itr = m_name_profile_mapping.find(profile_name);
     if (itr == m_name_profile_mapping.end())
     {
-        return;
+        return task_process_status::task_success;
+    }
+
+    if (!itr->second->canBeUpdated())
+    {
+        return task_process_status::task_need_retry;
     }
 
     auto profile = itr->second;
     for (auto type : profile->getObjectTypes())
     {
+        profile->tryCommitConfig(type);
         m_type_profile_mapping[type].erase(profile);
+        m_state_telemetry_session.del(profile_name + "|" + STelUtils::sai_type_to_group_name(type));
     }
     m_name_profile_mapping.erase(itr);
+
+    return task_process_status::task_success;
 }
 
-void STelOrch::groupTableSet(const std::string &profile_name, const std::string &group_name, const std::vector<swss::FieldValueTuple> &values)
+task_process_status STelOrch::groupTableSet(const std::string &profile_name, const std::string &group_name, const std::vector<swss::FieldValueTuple> &values)
 {
     SWSS_LOG_ENTER();
 
     auto profile = getProfile(profile_name);
-    auto type = STelProfile::group_name_to_sai_type(group_name);
+    auto type = STelUtils::group_name_to_sai_type(group_name);
 
+    if (!profile->canBeUpdated(type))
+    {
+        return task_process_status::task_need_retry;
+    }
 
     auto value_opt = fvsGetValue(values, "object_names", true);
     if (value_opt)
@@ -205,16 +236,32 @@ void STelOrch::groupTableSet(const std::string &profile_name, const std::string 
         profile->setStatsIDs(group_name, object_counters);
     }
 
+    profile->tryCommitConfig(type);
+
     m_type_profile_mapping[type].insert(profile);
+
+    return task_process_status::task_success;
 }
 
-void STelOrch::groupTableDel(const std::string &profile_name, const std::string &group_name)
+task_process_status STelOrch::groupTableDel(const std::string &profile_name, const std::string &group_name)
 {
     SWSS_LOG_ENTER();
 
     auto profile = getProfile(profile_name);
-    auto type = STelProfile::group_name_to_sai_type(group_name);
+    auto type = STelUtils::group_name_to_sai_type(group_name);
+
+    if (!profile->canBeUpdated(type))
+    {
+        return task_process_status::task_need_retry;
+    }
+
+    profile->setObjectSAIID(type, group_name.c_str(), SAI_NULL_OBJECT_ID);
+    profile->tryCommitConfig(type);
+
     m_type_profile_mapping[type].erase(profile);
+    m_state_telemetry_session.del(profile_name + "|" + group_name);
+
+    return task_process_status::task_success;
 }
 
 shared_ptr<STelProfile> STelOrch::getProfile(const string &profile_name)
@@ -235,6 +282,73 @@ shared_ptr<STelProfile> STelOrch::getProfile(const string &profile_name)
     return m_name_profile_mapping.at(profile_name);
 }
 
+void STelOrch::doTask(swss::NotificationConsumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> values;
+
+    consumer.pop(op, data, values);
+
+    if (&consumer != m_asic_notification_consumer.get())
+    {
+        SWSS_LOG_ERROR("Unknown consumer");
+        return;
+    }
+
+    if (op != SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE)
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return;
+    }
+
+    sai_object_id_t tam_tel_type_obj = SAI_NULL_OBJECT_ID;
+
+    // sai_deserialize_tam_tel_type_config_ntf(data, tam_tel_type_obj);
+
+    if (tam_tel_type_obj == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM tel type object is not valid");
+        return;
+    }
+
+    for (auto &profile : m_name_profile_mapping)
+    {
+        auto type = profile.second->getObjectType(tam_tel_type_obj);
+        if (type != SAI_OBJECT_TYPE_NULL)
+        {
+            profile.second->notifyConfigReady(type);
+            // TODO: TryCommitConfig once the template has been applied by CounterSyncd in the phase2
+            profile.second->tryCommitConfig(type);
+            // Update state db
+            vector<FieldValueTuple> values;
+            auto state = profile.second->getTelemetryTypeState(type);
+            if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
+            {
+                values.emplace_back("stream_status", "enable");
+            }
+            else if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
+            {
+                values.emplace_back("stream_status", "disable");
+            }
+            else
+            {
+                SWSS_LOG_THROW("Unexpected state %d", state);
+            }
+
+            values.emplace_back("session_type", "ipfix");
+
+            auto templates = profile.second->getTemplates(type);
+            values.emplace_back("session_config", string(templates.begin(), templates.end()));
+
+            m_state_telemetry_session.set(profile.first + "|" + STelUtils::sai_type_to_group_name(type), values);
+            break;
+        }
+    }
+}
+
 void STelOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -244,6 +358,7 @@ void STelOrch::doTask(Consumer &consumer)
     auto itr = consumer.m_toSync.begin();
     while (itr != consumer.m_toSync.end())
     {
+        task_process_status status = task_process_status::task_failed;
         KeyOpFieldsValuesTuple t = itr->second;
 
         string key = kfvKey(t);
@@ -253,11 +368,11 @@ void STelOrch::doTask(Consumer &consumer)
         {
             if (op == SET_COMMAND)
             {
-                profileTableSet(key, kfvFieldsValues(t));
+                status = profileTableSet(key, kfvFieldsValues(t));
             }
             else if (op == DEL_COMMAND)
             {
-                profileTableDel(key);
+                status = profileTableDel(key);
             }
             else
             {
@@ -273,11 +388,11 @@ void STelOrch::doTask(Consumer &consumer)
             }
             if (op == SET_COMMAND)
             {
-                groupTableSet(tokens[0], tokens[1], kfvFieldsValues(t));
+                status = groupTableSet(tokens[0], tokens[1], kfvFieldsValues(t));
             }
             else if (op == DEL_COMMAND)
             {
-                groupTableDel(tokens[0], tokens[1]);
+                status = groupTableDel(tokens[0], tokens[1]);
             }
             else
             {
@@ -289,7 +404,14 @@ void STelOrch::doTask(Consumer &consumer)
             SWSS_LOG_ERROR("Unknown table %s\n", table_name.c_str());
         }
 
-        itr = consumer.m_toSync.erase(itr);
+        if (status == task_process_status::task_need_retry)
+        {
+            ++itr;
+        }
+        else
+        {
+            itr = consumer.m_toSync.erase(itr);
+        }
     }
 }
 
@@ -456,24 +578,14 @@ void STelOrch::createTAM()
             attrs.data()));
 
     // Bind the TAM object to switch
-    vector<sai_object_id_t> tam_objects(1024, SAI_NULL_OBJECT_ID);
-    attrs.clear();
-    attr.id = SAI_SWITCH_ATTR_TAM_OBJECT_ID;
-    attr.value.objlist.count = static_cast<uint32_t>(tam_objects.size());
-    attr.value.objlist.list = tam_objects.data();
-    handleSaiGetStatus(
+
+    STELUTILS_ADD_SAI_OBJECT_LIST(
+        gSwitchId,
+        SAI_SWITCH_ATTR_TAM_OBJECT_ID,
+        m_sai_tam_obj,
         SAI_API_SWITCH,
-        sai_switch_api->get_switch_attribute(
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
-    tam_objects[attr.value.objlist.count] = m_sai_tam_obj;
-    attr.value.objlist.count++;
-    handleSaiSetStatus(
-        SAI_API_SWITCH,
-        sai_switch_api->set_switch_attribute(
-            gSwitchId,
-            &attr));
+        switch,
+        switch);
 }
 
 void STelOrch::deleteTAM()
@@ -483,28 +595,13 @@ void STelOrch::deleteTAM()
     if (m_sai_tam_obj != SAI_NULL_OBJECT_ID)
     {
         // Unbind the TAM object from switch
-        vector<sai_object_id_t> tam_objects(1024, SAI_NULL_OBJECT_ID);
-        sai_attribute_t attr;
-        attr.id = SAI_SWITCH_ATTR_TAM_OBJECT_ID;
-        attr.value.objlist.count = static_cast<uint32_t>(tam_objects.size());
-        attr.value.objlist.list = tam_objects.data();
-        handleSaiGetStatus(
+        STELUTILS_DEL_SAI_OBJECT_LIST(
+            gSwitchId,
+            SAI_SWITCH_ATTR_TAM_OBJECT_ID,
+            m_sai_tam_obj,
             SAI_API_SWITCH,
-            sai_switch_api->get_switch_attribute(
-                gSwitchId,
-                1,
-                &attr));
-        tam_objects.erase(
-            remove(
-                tam_objects.begin(),
-                tam_objects.begin() + attr.value.objlist.count,
-                m_sai_tam_obj),
-            tam_objects.end());
-        handleSaiSetStatus(
-            SAI_API_SWITCH,
-            sai_switch_api->set_switch_attribute(
-                gSwitchId,
-                &attr));
+            switch,
+            switch);
         handleSaiRemoveStatus(
             SAI_API_TAM,
             sai_tam_api->remove_tam(m_sai_tam_obj));
