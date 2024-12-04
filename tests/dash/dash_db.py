@@ -13,6 +13,8 @@ from dash_api.route_group_pb2 import *
 from dash_api.route_rule_pb2 import *
 from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
+from dash_api.meter_policy_pb2 import *
+from dash_api.meter_rule_pb2 import *
 from dash_api.types_pb2 import *
 from google.protobuf.json_format import ParseDict
 from google.protobuf.message import Message
@@ -27,6 +29,8 @@ ASIC_PA_VALIDATION_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY"
 ASIC_OUTBOUND_ROUTING_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY"
 ASIC_INBOUND_ROUTING_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY"
 ASIC_OUTBOUND_ROUTING_GROUP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP"
+ASIC_METER_POLICY_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_METER_POLICY"
+ASIC_METER_RULE_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_METER_RULE"
 
 APP_DB_TO_PROTOBUF_MAP = {
     swsscommon.APP_DASH_APPLIANCE_TABLE_NAME: Appliance,
@@ -37,6 +41,8 @@ APP_DB_TO_PROTOBUF_MAP = {
     swsscommon.APP_DASH_ROUTE_RULE_TABLE_NAME: RouteRule,
     swsscommon.APP_DASH_ENI_ROUTE_TABLE_NAME: EniRoute,
     swsscommon.APP_DASH_ROUTING_TYPE_TABLE_NAME: RouteType,
+    swsscommon.APP_DASH_METER_POLICY_TABLE_NAME: MeterPolicy,
+    swsscommon.APP_DASH_METER_RULE_TABLE_NAME: MeterRule,
     swsscommon.APP_DASH_ROUTE_GROUP_TABLE_NAME: RouteGroup
 }
 
@@ -131,6 +137,19 @@ class DashDB(object):
         _, keys = wait_for_result(polling_function, failure_message=f"Found fewer than {min_keys} keys in ASIC_DB table {table_name}")
         return keys
 
+    def wait_for_asic_db_num_keys(self, table_name, num_expected):
+        num_actual = -1
+
+        def polling_function():
+            nonlocal num_actual
+            table = Table(self.dvs.get_asic_db().db_connection, table_name)
+            keys = table.get_keys()
+            num_actual = len(keys)
+            return num_actual == num_expected, keys
+
+        _, keys = wait_for_result(polling_function, failure_message=f"Found {num_actual} keys rather than expected {num_expected} keys in ASIC_DB table {table_name}")
+        return keys
+
     def wait_for_asic_db_field(self, table_name, key, field, expected_value=None):
 
         def polling_function():
@@ -174,6 +193,10 @@ class DashDB(object):
             self.dvs.get_app_db().db_connection, "DASH_ENI_ROUTE_TABLE")
         self.app_dash_route_group_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_ROUTE_GROUP_TABLE")
+        self.app_dash_meter_policy_table = ProducerStateTable(
+            self.dvs.get_app_db().db_connection, "DASH_METER_POLICY_TABLE")
+        self.app_dash_meter_rule_table = ProducerStateTable(
+            self.dvs.get_app_db().db_connection, "DASH_METER_RULE_TABLE")
 
         self.asic_direction_lookup_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY")
@@ -195,6 +218,10 @@ class DashDB(object):
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY")
         self.asic_outbound_routing_group_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP")
+        self.asic_meter_policy_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_METER_POLICY")
+        self.asic_meter_rule_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_METER_RULE")
 
     def create_appliance(self, appliance_id, attr_maps: dict):
         self.app_dash_appliance_table[str(appliance_id)] = attr_maps
@@ -249,3 +276,15 @@ class DashDB(object):
 
     def remove_routing_type(self, routing_type):
         del self.app_dash_routing_type_table[str(routing_type)]
+
+    def create_meter_policy(self, meter_policy, attr_maps: dict):
+        self.app_dash_meter_policy_table[str(meter_policy)] = attr_maps
+
+    def remove_meter_policy(self, meter_policy):
+        del self.app_dash_meter_policy_table[str(meter_policy)]
+
+    def create_meter_rule(self, meter_policy, rule_num, attr_maps: dict):
+        self.app_dash_meter_rule_table[str(meter_policy) + ":" + str(rule_num)] = attr_maps
+
+    def remove_meter_rule(self, meter_policy, rule_num):
+        del self.app_dash_meter_rule_table[str(meter_policy) + ":" + str(rule_num)]
