@@ -127,7 +127,8 @@ orchagent_SOURCES = \
             stporch.cpp \
             stream_telemetry/stelorch.cpp \
             stream_telemetry/stelmgr.cpp \
-            stream_telemetry/counternameupdater.cpp
+            stream_telemetry/counternameupdater.cpp \
+            stream_telemetry/stelutils.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
