@@ -146,13 +146,7 @@ class DVSDatabase:
         """Wait for the entry stored at `key` in the specified table to exist and retrieve it.
 
         Args:
-            table_name: The name of the table where the￼	￼Reply...
-￼
-prabhataravind reviewed 7 hours ago
-View reviewed changes
-tests/dvslib/dvs_database.py
-@@ -162,7 +162,7 @@ def access_function():
- entry is stored.
+            table_name: The name of the table where the￼entry is stored.
             key: The key that maps to the entry being retrieved.
             polling_config: The parameters to use to poll the db.
             failure_message: The message to print if the call times out. This will only take effect
@@ -254,13 +248,7 @@ tests/dvslib/dvs_database.py
 
         return result
 
-    def wait_for_field_negative_match(￼	￼Reply...
-￼
-prabhataravind reviewed 7 hours ago
-View reviewed changes
-tests/dvslib/dvs_database.py
-@@ -162,7 +162,7 @@ def access_function():
-
+    def wait_for_field_negative_match(￼
         self,
         table_name: str,
         key: str,

@@ -219,20 +219,8 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::/126":
                 assert False
             if route["dest"] == "fc00::1/128":
-                assert False
-Reply...
-￼
-prabhataravind reviewed 7 hours ago
-View reviewed changes
-tests/test_fgnhg.py
-@@ -776,7 +778,7 @@ def test_fgnhg_matchmode_nexthop_multi_route(self, dvs, testlog):
-            dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
+                assert False   
 
-        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)
-
-        
-Contributor
-￼ prabhataravind 7 hours ago
     def test_PortInterfaceAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)
 
