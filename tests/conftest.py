@@ -1865,7 +1865,7 @@ def manage_dvs(request) -> str:
 
     dvs.get_logs()
     dvs.destroy()
-    
+
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()

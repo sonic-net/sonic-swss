@@ -29,7 +29,8 @@ class TestRouterInterface(object):
         if interface.startswith("PortChannel"):
             dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") +\
                     " > /sys/class/net/" + interface + "/carrier'")
-        time.sleep(1)    
+        time.sleep(1)
+
     def create_vrf(self, vrf_name):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         initial_entries = set(tbl.getKeys())
@@ -964,6 +965,7 @@ class TestRouterInterface(object):
         # configure MTU to interface
         self.set_mtu("PortChannel002", "8888")        
         # check ASIC router interface database
+
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         intf_entries = tbl.getKeys()
         # one loopback router interface one port based router interface
