@@ -238,8 +238,7 @@ void PortMgr::doTask(Consumer &consumer)
                 else if (fvField(i) == "admin_status")
                 {
                     admin_status = fvValue(i);
-                }
-               
+                }               
                 else
                 {
                     field_values.emplace_back(i);

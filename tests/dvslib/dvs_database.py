@@ -146,7 +146,13 @@ class DVSDatabase:
         """Wait for the entry stored at `key` in the specified table to exist and retrieve it.
 
         Args:
-            table_name: The name of the table where the entry is stored.
+            table_name: The name of the table where the￼	￼Reply...
+￼
+prabhataravind reviewed 7 hours ago
+View reviewed changes
+tests/dvslib/dvs_database.py
+@@ -162,7 +162,7 @@ def access_function():
+ entry is stored.
             key: The key that maps to the entry being retrieved.
             polling_config: The parameters to use to poll the db.
             failure_message: The message to print if the call times out. This will only take effect
@@ -155,14 +161,11 @@ class DVSDatabase:
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
-
         def access_function():
             fv_pairs = self.get_entry(table_name, key)
             return (bool(fv_pairs), fv_pairs)
-
         message = failure_message or f'Entry not found: key="{key}", table="{table_name}"'
-        _, result = wait_for_result(access_function, polling_config, message)
-        
+        _, result = wait_for_result(access_function, polling_config, message)        
         return result
 
     def wait_for_fields(
@@ -251,7 +254,13 @@ class DVSDatabase:
 
         return result
 
-    def wait_for_field_negative_match(
+    def wait_for_field_negative_match(￼	￼Reply...
+￼
+prabhataravind reviewed 7 hours ago
+View reviewed changes
+tests/dvslib/dvs_database.py
+@@ -162,7 +162,7 @@ def access_function():
+
         self,
         table_name: str,
         key: str,

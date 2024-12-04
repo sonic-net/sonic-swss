@@ -198,7 +198,50 @@ class VirtualServer:
         # create netns
         if os.path.exists(os.path.join("/var/run/netns/", self.nsname)):
             self.kill_all_processes()
-            self.cleanup = False
+            self.cleanup = False0 / 21 files viewed
+Review in codespace
+￼
+Review changes
+()
+￼
+￼
+cfgmgr
+portmgr.cpp
+portmgr.h
+portmgrd.cpp
+shellcmd.h
+￼
+orchagent
+port.h
+￼
+port
+portcnt.h
+porthlpr.cpp
+portschema.h
+portsorch.cpp
+￼
+tests
+conftest.py
+￼
+dvslib
+dvs_common.py
+dvs_database.py
+￼
+mock_tests
+portmgr_ut.cpp
+￼
+portsyncd
+portsyncd_ut.cpp
+test_drop_counters.py
+test_fgnhg.py
+test_interface.py
+test_port_add_remove.py
+test_port_config.py
+test_sub_port_intf.py
+test_warm_reboot.py
+￼ ￼  73 changes: 69 additions & 4 deletions73  
+cfgmgr/portmgr.cpp
+
         else:
             ensure_system(f"ip netns add {self.nsname}")
 
@@ -231,7 +274,50 @@ class VirtualServer:
             # bring up link in the virtual switch
             ensure_system(f"nsenter -t {pid} -n ip link set dev {self.pifname} up")
 
-            # disable arp, so no neigh on physical interfaces
+            # disable arp, so no neigh on physical interfaces0 / 21 files viewed
+Review in codespace
+￼
+Review changes
+()
+￼
+￼
+cfgmgr
+portmgr.cpp
+portmgr.h
+portmgrd.cpp
+shellcmd.h
+￼
+orchagent
+port.h
+￼
+port
+portcnt.h
+porthlpr.cpp
+portschema.h
+portsorch.cpp
+￼
+tests
+conftest.py
+￼
+dvslib
+dvs_common.py
+dvs_database.py
+￼
+mock_tests
+portmgr_ut.cpp
+￼
+portsyncd
+portsyncd_ut.cpp
+test_drop_counters.py
+test_fgnhg.py
+test_interface.py
+test_port_add_remove.py
+test_port_config.py
+test_sub_port_intf.py
+test_warm_reboot.py
+￼ ￼  73 changes: 69 additions & 4 deletions73  
+cfgmgr/portmgr.cpp
+
             ensure_system(f"nsenter -t {pid} -n ip link set arp off dev {self.pifname}")
             ensure_system(f"nsenter -t {pid} -n sysctl -w net.ipv6.conf.{self.pifname}.disable_ipv6=1")
 
@@ -688,7 +774,50 @@ class DockerVirtualSwitch:
         p.stdin.close()
         p.wait()
 
-        if p.returncode:
+        if p.returncode:0 / 21 files viewed
+Review in codespace
+￼
+Review changes
+()
+￼
+￼
+cfgmgr
+portmgr.cpp
+portmgr.h
+portmgrd.cpp
+shellcmd.h
+￼
+orchagent
+port.h
+￼
+port
+portcnt.h
+porthlpr.cpp
+portschema.h
+portsorch.cpp
+￼
+tests
+conftest.py
+￼
+dvslib
+dvs_common.py
+dvs_database.py
+￼
+mock_tests
+portmgr_ut.cpp
+￼
+portsyncd
+portsyncd_ut.cpp
+test_drop_counters.py
+test_fgnhg.py
+test_interface.py
+test_port_add_remove.py
+test_port_config.py
+test_sub_port_intf.py
+test_warm_reboot.py
+￼ ￼  73 changes: 69 additions & 4 deletions73  
+cfgmgr/portmgr.cpp
+
             raise RuntimeError("Failed to unpack the log archive.")
 
         ensure_system("chmod a+r -R log")
@@ -1115,7 +1244,50 @@ class DockerVirtualSwitch:
     def remove_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
-        elif interface.startswith("Vlan"):
+        elif interface.startswith("Vlan"):0 / 21 files viewed
+Review in codespace
+￼
+Review changes
+()
+￼
+￼
+cfgmgr
+portmgr.cpp
+portmgr.h
+portmgrd.cpp
+shellcmd.h
+￼
+orchagent
+port.h
+￼
+port
+portcnt.h
+porthlpr.cpp
+portschema.h
+portsorch.cpp
+￼
+tests
+conftest.py
+￼
+dvslib
+dvs_common.py
+dvs_database.py
+￼
+mock_tests
+portmgr_ut.cpp
+￼
+portsyncd
+portsyncd_ut.cpp
+test_drop_counters.py
+test_fgnhg.py
+test_interface.py
+test_port_add_remove.py
+test_port_config.py
+test_sub_port_intf.py
+test_warm_reboot.py
+￼ ￼  73 changes: 69 additions & 4 deletions73  
+cfgmgr/portmgr.cpp
+
             tbl_name = "VLAN_INTERFACE"
         else:
             tbl_name = "INTERFACE"
@@ -1432,7 +1604,7 @@ class DockerVirtualSwitch:
         return self.state_db
 
     def change_port_breakout_mode(self, intf_name, target_mode, options=""):
-        cmd = f"config interface breakout {intf_name} {target_mode} -y {options}"
+        cmd = f"config interface breakout {intf_name} {target_mode} -y {options}"py
         self.runcmd(cmd)
         time.sleep(2)
 
@@ -1579,7 +1751,7 @@ class DockerVirtualChassisTopology:
                 retry += 1
         if self.oper == "delete":
             for dv in self.dvss.values():
-                dv.destroy()
+                dv.destroy()pypy
             self.handle_bridge(self.chassbr)
             self.runcmd(f"sudo ip netns del {self.ns}", addns=False)
 
@@ -1693,12 +1865,10 @@ class DockerVirtualChassisTopology:
     def handle_neighconn(self):
         if self.oper != "create":
             return
-
         instance_to_neighbor_map = self.get_topo_neigh()
         for ctnname, nbraddrs in instance_to_neighbor_map.items():
             if ctnname not in self.dvss:
                 continue
-
             for server, neighbor_address in nbraddrs:
                 self.dvss[ctnname].servers[server].runcmd("ifconfig eth0 down")
                 self.dvss[ctnname].servers[server].runcmd("ifconfig eth0 up")

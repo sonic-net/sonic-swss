@@ -79,7 +79,7 @@ class TestPortAddRemove(object):
         config_db.delete_entry('PORT', PORT_A)
         num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                               num_of_ports-1,
-                              polling_config = PollingConfig(polling_interval = 1, timeout = 30.00, strict = True))
+                              polling_config = PollingConfig(polling_interval = 1, timeout = 10.00, strict = True))
 
         # verify that the port was removed properly since all buffer configuration was removed also
         assert len(num) == num_of_ports - 1
@@ -90,7 +90,7 @@ class TestPortAddRemove(object):
         # verify that the port has been readded
         num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                               num_of_ports,
-                              polling_config = PollingConfig(polling_interval = 1, timeout = 30.00, strict = True))
+                              polling_config = PollingConfig(polling_interval = 1, timeout = 10.00, strict = True))
 
         assert len(num) == num_of_ports
 
@@ -107,8 +107,7 @@ class TestPortAddRemove(object):
         config_db.delete_entry('PORT', PORT_A)
         num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                                       num_of_ports-1,
-                                      polling_config = PollingConfig(polling_interval = 1, timeout = 30.00, strict = False))
-
+                                      polling_config = PollingConfig(polling_interval = 1, timeout = 10.00, strict = False))
         # verify that the port wasn't removed since we still have buffer cfg
         assert len(num) == num_of_ports
 
@@ -131,7 +130,7 @@ class TestPortAddRemove(object):
 
         num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                                       num_of_ports-1,
-                                      polling_config = PollingConfig(polling_interval = 1, timeout = 10.00, strict = True))
+                                      polling_config = PollingConfig(polling_interval = 1, timeout = 6.00, strict = True))
 
         # verify that the port wasn't removed since we still have buffer cfg
         assert len(num) == num_of_ports - 1

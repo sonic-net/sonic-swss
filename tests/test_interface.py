@@ -29,8 +29,7 @@ class TestRouterInterface(object):
         if interface.startswith("PortChannel"):
             dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") +\
                     " > /sys/class/net/" + interface + "/carrier'")
-        time.sleep(1)
-    
+        time.sleep(1)    
     def create_vrf(self, vrf_name):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         initial_entries = set(tbl.getKeys())
@@ -221,7 +220,19 @@ class TestRouterInterface(object):
                 assert False
             if route["dest"] == "fc00::1/128":
                 assert False
+Reply...
+￼
+prabhataravind reviewed 7 hours ago
+View reviewed changes
+tests/test_fgnhg.py
+@@ -776,7 +778,7 @@ def test_fgnhg_matchmode_nexthop_multi_route(self, dvs, testlog):
+            dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
 
+        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)
+
+        
+Contributor
+￼ prabhataravind 7 hours ago
     def test_PortInterfaceAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -963,8 +974,7 @@ class TestRouterInterface(object):
         self.add_ip_address("PortChannel002", "40.0.0.8/29")
 
         # configure MTU to interface
-        self.set_mtu("PortChannel002", "8888")
-        
+        self.set_mtu("PortChannel002", "8888")        
         # check ASIC router interface database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         intf_entries = tbl.getKeys()
