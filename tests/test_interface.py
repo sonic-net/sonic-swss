@@ -220,7 +220,7 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::/126":
                 assert False
             if route["dest"] == "fc00::1/128":
-                assert False   
+                assert False
 
     def test_PortInterfaceAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)

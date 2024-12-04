@@ -231,7 +231,7 @@ class VirtualServer:
             # bring up link in the virtual switch
             ensure_system(f"nsenter -t {pid} -n ip link set dev {self.pifname} up")
 
-            # disable arp, so no neigh on physical interfaces0 / 21 files viewed
+            # disable arp, so no neigh on physical interfaces
             ensure_system(f"nsenter -t {pid} -n ip link set arp off dev {self.pifname}")
             ensure_system(f"nsenter -t {pid} -n sysctl -w net.ipv6.conf.{self.pifname}.disable_ipv6=1")
 
@@ -1432,7 +1432,7 @@ class DockerVirtualSwitch:
         return self.state_db
 
     def change_port_breakout_mode(self, intf_name, target_mode, options=""):
-        cmd = f"config interface breakout {intf_name} {target_mode} -y {options}"py
+        cmd = f"config interface breakout {intf_name} {target_mode} -y {options}"
         self.runcmd(cmd)
         time.sleep(2)
 
