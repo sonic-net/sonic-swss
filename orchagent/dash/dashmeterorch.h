@@ -21,9 +21,11 @@
 #include "dash_api/meter_rule.pb.h"
 
 ///// To be deleted after sonic-swss-common/common/schema.h fix
-//B4C-->0
-//#define APP_DASH_METER_POLICY_TABLE_NAME    "DASH_METER_POLICY_TABLE"
-//#define APP_DASH_METER_RULE_TABLE_NAME      "DASH_METER_RULE_TABLE"
+#if 0 //B4C-->0
+#define APP_DASH_METER_POLICY_TABLE_NAME    "DASH_METER_POLICY_TABLE"
+#define APP_DASH_METER_RULE_TABLE_NAME      "DASH_METER_RULE_TABLE"
+#define DASH_METER_COUNTER_ID_LIST "DASH_METER_COUNTER_ID_LIST"
+#endif
 ///// End..To be deleted after sonic-swss-common/common/schema.h fix
 
 #define METER_STAT_COUNTER_FLEX_COUNTER_GROUP "METER_STAT_COUNTER"
