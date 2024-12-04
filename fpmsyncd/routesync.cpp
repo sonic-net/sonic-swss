@@ -112,7 +112,7 @@ enum {
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
 };
 
-#define MAX_MULTIPATH_NUM 256 //Same value used for FRR in SONiC
+#define MAX_MULTIPATH_NUM 514
 
 /* Returns name of the protocol passed number represents */
 static string getProtocolString(int proto)
