@@ -260,6 +260,6 @@ namespace portmgr_ut
         value_opt = swss::fvsGetValue(values, "pt_timestamp_template", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("template2", value_opt.get());
-    }            {"mtu", "1518"},
+    }
 
 }

@@ -378,18 +378,7 @@ class DockerVirtualSwitch:
         else:
             self.ctn_sw = self.client.containers.run("debian:jessie",
                                                      privileged=True,
-                            Review in codespace
-￼
-Review changes
-()
-￼
-￼
-…test_port_add_remove.py
-test_port_config.py
-test_sub_port_intf.py
-test_warm_reboot.py
-￼ ￼  73 changes: 69 additions & 4 deletions73  
-cfgmgr/portmgr.cpp                         detach=True,
+                                                     detach=True,
                                                      command="bash",
                                                      stdin_open=True)
 
