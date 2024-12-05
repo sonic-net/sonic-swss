@@ -3306,7 +3306,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == CISCO_8000_PLATFORM_SUBSTRING ||
             platform == MLNX_PLATFORM_SUBSTRING ||
             platform == BFN_PLATFORM_SUBSTRING  ||
-            platform == MRVL_PLATFORM_SUBSTRING ||
+            platform == MRVL_PRST_PLATFORM_SUBSTRING ||
             platform == MRVL_TL_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
@@ -3327,7 +3327,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         };
     }
 
-    if ( platform == MRVL_PLATFORM_SUBSTRING ||
+    if ( platform == MRVL_PRST_PLATFORM_SUBSTRING ||
 	    platform == MRVL_TL_PLATFORM_SUBSTRING ||
             platform == VS_PLATFORM_SUBSTRING)
     {
@@ -3362,7 +3362,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // In Broadcom DNX platform also, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
-        platform == MRVL_PLATFORM_SUBSTRING ||
+        platform == MRVL_PRST_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
         (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
     {
@@ -5938,7 +5938,7 @@ bool MetaDataMgr::isValidMetaData(uint16_t metadata)
 
 uint16_t MetaDataMgr::getFreeMetaData(uint8_t dscp)
 {
-    uint16_t metadata = metaMax + 1;
+    uint16_t metadata = (uint16_t)(metaMax + 1);
     SWSS_LOG_INFO("Metadata Request for dscp %d", dscp);
 
     if (initComplete)
@@ -5962,7 +5962,7 @@ uint16_t MetaDataMgr::getFreeMetaData(uint8_t dscp)
             m_dscpMetadata[dscp] = metadata;
             SWSS_LOG_INFO("New Metadata %d allocated for dscp %d", metadata, dscp);
         }
-        m_MetadataRef[metadata] += 1;
+        m_MetadataRef[metadata] = (uint16_t)(m_MetadataRef[metadata] + 1);
     }
     else
     {
@@ -5975,7 +5975,7 @@ void MetaDataMgr::recycleMetaData(uint16_t metadata)
 {
     if (initComplete)
     {
-        m_MetadataRef[metadata] -= 1;
+        m_MetadataRef[metadata] = (uint16_t)(m_MetadataRef[metadata] - 1);
         SWSS_LOG_INFO("Freeing Metadata %d refcount %d", metadata, m_MetadataRef[metadata]);
         if (m_MetadataRef[metadata] == 0)
         {
