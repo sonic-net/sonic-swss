@@ -119,6 +119,8 @@ jobs:
         dget -u https://deb.debian.org/debian/pool/main/libn/libnl3/libnl3_${LIBNL3_VER}-${LIBNL3_REV}.dsc
         pushd libnl3-${LIBNL3_VER}
         git init
+        git config --local user.name $USER
+        git config --local user.email $USER@microsoft.com
         git add -f *
         git commit -qm "initial commit"
         stg init
