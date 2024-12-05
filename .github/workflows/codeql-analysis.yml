@@ -46,10 +46,6 @@ jobs:
             aspell \
             aspell-en \
             libhiredis-dev \
-            libnl-3-dev \
-            libnl-genl-3-dev \
-            libnl-route-3-dev \
-            libnl-nf-3-dev \
             libyang-dev \
             libzmq3-dev \
             libzmq5 \
@@ -70,6 +66,7 @@ jobs:
             libjansson-dev \
             nlohmann-json3-dev \
             python \
+            devscripts \
             stgit
 
     - if: matrix.language == 'cpp'
@@ -115,12 +112,11 @@ jobs:
         cd ..
         git clone https://github.com/sonic-net/sonic-buildimage
         pushd sonic-buildimage/src/libnl3
-        git clone https://github.com/thom311/libnl libnl3-${LIBNL3_VER}
+        dget https://deb.debian.org/debian/pool/main/libn/libnl3/libnl3_${LIBNL3_VER}-${LIBNL3_REV}.dsc
         pushd libnl3-${LIBNL3_VER}
-        git checkout tags/libnl${LIBNL3_VER//./_}
-        git checkout -b sonic
-        git config --local user.name $USER
-        git config --local user.email $USER@microsoft.com
+        git init
+        git add -f *
+        git commit -qm "initial commit"
         stg init
         stg import -s ../patch/series
         git config --local --unset user.name
@@ -138,8 +134,8 @@ jobs:
         dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         popd
       env:
-        LIBNL3_VER: "3.5.0"
-        LIBNL3_REV: "1"
+        LIBNL3_VER: "3.7.0"
+        LIBNL3_REV: "0.2"
 
     - if: matrix.language == 'cpp'
       name: Build repository
