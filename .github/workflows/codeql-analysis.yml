@@ -16,7 +16,7 @@ on:
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: read
@@ -53,12 +53,12 @@ jobs:
             libyang-dev \
             libzmq3-dev \
             libzmq5 \
-            swig3.0 \
-            libpython2.7-dev \
+            swig \
+            libpython3-dev \
             libgtest-dev \
             libgmock-dev \
-            libboost1.71-dev \
-            libboost-serialization1.71-dev \
+            libboost-dev \
+            libboost-serialization-dev \
             dh-exec \
             doxygen \
             cdbs \
