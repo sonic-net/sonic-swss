@@ -116,7 +116,7 @@ jobs:
         cd ..
         git clone https://github.com/sonic-net/sonic-buildimage
         pushd sonic-buildimage/src/libnl3
-        dget https://deb.debian.org/debian/pool/main/libn/libnl3/libnl3_${LIBNL3_VER}-${LIBNL3_REV}.dsc
+        dget -u https://deb.debian.org/debian/pool/main/libn/libnl3/libnl3_${LIBNL3_VER}-${LIBNL3_REV}.dsc
         pushd libnl3-${LIBNL3_VER}
         git init
         git add -f *
