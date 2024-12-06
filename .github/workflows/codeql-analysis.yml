@@ -68,6 +68,7 @@ jobs:
             uuid-dev \
             libjansson-dev \
             nlohmann-json3-dev \
+            build-essential \
             devscripts \
             stgit
 
