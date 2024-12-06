@@ -1,11 +1,6 @@
-import os
-import sys
 import time
-import json
-import pytest
 
 from swsscommon import swsscommon
-from distutils.version import StrictVersion
 
 def create_entry(tbl, key, pairs):
     fvs = swsscommon.FieldValuePairs(pairs)
@@ -73,7 +68,6 @@ class TestPac(object):
         vlan_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         bp_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
         vm_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
-        fdb_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB")
 
         # create vlan
         dvs.create_vlan("2")
@@ -170,10 +164,6 @@ class TestPac(object):
     def test_PacPortLearnMode(self, dvs, testlog):
         dvs.setup_db()
         time.sleep(2)
-
-        vlan_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
-        bp_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
-        vm_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
         # create vlan
         dvs.create_vlan("2")
