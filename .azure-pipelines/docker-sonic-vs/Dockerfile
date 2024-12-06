@@ -24,6 +24,8 @@ RUN apt install /debs/libdashapi_1.0.0_amd64.deb \
 
 RUN if [ "$need_dbg" = "y" ] ; then dpkg -i /debs/swss-dbg_1.0.0_amd64.deb ; fi
 
+COPY ["start.sh", "/usr/bin/"]
+
 RUN apt-get update
 
 RUN apt-get -y install software-properties-common libdatetime-perl libcapture-tiny-perl build-essential libcpanel-json-xs-perl git

@@ -303,7 +303,7 @@ class DockerVirtualSwitch:
             "portmgrd"
         ]
         self.syncd = ["syncd"]
-        self.rtd = ["fpmsyncd", "zebra", "staticd"]
+        self.rtd = ["fpmsyncd", "zebra", "staticd", "mgmtd"]
         self.teamd = ["teamsyncd", "teammgrd"]
         self.natd = ["natsyncd", "natmgrd"]
         self.alld = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd + self.natd
