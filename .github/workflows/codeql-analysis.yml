@@ -50,7 +50,6 @@ jobs:
             libnl-genl-3-dev \
             libnl-route-3-dev \
             libnl-nf-3-dev \
-            libyang-dev \
             libzmq3-dev \
             libzmq5 \
             swig \
@@ -79,7 +78,7 @@ jobs:
         git clone https://github.com/sonic-net/sonic-swss-common
         pushd sonic-swss-common
         ./autogen.sh
-        dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
+        dpkg-buildpackage -rfakeroot -us -uc -b -Pnoyangmod -j$(nproc)
         popd
         dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
