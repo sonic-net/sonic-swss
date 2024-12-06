@@ -7,7 +7,7 @@ on:
     branches:
       - 'master'
       - '202[0-9][0-9][0-9]'
-  pull_request_target:
+  pull_request:
     branches:
       - 'master'
       - '202[0-9][0-9][0-9]'
@@ -16,7 +16,7 @@ on:
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     permissions:
       actions: read
       contents: read
@@ -50,15 +50,14 @@ jobs:
             libnl-genl-3-dev \
             libnl-route-3-dev \
             libnl-nf-3-dev \
-            libyang-dev \
             libzmq3-dev \
             libzmq5 \
-            swig3.0 \
-            libpython2.7-dev \
+            swig \
+            libpython3-dev \
             libgtest-dev \
             libgmock-dev \
-            libboost1.71-dev \
-            libboost-serialization1.71-dev \
+            libboost-dev \
+            libboost-serialization-dev \
             dh-exec \
             doxygen \
             cdbs \
@@ -69,7 +68,8 @@ jobs:
             uuid-dev \
             libjansson-dev \
             nlohmann-json3-dev \
-            python \
+            build-essential \
+            devscripts \
             stgit
 
     - if: matrix.language == 'cpp'
@@ -79,7 +79,7 @@ jobs:
         git clone https://github.com/sonic-net/sonic-swss-common
         pushd sonic-swss-common
         ./autogen.sh
-        dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
+        dpkg-buildpackage -rfakeroot -us -uc -b -Pnoyangmod,nopython2 -j$(nproc)
         popd
         dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
@@ -115,12 +115,13 @@ jobs:
         cd ..
         git clone https://github.com/sonic-net/sonic-buildimage
         pushd sonic-buildimage/src/libnl3
-        git clone https://github.com/thom311/libnl libnl3-${LIBNL3_VER}
+        dget -u https://deb.debian.org/debian/pool/main/libn/libnl3/libnl3_${LIBNL3_VER}-${LIBNL3_REV}.dsc
         pushd libnl3-${LIBNL3_VER}
-        git checkout tags/libnl${LIBNL3_VER//./_}
-        git checkout -b sonic
+        git init
         git config --local user.name $USER
         git config --local user.email $USER@microsoft.com
+        git add -f *
+        git commit -qm "initial commit"
         stg init
         stg import -s ../patch/series
         git config --local --unset user.name
@@ -138,8 +139,8 @@ jobs:
         dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         popd
       env:
-        LIBNL3_VER: "3.5.0"
-        LIBNL3_REV: "1"
+        LIBNL3_VER: "3.7.0"
+        LIBNL3_REV: "0.2"
 
     - if: matrix.language == 'cpp'
       name: Build repository
