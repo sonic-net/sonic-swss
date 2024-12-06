@@ -680,7 +680,7 @@ class DockerVirtualSwitch:
         ensure_system(f"rm -rf {log_dir}")
         ensure_system(f"mkdir -p {log_dir}")
 
-        p = subprocess.Popen(["tar", "--no-same-owner", "-C", os.path.join("./", log_dir), "-x"], stdin=subprocess.PIPE)
+        p = subprocess.Popen(["tar", "--no-same-owner", "--exclude", "README", "-C", os.path.join("./", log_dir), "-x"], stdin=subprocess.PIPE)
 
         stream, _ = self.ctn.get_archive("/var/log/")
         for x in stream:
