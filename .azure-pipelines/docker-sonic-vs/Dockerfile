@@ -14,7 +14,7 @@ RUN dpkg --purge libswsscommon python3-swsscommon sonic-db-cli libsaimetadata li
 
 RUN apt-get update
 
-RUN apt install /debs/libdashapi_1.0.0_amd64.deb \
+RUN apt install -y /debs/libdashapi_1.0.0_amd64.deb \
             /debs/libswsscommon_1.0.0_amd64.deb \
             /debs/python3-swsscommon_1.0.0_amd64.deb \
             /debs/sonic-db-cli_1.0.0_amd64.deb \
