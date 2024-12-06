@@ -30,7 +30,7 @@ COPY ["start.sh", "/usr/bin/"]
 
 RUN pip3 install scapy==2.5.0
 
-RUN apt-get -y install software-properties-common libdatetime-perl libcapture-tiny-perl build-essential libcpanel-json-xs-perl git
+RUN apt-get -y install software-properties-common libdatetime-perl libcapture-tiny-perl build-essential libcpanel-json-xs-perl git python3-protobuf
 
 RUN git clone -b v2.0 --single-branch --depth 1 https://github.com/linux-test-project/lcov && cd lcov && make install
 
