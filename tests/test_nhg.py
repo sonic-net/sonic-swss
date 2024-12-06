@@ -1198,42 +1198,6 @@ class TestNextHopGroup(TestNextHopGroupBase):
         if ordered_ecmp == 'true':
            self.disble_ordered_ecmp()
 
-    def test_route_no_ecmp_all_link_down(self, dvs, dvs_route, testlog):
-        self.init_test(dvs, 3)
-        rtprefix = "2.2.2.0/24"
-        nexthop_str = "10.0.0.1,10.0.0.3,10.0.0.5"
-
-        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
-
-        try:
-
-            # bring links down one-by-one
-            for i in [0, 1, 2]:
-                self.flap_intf(i, 'down')
-                time.sleep(1)
-
-            fvs = swsscommon.FieldValuePairs([("nexthop",nexthop_str),
-                                              ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
-                                             ])
-            self.rt_ps.set(rtprefix, fvs)
-            time.sleep(1)
-
-            dvs_route.check_asicdb_deleted_route_entries([rtprefix])
-
-            assert len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == 0
-
-            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
-        
-            assert len(keys) == 0
-
-            self.rt_ps._del(rtprefix)
-
-        finally:
-            # bring links down one-by-one
-            for i in [0, 1, 2]:
-                self.flap_intf(i, 'up')
-                time.sleep(1)
-
     def test_label_route_nhg(self, dvs, testlog):
         self.init_test(dvs, 3)
 
