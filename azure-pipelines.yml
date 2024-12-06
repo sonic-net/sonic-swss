@@ -150,7 +150,7 @@ stages:
   - template: .azure-pipelines/gcov.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-bullseye
+      sonic_slave: sonic-slave-bookworm
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       swss_artifact_name: sonic-swss-${{ parameters.debian_version }}
