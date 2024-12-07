@@ -1761,3 +1761,47 @@ TEST(request_parser, multipleValuesInvalidMac)
         FAIL() << "Expected std::invalid_argument, not other exception";
     }
 }
+
+/*
+Check MAC key
+*/
+const request_description_t test_mac_key = {
+    { REQ_T_STRING, REQ_T_MAC_ADDRESS },
+    {
+        { "f1",               REQ_T_STRING }
+    },
+    { }
+};
+
+class TestRequestMacKey: public Request
+{
+public:
+    TestRequestMacKey() : Request(test_mac_key, ':') { }
+};
+
+TEST(request_parser, mac_key_parse_checker)
+{
+    KeyOpFieldsValuesTuple t {"Vnet_1000:ab:b1:ca:dd:e1:f2", "SET",
+                                { }
+                            };
+
+    try
+    {
+        TestRequestMacKey request;
+
+        EXPECT_NO_THROW(request.parse(t));
+
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "Vnet_1000:ab:b1:ca:dd:e1:f2");
+        EXPECT_EQ(request.getKeyString(0), "Vnet_1000");
+        EXPECT_EQ(request.getKeyMacAddress(1), MacAddress("ab:b1:ca:dd:e1:f2"));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
