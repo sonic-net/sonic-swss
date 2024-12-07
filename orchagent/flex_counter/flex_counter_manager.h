@@ -32,7 +32,8 @@ enum class CounterType
     TUNNEL,
     HOSTIF_TRAP,
     ROUTE,
-    ENI
+    ENI,
+    DASH_METER
 };
 
 // FlexCounterManager allows users to manage a group of flex counters.

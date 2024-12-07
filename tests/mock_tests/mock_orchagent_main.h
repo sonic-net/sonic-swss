@@ -12,6 +12,7 @@
 #include "mirrororch.h"
 #define private public
 #include "dashorch.h"
+#include "dashmeterorch.h"
 #include "bufferorch.h"
 #include "qosorch.h"
 #define protected public
@@ -94,3 +95,4 @@ extern sai_tam_api_t* sai_tam_api;
 extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
+extern sai_dash_meter_api_t* sai_dash_meter_api;
