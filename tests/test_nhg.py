@@ -125,22 +125,38 @@ class TestNextHopGroupBase(object):
     def port_ip(self, i):
         return "10.0.0." + str(i * 2)
 
+    def port_ipv6(self, i):
+        return "fc00::" + str(hex((i * 2)))[2:]
+    
     def port_ipprefix(self, i):
         return self.port_ip(i) + "/31"
+
+    def port_ipv6prefix(self, i):
+        return self.port_ipv6(i) + "/126"
 
     def peer_ip(self, i):
         return "10.0.0." + str(i * 2 + 1)
 
+    def peer_ipv6(self, i):
+        return "fc00::" + str(hex((i * 2 + 1)))[2:]
+
     def port_mac(self, i):
         return "00:00:00:00:00:0" + str(i + 1)
 
-    def config_intf(self, i):
+    def config_intf(self, i, is_ipv6_needed=False):
         fvs = {'NULL': 'NULL'}
 
         self.config_db.create_entry("INTERFACE", self.port_name(i), fvs)
         self.config_db.create_entry("INTERFACE", "{}|{}".format(self.port_name(i), self.port_ipprefix(i)), fvs)
+        if is_ipv6_needed:
+            self.config_db.create_entry("INTERFACE", "{}|{}".format(self.port_name(i), self.port_ipv6prefix(i)), fvs)
+
         self.dvs.port_admin_set(self.port_name(i), "up")
         self.dvs.runcmd("arp -s {} {}".format(self.peer_ip(i), self.port_mac(i)))
+        if is_ipv6_needed:
+            command = "ip -6 neighbor replace {} lladdr {} dev {}".format(self.peer_ipv6(i), 
+                                                                      self.port_mac(i), self.port_name(i))
+            self.dvs.runcmd(command)
         assert self.dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         assert self.dvs.servers[i].runcmd("ip link set up dev eth0") == 0
 
@@ -188,7 +204,7 @@ class TestNextHopGroupBase(object):
         ntf.send("bfd_session_state_change", ntf_data, fvp)
     # BFD utilities for static route BFD and ecmp acceleration -- end
 
-    def init_test(self, dvs, num_intfs):
+    def init_test(self, dvs, num_intfs, is_ipv6_needed=False):
         self.dvs = dvs
         self.app_db = self.dvs.get_app_db()
         self.asic_db = self.dvs.get_asic_db()
@@ -205,7 +221,7 @@ class TestNextHopGroupBase(object):
         self.dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_MAX_NUMBER_OF_FORWARDING_CLASSES', '63')
 
         for i in range(num_intfs):
-            self.config_intf(i)
+            self.config_intf(i, is_ipv6_needed)
 
         self.asic_nhgs_count = len(self.asic_db.get_keys(self.ASIC_NHG_STR))
         self.asic_nhgms_count = len(self.asic_db.get_keys(self.ASIC_NHGM_STR))
@@ -1824,7 +1840,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # Remove group1
         self.nhg_ps._del("group1")
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
-
+    
 class TestCbfNextHopGroup(TestNextHopGroupBase):
     MAX_NHG_MAP_COUNT = 512
 
