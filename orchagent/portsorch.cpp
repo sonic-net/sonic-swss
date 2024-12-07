@@ -17,7 +17,6 @@
 #include <tuple>
 #include <sstream>
 #include <unordered_set>
-
 #include <netinet/if_ether.h>
 #include "net/if.h"
 
