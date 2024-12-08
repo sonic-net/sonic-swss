@@ -22,6 +22,8 @@ using namespace testing;
 
 using ::testing::_;
 
+#pragma GCC diagnostic ignored "-Wcast-align"
+
 class MockRouteSync : public RouteSync
 {
 public:
