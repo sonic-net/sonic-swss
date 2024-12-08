@@ -51,7 +51,7 @@ const char state_db_key_delimiter  = '|';
 #define DEFAULT_KEY_SEPARATOR  ":"
 #define VLAN_SUB_INTERFACE_SEPARATOR "."
 
-#define ORCH_RING_SIZE 30
+#define RING_SIZE 30
 #define SLEEP_MSECONDS 500
 
 const int default_orch_pri = 0;
@@ -94,9 +94,8 @@ typedef std::pair<std::string, int> table_name_with_pri_t;
 class Orch;
 
 using AnyTask = std::function<void()>;
-template<typename DataType, int RingSize>
+
 class RingBuffer;
-typedef RingBuffer<AnyTask, ORCH_RING_SIZE> OrchRing;
 
 // Design assumption
 // 1. one Orch can have one or more Executor
@@ -135,7 +134,7 @@ public:
     }
 
     Orch *getOrch() const { return m_orch; }
-    static OrchRing* gRingBuffer;
+    static RingBuffer* gRingBuffer;
     void pushRingBuffer(AnyTask&& func);
 
 protected:
@@ -185,32 +184,31 @@ public:
     size_t refillToSync(swss::Table* table);
 };
 
-template<typename DataType, int RingSize>
 class RingBuffer
 {
 private:
-    static RingBuffer<DataType, RingSize>* instance;
-    std::vector<DataType> buffer;
+    static RingBuffer* instance;
+    std::vector<AnyTask> buffer;
     int head = 0;
     int tail = 0;
-    ConsumerMap m_consumerMap;
+    std::set<std::string> m_consumerSet;
 
     std::condition_variable cv;
     std::mutex mtx;
 
 protected:
-    RingBuffer<DataType, RingSize>(): buffer(RingSize) {}
-    ~RingBuffer<DataType, RingSize>() {
-        delete instance;
+    RingBuffer(): buffer(RING_SIZE) {}
+    ~RingBuffer() {
+        instance = nullptr;
     }
 
 public:
-    RingBuffer<DataType, RingSize>(const RingBuffer<DataType, RingSize>&) = delete;
-    RingBuffer<DataType, RingSize>(RingBuffer<DataType, RingSize>&&) = delete;
-    RingBuffer<DataType, RingSize>& operator= (const RingBuffer<DataType, RingSize>&) = delete;
-    RingBuffer<DataType, RingSize>& operator= (RingBuffer<DataType, RingSize>&&) = delete;
+    RingBuffer(const RingBuffer&) = delete;
+    RingBuffer(RingBuffer&&) = delete;
+    RingBuffer& operator= (const RingBuffer&) = delete;
+    RingBuffer& operator= (RingBuffer&&) = delete;
 
-    static RingBuffer<DataType, RingSize>* Get();
+    static RingBuffer* Get();
     bool threadCreated = false;
     bool Idle = true;
 
@@ -222,95 +220,12 @@ public:
     bool IsFull();
     bool IsEmpty();
 
-    bool push(DataType entry);
-    bool pop(DataType& entry);
+    bool push(AnyTask entry);
+    bool pop(AnyTask& entry);
 
     void addExecutor(Executor* executor);
     bool Serves(const std::string& tableName);
 };
-
-template<typename DataType, int RingSize>
-void RingBuffer<DataType, RingSize>::pause_thread()
-{
-    std::unique_lock<std::mutex> lock(mtx);
-    cv.wait(lock, [&](){ return !IsEmpty(); });
-}
-
-template<typename DataType, int RingSize>
-void RingBuffer<DataType, RingSize>::notify()
-{
-    if (!IsEmpty() && Idle)
-        cv.notify_all();
-}
-
-template<typename DataType, int RingSize>
-RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::instance = nullptr;
-
-template<typename DataType, int RingSize>
-RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::Get()
-{
-    if (instance == nullptr) {
-        instance = new RingBuffer<DataType, RingSize>();
-        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)instance);
-    }
-    return instance;
-}
-
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::IsFull()
-{
-    return (tail + 1) % RingSize == head;
-}
-
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::IsEmpty()
-{
-    return tail == head;
-}
-
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::push(DataType ringEntry)
-{
-    if (IsFull())
-        return false;
-    buffer[tail] = std::move(ringEntry);
-    tail = (tail + 1) % RingSize;
-    return true;
-}
-
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::pop(DataType& ringEntry)
-{
-    if (IsEmpty())
-        return false;
-    ringEntry = std::move(buffer[head]);
-    head = (head + 1) % RingSize;
-    return true;
-}
-
-template<typename DataType, int RingSize>
-void RingBuffer<DataType, RingSize>::addExecutor(Executor* executor)
-{
-    auto inserted = m_consumerMap.emplace(std::piecewise_construct,
-            std::forward_as_tuple(executor->getName()),
-            std::forward_as_tuple(executor));
-
-    // If there is duplication of executorName in m_consumerMap, logic error
-    if (!inserted.second)
-    {
-        SWSS_LOG_THROW("Duplicated executorName in m_consumerMap: %s", executor->getName().c_str());
-    }
-}
-
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::Serves(const std::string& tableName)
-{
-    for (auto &it : m_consumerMap) {
-        if (it.first == tableName)
-            return true;
-    }
-    return false;
-}
 
 class Consumer : public ConsumerBase {
 public:
@@ -369,7 +284,7 @@ public:
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
 
-    static OrchRing* gRingBuffer;
+    static RingBuffer* gRingBuffer;
 
     std::vector<swss::Selectable*> getSelectables();
 

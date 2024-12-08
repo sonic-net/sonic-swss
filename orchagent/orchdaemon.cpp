@@ -141,7 +141,7 @@ void OrchDaemon::popRingBuffer()
  * This function initializes gRingBuffer, otherwise it's nullptr.
  */
 void OrchDaemon::enableRingBuffer() {
-    gRingBuffer = OrchRing::Get();
+    gRingBuffer = RingBuffer::Get();
     Executor::gRingBuffer = gRingBuffer;
     Orch::gRingBuffer = gRingBuffer;
 }
