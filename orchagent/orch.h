@@ -201,7 +201,7 @@ private:
 protected:
     RingBuffer<DataType, RingSize>(): buffer(RingSize) {}
     ~RingBuffer<DataType, RingSize>() {
-        delete instance;
+        instance = nullptr;
     }
 
 public:
@@ -250,8 +250,9 @@ template<typename DataType, int RingSize>
 RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::Get()
 {
     if (instance == nullptr) {
-        instance = new RingBuffer<DataType, RingSize>();
-        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)instance);
+        static RingBuffer<DataType, RingSize> instance_;
+        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)&instance_);
+        instance = &instance_;
     }
     return instance;
 }
