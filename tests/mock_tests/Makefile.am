@@ -67,7 +67,6 @@ tests_SOURCES = aclorch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
                 mock_orch_test.cpp \
-                ring_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \

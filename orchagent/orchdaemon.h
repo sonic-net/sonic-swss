@@ -122,7 +122,7 @@ private:
 
 protected:
     /* Orchdaemon instance points to the same ring buffer during its lifetime */
-    OrchRing* gRingBuffer = nullptr;
+    RingBuffer* gRingBuffer = nullptr;
     std::atomic<bool> ring_thread_exited{false};
 };
 
