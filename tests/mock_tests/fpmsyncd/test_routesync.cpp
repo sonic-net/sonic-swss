@@ -24,6 +24,8 @@ using ::testing::_;
 
 int rt_build_ret = 0;
 bool nlmsg_alloc_ret = true;
+#pragma GCC diagnostic ignored "-Wcast-align"
+
 class MockRouteSync : public RouteSync
 {
 public:
