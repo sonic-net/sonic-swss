@@ -1,5 +1,5 @@
 #include "redisutility.h"
-
+#include "ut_helpers_fpmsyncd.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "mock_table.h"
@@ -7,10 +7,22 @@
 #include "fpmsyncd/routesync.h"
 #undef private
 
+#include <arpa/inet.h>
+#include <linux/rtnetlink.h>
+#include <netlink/route/link.h>
+#include <netlink/route/nexthop.h>
+#include <linux/nexthop.h>
+
+#include <sstream>
+
 using namespace swss;
+using namespace testing;
+
 #define MAX_PAYLOAD 1024
 
 using ::testing::_;
+
+#pragma GCC diagnostic ignored "-Wcast-align"
 
 class MockRouteSync : public RouteSync
 {
@@ -26,6 +38,7 @@ public:
                                rtattr *[], std::string&,
                                std::string& , std::string&,
                                std::string&), (override));
+    MOCK_METHOD(bool, getIfName, (int, char *, size_t), (override));
 };
 class MockFpm : public FpmInterface
 {
@@ -222,6 +235,7 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
         return true;
     });
     m_mockRouteSync.onMsgRaw(nlh);
+    
     vector<string> keys;
     vector<FieldValueTuple> fieldValues;
     app_route_table.getKeys(keys);
@@ -231,4 +245,363 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
     auto value = swss::fvsGetValue(fieldValues, "protocol", true);
     ASSERT_EQ(value.get(), "0xc8");
 
+}
+
+struct nlmsghdr* createNewNextHopMsgHdr(int32_t ifindex, const char* gateway, uint32_t id, unsigned char nh_family=AF_INET) {
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+
+    // Set header
+    nlh->nlmsg_type = RTM_NEWNEXTHOP;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+
+    // Set nhmsg
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(nlh);
+    nhm->nh_family = nh_family;
+
+    // Add NHA_ID
+    struct rtattr *rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = NHA_ID;
+    rta->rta_len = RTA_LENGTH(sizeof(uint32_t));
+    *(uint32_t *)RTA_DATA(rta) = id;
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+
+    // Add NHA_GATEWAY
+    rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = NHA_GATEWAY;
+    if (nh_family == AF_INET6)
+    {
+        struct in6_addr gw_addr6;
+        inet_pton(AF_INET6, gateway, &gw_addr6);
+        rta->rta_len = RTA_LENGTH(sizeof(struct in6_addr));
+        memcpy(RTA_DATA(rta), &gw_addr6, sizeof(struct in6_addr));
+    }
+    else
+    {   
+        struct in_addr gw_addr;
+        inet_pton(AF_INET, gateway, &gw_addr);
+        rta->rta_len = RTA_LENGTH(sizeof(struct in_addr));
+        memcpy(RTA_DATA(rta), &gw_addr, sizeof(struct in_addr));
+    }
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+
+    // Add NHA_OIF
+    rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = NHA_OIF;
+    rta->rta_len = RTA_LENGTH(sizeof(int32_t));
+    *(int32_t *)RTA_DATA(rta) = ifindex;
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+
+    return nlh;
+}
+
+TEST_F(FpmSyncdResponseTest, TestNoNHAId)
+{
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+
+    nlh->nlmsg_type = RTM_NEWNEXTHOP;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(nlh);
+    nhm->nh_family = AF_INET;
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(_, _, _))
+    .Times(0);
+
+    m_mockRouteSync.onNextHopMsg(nlh, 0);
+
+    free(nlh);
+}
+
+TEST_F(FpmSyncdResponseTest, TestNextHopAdd)
+{
+    uint32_t test_id = 10;
+    const char* test_gateway = "192.168.1.1";
+    int32_t test_ifindex = 5;
+
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(test_ifindex, test_gateway, test_id);
+    int expected_length = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(test_ifindex, _, _))
+    .WillOnce(DoAll(
+        [](int32_t, char* ifname, size_t size) {
+            strncpy(ifname, "Ethernet1", size);
+            ifname[size-1] = '\0';
+        },
+        Return(true)
+    ));
+
+    m_mockRouteSync.onNextHopMsg(nlh, expected_length);
+
+    auto it = m_mockRouteSync.m_nh_groups.find(test_id);
+    ASSERT_NE(it, m_mockRouteSync.m_nh_groups.end()) << "Failed to add new nexthop";
+
+    free(nlh);
+}
+
+TEST_F(FpmSyncdResponseTest, TestIPv6NextHopAdd)
+{
+    uint32_t test_id = 20;
+    const char* test_gateway = "2001:db8::1";
+    int32_t test_ifindex = 7;
+
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(test_ifindex, test_gateway, test_id, AF_INET6);
+    int expected_length = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(test_ifindex, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet2", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onNextHopMsg(nlh, expected_length);
+
+    Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
+
+    vector<FieldValueTuple> fieldValues;
+    string key = "ID" + to_string(test_id);
+    nexthop_group_table.get(key, fieldValues);
+    
+    // onNextHopMsg only updates m_nh_groups unless the nhg is marked as installed
+    ASSERT_TRUE(fieldValues.empty());
+
+    // Update the nexthop group to mark it as installed and write to DB
+    m_mockRouteSync.updateNextHopGroup(test_id);
+    nexthop_group_table.get(key, fieldValues);
+
+    string nexthop, ifname;
+    for (const auto& fv : fieldValues) {
+        if (fvField(fv) == "nexthop") {
+            nexthop = fvValue(fv);
+        } else if (fvField(fv) == "ifname") {
+            ifname = fvValue(fv);
+        }
+    }
+    
+    EXPECT_EQ(nexthop, test_gateway);
+    EXPECT_EQ(ifname, "Ethernet2");
+
+    free(nlh);
+}
+
+
+TEST_F(FpmSyncdResponseTest, TestGetIfNameFailure)
+{
+    uint32_t test_id = 22;
+    const char* test_gateway = "192.168.1.1";
+    int32_t test_ifindex = 9;
+
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(test_ifindex, test_gateway, test_id);
+    int expected_length = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(test_ifindex, _, _))
+        .WillOnce(Return(false));
+
+    m_mockRouteSync.onNextHopMsg(nlh, expected_length);
+
+    auto it = m_mockRouteSync.m_nh_groups.find(test_id);
+    ASSERT_NE(it, m_mockRouteSync.m_nh_groups.end());
+    EXPECT_EQ(it->second.intf, "unknown");
+
+    free(nlh);
+}
+TEST_F(FpmSyncdResponseTest, TestSkipSpecialInterfaces)
+{
+    uint32_t test_id = 11;
+    const char* test_gateway = "192.168.1.1";
+    int32_t test_ifindex = 6;
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(test_ifindex, _, _))
+    .WillOnce(DoAll(
+        [](int32_t ifidx, char* ifname, size_t size) {
+            strncpy(ifname, "eth0", size);
+        },
+        Return(true)
+    ));
+
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(test_ifindex, test_gateway, test_id);
+    int expected_length = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+
+    m_mockRouteSync.onNextHopMsg(nlh, expected_length);
+
+    auto it = m_mockRouteSync.m_nh_groups.find(test_id);
+    EXPECT_EQ(it, m_mockRouteSync.m_nh_groups.end()) << "Should skip eth0 interface";
+
+    free(nlh);
+}
+
+TEST_F(FpmSyncdResponseTest, TestNextHopGroupKeyString)
+{
+    EXPECT_EQ(m_mockRouteSync.getNextHopGroupKeyAsString(1), "ID1");
+    EXPECT_EQ(m_mockRouteSync.getNextHopGroupKeyAsString(1234), "ID1234");
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetNextHopGroupFields)
+{
+    // Test single next hop case
+    {
+        NextHopGroup nhg(1, "192.168.1.1", "Ethernet0");
+        m_mockRouteSync.m_nh_groups.insert({1, nhg});
+        
+        string nexthops, ifnames, weights;
+        m_mockRouteSync.getNextHopGroupFields(nhg, nexthops, ifnames, weights);
+        
+        EXPECT_EQ(nexthops, "192.168.1.1");
+        EXPECT_EQ(ifnames, "Ethernet0");
+        EXPECT_TRUE(weights.empty());
+    }
+
+    // Test multiple next hops with weights
+    {
+        // Create the component next hops first
+        NextHopGroup nhg1(1, "192.168.1.1", "Ethernet0");
+        NextHopGroup nhg2(2, "192.168.1.2", "Ethernet1");
+        m_mockRouteSync.m_nh_groups.insert({1, nhg1});
+        m_mockRouteSync.m_nh_groups.insert({2, nhg2});
+        
+        // Create the group with multiple next hops
+        vector<pair<uint32_t,uint8_t>> group_members;
+        group_members.push_back(make_pair(1, 1));  // id=1, weight=1
+        group_members.push_back(make_pair(2, 2));  // id=2, weight=2
+        
+        NextHopGroup nhg(3, group_members);
+        m_mockRouteSync.m_nh_groups.insert({3, nhg});
+        
+        string nexthops, ifnames, weights;
+        m_mockRouteSync.getNextHopGroupFields(nhg, nexthops, ifnames, weights);
+        
+        EXPECT_EQ(nexthops, "192.168.1.1,192.168.1.2");
+        EXPECT_EQ(ifnames, "Ethernet0,Ethernet1");
+        EXPECT_EQ(weights, "1,2");
+    }
+
+    // Test IPv6 default case
+    {
+        NextHopGroup nhg(4, "", "Ethernet0");
+        m_mockRouteSync.m_nh_groups.insert({4, nhg});
+        
+        string nexthops, ifnames, weights;
+        m_mockRouteSync.getNextHopGroupFields(nhg, nexthops, ifnames, weights, AF_INET6);
+        
+        EXPECT_EQ(nexthops, "::");
+        EXPECT_EQ(ifnames, "Ethernet0");
+        EXPECT_TRUE(weights.empty());
+    }
+
+     // Both empty
+    {
+        NextHopGroup nhg(5, "", "");
+        string nexthops, ifnames, weights;
+        m_mockRouteSync.getNextHopGroupFields(nhg, nexthops, ifnames, weights, AF_INET);
+        
+        EXPECT_EQ(nexthops, "0.0.0.0");
+        EXPECT_TRUE(ifnames.empty());
+        EXPECT_TRUE(weights.empty());
+    }
+}
+
+TEST_F(FpmSyncdResponseTest, TestUpdateNextHopGroupDb)
+{
+    Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
+
+    // Test single next hop group
+    {
+        NextHopGroup nhg(1, "192.168.1.1", "Ethernet0");
+        m_mockRouteSync.updateNextHopGroupDb(nhg);
+
+        vector<FieldValueTuple> fieldValues;
+        nexthop_group_table.get("ID1", fieldValues);
+        
+        EXPECT_EQ(fieldValues.size(), 2);
+        EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
+        EXPECT_EQ(fvValue(fieldValues[0]), "192.168.1.1");
+        EXPECT_EQ(fvField(fieldValues[1]), "ifname");
+        EXPECT_EQ(fvValue(fieldValues[1]), "Ethernet0");
+    }
+
+    // Test group with multiple next hops
+    {
+        vector<pair<uint32_t,uint8_t>> group_members;
+        group_members.push_back(make_pair(1, 1));
+        group_members.push_back(make_pair(2, 2));
+        
+        NextHopGroup nhg1(1, "192.168.1.1", "Ethernet0");
+        NextHopGroup nhg2(2, "192.168.1.2", "Ethernet1");
+        NextHopGroup group(3, group_members);
+        
+        m_mockRouteSync.m_nh_groups.insert({1, nhg1});
+        m_mockRouteSync.m_nh_groups.insert({2, nhg2});
+        m_mockRouteSync.m_nh_groups.insert({3, group});
+        
+        m_mockRouteSync.updateNextHopGroup(3);
+        
+        auto it = m_mockRouteSync.m_nh_groups.find(3);
+        ASSERT_NE(it, m_mockRouteSync.m_nh_groups.end());
+        EXPECT_TRUE(it->second.installed);
+        vector<FieldValueTuple> fieldValues;
+        nexthop_group_table.get("ID3", fieldValues);
+        EXPECT_EQ(fieldValues.size(), 3);
+        EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
+        EXPECT_EQ(fvValue(fieldValues[0]), "192.168.1.1,192.168.1.2");
+        EXPECT_EQ(fvField(fieldValues[1]), "ifname");
+        EXPECT_EQ(fvValue(fieldValues[1]), "Ethernet0,Ethernet1");
+        EXPECT_EQ(fvField(fieldValues[2]), "weight");
+        EXPECT_EQ(fvValue(fieldValues[2]), "1,2");
+    }
+
+    // Empty nexthop (default route case)
+    {
+        NextHopGroup nhg(4, "", "Ethernet0");
+        m_mockRouteSync.updateNextHopGroupDb(nhg);
+        
+        vector<FieldValueTuple> fieldValues;
+        nexthop_group_table.get("ID4", fieldValues);
+        
+        EXPECT_EQ(fieldValues.size(), 2);
+        EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
+        EXPECT_EQ(fvValue(fieldValues[0]), "0.0.0.0");
+        EXPECT_EQ(fvField(fieldValues[1]), "ifname");
+        EXPECT_EQ(fvValue(fieldValues[1]), "Ethernet0");
+    }
+
+    // Empty interface name
+    {
+        NextHopGroup nhg(5, "192.168.1.1", "");
+        m_mockRouteSync.updateNextHopGroupDb(nhg);
+        
+        vector<FieldValueTuple> fieldValues;
+        nexthop_group_table.get("ID5", fieldValues);
+        
+        EXPECT_EQ(fieldValues.size(), 2);
+        EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
+        EXPECT_EQ(fvValue(fieldValues[0]), "192.168.1.1");
+        EXPECT_EQ(fvField(fieldValues[1]), "ifname");
+        EXPECT_EQ(fvValue(fieldValues[1]), "");
+    }
+}
+
+TEST_F(FpmSyncdResponseTest, TestDeleteNextHopGroup)
+{
+    // Setup test groups
+    NextHopGroup nhg1(1, "192.168.1.1", "Ethernet0");
+    NextHopGroup nhg2(2, "192.168.1.2", "Ethernet1");
+    nhg1.installed = true;
+    nhg2.installed = true;
+    
+    m_mockRouteSync.m_nh_groups.insert({1, nhg1});
+    m_mockRouteSync.m_nh_groups.insert({2, nhg2});
+    
+    // Test deletion
+    m_mockRouteSync.deleteNextHopGroup(1);
+    EXPECT_EQ(m_mockRouteSync.m_nh_groups.find(1), m_mockRouteSync.m_nh_groups.end());
+    EXPECT_NE(m_mockRouteSync.m_nh_groups.find(2), m_mockRouteSync.m_nh_groups.end());
+
+    // Test deleting non-existent group
+    m_mockRouteSync.deleteNextHopGroup(999);
+    EXPECT_EQ(m_mockRouteSync.m_nh_groups.find(999), m_mockRouteSync.m_nh_groups.end());
 }
