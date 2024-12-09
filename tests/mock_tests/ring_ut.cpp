@@ -3,11 +3,6 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
-// let the compiler to generate codes for the instantiated template
-static constexpr int TEST_ORCH_RING_SIZE = 60;
-template class RingBuffer<AnyTask, TEST_ORCH_RING_SIZE>;
-using TestRing = RingBuffer<AnyTask, TEST_ORCH_RING_SIZE>;
-
 namespace ring_test
 {
     using namespace std;
@@ -17,11 +12,9 @@ namespace ring_test
     class RingTest : public ::testing::Test
     {
         public:
-
-            TestRing* ring = TestRing::Get();
-            OrchRing* gRingBuffer = OrchRing::Get();
-            std::unique_ptr<Consumer> consumer;
-            std::unique_ptr<Orch> orch;
+            RingBuffer* gRingBuffer= RingBuffer::Get();
+            std::shared_ptr<Consumer> consumer;
+            std::shared_ptr<Orch> orch;
 
             void SetUp() override {
                 Orch::gRingBuffer = gRingBuffer;
@@ -31,73 +24,69 @@ namespace ring_test
                     AnyTask task;
                     gRingBuffer->pop(task);
                 }
-                while (!ring->IsEmpty()) {
+                while (!gRingBuffer->IsEmpty()) {
                     AnyTask task;
-                    ring->pop(task);
+                    gRingBuffer->pop(task);
                 }
             }
 
-            void TearDown() override {
-                Orch::gRingBuffer = nullptr;
-                Executor::gRingBuffer = nullptr;
-            }
     };
 
     TEST_F(RingTest, basics)
     {
         AnyTask task = []() { };
-        EXPECT_TRUE(ring->push(task));
+        EXPECT_TRUE(gRingBuffer->push(task));
 
         AnyTask poppedTask;
-        EXPECT_TRUE(ring->pop(poppedTask));
-        EXPECT_TRUE(ring->IsEmpty());
+        EXPECT_TRUE(gRingBuffer->pop(poppedTask));
+        EXPECT_TRUE(gRingBuffer->IsEmpty());
     }
 
     TEST_F(RingTest, bufferFull) {
         AnyTask task = []() { };
 
         // Fill the buffer
-        for (int i = 0; i < TEST_ORCH_RING_SIZE - 1; i++) {
-            EXPECT_TRUE(ring->push(task));
+        for (int i = 0; i < RING_SIZE - 1; i++) {
+            EXPECT_TRUE(gRingBuffer->push(task));
         }
 
         // Fail to push when full
-        EXPECT_FALSE(ring->push(task));
+        EXPECT_FALSE(gRingBuffer->push(task));
     }
 
     TEST_F(RingTest, bufferEmpty) {
         AnyTask task;
-        EXPECT_TRUE(ring->IsEmpty());
-        EXPECT_FALSE(ring->pop(task));
+        EXPECT_TRUE(gRingBuffer->IsEmpty());
+        EXPECT_FALSE(gRingBuffer->pop(task));
     }
 
     TEST_F(RingTest, bufferOverflow) {
         AnyTask task = []() { };
 
-        int halfSize = TEST_ORCH_RING_SIZE / 2;
+        int halfSize = RING_SIZE / 2;
 
         for (int i = 0; i < halfSize; i++) {
-            EXPECT_TRUE(ring->push(task));
+            EXPECT_TRUE(gRingBuffer->push(task));
         }
         for (int i = 0; i < halfSize; i++) {
             AnyTask poppedTask;
-            EXPECT_TRUE(ring->pop(poppedTask));
+            EXPECT_TRUE(gRingBuffer->pop(poppedTask));
         }
 
         for (int i = 0; i < halfSize; i++) {
-            EXPECT_TRUE(ring->push(task));
+            EXPECT_TRUE(gRingBuffer->push(task));
         }
 
         for (int i = 0; i < halfSize; i++) {
             AnyTask poppedTask;
-            EXPECT_TRUE(ring->pop(poppedTask));
+            EXPECT_TRUE(gRingBuffer->pop(poppedTask));
         }
     }
 
     TEST_F(RingTest, ringBasics)
     {
-        orch = make_unique<Orch>(&appl_db, "ROUTE_TABLE", 0);
-        consumer = make_unique<Consumer>(new swss::ConsumerStateTable(&appl_db, "ROUTE_TABLE", 128, 1), orch.get(), "ROUTE_TABLE");
+        orch = make_shared<Orch>(&appl_db, "ROUTE_TABLE", 0);
+        consumer = make_shared<Consumer>(new swss::ConsumerStateTable(&appl_db, "ROUTE_TABLE", 128, 1), orch.get(), "ROUTE_TABLE");
 
         EXPECT_TRUE(gRingBuffer->Serves("ROUTE_TABLE"));
         EXPECT_FALSE(gRingBuffer->Serves("OTHER_TABLE"));
@@ -137,15 +126,15 @@ namespace ring_test
         bool threadFinished = false;
 
         std::thread t([this, &threadFinished]() {
-            ring->Idle = true;
-            ring->pause_thread();
+            gRingBuffer->Idle = true;
+            gRingBuffer->pause_thread();
             threadFinished = true;
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         AnyTask task = []() { };
-        EXPECT_TRUE(ring->push(task));
-        ring->notify();
+        EXPECT_TRUE(gRingBuffer->push(task));
+        gRingBuffer->notify();
 
         t.join();
         EXPECT_TRUE(threadFinished);
@@ -159,7 +148,7 @@ namespace ring_test
             producers.emplace_back([this]() {
                 AnyTask task = []() { };
                 for (int j = 0; j < 10; j++) {
-                    ring->push(task);
+                    gRingBuffer->push(task);
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
             });
@@ -169,7 +158,7 @@ namespace ring_test
             consumers.emplace_back([this]() {
                 for (int j = 0; j < 10; j++) {
                     AnyTask task;
-                    while (!ring->pop(task)) {
+                    while (!gRingBuffer->pop(task)) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     }
                 }
@@ -185,38 +174,26 @@ namespace ring_test
     }
 
     TEST_F(RingTest, notify) {
-        ring->Idle = true;
-        EXPECT_NO_THROW(ring->notify());
+        gRingBuffer->Idle = true;
+        EXPECT_NO_THROW(gRingBuffer->notify());
         AnyTask task = []() { };
-        ring->push(task);
-        EXPECT_NO_THROW(ring->notify());
+        gRingBuffer->push(task);
+        EXPECT_NO_THROW(gRingBuffer->notify());
     }
 
     TEST_F(RingTest, edgeCases) {
         AnyTask task = []() { };
         
         for (int cycle = 0; cycle < 3; cycle++) {
-            for (int i = 0; i < TEST_ORCH_RING_SIZE - 1; i++) {
-                EXPECT_TRUE(ring->push(task));
+            for (int i = 0; i < RING_SIZE - 1; i++) {
+                EXPECT_TRUE(gRingBuffer->push(task));
             }
-            EXPECT_TRUE(ring->IsFull());
-            for (int i = 0; i < TEST_ORCH_RING_SIZE - 1; i++) {
+            EXPECT_TRUE(gRingBuffer->IsFull());
+            for (int i = 0; i < RING_SIZE - 1; i++) {
                 AnyTask poppedTask;
-                EXPECT_TRUE(ring->pop(poppedTask));
+                EXPECT_TRUE(gRingBuffer->pop(poppedTask));
             }
-            EXPECT_TRUE(ring->IsEmpty());
+            EXPECT_TRUE(gRingBuffer->IsEmpty());
         }
-    }
-
-    TEST_F(RingTest, invalidSize) {
-        auto badRing = RingBuffer<AnyTask, 1>::Get();
-        AnyTask task = []() { };
-
-        EXPECT_TRUE(badRing->IsEmpty());
-        EXPECT_TRUE(badRing->IsFull());
-
-        EXPECT_FALSE(badRing->push(task));
-        AnyTask poppedTask;
-        EXPECT_FALSE(badRing->pop(poppedTask));
     }
 }
