@@ -127,7 +127,7 @@ jobs:
         git config --local --unset user.name
         git config --local --unset user.email
         ln -s ../debian debian
-        dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
+        DPKG_GENSYMBOLS_CHECK_LEVEL=0 dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
         popd
         dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
