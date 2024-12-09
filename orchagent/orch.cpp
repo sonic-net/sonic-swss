@@ -17,8 +17,76 @@ using namespace swss;
 
 int gBatchSize = 0;
 
-OrchRing* Orch::gRingBuffer = nullptr;
-OrchRing* Executor::gRingBuffer = nullptr;
+RingBuffer* Orch::gRingBuffer = nullptr;
+RingBuffer* Executor::gRingBuffer = nullptr;
+
+void RingBuffer::pause_thread()
+{
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, [&](){ return !IsEmpty(); });
+}
+
+void RingBuffer::notify()
+{
+    if (!IsEmpty() && Idle)
+        cv.notify_all();
+}
+
+RingBuffer* RingBuffer::instance = nullptr;
+
+RingBuffer* RingBuffer::Get()
+{
+    if (instance == nullptr) {
+        static RingBuffer instance_;
+        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)&instance_);
+        instance = &instance_;
+    }
+    return instance;
+}
+
+bool RingBuffer::IsFull()
+{
+    return (tail + 1) % RING_SIZE == head;
+}
+
+bool RingBuffer::IsEmpty()
+{
+    return tail == head;
+}
+
+bool RingBuffer::push(AnyTask ringEntry)
+{
+    if (IsFull())
+        return false;
+    buffer[tail] = std::move(ringEntry);
+    tail = (tail + 1) % RING_SIZE;
+    return true;
+}
+
+bool RingBuffer::pop(AnyTask& ringEntry)
+{
+    if (IsEmpty())
+        return false;
+    ringEntry = std::move(buffer[head]);
+    head = (head + 1) % RING_SIZE;
+    return true;
+}
+
+void RingBuffer::addExecutor(Executor* executor)
+{
+    auto inserted = m_consumerSet.insert(executor->getName());
+
+    // If there is duplication of executorName, logic error
+    if (!inserted.second)
+    {
+        SWSS_LOG_THROW("Duplicated executorName in m_consumerSet: %s", executor->getName().c_str());
+    }
+}
+
+bool RingBuffer::Serves(const std::string& tableName)
+{
+    return m_consumerSet.find(tableName) != m_consumerSet.end();  
+}
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
