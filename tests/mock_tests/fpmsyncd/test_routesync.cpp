@@ -619,3 +619,150 @@ TEST_F(FpmSyncdResponseTest, TestDeleteNextHopGroup)
     m_mockRouteSync.deleteNextHopGroup(999);
     EXPECT_EQ(m_mockRouteSync.m_nh_groups.find(999), m_mockRouteSync.m_nh_groups.end());
 }
+
+struct nlmsghdr* createNewNextHopMsgHdr(const vector<pair<uint32_t, uint8_t>>& group_members, uint32_t id) {
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+
+    // Set header
+    nlh->nlmsg_type = RTM_NEWNEXTHOP;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+
+    // Set nhmsg
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(nlh);
+    nhm->nh_family = AF_INET;
+
+    // Add NHA_ID
+    struct rtattr *rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = NHA_ID;
+    rta->rta_len = RTA_LENGTH(sizeof(uint32_t));
+    *(uint32_t *)RTA_DATA(rta) = id;
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+
+    // Add NHA_GROUP
+    rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = NHA_GROUP;
+    struct nexthop_grp* grp = (struct nexthop_grp*)malloc(group_members.size() * sizeof(struct nexthop_grp));
+    
+    for (size_t i = 0; i < group_members.size(); i++) {
+        grp[i].id = group_members[i].first;
+        grp[i].weight = group_members[i].second - 1; // kernel stores weight-1
+    }
+
+    size_t payload_size = group_members.size() * sizeof(struct nexthop_grp);
+    if (payload_size > USHRT_MAX - RTA_LENGTH(0)) {
+        free(nlh);
+        return nullptr;
+    }
+
+    rta->rta_len = static_cast<unsigned short>(RTA_LENGTH(group_members.size() * sizeof(struct nexthop_grp)));
+    memcpy(RTA_DATA(rta), grp, group_members.size() * sizeof(struct nexthop_grp));
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+
+    free(grp);
+    return nlh;
+}
+
+TEST_F(FpmSyncdResponseTest, TestNextHopGroupAdd)
+{
+    // 1. create nexthops
+    uint32_t nh1_id = 1;
+    uint32_t nh2_id = 2;
+    uint32_t nh3_id = 3;
+
+    struct nlmsghdr* nlh1 = createNewNextHopMsgHdr(1, "192.168.1.1", nh1_id);
+    struct nlmsghdr* nlh2 = createNewNextHopMsgHdr(2, "192.168.1.2", nh2_id);
+    struct nlmsghdr* nlh3 = createNewNextHopMsgHdr(3, "192.168.1.3", nh3_id);
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(1, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet1", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+    
+    EXPECT_CALL(m_mockRouteSync, getIfName(2, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet2", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+    
+    EXPECT_CALL(m_mockRouteSync, getIfName(3, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet3", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onNextHopMsg(nlh1, (int)(nlh1->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg))));
+    m_mockRouteSync.onNextHopMsg(nlh2, (int)(nlh2->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg))));
+    m_mockRouteSync.onNextHopMsg(nlh3, (int)(nlh3->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg))));
+
+    // 2. create a nexthop group with these nexthops
+    uint32_t group_id = 10;
+    vector<pair<uint32_t, uint8_t>> group_members = {
+        {nh1_id, 1},  // id=1, weight=1
+        {nh2_id, 2},  // id=2, weight=2
+        {nh3_id, 3}   // id=3, weight=3
+    };
+
+    struct nlmsghdr* group_nlh = createNewNextHopMsgHdr(group_members, group_id);
+    ASSERT_NE(group_nlh, nullptr) << "Failed to create group nexthop message";
+    m_mockRouteSync.onNextHopMsg(group_nlh, (int)(group_nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg))));
+
+    // Verify the group was added correctly
+    auto it = m_mockRouteSync.m_nh_groups.find(group_id);
+    ASSERT_NE(it, m_mockRouteSync.m_nh_groups.end()) << "Failed to add nexthop group";
+    
+    // Verify group members
+    const auto& group = it->second.group;
+    ASSERT_EQ(group.size(), 3) << "Wrong number of group members";
+    
+    // Check each member's ID and weight
+    EXPECT_EQ(group[0].first, nh1_id);
+    EXPECT_EQ(group[0].second, 1);
+    EXPECT_EQ(group[1].first, nh2_id);
+    EXPECT_EQ(group[1].second, 2);
+    EXPECT_EQ(group[2].first, nh3_id);
+    EXPECT_EQ(group[2].second, 3);
+
+    // Mark the group as installed and verify DB update
+    m_mockRouteSync.updateNextHopGroup(group_id);
+    
+    Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
+    vector<FieldValueTuple> fieldValues;
+    string key = "ID" + to_string(group_id);
+    nexthop_group_table.get(key, fieldValues);
+    
+    ASSERT_EQ(fieldValues.size(), 3) << "Wrong number of fields in DB";
+    
+    // Verify the DB fields
+    string nexthops, ifnames, weights;
+    for (const auto& fv : fieldValues) {
+        if (fvField(fv) == "nexthop") {
+            nexthops = fvValue(fv);
+        } else if (fvField(fv) == "ifname") {
+            ifnames = fvValue(fv);
+        } else if (fvField(fv) == "weight") {
+            weights = fvValue(fv);
+        }
+    }
+    
+    EXPECT_EQ(nexthops, "192.168.1.1,192.168.1.2,192.168.1.3");
+    EXPECT_EQ(ifnames, "Ethernet1,Ethernet2,Ethernet3");
+    EXPECT_EQ(weights, "1,2,3");
+
+    // Cleanup
+    free(nlh1);
+    free(nlh2);
+    free(nlh3);
+    free(group_nlh);
+}
