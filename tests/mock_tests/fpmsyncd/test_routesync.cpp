@@ -12,6 +12,8 @@ using namespace swss;
 
 using ::testing::_;
 
+int rt_build_ret = 0;
+bool nlmsg_alloc_ret = true;
 class MockRouteSync : public RouteSync
 {
 public:
@@ -230,5 +232,20 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
     app_route_table.get(keys[0], fieldValues);
     auto value = swss::fvsGetValue(fieldValues, "protocol", true);
     ASSERT_EQ(value.get(), "0xc8");
+
+}
+
+TEST_F(FpmSyncdResponseTest, testSendOffloadReply)
+{
+
+    rt_build_ret = 1;
+    rtnl_route* routeObject{};
+
+
+    ASSERT_EQ(m_routeSync.sendOffloadReply(routeObject), false);
+    rt_build_ret = 0;
+    nlmsg_alloc_ret = false;
+    ASSERT_EQ(m_routeSync.sendOffloadReply(routeObject), false);
+    nlmsg_alloc_ret = true;
 
 }
