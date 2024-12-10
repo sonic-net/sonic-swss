@@ -1136,7 +1136,7 @@ class DockerVirtualSwitch:
         fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
         tbl.set(interface, fvs)
         time.sleep(1)
-        
+
     def set_dhcp_rate_limit(self, interface, dhcp_rate_limit):
         tbl_name = "PORT"
         tbl = swsscommon.Table(self.cdb, tbl_name)

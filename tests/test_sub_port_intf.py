@@ -389,8 +389,6 @@ class TestSubPortIntf(object):
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_ROUTE_TABLE_NAME)
         tbl._del(vrf_name + APPL_DB_SEPARATOR + ip_prefix if vrf_name else ip_prefix)
 
-    
-
     def get_newly_created_oid(self, table, old_oids):
         new_oids = self.asic_db.wait_for_n_keys(table, len(old_oids) + 1)
         oid = [ids for ids in new_oids if ids not in old_oids]

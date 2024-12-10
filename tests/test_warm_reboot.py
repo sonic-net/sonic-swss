@@ -967,7 +967,7 @@ class TestWarmReboot(object):
         time.sleep(5)
 
     def test_swss_port_state_syncup(self, dvs, testlog):
- 
+
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
@@ -1900,7 +1900,7 @@ class TestWarmReboot(object):
         intf_tbl._del("{}".format(intfs[1]))
         intf_tbl._del("{}".format(intfs[2]))
         intf_tbl._del("{}".format(intfs[2]))
-        time.sleep(2)       
+        time.sleep(2)
     @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
     def test_system_warmreboot_neighbor_syncup(self, dvs, testlog):
 

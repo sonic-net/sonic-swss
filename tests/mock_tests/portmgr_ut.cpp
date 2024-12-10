@@ -36,7 +36,7 @@ namespace portmgr_ut
         }
     };
 
-    TEST_F(PortMgrTest, DoTask) 
+    TEST_F(PortMgrTest, DoTask)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
         Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -117,7 +117,7 @@ namespace portmgr_ut
         // **Test Case 5: dhcp_rate_limit deletion failure**
         state_port_table.set("Ethernet0", {{"state", "ok"}});
         mockCallArgs.clear();
-        
+
         cfg_port_table.set("Ethernet0", {{"dhcp_rate_limit", "0"}});
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();

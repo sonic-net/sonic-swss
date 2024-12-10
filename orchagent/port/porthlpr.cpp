@@ -1264,8 +1264,7 @@ bool PortHelper::validatePortConfig(PortConfig &port) const
 
         port.admin_status.value = false;
         port.admin_status.is_set = true;
-
         port.fieldValueMap[PORT_ADMIN_STATUS] = PORT_STATUS_DOWN;
-    }    
+    }
     return true;
 }

@@ -94,7 +94,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
         if (!ret)
-        {   
+        {
             SWSS_LOG_INFO("writing dhcp_rate_limit to appl_db");
             return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
         }
@@ -214,8 +214,6 @@ void PortMgr::doTask(Consumer &consumer)
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
                 dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT_STR;
-
-
                 m_portList.insert(alias);
             }
             else if (!portOk)
@@ -261,7 +259,6 @@ void PortMgr::doTask(Consumer &consumer)
             if (!portOk)
             {
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
-
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
@@ -276,19 +273,16 @@ void PortMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
-
             if (!mtu.empty())
             {
                 setPortMtu(alias, mtu);
                 SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
             }
-
             if (!admin_status.empty())
             {
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
-            }
-            
+            }            
             if (!dhcp_rate_limit.empty())
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);

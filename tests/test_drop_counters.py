@@ -673,7 +673,7 @@ class TestDropCounters(object):
         """
         self.setup_db(dvs)
         time.sleep(3)
-         
+
         # save port info
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         tbl = swsscommon.Table(cdb, PORT_TABLE_NAME)

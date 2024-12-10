@@ -74,7 +74,7 @@ class TestPortAddRemove(object):
 
         # Shutdown interface
         dvs.port_admin_set(PORT_A, 'down')
-                
+
         # try to remove this port
         config_db.delete_entry('PORT', PORT_A)
         num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
