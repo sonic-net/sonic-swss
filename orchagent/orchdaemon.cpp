@@ -88,6 +88,12 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
+    // Stop the ring thread before delete orch pointers
+    if (gRingBuffer) {
+        ring_thread_exited = true;
+        ring_thread.join();
+    }
+
     /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
@@ -104,6 +110,41 @@ OrchDaemon::~OrchDaemon()
     delete m_select;
 
     events_deinit_publisher(g_events_handle);
+}
+
+void OrchDaemon::popRingBuffer()
+{
+    SWSS_LOG_ENTER();
+
+    // make sure there is only one thread created to run popRingBuffer()
+    if (!gRingBuffer || gRingBuffer->threadCreated)
+        return;
+
+    gRingBuffer->threadCreated = true;
+    SWSS_LOG_NOTICE("OrchDaemon starts the popRingBuffer thread!");
+
+    while (!ring_thread_exited)
+    {
+        gRingBuffer->pause_thread();
+
+        gRingBuffer->Idle = false;
+
+        AnyTask func;
+        while (gRingBuffer->pop(func)) {
+            func();
+        }
+
+        gRingBuffer->Idle = true;
+    }
+}
+
+/**
+ * This function initializes gRingBuffer, otherwise it's nullptr.
+ */
+void OrchDaemon::enableRingBuffer() {
+    gRingBuffer = RingBuffer::Get();
+    Executor::gRingBuffer = gRingBuffer;
+    Orch::gRingBuffer = gRingBuffer;
 }
 
 bool OrchDaemon::init()
@@ -823,6 +864,8 @@ void OrchDaemon::start()
 
     Recorder::Instance().sairedis.setRotate(false);
 
+    ring_thread = std::thread(&OrchDaemon::popRingBuffer, this);
+
     for (Orch *o : m_orchList)
     {
         m_select->addSelectables(o->getSelectables());
@@ -863,6 +906,21 @@ void OrchDaemon::start()
              * requests live in it. When the daemon has nothing to do, it
              * is a good chance to flush the pipeline  */
             flush();
+
+            if (gRingBuffer)
+            {
+
+                if (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle)
+                {
+                    gRingBuffer->notify();
+                }
+                else
+                {
+                    for (Orch *o : m_orchList)
+                        o->doTask();
+                }
+            }
+
             continue;
         }
 
@@ -880,9 +938,9 @@ void OrchDaemon::start()
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
 
-        /* TODO: Abstract Orch class to have a specific todo list */
-        for (Orch *o : m_orchList)
-            o->doTask();
+        if (!gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->Idle))
+            for (Orch *o : m_orchList)
+                o->doTask();
 
         /*
          * Asked to check warm restart readiness.
@@ -894,7 +952,18 @@ void OrchDaemon::start()
             bool ret = warmRestartCheck();
             if (ret)
             {
+                
                 // Orchagent is ready to perform warm restart, stop processing any new db data.
+                // but should finish data that already in the ring
+                if (gRingBuffer)
+                {
+                    while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle)
+                    {
+                        gRingBuffer->notify();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
+                    }
+                }
+
                 // Should sleep here or continue handling timers and etc.??
                 if (!gSwitchOrch->checkRestartNoFreeze())
                 {
