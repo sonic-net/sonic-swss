@@ -54,6 +54,12 @@ private:
 
     bool m_pgfile_processed;
     bool dynamic_buffer_model;
+    /*
+     * True if cable lengths and speeds are predetermined. If it is true, we
+     * do not dynamically generate BUFFER_PROFILE and BUFFER_PG entries in
+     * APPL_DB (i.e., we just copy static entries from CONFIG_DB).
+     */
+    bool fixed_cable_speed_len;
 
     pg_profile_lookup_t m_pgProfileLookup;
     port_cable_length_t m_cableLenLookup;
