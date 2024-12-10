@@ -1,6 +1,6 @@
 """Utilities for interacting with ACLs when writing VS tests."""
 from typing import Callable, Dict, List
-
+from swsscommon import swsscommon
 
 class DVSAcl:
     """Manage ACL tables and rules on the virtual switch."""
@@ -17,6 +17,9 @@ class DVSAcl:
     ADB_ACL_GROUP_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP"
     ADB_ACL_GROUP_MEMBER_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER"
     ADB_ACL_COUNTER_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_COUNTER"
+
+    STATE_DB_ACL_TABLE_TABLE_NAME = "ACL_TABLE_TABLE"
+    STATE_DB_ACL_RULE_TABLE_NAME = "ACL_RULE_TABLE"
 
     ADB_ACL_STAGE_LOOKUP = {
         "ingress": "SAI_ACL_STAGE_INGRESS",
@@ -54,7 +57,8 @@ class DVSAcl:
             self,
             name: str,
             matches: List[str],
-            bpoint_types: List[str]
+            bpoint_types: List[str],
+            actions: List[str]
     ) -> None:
         """Create a new ACL table type in Config DB.
 
@@ -62,10 +66,12 @@ class DVSAcl:
             name: The name for the new ACL table type.
             matches: A list of matches to use in ACL table.
             bpoint_types: A list of bind point types to use in ACL table.
+            actions: A list of actions to use in ACL table
         """
         table_type_attrs = {
             "matches@": ",".join(matches),
-            "bind_points@": ",".join(bpoint_types)
+            "bind_points@": ",".join(bpoint_types),
+            "actions@": ",".join(actions)
         }
 
         self.config_db.create_entry(self.CDB_ACL_TABLE_TYPE_NAME, name, table_type_attrs)
@@ -306,6 +312,50 @@ class DVSAcl:
 
         self.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, num_tables)
 
+    
+    def verify_acl_table_action_list(
+            self,
+            acl_table_id: str,
+            expected_action_list: List[str],
+    ) -> None:
+        """Verify that the ACL table has specified action list.
+        Args:
+            acl_table_id: The ACL table that is being checked.
+            expected_action_list: The expected action list set to the given ACL table.
+        """
+        fvs = self.asic_db.wait_for_entry(self.ADB_ACL_TABLE_NAME, acl_table_id)
+        action_list_str = fvs.get('SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST')
+        action_count, actions = action_list_str.split(':')
+        action_list = actions.split(',')
+        assert (int(action_count) == len(action_list))
+        for action in expected_action_list:
+            assert action in action_list
+    
+    def create_dscp_acl_rule(
+            self,
+            table_name: str,
+            rule_name: str,
+            qualifiers: Dict[str, str],
+            action: str,
+            priority: str = "2020"
+    ) -> None:
+        """Create a new DSCP ACL rule in the given table.
+        Args:
+            table_name: The name of the ACL table to add the rule to.
+            rule_name: The name of the ACL rule.
+            qualifiers: The list of qualifiers to add to the rule.
+            action: DSCP value.
+            priority: The priority of the rule.
+        """
+        fvs = {
+            "priority": priority,
+            "DSCP_ACTION": action
+        }
+
+        for k, v in qualifiers.items():
+            fvs[k] = v
+        self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
+            
     def create_acl_rule(
             self,
             table_name: str,
@@ -573,7 +623,7 @@ class DVSAcl:
             elif k == "SAI_ACL_ENTRY_ATTR_ADMIN_STATE":
                 assert v == "true"
             elif k in sai_qualifiers:
-                assert sai_qualifiers[k](v)
+                assert sai_qualifiers[k](v), "Unexpected value for SAI qualifier: key={}, value={}".format(k, v)
             else:
                 assert False, "Unknown SAI qualifier: key={}, value={}".format(k, v)
 
@@ -659,6 +709,17 @@ class DVSAcl:
             return True
 
         return _match_acl_range
+    
+    def get_acl_counter_oid(self, acl_rule_id=None) -> str:
+        if not acl_rule_id:
+            acl_rule_id = self._get_acl_rule_id()
+        
+        entry = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
+        counter_oid = entry.get("SAI_ACL_ENTRY_ATTR_ACTION_COUNTER")
+        return counter_oid
+    
+    def get_acl_rule_id(self) -> str:
+        return self._get_acl_rule_id()
 
     def _get_acl_rule_id(self) -> str:
         num_keys = len(self.asic_db.default_acl_entries) + 1
@@ -716,4 +777,49 @@ class DVSAcl:
             return
         rule_to_counter_map = self.counters_db.get_entry("ACL_COUNTER_RULE_MAP", "")
         counter_to_rule_map = {v: k for k, v in rule_to_counter_map.items()}
-        assert counter_oid in counter_to_rule_map
+        assert counter_oid in counter_to_rule_map       
+
+    def check_acl_counter_not_in_counters_map(self, acl_counter_oid: str):
+        rule_to_counter_map = self.counters_db.get_entry("ACL_COUNTER_RULE_MAP", "")
+        counter_to_rule_map = {v: k for k, v in rule_to_counter_map.items()}
+        assert acl_counter_oid not in counter_to_rule_map
+
+    def verify_acl_table_status(
+            self,
+            acl_table_name,
+            expected_status
+    ) -> None:
+        """Verify that the STATE_DB status of ACL table is as expected.
+
+        Args:
+            acl_table_name: The name of ACL table to check
+            expected_status: The expected status in STATE_DB
+        """
+        if expected_status:
+            fvs = self.state_db.wait_for_entry(self.STATE_DB_ACL_TABLE_TABLE_NAME, acl_table_name)
+            assert len(fvs) > 0
+            assert (fvs['status'] == expected_status) 
+        else:
+            self.state_db.wait_for_deleted_entry(self.STATE_DB_ACL_TABLE_TABLE_NAME, acl_table_name)
+
+    def verify_acl_rule_status(
+            self,
+            acl_table_name,
+            acl_rule_name,
+            expected_status
+    ) -> None:
+        """Verify that the STATE_DB status of ACL rule is as expected.
+
+        Args:
+            acl_table_name: The name of ACL table to check
+            acl_rule_name: The name of ACL rule to check
+            expected_status: The expected status in STATE_DB
+        """
+        key = acl_table_name + "|" + acl_rule_name
+        if expected_status:
+            fvs = self.state_db.wait_for_entry(self.STATE_DB_ACL_RULE_TABLE_NAME, key)
+            assert len(fvs) > 0
+            assert (fvs['status'] == expected_status) 
+        else:
+            self.state_db.wait_for_deleted_entry(self.STATE_DB_ACL_TABLE_TABLE_NAME, key)
+

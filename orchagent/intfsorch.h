@@ -18,6 +18,7 @@ extern MacAddress gMacAddress;
 
 #define RIF_STAT_COUNTER_FLEX_COUNTER_GROUP "RIF_STAT_COUNTER"
 #define RIF_RATE_COUNTER_FLEX_COUNTER_GROUP "RIF_RATE_COUNTER"
+#define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 
 struct IntfsEntry
 {
@@ -54,7 +55,9 @@ public:
     void addRifToFlexCounter(const string&, const string&, const string&);
     void removeRifFromFlexCounter(const string&, const string&);
 
-    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
+    bool setIntfLoopbackAction(const Port &port, string actionStr);
+    bool getSaiLoopbackAction(const string &actionStr, sai_packet_action_t &action);
+    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0, string loopbackAction = "");
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
@@ -68,6 +71,8 @@ public:
     bool updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add = true);
 
     bool isRemoteSystemPortIntf(string alias);
+    bool isLocalSystemPortIntf(string alias);
+    void voqSyncIntfState(string &alias, bool);
 
 private:
 
@@ -81,21 +86,16 @@ private:
     void doTask(SelectableTimer &timer);
 
     shared_ptr<DBConnector> m_counter_db;
-    shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_asic_db;
     unique_ptr<Table> m_rifNameTable;
     unique_ptr<Table> m_rifTypeTable;
     unique_ptr<Table> m_vidToRidTable;
-    unique_ptr<ProducerTable> m_flexCounterTable;
-    unique_ptr<ProducerTable> m_flexCounterGroupTable;
+
+    std::set<std::string> m_removingIntfses;
 
     std::string getRifFlexCounterTableKey(std::string s);
-    std::string getRifCounterTableKey(std::string s);
-    std::string getRifRateTableKey(std::string s);
-    std::string getRifRateInitTableKey(std::string s);
-    void cleanUpRifFromCounterDb(const string &id, const string &name);
 
-    bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
+    bool addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackAction);
     bool removeRouterIntfs(Port &port);
 
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);

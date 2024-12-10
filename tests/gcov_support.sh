@@ -65,16 +65,6 @@ list_lcov_path()
     echo "Start searching .gcda files..."
     exec 4>$TMP_FILE
     find_gcda_file=`find ${gcda_dir} -name *.gcda`
-    echo "Start rm unused gcno files for speed up"
-    find_gcno_file=`find ${gcda_dir} -name *.gcno`
-    for line in ${find_gcno_file}
-    do
-        temp_gcda=${line/.gcno/$gcdastr}
-        if [ ! -f ${temp_gcda} ]; then
-            rm ${line}
-        fi
-    done
-
     echo ${find_gcda_file}
     RESULT=${find_gcda_file}
     echo "$RESULT" >&4
@@ -93,8 +83,7 @@ lcov_genhtml_report()
     do
         local fullpath=$line
         local infoname=${INFO_FILE_PREFIX}${fullpath##*/}.info
-        htmldirname=${HTML_FILE_PREFIX}${fullpath##*/}
-        
+
         echo ${fullpath}
 
         pushd ${fullpath}
@@ -102,7 +91,7 @@ lcov_genhtml_report()
         echo "gcda count: $GCDA_COUNT"
         if [ $GCDA_COUNT -ge 1 ]; then
             echo "Executing lcov -c -d . -o ${infoname}"
-            lcov -c -d . -o ${infoname}
+            lcov -c -d . -o ${infoname} &>/dev/null
             if [ "$?" != "0" ]; then
                 echo "lcov fail!"
                 rm ${infoname}
@@ -110,12 +99,6 @@ lcov_genhtml_report()
         fi
         popd
     done < ${gcda_file_range}/gcda_dir_list.txt
-}
-
-rm_unused_gcno()
-{
-    cur_dir = $1/
-
 }
 
 # generate html reports for all eligible submodules
@@ -142,12 +125,15 @@ lcov_merge_all()
         fi
     done < infolist
 
-    lcov --extract total.info '*sonic-gcov/*' -o total.info
+    # Remove unit test files.
+    lcov -o total.info -r total.info "*tests/*"
+    lcov -o total.info -r total.info "/usr/*"
+
     cp $1/lcov_cobertura.py $1/common_work/gcov/
     python $1/common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
 
-    sed -i "s#common_work/gcov/##" coverage.xml
-    sed -i "s#common_work.gcov.##" coverage.xml
+    sed -i "s#\.\./s/##" coverage.xml
+    sed -i "s#\.\.\.s\.##" coverage.xml
 
     cd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
@@ -197,12 +183,6 @@ gcov_set_environment()
 
     echo "cat list"
     cat ${CONTAINER_LIST}
-
-    cd ${build_dir}/gcov_tmp/
-    tar -zcvf sonic-gcov.tar.gz sonic-gcov/
-    rm -rf sonic-gcov
-    cd ../../
-    rm ${CONTAINER_LIST}
 }
 
 gcov_merge_info()
@@ -220,7 +200,8 @@ gcov_support_generate_report()
     mkdir -p gcov_output/info
 
     #for same code path
-    mkdir -p common_work
+    mkdir -p common_work/gcov
+    tar -zxvf swss.tar.gz -C common_work/gcov
 
     cat container_dir_list
     while read line
@@ -229,7 +210,6 @@ gcov_support_generate_report()
         echo ${container_id}
 
         cp -rf ${container_id}/* common_work
-        tar -zxvf swss.tar.gz -C common_work/gcov
         cd common_work/gcov/
         find -name gcda*.tar.gz > tmp_gcda.txt
         while read LINE ; do
@@ -239,13 +219,16 @@ gcov_support_generate_report()
         done < tmp_gcda.txt
         rm tmp_gcda.txt
 
-        find -name gcno*.tar.gz > tmp_gcno.txt
-        while read LINE ; do
-            echo ${LINE}
-            echo ${LINE%%.*}
-            tar -zxvf ${LINE}
-        done < tmp_gcno.txt
-        rm tmp_gcno.txt
+        gcno_count=`find -name "*.gcno" | wc -l`
+        if [ ${gcno_count} -lt 1 ]; then
+            find -name gcno*.tar.gz > tmp_gcno.txt
+            while read LINE ; do
+                echo ${LINE}
+                echo ${LINE%%.*}
+                tar -zxvf ${LINE}
+            done < tmp_gcno.txt
+            rm tmp_gcno.txt
+        fi
         cd -
 
         ls -lh common_work/*
@@ -254,22 +237,21 @@ gcov_support_generate_report()
             echo "###lcov operation fail.."
             return 0
         fi
-        cd common_work
-        find . -name "*.gcda" -o -name "*.gcno" -o -name "*.gz" -o -name "*.cpp" -o -name "*.h"| xargs rm -rf
-        cd ../
-        cp -rf common_work/*  ${container_id}/*
-        cd ${container_id}
-        find . -name "*.gcda" -o -name "*.gcno" -o -name "*.gz" -o -name "*.cpp" -o -name "*.h"| xargs rm -rf
-        cd ../
-
-        rm -rf common_work/*
-
-        cp -rf ${container_id} gcov_output/
+        mkdir -p gcov_output/${container_id}
+        cp -rf common_work/*  gcov_output/${container_id}/*
+        pushd gcov_output/${container_id}
+        find . -name "*.gcda" -o -name "*.gcno" -o -name "*.gz" -o -name "*.cpp" -o -name "*.h" | xargs rm -rf
+        popd
+        pushd common_work
+        find . -name "*.gcda" -o -name "*.gz" -o -name "*.info" | xargs rm -rf
+        popd
+        rm -rf ${container_id}
     done < container_dir_list
 
     # generate report with code
-    mkdir -p common_work/gcov
-    tar -zxvf swss.tar.gz -C common_work/gcov
+    pushd common_work/gcov
+    find . -name "*.gcno" | xargs rm -rf
+    popd
 
     echo "### Make info generating completed !!"
 }
@@ -345,7 +327,7 @@ gcov_support_collect_gcno()
     echo " === Start collecting .gcno files... === "
     submodule_name=$1
     exec 3>$GCNO_LIST_FILE
-    find_command=`find -name *.gcno`
+    find_command=`find -name "*.gcno" -o -name "*.gcda"`
     echo "${find_command}"
     if [ -z "${find_command}" ]; then
         echo "### Error! no gcno files found!"
@@ -401,9 +383,7 @@ main()
             echo "Usage:"
             echo " collect               collect .gcno files based on module"
             echo " collect_gcda          collect .gcda files"
-            echo " collect_gcda_files    collect .gcda files in a docker"
             echo " generate              generate gcov report in html form (all or submodule_name)"
-            echo " tar_output            tar gcov_output forder"
             echo " merge_container_info  merge homonymic info files from different container"
             echo " set_environment       set environment ready for report generating in containers"
     esac

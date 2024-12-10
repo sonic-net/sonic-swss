@@ -13,6 +13,17 @@ class DVSVlan(object):
         vlan_entry = {"vlanid": vlanID}
         self.config_db.create_entry("VLAN", vlan, vlan_entry)
 
+    def create_vlan_interface(self,  vlanID):
+        vlan = "Vlan{}".format(vlanID)
+        vlan_intf_entry = {}
+        self.config_db.create_entry("VLAN_INTERFACE", vlan, vlan_intf_entry)
+
+    def set_vlan_intf_property(self, vlanID, property, value):
+        vlan_key = "Vlan{}".format(vlanID)
+        vlan_entry = self.config_db.get_entry("VLAN_INTERFACE", vlan_key)
+        vlan_entry[property] = value
+        self.config_db.update_entry("VLAN_INTERFACE", vlan_key, vlan_entry)
+
     def create_vlan_hostif(self, vlan, hostif_name):
         vlan = "Vlan{}".format(vlan)
         vlan_entry = {"vlanid": vlan,  "host_ifname": hostif_name}
@@ -34,6 +45,10 @@ class DVSVlan(object):
     def remove_vlan_member(self, vlanID, interface):
         member = "Vlan{}|{}".format(vlanID, interface)
         self.config_db.delete_entry("VLAN_MEMBER", member)
+
+    def remove_vlan_interface(self, vlanID):
+        vlan = "Vlan{}".format(vlanID)
+        self.config_db.delete_entry("VLAN_INTERFACE", vlan)
 
     def check_app_db_vlan_fields(self, fvs, admin_status="up", mtu="9100"):
         assert fvs.get("admin_status") == admin_status
@@ -57,7 +72,7 @@ class DVSVlan(object):
                                 polling_config=PollingConfig()):
         vlan_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN",
                                                     expected_num + 1,
-                                                    polling_config)
+                                                    polling_config=polling_config)
 
         return [v for v in vlan_entries if v != self.asic_db.default_vlan_id]
 
@@ -91,10 +106,11 @@ class DVSVlan(object):
         assert hostif.get("SAI_HOSTIF_ATTR_TYPE") == "SAI_HOSTIF_TYPE_NETDEV"
         assert hostif.get("SAI_HOSTIF_ATTR_OBJ_ID") == vlan_oid
         assert hostif.get("SAI_HOSTIF_ATTR_NAME") == hostif_name
+        assert hostif.get("SAI_HOSTIF_ATTR_QUEUE") == "7"
 
     def get_and_verify_vlan_hostif_ids(self, expected_num, polling_config=PollingConfig()):
         hostif_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF",
                                                       expected_num + 1,
-                                                      polling_config)
+                                                      polling_config=polling_config)
         return hostif_entries
 

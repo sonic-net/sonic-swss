@@ -11,6 +11,8 @@
 #include "nexthopkey.h"
 #include "producerstatetable.h"
 #include "schema.h"
+#include "bfdorch.h"
+#include "bulker.h"
 
 #define NHFLAGS_IFDOWN                  0x1 // nexthop's outbound i/f is down
 
@@ -42,6 +44,29 @@ struct NeighborUpdate
     bool add;
 };
 
+/*
+ * Keeps track of neighbor entry information primarily for bulk operations
+ */
+struct NeighborContext
+{
+    NeighborEntry                       neighborEntry;              // neighbor entry to process
+    std::deque<sai_status_t>            object_statuses;            // entity bulk statuses for neighbors
+    MacAddress                          mac;                        // neighbor mac
+    bool                                bulk_op = false;            // use bulker (only for mux use for now)
+    sai_object_id_t                     next_hop_id;                // next hop id
+    sai_status_t                        nexthop_status;             // next hop status
+
+    NeighborContext(NeighborEntry neighborEntry)
+        : neighborEntry(neighborEntry)
+    {
+    }
+
+    NeighborContext(NeighborEntry neighborEntry, bool bulk_op)
+        : neighborEntry(neighborEntry), bulk_op(bulk_op)
+    {
+    }
+};
+
 class NeighOrch : public Orch, public Subject, public Observer
 {
 public:
@@ -50,7 +75,7 @@ public:
 
     bool hasNextHop(const NextHopKey&);
     bool isNeighborResolved(const NextHopKey&);
-    bool addNextHop(const NextHopKey&);
+    bool addNextHop(NeighborContext& ctx);
     bool removeMplsNextHop(const NextHopKey&);
 
     sai_object_id_t getNextHopId(const NextHopKey&);
@@ -65,12 +90,15 @@ public:
 
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
+    bool enableNeighbors(std::list<NeighborContext>&);
+    bool disableNeighbors(std::list<NeighborContext>&);
     bool isHwConfigured(const NeighborEntry&);
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
 
     bool ifChangeInformNextHop(const string &, bool);
+    
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);
     bool removeOverlayNextHop(const NextHopKey &);
     void update(SubjectType, void *);
@@ -80,6 +108,7 @@ public:
 
     void resolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
+    bool ifChangeInformRemoteNextHop(const string &, bool);
 
 private:
     PortsOrch *m_portsOrch;
@@ -92,10 +121,16 @@ private:
 
     std::set<NextHopKey> m_neighborToResolve;
 
-    bool removeNextHop(const IpAddress&, const string&);
+    EntityBulker<sai_neighbor_api_t> gNeighBulker;
+    ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
 
-    bool addNeighbor(const NeighborEntry&, const MacAddress&);
-    bool removeNeighbor(const NeighborEntry&, bool disable = false);
+    bool removeNextHop(const IpAddress&, const string&);
+    bool processBulkAddNextHop(NeighborContext&);
+
+    bool addNeighbor(NeighborContext& ctx);
+    bool removeNeighbor(NeighborContext& ctx, bool disable = false);
+    bool processBulkEnableNeighbor(NeighborContext& ctx);
+    bool processBulkDisableNeighbor(NeighborContext& ctx);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
@@ -112,9 +147,12 @@ private:
     void voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry);
     void voqSyncDelNeigh(string &alias, IpAddress &ip_address);
     bool updateVoqNeighborEncapIndex(const NeighborEntry &neighborEntry, uint32_t encap_index);
+    void updateNextHop(const BfdUpdate&);
 
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
     void clearResolvedNeighborEntry(const NeighborEntry &);
+
+    bool addZeroMacTunnelRoute(const NeighborEntry &, const MacAddress &);
 };
 
 #endif /* SWSS_NEIGHORCH_H */

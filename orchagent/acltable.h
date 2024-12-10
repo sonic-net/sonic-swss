@@ -25,16 +25,21 @@ extern "C" {
 
 #define TABLE_TYPE_L3                   "L3"
 #define TABLE_TYPE_L3V6                 "L3V6"
+#define TABLE_TYPE_L3V4V6               "L3V4V6"
 #define TABLE_TYPE_MIRROR               "MIRROR"
 #define TABLE_TYPE_MIRRORV6             "MIRRORV6"
 #define TABLE_TYPE_MIRROR_DSCP          "MIRROR_DSCP"
 #define TABLE_TYPE_PFCWD                "PFCWD"
 #define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
 #define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
-#define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
 #define TABLE_TYPE_MCLAG                "MCLAG"
 #define TABLE_TYPE_MUX                  "MUX"
 #define TABLE_TYPE_DROP                 "DROP"
+#define TABLE_TYPE_MARK_META            "MARK_META"
+#define TABLE_TYPE_MARK_META_V6         "MARK_METAV6"
+#define TABLE_TYPE_EGR_SET_DSCP         "EGR_SET_DSCP"
+#define TABLE_TYPE_UNDERLAY_SET_DSCP    "UNDERLAY_SET_DSCP"
+#define TABLE_TYPE_UNDERLAY_SET_DSCPV6  "UNDERLAY_SET_DSCPV6"
 
 typedef enum
 {

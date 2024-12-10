@@ -40,8 +40,7 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
-        m_neighTable(appDb, APP_NEIGH_TABLE_NAME),
-        m_appLagTable(appDb, APP_LAG_TABLE_NAME)
+        m_neighTable(appDb, APP_NEIGH_TABLE_NAME)
 {
     auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
             STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
@@ -350,7 +349,7 @@ std::string IntfMgr::getIntfAdminStatus(const string &alias)
     }
     else if (!alias.compare(0, strlen("Po"), "Po"))
     {
-        portTable = &m_appLagTable;
+        portTable = &m_stateLagTable;
     }
     else
     {
@@ -382,7 +381,7 @@ std::string IntfMgr::getIntfMtu(const string &alias)
     }
     else if (!alias.compare(0, strlen("Po"), "Po"))
     {
-        portTable = &m_appLagTable;
+        portTable = &m_stateLagTable;
     }
     else
     {
@@ -447,8 +446,19 @@ std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &mtu, c
     }
     SWSS_LOG_INFO("subintf %s active mtu: %s", alias.c_str(), subifMtu.c_str());
     cmd << IP_CMD " link set " << shellquote(alias) << " mtu " << shellquote(subifMtu);
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    std::string cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
 
+    if (ret && !isIntfStateOk(alias))
+    {
+        // Can happen when a SET notification on the PORT_TABLE in the State DB
+        // followed by a new DEL notification that send by portmgrd
+        SWSS_LOG_WARN("Setting mtu to %s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+    }
+    else if (ret)
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
     return subifMtu;
 }
 
@@ -468,7 +478,7 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
                 continue;
             }
             std::vector<FieldValueTuple> fvVector;
-            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin); 
+            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin);
             m_subIntfList[intf].currAdminStatus = subintf_admin;
             FieldValueTuple fvTuple("admin_status", subintf_admin);
             fvVector.push_back(fvTuple);
@@ -480,13 +490,24 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
 std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
 {
     stringstream cmd;
-    string res;
+    string res, cmd_str;
 
     if (parent_admin_status == "up" || admin_status == "down")
     {
         SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), admin_status.c_str());
         cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        cmd_str = cmd.str();
+        int ret = swss::exec(cmd_str, res);
+        if (ret && !isIntfStateOk(alias))
+        {
+            // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
+            SWSS_LOG_WARN("Setting admin_status to %s netdev failed with cmd:%s, rc:%d, error:%s",
+                          alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        }
+        else if (ret)
+        {
+            throw runtime_error(cmd_str + " : " + res);
+        }
         return admin_status;
     }
     else
@@ -535,11 +556,12 @@ void IntfMgr::removeSubIntfState(const string &alias)
 bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
 {
     /*
-     * Enable gratuitous ARP by accepting unsolicited ARP replies
+     * Enable gratuitous ARP by accepting unsolicited ARP replies and untracked neighbor advertisements
      */
     stringstream cmd;
     string res;
     string garp_enabled;
+    int rc;
 
     if (grat_arp == "enabled")
     {
@@ -557,8 +579,23 @@ bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
 
     cmd << ECHO_CMD << " " << garp_enabled << " > /proc/sys/net/ipv4/conf/" << alias << "/arp_accept";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
     SWSS_LOG_INFO("ARP accept set to \"%s\" on interface \"%s\"",  grat_arp.c_str(), alias.c_str());
+
+    cmd.clear();
+    cmd.str(std::string());
+
+    // `accept_untracked_na` is not available in all kernels, so check for it before trying to set it
+    cmd << "test -f /proc/sys/net/ipv6/conf/" << alias << "/accept_untracked_na";
+    rc = swss::exec(cmd.str(), res);
+
+    if (rc == 0) {
+        cmd.clear();
+        cmd.str(std::string());
+        cmd << ECHO_CMD << " " << garp_enabled << " > /proc/sys/net/ipv6/conf/" << alias << "/accept_untracked_na";
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        SWSS_LOG_INFO("`accept_untracked_na` set to \"%s\" on interface \"%s\"",  grat_arp.c_str(), alias.c_str());
+    }
+
     return true;
 }
 
@@ -566,15 +603,15 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     stringstream cmd;
     string res;
-    string proxy_arp_pvlan;
+    string proxy_arp_status;
 
     if (proxy_arp == "enabled")
     {
-        proxy_arp_pvlan = "1";
+        proxy_arp_status = "1";
     }
     else if (proxy_arp == "disabled")
     {
-        proxy_arp_pvlan = "0";
+        proxy_arp_status = "0";
     }
     else
     {
@@ -582,7 +619,13 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
         return false;
     }
 
-    cmd << ECHO_CMD << " " << proxy_arp_pvlan << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    cmd << ECHO_CMD << " " << proxy_arp_status << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    cmd.clear();
+    cmd.str(std::string());
+
+    cmd << ECHO_CMD << " " << proxy_arp_status << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_INFO("Proxy ARP set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
@@ -722,6 +765,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string grat_arp = "";
     string mpls = "";
     string ipv6_link_local_mode = "";
+    string loopback_action = "";
 
     for (auto idx : data)
     {
@@ -764,6 +808,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             vlanId = value;
         }
+        else if (field == "loopback_action")
+        {
+            loopback_action = value;
+        }
     }
 
     if (op == SET_COMMAND)
@@ -802,6 +850,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (!nat_zone.empty())
             {
                 FieldValueTuple fvTuple("nat_zone", nat_zone);
+                data.push_back(fvTuple);
+            }
+
+            /* Set loopback action */
+            if (!loopback_action.empty())
+            {
+                FieldValueTuple fvTuple("loopback_action", loopback_action);
                 data.push_back(fvTuple);
             }
 

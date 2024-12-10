@@ -3,9 +3,11 @@
 #include <algorithm>
 #include "routeorch.h"
 #include "nhgorch.h"
+#include "tunneldecaporch.h"
 #include "cbf/cbfnhgorch.h"
 #include "logger.h"
 #include "flowcounterrouteorch.h"
+#include "muxorch.h"
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
@@ -24,8 +26,10 @@ extern Directory<Orch*> gDirectory;
 extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+extern TunnelDecapOrch *gTunneldecapOrch;
 
 extern size_t gMaxBulkSize;
+extern string gMySwitchType;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -43,9 +47,12 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_fgNhgOrch(fgNhgOrch),
         m_nextHopGroupCount(0),
         m_srv6Orch(srv6Orch),
-        m_resync(false)
+        m_resync(false),
+        m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+
+    m_publisher.setBuffered(true);
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
@@ -81,6 +88,37 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     m_switchOrch->set_switch_capability(fvTuple);
 
     SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
+
+    /* fetch the MAX_ECMP_MEMBER_COUNT and for voq platform, set it to 128 */
+    attr.id = SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get switch attribute max ECMP Group size. rv:%d", status);
+    }
+    else
+    {
+        uint32_t maxEcmpGroupSize = attr.value.u32;
+        SWSS_LOG_NOTICE("Switch Type: %s, Max ECMP Group Size supported: %d", gMySwitchType.c_str(), attr.value.u32);
+
+        /*If the switch type is voq, and max Ecmp group size supported is greater or equal to 128, set it to 128 */
+        if (gMySwitchType == "voq" && maxEcmpGroupSize >= 128)
+        {
+            maxEcmpGroupSize = 128;
+            attr.id = SAI_SWITCH_ATTR_ECMP_MEMBER_COUNT;
+            attr.value.s32 = maxEcmpGroupSize;
+            status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set switch attribute ECMP member count to 128. rv:%d", status);
+            }
+            else 
+            {
+                SWSS_LOG_NOTICE("Set switch attribute ECMP member count to 128");
+            }
+        }
+    }
 
     m_stateDb = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateDefaultRouteTb = unique_ptr<swss::Table>(new Table(m_stateDb.get(), STATE_ROUTE_TABLE_NAME));
@@ -499,7 +537,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
             auto rc = toBulk.emplace(std::piecewise_construct,
                     std::forward_as_tuple(key, op),
-                    std::forward_as_tuple());
+                    std::forward_as_tuple(key, (op == SET_COMMAND)));
 
             bool inserted = rc.second;
             auto& ctx = rc.first->second;
@@ -630,6 +668,11 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "seg_src")
                         srv6_source = fvValue(i);
+
+                    if (fvField(i) == "protocol")
+                    {
+                        ctx.protocol = fvValue(i);
+                    }
                 }
 
                 /*
@@ -658,6 +701,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 NextHopGroupKey& nhg = ctx.nhg;
                 vector<string> srv6_segv;
                 vector<string> srv6_src;
+                bool l3Vni = true;
+                uint32_t vni = 0;
 
                 /* Check if the next hop group is owned by the NhgOrch. */
                 if (nhg_index.empty())
@@ -687,6 +732,23 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                         SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
                         ipv.resize(alsv.size());
+                    }
+
+                    for (auto &vni_str: vni_labelv)
+                    {
+                        vni = static_cast<uint32_t>(std::stoul(vni_str));
+                        if (!m_vrfOrch->isL3VniVlan(vni))
+                        {
+                            SWSS_LOG_WARN("Route %s is received on non L3 VNI %s", key.c_str(), vni_str.c_str());
+                            l3Vni = false;
+                            break;
+                        }
+                    }
+
+                    if (!l3Vni)
+                    {
+                        it++;
+                        continue;
                     }
 
                     /* Set the empty ip(s) to zero
@@ -724,6 +786,9 @@ void RouteOrch::doTask(Consumer& consumer)
                             it = consumer.m_toSync.erase(it);
                         else
                             it++;
+
+                        /* Publish route state to advertise routes to Loopback interface */
+                        publishRouteState(ctx);
                         continue;
                     }
 
@@ -777,6 +842,18 @@ void RouteOrch::doTask(Consumer& consumer)
                     }
                     else
                     {
+                        if(ipv.size() != rmacv.size()){
+                            SWSS_LOG_ERROR("Skip route %s, it has an invalid router mac field %s", key.c_str(), remote_macs.c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+
+                        if(ipv.size() != vni_labelv.size()){
+                            SWSS_LOG_ERROR("Skip route %s, it has an invalid vni label field %s", key.c_str(), vni_labels.c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+
                         for (uint32_t i = 0; i < ipv.size(); i++)
                         {
                             if (i) nhg_str += NHG_DELIMITER;
@@ -831,6 +908,10 @@ void RouteOrch::doTask(Consumer& consumer)
                     /* fullmask subnet route is same as ip2me route */
                     else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
                     {
+                        /* The prefix is full mask (/32 or /128) and it is an interface subnet route, so IntfOrch has already
+                         * created an IP2ME route for it and we skip programming such route here as it already exists.
+                         * However, to keep APPL_DB and APPL_STATE_DB consistent we have to publish it. */
+                        publishRouteState(ctx);
                         it = consumer.m_toSync.erase(it);
                     }
                     /* subnet route, vrf leaked route, etc */
@@ -860,7 +941,9 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    /* Duplicate entry */
+                    /* Duplicate entry. Publish route state anyway since there could be multiple DEL, SET operations
+                     * consolidated by ConsumerStateTable leading to orchagent receiving only the last SET update. */
+                    publishRouteState(ctx);
                     it = consumer.m_toSync.erase(it);
                 }
 
@@ -1222,7 +1305,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         else if (it.isMplsNextHop() &&
                  m_neighOrch->hasNextHop(NextHopKey(it.ip_address, it.alias)))
         {
-            m_neighOrch->addNextHop(it);
+            NeighborContext ctx = NeighborContext(it);
+            m_neighOrch->addNextHop(ctx);
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         else
@@ -1552,6 +1636,20 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
     auto rt = it->second.begin();
     while(rt != it->second.end())
     {
+        /* Check if route points to nexthop group and skip */
+        NextHopGroupKey nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, (*rt).prefix);
+        if (nhg_key.getSize() > 1)
+        {
+            /* multiple mux nexthop case:
+             * skip for now, muxOrch::updateRoute() will handle route
+             */
+            SWSS_LOG_INFO("Route %s is mux multi nexthop route, skipping.",
+                        (*rt).prefix.to_string().c_str());
+
+            ++rt;
+            continue;
+        }
+
         SWSS_LOG_INFO("Updating route %s", (*rt).prefix.to_string().c_str());
         next_hop_id = m_neighOrch->getNextHopId(nextHop);
 
@@ -1578,6 +1676,24 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
     }
 
     return true;
+}
+
+/**
+ * @brief returns a route prefix associated with nexthopkey
+ * @param routeKeys empty set of routekeys to populate
+ * @param nexthopKey nexthop key to lookup
+ * @return true if found, false if not found.
+ */
+bool RouteOrch::getRoutesForNexthop(std::set<RouteKey>& routeKeys, const NextHopKey& nexthopKey)
+{
+    auto it = m_nextHops.find(nexthopKey);
+
+    if (it != m_nextHops.end())
+    {
+        routeKeys = it->second;
+    }
+
+    return it != m_nextHops.end();
 }
 
 void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
@@ -1724,7 +1840,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                      m_neighOrch->isNeighborResolved(nexthop))
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
-                m_neighOrch->addNextHop(nexthop);
+                NeighborContext ctx = NeighborContext(nexthop);
+                m_neighOrch->addNextHop(ctx);
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
             /* IP neighbor is not yet resolved */
@@ -2016,6 +2133,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     auto it_status = object_statuses.begin();
     auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (isFineGrained)
     {
         if (it_route == m_syncdRoutes.at(vrf_id).end())
@@ -2145,15 +2263,35 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             decreaseNextHopRefCount(it_route->second.nhg_key);
             auto ol_nextHops = it_route->second.nhg_key;
-            if (ol_nextHops.getSize() > 1
-                && m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+            if (ol_nextHops.getSize() > 1)
             {
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+                {
+                    SWSS_LOG_NOTICE("Update Nexthop Group %s", ol_nextHops.to_string().c_str());
+                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                }
+                if (mux_orch->isMuxNexthops(ol_nextHops))
+                {
+                    SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
+                    RouteKey routekey = { vrf_id, ipPrefix };
+                    auto nexthop_list = ol_nextHops.getNextHops();
+                    for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+                    {
+                        if (!nh->ip_address.isZero())
+                        {
+                            removeNextHopRoute(*nh, routekey);
+                        }
+                    }
+                }
             }
             else if (ol_nextHops.is_overlay_nexthop())
             {
-                SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+                if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
+                {
+                    SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
+                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                }
             }
             else if (ol_nextHops.is_srv6_nexthop())
             {
@@ -2211,6 +2349,18 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             addNextHopRoute(nexthop, r_key);
         }
     }
+    else if (mux_orch->isMuxNexthops(nextHops))
+    {
+        RouteKey routekey = { vrf_id, ipPrefix };
+        auto nexthop_list = nextHops.getNextHops();
+        for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+        {
+            if (!nh->ip_address.isZero())
+            {
+                addNextHopRoute(*nh, routekey);
+            }
+        }
+    }
 
     if (ipPrefix.isDefaultRoute())
     {
@@ -2224,7 +2374,23 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
+    /* add subnet decap term for VIP route */
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    if (config.enable && isVipRoute(ipPrefix, nextHops))
+    {
+        createVipRouteSubnetDecapTerm(ipPrefix);
+    }
+
+    // update routes to reflect mux state
+    if (mux_orch->isMuxNexthops(nextHops))
+    {
+        mux_orch->updateRoute(ipPrefix, true);
+    }
+
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
+
+    /* Publish and update APPL STATE DB route entry programming status */
+    publishRouteState(ctx);
 
     /*
      * If the route uses a temporary synced NHG owned by NhgOrch, return false
@@ -2383,16 +2549,38 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         decreaseNextHopRefCount(it_route->second.nhg_key);
 
         auto ol_nextHops = it_route->second.nhg_key;
-
-        if (it_route->second.nhg_key.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+        MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+        if (it_route->second.nhg_key.getSize() > 1)
         {
-            m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+            {
+                SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
+                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            }
+            if (mux_orch->isMuxNexthops(ol_nextHops))
+            {
+                SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
+                RouteKey routekey = { vrf_id, ipPrefix };
+                auto nexthop_list = ol_nextHops.getNextHops();
+                for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+                {
+                    if (!nh->ip_address.isZero())
+                    {
+                        SWSS_LOG_NOTICE("removeNextHopRoute");
+                        removeNextHopRoute(*nh, routekey);
+                    }
+                }
+                mux_orch->updateRoute(ipPrefix, false);
+            }
         }
         else if (ol_nextHops.is_overlay_nexthop())
         {
-            SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
-            m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+            const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+            if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
+            {
+                SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
+                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+            }
         }
         /*
          * Additionally check if the NH has label and its ref count == 0, then
@@ -2420,6 +2608,13 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.nhg_key.to_string().c_str());
 
+    /* Publish removal status, removes route entry from APPL STATE DB */
+    publishRouteState(ctx);
+
+    /* Remove the VIP route subnet decap term */
+    removeVipRouteSubnetDecapTerm(ipPrefix);
+
+
     if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         it_route_table->second[ipPrefix] = RouteNhg();
@@ -2429,7 +2624,6 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
     else
     {
-        gFlowCounterRouteOrch->handleRouteRemove(vrf_id, ipPrefix);
         it_route_table->second.erase(ipPrefix);
 
         /* Notify about the route next hop removal */
@@ -2440,9 +2634,56 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             m_syncdRoutes.erase(vrf_id);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
         }
+
+        gFlowCounterRouteOrch->handleRouteRemove(vrf_id, ipPrefix);
     }
 
     return true;
+}
+
+bool RouteOrch::isRouteExists(const IpPrefix& prefix)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t& vrf_id = gVirtualRouterId;
+
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vrf_id;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, prefix);
+    auto it_route_table = m_syncdRoutes.find(vrf_id);
+    if (it_route_table == m_syncdRoutes.end())
+    {
+        SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%" PRIx64 "\n", vrf_id);
+        return true;
+    }
+    auto it_route = it_route_table->second.find(prefix);
+    size_t creating = gRouteBulker.creating_entries_count(route_entry);
+    if (it_route == it_route_table->second.end() && creating == 0)
+    {
+        SWSS_LOG_INFO("No Route exists for vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
+                      prefix.to_string().c_str());
+        return false;
+    }
+    return true;
+}
+
+bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
+{
+    // This function removes the route if it exists.
+
+    string key = "ROUTE_TABLE:" + prefix.to_string();
+    RouteBulkContext context(key, false);
+    context.ip_prefix = prefix;
+    context.vrf_id = gVirtualRouterId;
+    if (removeRoute(context))
+    {
+        SWSS_LOG_INFO("Could not find the route  with prefix %s", prefix.to_string().c_str());
+        return true;
+    }
+    gRouteBulker.flush();
+    return removeRoutePost(context);
+
 }
 
 bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextHop)
@@ -2573,4 +2814,72 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index)
     {
         gCbfNhgOrch->decNhgRefCount(nhg_index);
     }
+}
+
+void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvs;
+
+    /* Leave the fvs empty if the operation type is "DEL".
+     * An empty fvs makes ResponsePublisher::publish() remove the state entry from APPL_STATE_DB
+     */
+    if (ctx.is_set)
+    {
+        fvs.emplace_back("protocol", ctx.protocol);
+    }
+
+    const bool replace = false;
+
+    m_publisher.publish(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
+}
+
+inline bool RouteOrch::isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+{
+    bool res = true;
+    /* Ensure all next hops are vlan devices */
+    for (const auto &nextHop : nextHops.getNextHops())
+    {
+        res &= (!nextHop.alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX));
+    }
+    /* Ensure the prefix is non-local */
+    if (nextHops.getSize() == 1)
+    {
+        res &= (!m_intfsOrch->isPrefixSubnet(ipPrefix, nextHops.getNextHops().begin()->alias));
+    }
+    return res;
+}
+
+inline void RouteOrch::createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    if (!config.enable || m_SubnetDecapTermsCreated.find(ipPrefix) != m_SubnetDecapTermsCreated.end())
+    {
+        return;
+    }
+    SWSS_LOG_NOTICE("Add subnet decap term for %s", ipPrefix.to_string().c_str());
+    static const vector<FieldValueTuple> data = {
+        {"term_type", "MP2MP"},
+        {"subnet_type", "vip"}
+    };
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    m_appTunnelDecapTermProducer.set(key, data);
+    m_SubnetDecapTermsCreated.insert(ipPrefix);
+}
+
+inline void RouteOrch::removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
+{
+    auto it = m_SubnetDecapTermsCreated.find(ipPrefix);
+    if (it == m_SubnetDecapTermsCreated.end())
+    {
+        return;
+    }
+    const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
+    SWSS_LOG_NOTICE("Remove subnet decap term for %s", ipPrefix.to_string().c_str());
+    string tunnel_name = ipPrefix.isV4() ? config.tunnel : config.tunnel_v6;
+    string key = tunnel_name + ":" + ipPrefix.to_string();
+    m_appTunnelDecapTermProducer.del(key);
+    m_SubnetDecapTermsCreated.erase(it);
 }

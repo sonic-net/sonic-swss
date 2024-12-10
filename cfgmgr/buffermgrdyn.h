@@ -147,7 +147,7 @@ typedef std::map<std::string, std::string> gearbox_delay_t;
 class BufferMgrDynamic : public Orch
 {
 public:
-    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo);
+    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, DBConnector *applStateDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo);
     using Orch::doTask;
 
 private:
@@ -196,6 +196,7 @@ private:
     // key: port name
     // updated only when a port's speed and cable length updated
     port_info_lookup_t m_portInfoLookup;
+    std::map<std::string, std::string> m_cableLengths;
     std::set<std::string> m_adminDownPorts;
     std::set<std::string> m_pendingApplyZeroProfilePorts;
     std::set<std::string> m_pendingSupportedButNotConfiguredPorts[BUFFER_DIR_MAX];
@@ -203,6 +204,7 @@ private:
 
     // BUFFER_POOL table and cache
     ProducerStateTable m_applBufferPoolTable;
+    Table m_applStateBufferPoolTable;
     Table m_stateBufferPoolTable;
     buffer_pool_lookup_t m_bufferPoolLookup;
 
@@ -293,6 +295,7 @@ private:
     task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
+    bool isSharedHeadroomPoolEnabledInSai();
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, buffer_direction_t dir);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
@@ -302,6 +305,7 @@ private:
     void handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
     void handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
     bool isReadyToReclaimBufferOnPort(const std::string &port);
+    void cleanUpItemsForReclaimingBuffer(const std::string &port);
 
     // Main flows
     template<class T> task_process_status reclaimReservedBufferForPort(const std::string &port, T &obj, buffer_direction_t dir);

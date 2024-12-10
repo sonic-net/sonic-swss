@@ -25,9 +25,9 @@ namespace flowcounterrouteorch_test
     sai_remove_counter_fn old_remove_counter;
 
     sai_status_t _ut_stub_create_counter(
-        _Out_ sai_object_id_t *counter_id, 
-	    _In_ sai_object_id_t switch_id, 
-	    _In_ uint32_t attr_count, 
+        _Out_ sai_object_id_t *counter_id,
+	    _In_ sai_object_id_t switch_id,
+	    _In_ uint32_t attr_count,
 	    _In_ const sai_attribute_t *attr_list)
     {
         num_created_counter ++;
@@ -98,7 +98,7 @@ namespace flowcounterrouteorch_test
 
             gVirtualRouterId = attr.value.oid;
 
-            
+
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
@@ -135,6 +135,7 @@ namespace flowcounterrouteorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            gDirectory.set(gPortsOrch);
 
             vector<string> vnet_tables = {
                 APP_VNET_RT_TABLE_NAME,
@@ -175,12 +176,18 @@ namespace flowcounterrouteorch_test
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
-            auto* tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+            ASSERT_EQ(gTunneldecapOrch, nullptr);
+            vector<string> tunnel_tables = {
+                APP_TUNNEL_DECAP_TABLE_NAME,
+                APP_TUNNEL_DECAP_TERM_TABLE_NAME
+            };
+            gTunneldecapOrch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+
             vector<string> mux_tables = {
                 CFG_MUX_CABLE_TABLE_NAME,
                 CFG_PEER_SWITCH_TABLE_NAME
             };
-            auto* mux_orch = new MuxOrch(m_config_db.get(), mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
+            auto* mux_orch = new MuxOrch(m_config_db.get(), mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
             gDirectory.set(mux_orch);
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
@@ -199,6 +206,12 @@ namespace flowcounterrouteorch_test
                 APP_SRV6_MY_SID_TABLE_NAME
             };
             gSrv6Orch = new Srv6Orch(m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
+
+            // Start FlowCounterRouteOrch
+            static const  vector<string> route_pattern_tables = {
+                CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+            };
+            gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
 
             ASSERT_EQ(gRouteOrch, nullptr);
             const int routeorch_pri = 5;
@@ -276,14 +289,7 @@ namespace flowcounterrouteorch_test
             consumer->addToSync(entries);
             static_cast<Orch *>(flexCounterOrch)->doTask();
 
-            // Start FlowCounterRouteOrch
-            static const  vector<string> route_pattern_tables = {
-                CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
-            };
-            gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
-            
             static_cast<Orch *>(gFlowCounterRouteOrch)->doTask();
-
             return;
         }
 
@@ -300,8 +306,14 @@ namespace flowcounterrouteorch_test
             delete gBfdOrch;
             gBfdOrch = nullptr;
 
+            delete gSrv6Orch;
+            gSrv6Orch = nullptr;
+
             delete gNeighOrch;
             gNeighOrch = nullptr;
+
+            delete gTunneldecapOrch;
+            gTunneldecapOrch = nullptr;
 
             delete gFdbOrch;
             gFdbOrch = nullptr;
@@ -311,12 +323,9 @@ namespace flowcounterrouteorch_test
 
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
-            
+
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
-
-            delete gSrv6Orch;
-            gSrv6Orch = nullptr;
 
             delete gRouteOrch;
             gRouteOrch = nullptr;
@@ -357,5 +366,45 @@ namespace flowcounterrouteorch_test
         static_cast<Orch *>(gFlowCounterRouteOrch)->doTask();
         ASSERT_TRUE(current_counter_num - num_created_counter == 1);
 
+    }
+
+    TEST_F(FlowcounterRouteOrchTest, DelayAddVRF)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        // Setting route pattern with VRF does not exist
+        auto current_counter_num = num_created_counter;
+        entries.push_back({"Vrf1|1.1.1.0/24", "SET", { {"max_match_count", "10"}}});
+        auto consumer = dynamic_cast<Consumer *>(gFlowCounterRouteOrch->getExecutor(CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFlowCounterRouteOrch)->doTask();
+        ASSERT_TRUE(num_created_counter - current_counter_num == 0);
+
+        // Create VRF
+        entries.push_back({"Vrf1", "SET", { {"v4", "true"} }});
+        auto vrf_consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrf_consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(num_created_counter - current_counter_num == 0);
+
+        // Add route to VRF
+        Table routeTable = Table(m_app_db.get(), APP_ROUTE_TABLE_NAME);
+        routeTable.set("Vrf1:1.1.1.1/32", { {"ifname", "Ethernet0" },
+                                            {"nexthop", "10.0.0.2" }});
+        gRouteOrch->addExistingData(&routeTable);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(num_created_counter - current_counter_num == 1);
+
+        // Deleting route pattern
+        current_counter_num = num_created_counter;
+        entries.clear();
+        entries.push_back({"Vrf1|1.1.1.0/24", "DEL", { {"max_match_count", "10"}}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFlowCounterRouteOrch)->doTask();
+        ASSERT_TRUE(current_counter_num - num_created_counter == 1);
+
+        // Deleting VRF
+        entries.push_back({"Vrf1", "DEL", { {"v4", "true"} }});
+        vrf_consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
     }
 }

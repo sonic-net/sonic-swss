@@ -5,7 +5,7 @@ import buffer_model
 
 from dvslib.dvs_common import PollingConfig
 
-@pytest.yield_fixture
+@pytest.fixture
 def dynamic_buffer(dvs):
     buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
     yield
@@ -775,8 +775,162 @@ class TestBufferMgrDyn(object):
     def test_bufferPortMaxParameter(self, dvs, testlog):
         self.setup_db(dvs)
 
+        # Update log level so that we can analyze the log in case the test failed
+        logfvs = self.config_db.wait_for_entry("LOGGER", "buffermgrd")
+        old_log_level = logfvs.get("LOGLEVEL")
+        logfvs["LOGLEVEL"] = "INFO"
+        self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
+
         # Check whether port's maximum parameter has been exposed to STATE_DB
         fvs = self.state_db.wait_for_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
         assert int(fvs["max_queues"]) and int(fvs["max_priority_groups"])
 
+        _, oa_pid = dvs.runcmd("pgrep orchagent")
+
+        try:
+            fvs["max_headroom_size"] = "122880"
+            self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
+
+            # Startup interface
+            dvs.port_admin_set('Ethernet0', 'up')
+            # Wait for the lossy profile to be handled
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:0", {"profile": "ingress_lossy_profile"})
+
+            # Stop orchagent to simulate the scenario that the system is during initialization
+            dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
+
+            # Create a lossless profile
+            profile_fvs = {'xon': '19456',
+                          'xoff': '10240',
+                          'size': '29696',
+                          'dynamic_th': '0',
+                          'pool': 'ingress_lossless_pool'}
+            self.config_db.update_entry('BUFFER_PROFILE', 'test', profile_fvs)
+
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'test'})
+
+            # Make sure the entry has been handled by buffermgrd and is pending on orchagent's queue
+            self.app_db.wait_for_field_match("_BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "test"})
+
+            # Should not be added due to the maximum headroom exceeded
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': 'ingress_lossy_profile'})
+            # Should not be added due to the maximum headroom exceeded
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'test'})
+
+            # Resume orchagent
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+            # Check whether BUFFER_PG_TABLE is updated as expected 
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "test"})
+
+            keys = self.app_db.get_keys('BUFFER_PG_TABLE')
+
+            assert 'Ethernet0:1' not in keys
+            assert 'Ethernet0:6' not in keys
+
+            # Update the profile
+            profile_fvs['size'] = '28672'
+            profile_fvs['xoff'] = '9216'
+            self.config_db.update_entry('BUFFER_PROFILE', 'test', profile_fvs)
+            self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', 'test', profile_fvs)
+
+            # Verify a pending remove PG is not counted into the accumulative headroom
+            dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
+
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+            # Should be added because PG 3-4 has been removed and there are sufficient headroom
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': 'ingress_lossy_profile'})
+
+            # Resume orchagent
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+            # Check whether BUFFER_PG_TABLE is updated as expected
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:1", {"profile": "ingress_lossy_profile"})
+        finally:
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|1')
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|6')
+            self.config_db.delete_entry('BUFFER_PROFILE', 'test')
+
+            fvs.pop("max_headroom_size")
+            self.state_db.delete_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
+            self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
+
+            if old_log_level:
+                logfvs["LOGLEVEL"] = old_log_level
+                self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
+
+            dvs.port_admin_set('Ethernet0', 'down')
+
         self.cleanup_db(dvs)
+
+
+    def test_bufferPoolInitWithSHP(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        try:
+            # 1. Enable the shared headroom pool
+            default_lossless_buffer_parameter = self.config_db.get_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
+            default_lossless_buffer_parameter['over_subscribe_ratio'] = '2'
+            self.config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_buffer_parameter)
+
+            # 2. Stop the orchagent
+            _, oa_pid = dvs.runcmd("pgrep orchagent")
+            dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
+
+            # 3. Remove the size from CONFIG_DB|BUFFER_POOL.ingress_lossless_pool
+            original_ingress_lossless_pool = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            try:
+                self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'size')
+                self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'xoff')
+            except Exception as e:
+                pass
+
+            # 4. Remove the ingress_lossless_pool from the APPL_DB
+            self.app_db.delete_entry('BUFFER_POOL_TABLE', 'ingress_lossless_pool')
+
+            # 5. Mock it by adding a "TABLE_SET" entry to trigger the fallback logic
+            self.app_db.update_entry("BUFFER_PG_TABLE_SET", "", {"NULL": "NULL"})
+
+            # 6. Invoke the lua plugin
+            _, output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            assert "ingress_lossless_pool:2048:1024" in output
+
+        finally:
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)
+            self.config_db.delete_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
+            self.app_db.delete_entry("BUFFER_PG_TABLE_SET", "")
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+
+    def test_bufferPoolPercentage(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        try:
+            self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'size')
+        except Exception as e:
+            pass
+
+        try:
+            percentage = 75
+            margin = 1
+
+            re_pool_size = "ingress_lossless_pool:([0-9]+)"
+            _, original_output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            original_size = int(re.match(re_pool_size, original_output).group(1))
+
+            original_ingress_lossless_pool = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            ingress_lossless_pool = original_ingress_lossless_pool
+            ingress_lossless_pool['percentage'] = str(percentage)
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', ingress_lossless_pool)
+
+            _, percentage_output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            percentage_size = int(re.match(re_pool_size, percentage_output).group(1))
+
+            real_percentage = percentage_size * 100 / original_size
+            assert abs(percentage - real_percentage) < margin
+        finally:
+            self.config_db.delete_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)

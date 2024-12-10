@@ -10,6 +10,7 @@
 #include "tunneldecaporch.h"
 #include "aclorch.h"
 #include "neighorch.h"
+#include "bulker.h"
 
 enum MuxState
 {
@@ -29,6 +30,32 @@ enum MuxStateChange
     MUX_STATE_UNKNOWN_STATE
 };
 
+enum MuxCableType
+{
+    ACTIVE_STANDBY,
+    ACTIVE_ACTIVE
+};
+
+struct MuxRouteBulkContext
+{
+    std::deque<sai_status_t>            object_statuses;            // Bulk statuses
+    IpPrefix                            pfx;                        // Route prefix
+    sai_object_id_t                     nh;                         // nexthop id
+
+    MuxRouteBulkContext(IpPrefix pfx)
+        : pfx(pfx)
+    {
+    }
+
+    MuxRouteBulkContext(IpPrefix pfx, sai_object_id_t nh)
+        : pfx(pfx), nh(nh)
+    {
+    }
+};
+
+extern size_t gMaxBulkSize;
+extern sai_route_api_t* sai_route_api;
+
 // Forward Declarations
 class MuxOrch;
 class MuxCableOrch;
@@ -46,9 +73,8 @@ private:
     void createMuxAclRule(shared_ptr<AclRulePacket> rule, string strTable);
     void bindAllPorts(AclTable &acl_table);
 
-    // class shared dict: ACL table name -> ACL table
-    static std::map<std::string, AclTable> acl_table_;
     sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
+    bool is_ingress_acl_ = true;
     string alias_;
 };
 
@@ -59,24 +85,33 @@ typedef std::map<IpAddress, sai_object_id_t> MuxNeighbor;
 class MuxNbrHandler
 {
 public:
-    MuxNbrHandler() = default;
+    MuxNbrHandler() : gRouteBulker(sai_route_api, gMaxBulkSize) {};
 
     bool enable(bool update_rt);
     bool disable(sai_object_id_t);
     void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     sai_object_id_t getNextHopId(const NextHopKey);
+    MuxNeighbor getNeighbors() const { return neighbors_; };
+    string getAlias() const { return alias_; };
+
+private:
+    bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+    bool addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+
+    inline void updateTunnelRoute(NextHopKey, bool = true);
 
 private:
     MuxNeighbor neighbors_;
     string alias_;
+    EntityBulker<sai_route_api_t> gRouteBulker;
 };
 
 // Mux Cable object
 class MuxCable
 {
 public:
-    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip);
+    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type);
 
     bool isActive() const
     {
@@ -87,12 +122,14 @@ public:
     using state_machine_handlers = map<MuxStateChange, bool (MuxCable::*)()>;
 
     void setState(string state);
+    void rollbackStateChange();
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
     bool isStateChangeFailed() { return st_chg_failed_; }
 
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
+    void updateRoutes();
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
@@ -107,8 +144,10 @@ private:
     bool nbrHandler(bool enable, bool update_routes = true);
 
     string mux_name_;
+    MuxCableType cable_type_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
+    MuxState prev_state_;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
 
@@ -132,6 +171,7 @@ const request_description_t mux_cfg_request_description = {
                 { "server_ipv6", REQ_T_IP_PREFIX },
                 { "address_ipv4", REQ_T_IP },
                 { "soc_ipv4", REQ_T_IP_PREFIX },
+                { "soc_ipv6", REQ_T_IP_PREFIX },
                 { "cable_type", REQ_T_STRING },
             },
             { }
@@ -147,6 +187,7 @@ typedef std::unique_ptr<MuxCable> MuxCable_T;
 typedef std::map<std::string, MuxCable_T> MuxCableTb;
 typedef std::map<IpAddress, NHTunnel> MuxTunnelNHs;
 typedef std::map<NextHopKey, std::string> NextHopTb;
+typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 
 class MuxCfgRequest : public Request
 {
@@ -173,18 +214,38 @@ public:
         return mux_cable_tb_.at(portName).get();
     }
 
+    bool isSkipNeighbor(const IpAddress& nbr)
+    {
+        return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
+    }
+
     MuxCable* findMuxCableInSubnet(IpAddress);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
 
     void addNexthop(NextHopKey, string = "");
     void removeNexthop(NextHopKey);
+    bool containsNextHop(const NextHopKey&);
+    bool isMuxNexthops(const NextHopGroupKey&);
     string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
+
+    void updateRoute(const IpPrefix &pfx, bool add);
+    bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
+
+    void enableCachingNeighborUpdate()
+    {
+        enable_cache_neigh_updates_ = true;
+    }
+    void disableCachingNeighborUpdate()
+    {
+        enable_cache_neigh_updates_ = false;
+    }
+    void updateCachedNeighbors();
 
 private:
     virtual bool addOperation(const Request& request);
@@ -197,6 +258,26 @@ private:
     void updateFdb(const FdbUpdate&);
 
     bool getMuxPort(const MacAddress&, const string&, string&);
+
+    /***
+     * Methods for managing tunnel routes for neighbor IPs not associated
+     * with a specific mux cable
+    ***/
+    void createStandaloneTunnelRoute(IpAddress neighborIp);
+    void removeStandaloneTunnelRoute(IpAddress neighborIp);
+
+    void addSkipNeighbors(const std::set<IpAddress> &neighbors)
+    {
+        skip_neighbors_.insert(neighbors.begin(), neighbors.end());
+    }
+
+    void removeSkipNeighbors(const std::set<IpAddress> &neighbors)
+    {
+        for (const IpAddress &neighbor : neighbors)
+        {
+            skip_neighbors_.erase(neighbor);
+        }
+    }
 
     IpAddress mux_peer_switch_ = 0x0;
     sai_object_id_t mux_tunnel_id_ = SAI_NULL_OBJECT_ID;
@@ -212,6 +293,11 @@ private:
     FdbOrch *fdb_orch_;
 
     MuxCfgRequest request_;
+    std::set<IpAddress> standalone_tunnel_neighbors_;
+    std::set<IpAddress> skip_neighbors_;
+
+    bool enable_cache_neigh_updates_ = false;
+    std::vector<NeighborUpdate> cached_neigh_updates_;
 };
 
 const request_description_t mux_cable_request_description = {

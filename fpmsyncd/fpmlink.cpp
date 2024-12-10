@@ -39,9 +39,14 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
     int len;
     short encap_type = 0;
     struct rtmsg *rtm;
-    struct rtattr *tb[RTA_MAX + 1];
+    struct rtattr *tb[RTA_MAX + 1] = {0};
 
     rtm = (struct rtmsg *)NLMSG_DATA(h);
+
+    if (h->nlmsg_type == RTM_NEWSRV6LOCALSID || h->nlmsg_type == RTM_DELSRV6LOCALSID)
+    {
+        return true;
+    }
 
     if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
     {
@@ -54,7 +59,6 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         return false;
     }
 
-    memset(tb, 0, sizeof(tb));
     netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
 
     if (!tb[RTA_MULTIPATH])
@@ -120,7 +124,7 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
     m_server_up(false),
     m_routesync(rsync)
 {
-    struct sockaddr_in addr;
+    struct sockaddr_in addr = {};
     int true_val = 1;
 
     m_server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -141,7 +145,6 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
         throw system_error(errno, system_category());
     }
 
-    memset (&addr, 0, sizeof (addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -160,11 +163,17 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
 
     m_server_up = true;
     m_messageBuffer = new char[m_bufSize];
+    m_sendBuffer = new char[m_bufSize];
+
+    m_routesync->onFpmConnected(*this);
 }
 
 FpmLink::~FpmLink()
 {
+    m_routesync->onFpmDisconnected();
+
     delete[] m_messageBuffer;
+    delete[] m_sendBuffer;
     if (m_connected)
         close(m_connection_socket);
     if (m_server_up)
@@ -212,52 +221,103 @@ uint64_t FpmLink::readData()
         hdr = reinterpret_cast<fpm_msg_hdr_t *>(static_cast<void *>(m_messageBuffer + start));
         left = m_pos - start;
         if (left < FPM_MSG_HDR_LEN)
+        {
             break;
+        }
+
         /* fpm_msg_len includes header size */
         msg_len = fpm_msg_len(hdr);
         if (left < msg_len)
+        {
             break;
+        }
 
         if (!fpm_msg_ok(hdr, left))
-            throw system_error(make_error_code(errc::bad_message), "Malformed FPM message received");
-
-        if (hdr->msg_type == FPM_MSG_TYPE_NETLINK)
         {
-            bool isRaw = false;
-
-            nlmsghdr *nl_hdr = (nlmsghdr *)fpm_msg_data(hdr);
-
-            /*
-             * EVPN Type5 Add Routes need to be process in Raw mode as they contain 
-             * RMAC, VLAN and L3VNI information.
-             * Where as all other route will be using rtnl api to extract information 
-             * from the netlink msg.
-           * */
-            isRaw = isRawProcessing(nl_hdr);
-
-            nl_msg *msg = nlmsg_convert(nl_hdr);
-            if (msg == NULL)
-            {
-                throw system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
-            }
-
-            nlmsg_set_proto(msg, NETLINK_ROUTE);
-
-            if (isRaw)
-            {
-                /* EVPN Type5 Add route processing */
-                processRawMsg(nl_hdr);
-            }
-            else
-            {
-                NetDispatcher::getInstance().onNetlinkMessage(msg);
-            }
-            nlmsg_free(msg);
+            throw system_error(make_error_code(errc::bad_message), "Malformed FPM message received");
         }
+
+        processFpmMessage(hdr);
+
         start += msg_len;
     }
 
     memmove(m_messageBuffer, m_messageBuffer + start, m_pos - start);
     m_pos = m_pos - (uint32_t)start;
     return 0;
+}
+
+void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
+{
+    size_t msg_len = fpm_msg_len(hdr);
+
+    if (hdr->msg_type != FPM_MSG_TYPE_NETLINK)
+    {
+        return;
+    }
+    nlmsghdr *nl_hdr = (nlmsghdr *)fpm_msg_data(hdr);
+
+    /* Read all netlink messages inside FPM message */
+    for (; NLMSG_OK (nl_hdr, msg_len); nl_hdr = NLMSG_NEXT(nl_hdr, msg_len))
+    {
+        /*
+         * EVPN Type5 Add Routes need to be process in Raw mode as they contain
+         * RMAC, VLAN and L3VNI information.
+         * Where as all other route will be using rtnl api to extract information
+         * from the netlink msg.
+         */
+        bool isRaw = isRawProcessing(nl_hdr);
+
+        nl_msg *msg = nlmsg_convert(nl_hdr);
+        if (msg == NULL)
+        {
+            throw system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
+        }
+
+        nlmsg_set_proto(msg, NETLINK_ROUTE);
+
+        if (isRaw)
+        {
+            /* EVPN Type5 Add route processing */
+            processRawMsg(nl_hdr);
+        }
+        else
+        {
+            NetDispatcher::getInstance().onNetlinkMessage(msg);
+        }
+        nlmsg_free(msg);
+    }
+}
+
+bool FpmLink::send(nlmsghdr* nl_hdr)
+{
+    fpm_msg_hdr_t hdr{};
+
+    size_t len = fpm_msg_align(sizeof(hdr) + nl_hdr->nlmsg_len);
+
+    if (len > m_bufSize)
+    {
+        SWSS_LOG_THROW("Message length %zu is greater than the send buffer size %d", len, m_bufSize);
+    }
+
+    hdr.version = FPM_PROTO_VERSION;
+    hdr.msg_type = FPM_MSG_TYPE_NETLINK;
+    hdr.msg_len = htons(static_cast<uint16_t>(len));
+
+    memcpy(m_sendBuffer, &hdr, sizeof(hdr));
+    memcpy(m_sendBuffer + sizeof(hdr), nl_hdr, nl_hdr->nlmsg_len);
+
+    size_t sent = 0;
+    while (sent != len)
+    {
+        auto rc = ::send(m_connection_socket, m_sendBuffer + sent, len - sent, 0);
+        if (rc == -1)
+        {
+            SWSS_LOG_ERROR("Failed to send FPM message: %s", strerror(errno));
+            return false;
+        }
+        sent += rc;
+    }
+
+    return true;
 }

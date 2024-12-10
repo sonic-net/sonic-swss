@@ -15,7 +15,7 @@ fdbsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(COV_CFLAGS) $(CF
 fdbsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon $(COV_LDFLAGS)
 
 if GCOV_ENABLED
-fdbsyncd_LDADD += -lgcovpreload
+fdbsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED

@@ -62,7 +62,7 @@ class CoppMgr : public Orch
 {
 public:
     CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
-        const std::vector<std::string> &tableNames);
+        const std::vector<std::string> &tableNames, const std::string copp_init_file = COPP_INIT_FILE);
 
     using Orch::doTask;
 private:
@@ -75,6 +75,7 @@ private:
     CoppCfg                m_coppGroupInitCfg;
     CoppCfg                m_coppTrapInitCfg;
     CoppCfg                m_featuresCfgTable;
+    std::string            m_coppCfgfile;
 
 
     void doTask(Consumer &consumer);
@@ -100,6 +101,7 @@ private:
     bool isTrapGroupInstalled(std::string key);
     bool isFeatureEnabled(std::string feature);
     void mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable);
+    bool isDupEntry(const std::string &key, std::vector<FieldValueTuple> &fvs);
 
     void removeTrap(std::string key);
     void addTrap(std::string trap_ids, std::string trap_group);

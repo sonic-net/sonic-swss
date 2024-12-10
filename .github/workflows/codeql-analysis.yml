@@ -1,0 +1,159 @@
+# For more infomation, please visit: https://github.com/github/codeql-action
+
+name: "CodeQL"
+
+on:
+  push:
+    branches:
+      - 'master'
+      - '202[0-9][0-9][0-9]'
+  pull_request:
+    branches:
+      - 'master'
+      - '202[0-9][0-9][0-9]'
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'cpp','python' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    # Initializes the CodeQL tools for scanning.
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2.1.29
+      with:
+        config-file: ./.github/codeql/codeql-config.yml
+        languages: ${{ matrix.language }}
+
+    - if: matrix.language == 'cpp'
+      name: Install prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxml-simple-perl \
+            aspell \
+            aspell-en \
+            libhiredis-dev \
+            libnl-3-dev \
+            libnl-genl-3-dev \
+            libnl-route-3-dev \
+            libnl-nf-3-dev \
+            libzmq3-dev \
+            libzmq5 \
+            swig \
+            libpython3-dev \
+            libgtest-dev \
+            libgmock-dev \
+            libboost-dev \
+            libboost-serialization-dev \
+            dh-exec \
+            doxygen \
+            cdbs \
+            bison \
+            flex \
+            graphviz \
+            autoconf-archive \
+            uuid-dev \
+            libjansson-dev \
+            nlohmann-json3-dev \
+            build-essential \
+            devscripts \
+            stgit
+
+    - if: matrix.language == 'cpp'
+      name: Build sonic-swss-common
+      run: |
+        cd ..
+        git clone https://github.com/sonic-net/sonic-swss-common
+        pushd sonic-swss-common
+        ./autogen.sh
+        dpkg-buildpackage -rfakeroot -us -uc -b -Pnoyangmod,nopython2 -j$(nproc)
+        popd
+        dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+      env:
+        SWSSCOMMON_VER: "1.0.0"
+
+    - if: matrix.language == 'cpp'
+      name: Build sonic-sairedis
+      run: |
+        cd ..
+        git clone --recursive https://github.com/sonic-net/sonic-sairedis
+        pushd sonic-sairedis
+        ./autogen.sh
+        DEB_BUILD_OPTIONS=nocheck \
+        SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" \
+        SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" \
+        DEB_CFLAGS_SET="-Wno-error" DEB_CXXFLAGS_SET="-Wno-error" \
+        dpkg-buildpackage -rfakeroot -us -uc -b -Psyncd,vs,nopython2 -j$(nproc)
+        popd
+        dpkg-deb -x libsairedis_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsairedis-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+      env:
+        SAIREDIS_VER: "1.0.0"
+
+    # Inject libnl deb only after sonic-sairedis compilation is done.
+    - if: matrix.language == 'cpp'
+      name: Build libnl
+      run: |
+        cd ..
+        git clone https://github.com/sonic-net/sonic-buildimage
+        pushd sonic-buildimage/src/libnl3
+        dget -u https://deb.debian.org/debian/pool/main/libn/libnl3/libnl3_${LIBNL3_VER}-${LIBNL3_REV}.dsc
+        pushd libnl3-${LIBNL3_VER}
+        git init
+        git config --local user.name $USER
+        git config --local user.email $USER@microsoft.com
+        git add -f *
+        git commit -qm "initial commit"
+        stg init
+        stg import -s ../patch/series
+        git config --local --unset user.name
+        git config --local --unset user.email
+        ln -s ../debian debian
+        DPKG_GENSYMBOLS_CHECK_LEVEL=0 dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
+        popd
+        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        popd
+      env:
+        LIBNL3_VER: "3.7.0"
+        LIBNL3_REV: "0.2"
+        LIBNL3_REV_SONIC: "0.2+b1sonic1"
+
+    - if: matrix.language == 'cpp'
+      name: Build repository
+      run: |
+        ./autogen.sh
+        ./configure --prefix=/usr \
+        --with-extra-inc=$(dirname $GITHUB_WORKSPACE)/usr/include \
+        --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu \
+        --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu \
+        --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
+
+    - name: Perform CodeQL analysis
+      uses: github/codeql-action/analyze@v2.1.29
+      with:
+        category: "/language:${{matrix.language}}"

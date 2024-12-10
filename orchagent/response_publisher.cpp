@@ -5,13 +5,6 @@
 #include <string>
 #include <vector>
 
-#include "timestamp.h"
-
-extern bool gResponsePublisherRecord;
-extern bool gResponsePublisherLogRotate;
-extern std::ofstream gResponsePublisherRecordOfs;
-extern std::string gResponsePublisherRecordFile;
-
 namespace
 {
 
@@ -35,27 +28,10 @@ std::string PrependedComponent(const ReturnCode &status)
     return kOrchagentComponent;
 }
 
-void PerformLogRotate()
-{
-    if (!gResponsePublisherLogRotate)
-    {
-        return;
-    }
-    gResponsePublisherLogRotate = false;
-
-    gResponsePublisherRecordOfs.close();
-    gResponsePublisherRecordOfs.open(gResponsePublisherRecordFile);
-    if (!gResponsePublisherRecordOfs.is_open())
-    {
-        SWSS_LOG_ERROR("Failed to reopen Response Publisher record file %s: %s", gResponsePublisherRecordFile.c_str(),
-                       strerror(errno));
-    }
-}
-
 void RecordDBWrite(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &attrs,
                    const std::string &op)
 {
-    if (!gResponsePublisherRecord)
+    if (!swss::Recorder::Instance().respub.isRecord())
     {
         return;
     }
@@ -66,14 +42,13 @@ void RecordDBWrite(const std::string &table, const std::string &key, const std::
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    PerformLogRotate();
-    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << std::endl;
+    swss::Recorder::Instance().respub.record(s);
 }
 
 void RecordResponse(const std::string &response_channel, const std::string &key,
                     const std::vector<swss::FieldValueTuple> &attrs, const std::string &status)
 {
-    if (!gResponsePublisherRecord)
+    if (!swss::Recorder::Instance().respub.isRecord())
     {
         return;
     }
@@ -84,20 +59,59 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    PerformLogRotate();
-    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << std::endl;
+    swss::Recorder::Instance().respub.record(s);
 }
 
 } // namespace
 
-ResponsePublisher::ResponsePublisher() : m_db("APPL_STATE_DB", 0)
+ResponsePublisher::ResponsePublisher(const std::string &dbName, bool buffered, bool db_write_thread)
+    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)), m_buffered(buffered)
 {
+    if (m_buffered)
+    {
+        m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
+        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
+    }
+    else
+    {
+        m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
+        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
+    }
+    if (db_write_thread)
+    {
+        m_update_thread = std::unique_ptr<std::thread>(new std::thread(&ResponsePublisher::dbUpdateThread, this));
+    }
+}
+
+ResponsePublisher::~ResponsePublisher()
+{
+    if (m_update_thread != nullptr)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/false, /*shutdown=*/true);
+        }
+        m_signal.notify_one();
+        m_update_thread->join();
+    }
 }
 
 void ResponsePublisher::publish(const std::string &table, const std::string &key,
                                 const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
                                 const std::vector<swss::FieldValueTuple> &state_attrs, bool replace)
 {
+    std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
+    swss::NotificationProducer notificationProducer{m_ntf_pipe.get(), response_channel, m_buffered};
+
+    auto intent_attrs_copy = intent_attrs;
+    // Add error message as the first field-value-pair.
+    swss::FieldValueTuple err_str("err_str", PrependedComponent(status) + status.message());
+    intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
+    // Sends the response to the notification channel.
+    notificationProducer.send(status.codeStr(), key, intent_attrs_copy);
+    RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr());
+
     // Write to the DB only if:
     // 1) A write operation is being performed and state attributes are specified.
     // 2) A successful delete operation.
@@ -105,20 +119,6 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
     {
         writeToDB(table, key, state_attrs, intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
     }
-
-    std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
-    if (m_notifiers.find(table) == m_notifiers.end())
-    {
-        m_notifiers[table] = std::make_unique<swss::NotificationProducer>(&m_db, response_channel);
-    }
-
-    auto intent_attrs_copy = intent_attrs;
-    // Add error message as the first field-value-pair.
-    swss::FieldValueTuple err_str("err_str", PrependedComponent(status) + status.message());
-    intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
-    // Sends the response to the notification channel.
-    m_notifiers[table]->send(status.codeStr(), key, intent_attrs_copy);
-    RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr());
 }
 
 void ResponsePublisher::publish(const std::string &table, const std::string &key,
@@ -140,17 +140,33 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
 void ResponsePublisher::writeToDB(const std::string &table, const std::string &key,
                                   const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace)
 {
-    if (m_tables.find(table) == m_tables.end())
+    if (m_update_thread != nullptr)
     {
-        m_tables[table] = std::make_unique<swss::Table>(&m_db, table);
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(table, key, values, op, replace, /*flush=*/false, /*shutdown=*/false);
+        }
+        m_signal.notify_one();
     }
+    else
+    {
+        writeToDBInternal(table, key, values, op, replace);
+    }
+    RecordDBWrite(table, key, values, op);
+}
+
+void ResponsePublisher::writeToDBInternal(const std::string &table, const std::string &key,
+                                          const std::vector<swss::FieldValueTuple> &values, const std::string &op,
+                                          bool replace)
+{
+    swss::Table applStateTable{m_db_pipe.get(), table, m_buffered};
 
     auto attrs = values;
     if (op == SET_COMMAND)
     {
         if (replace)
         {
-            m_tables[table]->del(key);
+            applStateTable.del(key);
         }
         if (!values.size())
         {
@@ -160,10 +176,9 @@ void ResponsePublisher::writeToDB(const std::string &table, const std::string &k
         // Write to DB only if the key does not exist or non-NULL attributes are
         // being written to the entry.
         std::vector<swss::FieldValueTuple> fv;
-        if (!m_tables[table]->get(key, fv))
+        if (!applStateTable.get(key, fv))
         {
-            m_tables[table]->set(key, attrs);
-            RecordDBWrite(table, key, attrs, op);
+            applStateTable.set(key, attrs);
             return;
         }
         for (auto it = attrs.cbegin(); it != attrs.cend();)
@@ -179,13 +194,64 @@ void ResponsePublisher::writeToDB(const std::string &table, const std::string &k
         }
         if (attrs.size())
         {
-            m_tables[table]->set(key, attrs);
-            RecordDBWrite(table, key, attrs, op);
+            applStateTable.set(key, attrs);
         }
     }
     else if (op == DEL_COMMAND)
     {
-        m_tables[table]->del(key);
-        RecordDBWrite(table, key, {}, op);
+        applStateTable.del(key);
+    }
+}
+
+void ResponsePublisher::flush()
+{
+    m_ntf_pipe->flush();
+    if (m_update_thread != nullptr)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/true, /*shutdown=*/false);
+        }
+        m_signal.notify_one();
+    }
+    else
+    {
+        m_db_pipe->flush();
+    }
+}
+
+void ResponsePublisher::setBuffered(bool buffered)
+{
+    m_buffered = buffered;
+}
+
+void ResponsePublisher::dbUpdateThread()
+{
+    while (true)
+    {
+        entry e;
+        {
+            std::unique_lock<std::mutex> lock(m_lock);
+            while (m_queue.empty())
+            {
+                m_signal.wait(lock);
+            }
+
+            e = m_queue.front();
+            m_queue.pop();
+        }
+        if (e.shutdown)
+        {
+            break;
+        }
+        if (e.flush)
+        {
+            m_db_pipe->flush();
+        }
+        else
+        {
+            writeToDBInternal(e.table, e.key, e.values, e.op, e.replace);
+        }
     }
 }

@@ -1,3 +1,4 @@
+import pytest
 import time
 import re
 import json
@@ -6,6 +7,7 @@ import itertools
 from swsscommon import swsscommon
 
 
+@pytest.mark.usefixtures('dvs_lag_manager')
 class TestPortchannel(object):
     def test_Portchannel(self, dvs, testlog):
 
@@ -89,6 +91,28 @@ class TestPortchannel(object):
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 0
 
+    @pytest.mark.parametrize("fast_rate", [False, True])
+    def test_Portchannel_fast_rate(self, dvs, testlog, fast_rate):
+        po_id = "0003"
+        po_member = "Ethernet16"
+
+        # Create PortChannel
+        self.dvs_lag.create_port_channel(po_id, fast_rate=fast_rate)
+        self.dvs_lag.get_and_verify_port_channel(1)
+
+        # Add member to PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.get_and_verify_port_channel_members(1)
+
+        # test fast rate configuration
+        self.dvs_lag.get_and_verify_port_channel_fast_rate(po_id, fast_rate)
+
+        # remove PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.remove_port_channel(po_id)
+        self.dvs_lag.get_and_verify_port_channel(0)
+
+
     def test_Portchannel_lacpkey(self, dvs, testlog):
         portchannelNamesAuto = [("PortChannel001", "Ethernet0", 1001),
                             ("PortChannel002", "Ethernet4", 1002),
@@ -108,7 +132,7 @@ class TestPortchannel(object):
 
         for portchannel in portchannelNamesAuto:
             tbl.set(portchannel[0], fvs)
-            
+
         fvs_no_lacp_key = swsscommon.FieldValuePairs(
             [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up")])
         tbl.set(portchannelNames[0][0], fvs_no_lacp_key)

@@ -84,6 +84,8 @@ class TestNextHopGroupBase(object):
 
         # Create a NHG
         fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+        nhg_ps.set('_testnhg', fvs)
+        fvs = swsscommon.FieldValuePairs([('nexthop_group', '_testnhg')])
         nhg_ps.set('testnhg', fvs)
 
         # Add a CBF NHG pointing to the given map
@@ -98,6 +100,7 @@ class TestNextHopGroupBase(object):
             # Remove the added NHGs
             cbf_nhg_ps._del('testcbfnhg')
             nhg_ps._del('testnhg')
+            nhg_ps._del('_testnhg')
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
             return None
 
@@ -111,6 +114,7 @@ class TestNextHopGroupBase(object):
         # Remove the added NHGs
         cbf_nhg_ps._del('testcbfnhg')
         nhg_ps._del('testnhg')
+        nhg_ps._del('_testnhg')
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
 
         return nhg_map_id
@@ -128,7 +132,7 @@ class TestNextHopGroupBase(object):
         return "10.0.0." + str(i * 2 + 1)
 
     def port_mac(self, i):
-        return "00:00:00:00:00:0" + str(i)
+        return "00:00:00:00:00:0" + str(i + 1)
 
     def config_intf(self, i):
         fvs = {'NULL': 'NULL'}
@@ -148,6 +152,41 @@ class TestNextHopGroupBase(object):
         fvs = self.dvs.get_app_db().get_entry("PORT_TABLE", "Ethernet%d" % (i * 4))
         assert bool(fvs)
         assert fvs["oper_status"] == status
+
+    # BFD utilities for static route BFD and ecmp acceleration -- begin
+    def get_exist_bfd_session(self):
+        return set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"))
+
+    def create_bfd_session(self, key, pairs):
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, "BFD_SESSION_TABLE")
+        fvs = swsscommon.FieldValuePairs(list(pairs.items()))
+        tbl.set(key, fvs)
+
+    def remove_bfd_session(self, key):
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, "BFD_SESSION_TABLE")
+        tbl._del(key)
+
+    def check_asic_bfd_session_value(self, key, expected_values):
+        fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", key)
+        for k, v in expected_values.items():
+            assert fvs[k] == v
+
+    def check_state_bfd_session_value(self, key, expected_values):
+        fvs = self.state_db.get_entry("BFD_SESSION_TABLE", key)
+        for k, v in expected_values.items():
+            assert fvs[k] == v
+
+    def update_bfd_session_state(self, dvs, session, state):
+        bfd_sai_state = {"Admin_Down":  "SAI_BFD_SESSION_STATE_ADMIN_DOWN",
+                         "Down":        "SAI_BFD_SESSION_STATE_DOWN",
+                         "Init":        "SAI_BFD_SESSION_STATE_INIT",
+                         "Up":          "SAI_BFD_SESSION_STATE_UP"}
+
+        ntf = swsscommon.NotificationProducer(self.asic_db.db_connection, "NOTIFICATIONS")
+        fvp = swsscommon.FieldValuePairs()
+        ntf_data = "[{\"bfd_session_id\":\""+session+"\",\"session_state\":\""+bfd_sai_state[state]+"\"}]"
+        ntf.send("bfd_session_state_change", ntf_data, fvp)
+    # BFD utilities for static route BFD and ecmp acceleration -- end
 
     def init_test(self, dvs, num_intfs):
         self.dvs = dvs
@@ -952,6 +991,57 @@ class TestNextHopGroup(TestNextHopGroupBase):
             else:
                 assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
      
+        # BFD: test validate/invalidate nexthop group member when bfd state changes -- begin 
+        bfdSessions = self.get_exist_bfd_session()
+        # Create BFD session
+        fieldValues = {"local_addr": "10.0.0.2"}
+        self.create_bfd_session("default:default:10.0.0.3", fieldValues)
+        time.sleep(1)
+
+        # Checked created BFD session in ASIC_DB
+        createdSessions = self.get_exist_bfd_session() - bfdSessions
+        assert len(createdSessions) == 1
+        session = createdSessions.pop()
+
+        expected_adb_values = {
+            "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.2",
+            "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.3",
+            "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
+        }
+        self.check_asic_bfd_session_value(session, expected_adb_values)
+
+        # Check STATE_DB entry related to the BFD session
+        expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.2"}
+        self.check_state_bfd_session_value("default|default|10.0.0.3", expected_sdb_values)
+
+        # Send BFD session state notification to update BFD session state
+        self.update_bfd_session_state(dvs, session, "Down")
+        time.sleep(1)
+        # Confirm BFD session state in STATE_DB is updated as expected 
+        expected_sdb_values["state"] = "Down"
+        self.check_state_bfd_session_value("default|default|10.0.0.3", expected_sdb_values)
+
+        #check nexthop group member is removed
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        assert len(keys) == 2
+
+        # Send BFD session state notification to update BFD session state
+        self.update_bfd_session_state(dvs, session, "Up")
+        time.sleep(1)
+        # Confirm BFD session state in STATE_DB is updated as expected 
+        expected_sdb_values["state"] = "Up"
+        self.check_state_bfd_session_value("default|default|10.0.0.3", expected_sdb_values)
+
+        #check nexthop group member is added back
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        assert len(keys) == 3
+
+        # Remove the BFD session
+        self.remove_bfd_session("default:default:10.0.0.3")
+        self.asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+        # BFD: test validate/invalidate nexthop group member when bfd state changes -- end
+
         # Remove route 2.2.2.0/24
         self.rt_ps._del(rtprefix)
 
@@ -1461,6 +1551,67 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
     def test_nhgorch_nh_group(self, dvs, testlog):
         # Test scenario:
+        # - create recursive nhg - rec_grp1 with two members - grp1 and grp2 only one of which exists
+        # - create singleton nhg grp2 and check if the rec_grp1 is updated with both the members
+        # - create a recursive nhg - rec_grp2 with another recursive nhg - rec_grp1 as member. Assert that the nhg is not created.
+        def create_recursive_nhg_test():
+            # create next hop group in APPL DB
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("grp1", fvs)
+
+            # create a recursive nexthop group with two members
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if group was propagated to ASIC DB with the existing member
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('rec_grp1')
+
+            # check if the existing member was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 1
+
+            # add another singleton nexthop group - grp2
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3'), ('ifname', 'Ethernet4')])
+            self.nhg_ps.set("grp2", fvs)
+
+            # check if both the members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # update the recursive nexthop group with another member not yet existing
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2,grp3')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if only two members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # add another singleton nexthop group - grp3
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.5'), ('ifname', 'Ethernet8')])
+            self.nhg_ps.set("grp3", fvs)
+
+            # check if all members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 3
+
+            # create a recursive nhg with another recursive nhg as member
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'rec_grp1')])
+            self.nhg_ps.set("rec_grp2", fvs)
+
+            # check that the group was not propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert not self.nhg_exists('rec_grp2')
+
+            self.nhg_ps._del("rec_grp2")
+            self.nhg_ps._del("rec_grp1")
+            self.nhg_ps._del("grp1")
+            self.nhg_ps._del("grp2")
+            self.nhg_ps._del("grp3")
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+        # Test scenario:
         # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
         def create_nhg_test():
             # create next hop group in APPL DB
@@ -1619,8 +1770,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
             # Update the group to one NH only
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
             self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
-            assert len(self.get_nhgm_ids('group1')) == 1
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+            assert len(self.get_nhgm_ids('group1')) == 0
 
             # Update the group to 2 NHs
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])
@@ -1630,6 +1781,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         self.init_test(dvs, 4)
 
+        create_recursive_nhg_test()
         create_nhg_test()
         create_route_nhg_test()
         link_flap_test()
@@ -1752,9 +1904,11 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         # - update the CBF NHG reordering the members and assert the new details match
         def update_cbf_nhg_members_test():
             # Create a NHG with a single next hop
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
-                                            ("ifname", "Ethernet0")])
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("_group3", fvs)
+            fvs = swsscommon.FieldValuePairs([('nexthop_group','_group3')])
             self.nhg_ps.set("group3", fvs)
+
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 3)
 
             # Create a CBF NHG
@@ -1949,6 +2103,8 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         self.cbf_nhg_ps._del('cbfgroup1')
         self.nhg_ps._del('group2')
         self.nhg_ps._del('group3')
+        self.nhg_ps._del('_group3')
+
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
         self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
 

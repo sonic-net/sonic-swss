@@ -8,13 +8,13 @@ parameters:
 - name: pool
   type: string
   values:
-  - sonicbld
+  - sonicbld-1es
   - default
   default: default
 
 - name: timeout
   type: number
-  default: 180
+  default: 240
 
 - name: sonic_slave
   type: string
@@ -47,7 +47,7 @@ jobs:
       vmImage: 'ubuntu-20.04'
 
   variables:
-    DIFF_COVER_CHECK_THRESHOLD: 50
+    DIFF_COVER_CHECK_THRESHOLD: 80
     DIFF_COVER_ENABLE: 'true'
 
   container:
@@ -59,9 +59,9 @@ jobs:
         set -ex
         # Install .NET CORE
         curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-        sudo apt-add-repository https://packages.microsoft.com/debian/10/prod
+        sudo apt-add-repository https://packages.microsoft.com/debian/11/prod
         sudo apt-get update
-        sudo apt-get install -y dotnet-sdk-5.0
+        sudo apt-get install -y dotnet-sdk-7.0
     displayName: "Install .NET CORE"
   - script: |
       sudo apt-get install -y lcov
@@ -122,6 +122,8 @@ jobs:
       codeCoverageTool: Cobertura
       summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml'
       reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
+      pathToSources: '$(Build.SourcesDirectory)'
+      failIfCoverageEmpty: true
     displayName: 'Publish c c++ test coverage'
     condition: eq('${{ parameters.archive_gcov }}', true)
   

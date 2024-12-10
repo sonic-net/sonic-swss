@@ -22,17 +22,20 @@ public:
     using Orch::doTask;
 private:
     Table m_cfgPortTable;
+    Table m_cfgSendToIngressPortTable;
     Table m_cfgLagMemberTable;
     Table m_statePortTable;
     ProducerStateTable m_appPortTable;
+    ProducerStateTable m_appSendToIngressPortTable;
 
     std::set<std::string> m_portList;
 
     void doTask(Consumer &consumer);
+    void doSendToIngressPortTask(Consumer &consumer);
+    bool writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value);
+    bool writeConfigToAppDb(const std::string &alias, std::vector<FieldValueTuple> &field_values);
     bool setPortMtu(const std::string &alias, const std::string &mtu);
-    bool setPortTpid(const std::string &alias, const std::string &tpid);
     bool setPortAdminStatus(const std::string &alias, const bool up);
-    bool setPortLearnMode(const std::string &alias, const std::string &learn_mode);
     bool isPortStateOk(const std::string &alias);
 };
 

@@ -14,14 +14,54 @@ parameters:
 - name: swss_artifact_name
   type: string
 
-- name: sairedis_artifact_name
-  type: string
-
 - name: swss_common_artifact_name
   type: string
 
+- name: swss_common_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
 - name: artifact_name
   type: string
+
+- name: buildimage_artifact_name
+  type: string
+  default: 'sonic-buildimage.vs'
+
+- name: buildimage_artifact_project
+  type: string
+  default: 'build'
+
+- name: buildimage_artifact_pipeline
+  type: string
+  default: 'Azure.sonic-buildimage.official.vs'
+
+- name: buildimage_artifact_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
+- name: sairedis_artifact_name
+  type: string
+
+- name: sairedis_artifact_project
+  type: string
+  default: 'build'
+
+- name: sairedis_artifact_pipeline
+  type: string
+  default: 'Azure.sonic-sairedis'
+
+- name: sairedis_artifact_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
+- name: sairedis_artifact_pattern
+  type: string
+  default: '**'
+
+- name: asan
+  type: boolean
+  default: false
 
 jobs:
 - job:
@@ -39,19 +79,43 @@ jobs:
       pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
-      project: build
-      pipeline: Azure.sonic-sairedis
+      project: ${{ parameters.sairedis_artifact_project }}
+      pipeline: ${{ parameters.sairedis_artifact_pipeline }}
       artifact: ${{ parameters.sairedis_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
+      allowPartiallySucceededBuilds: true
+      path: $(Build.ArtifactStagingDirectory)/download/sairedis
+      patterns: |
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/syncd-vs_*.deb
+    displayName: "Download sonic sairedis deb packages"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: sonic-net.sonic-dash-api
+      ${{ if eq(parameters.arch, 'amd64') }}:
+        artifact: sonic-dash-api
+      ${{ else }}:
+        artifact: sonic-dash-api.${{ parameters.arch }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download sonic sairedis deb packages"
+      patterns: |
+        libdashapi*.deb
+    displayName: "Download dash api"
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.swss_artifact_name }}
@@ -60,33 +124,44 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
-      project: build
-      pipeline: Azure.sonic-buildimage.official.vs
-      artifact: sonic-buildimage.vs
+      project: ${{ parameters.buildimage_artifact_project }}
+      pipeline: ${{ parameters.buildimage_artifact_pipeline }}
+      artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
-      patterns: '**/target/docker-sonic-vs.gz'
-    displayName: "Download sonic-buildimage docker-sonic-vs"
+      patterns: '**/target/${{ parameters.artifact_name }}.gz'
+    displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
   - script: |
       set -ex
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
-      docker load < $(Build.ArtifactStagingDirectory)/download/target/docker-sonic-vs.gz
+      docker load < $(Build.ArtifactStagingDirectory)/download/target/${{ parameters.artifact_name }}.gz
 
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
+      find $(Build.ArtifactStagingDirectory)/download/sairedis -name '*.deb' -exec cp "{}" .azure-pipelines/docker-sonic-vs/debs \;
       cp -v $(Build.ArtifactStagingDirectory)/download/*.deb .azure-pipelines/docker-sonic-vs/debs
+      if [ -f $(Build.ArtifactStagingDirectory)/download/coverage.info ]; then
+        cp -v $(Build.ArtifactStagingDirectory)/download/coverage.info $(Build.ArtifactStagingDirectory)/
+        cp -v $(Build.ArtifactStagingDirectory)/download/coverage.xml $(Build.ArtifactStagingDirectory)/
+      fi
 
       pushd .azure-pipelines
 
-      docker build --no-cache -t docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber) docker-sonic-vs
+      build_dir=$(grep BUILD_DIR $(Build.ArtifactStagingDirectory)/download/build.info | cut -d= -f2)
+      build_args="--build-arg build_dir=$build_dir"
+      if [ '${{ parameters.asan }}' == True ]; then
+        build_args="$build_args --build-arg need_dbg=y"
+      fi
+
+      docker build $build_args --no-cache -t docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} docker-sonic-vs
 
       popd
 
-      docker save docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber) | gzip -c > $(Build.ArtifactStagingDirectory)/docker-sonic-vs.gz
+      docker save docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} | gzip -c > $(Build.ArtifactStagingDirectory)/docker-sonic-vs.gz
       rm -rf $(Build.ArtifactStagingDirectory)/download
-    displayName: "Build docker-sonic-vs"
+    displayName: "Build ${{ parameters.artifact_name }}"
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive sonic docker vs image"
