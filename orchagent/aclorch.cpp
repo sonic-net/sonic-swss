@@ -11,6 +11,7 @@
 #include "timer.h"
 #include "crmorch.h"
 #include "sai_serialize.h"
+#include "directory.h"
 
 using namespace std;
 using namespace swss;
@@ -30,6 +31,7 @@ extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
 extern string gMySwitchType;
+extern Directory<Orch*> gDirectory;
 
 #define MIN_VLAN_ID 1    // 0 is a reserved VLAN ID
 #define MAX_VLAN_ID 4095 // 4096 is a reserved VLAN ID
@@ -615,6 +617,35 @@ bool AclTableRangeMatch::validateAclRuleMatch(const AclRule& rule) const
     }
 
     return true;
+}
+
+void AclRule::TunnelNH::load(const std::string& target)
+{
+    parse(target);
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    /* Only the first call creates the SAI object, further calls just increment the ref count */
+    oid = vxlan_orch->createNextHopTunnel(tunnel_name, endpoint_ip, mac, vni);
+}
+
+void AclRule::TunnelNH::parse(const std::string& target)
+{
+    /* Supported Format: endpoint_ip@tunnel_name */
+    auto at_pos = target.find('@');
+    if (at_pos == std::string::npos)
+    {
+        throw std::logic_error("Invalid format for Tunnel Next Hop");
+    }
+
+    endpoint_ip = swss::IpAddress(target.substr(0, at_pos));
+    tunnel_name = target.substr(at_pos + 1);
+}
+
+void AclRule::TunnelNH::clear()
+{
+    oid = SAI_NULL_OBJECT_ID;
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    vxlan_orch->removeNextHopTunnel(tunnel_name, endpoint_ip, mac, vni);
 }
 
 string AclTableType::getName() const
@@ -1308,7 +1339,17 @@ void AclRule::decreaseNextHopRefCount()
         }
         m_redirect_target_next_hop_group.clear();
     }
-
+    if (m_redirect_target_tun_nh.oid != SAI_NULL_OBJECT_ID)
+    {
+        try
+        {
+            m_redirect_target_tun_nh.clear();
+        }
+        catch (const std::runtime_error& e)
+        {
+            SWSS_LOG_ERROR("Failed to remove tunnel nh reference %s, ACL Rule: %s", e.what(), m_id.c_str());
+        }
+    }
     return;
 }
 
@@ -2001,19 +2042,36 @@ sai_object_id_t AclRulePacket::getRedirectObjectId(const string& redirect_value)
     try
     {
         NextHopKey nh(target);
-        if (!m_pAclOrch->m_neighOrch->hasNextHop(nh))
+        if (m_pAclOrch->m_neighOrch->hasNextHop(nh))
         {
-            SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch", nh.to_string().c_str());
-            return SAI_NULL_OBJECT_ID;
+            m_redirect_target_next_hop = target;
+            m_pAclOrch->m_neighOrch->increaseNextHopRefCount(nh);
+            return m_pAclOrch->m_neighOrch->getNextHopId(nh);
         }
-
-        m_redirect_target_next_hop = target;
-        m_pAclOrch->m_neighOrch->increaseNextHopRefCount(nh);
-        return m_pAclOrch->m_neighOrch->getNextHopId(nh);
     }
     catch (...)
     {
         // no error, just try next variant
+    }
+
+    // Try to parse if this is a tunnel nexthop.
+    try
+    {
+        m_redirect_target_tun_nh.load(target);
+        if (SAI_NULL_OBJECT_ID != m_redirect_target_tun_nh.oid)
+        {
+            SWSS_LOG_INFO("Tunnel Next Hop Found: oid:0x%" PRIx64 ", target: %s", m_redirect_target_tun_nh.oid, target.c_str());
+            return m_redirect_target_tun_nh.oid;
+        }
+    }
+    catch (std::logic_error& e)
+    {
+        // no error, just try next variant
+    }
+    catch (const std::runtime_error& e)
+    {
+        SWSS_LOG_ERROR("Failed to create/fetch tunnel next hop, %s, err: %s", target.c_str(), e.what());
+        return SAI_NULL_OBJECT_ID;
     }
 
     // try to parse nh group the set of <ip address, interface name>
