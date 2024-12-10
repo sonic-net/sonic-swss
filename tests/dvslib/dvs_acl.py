@@ -623,7 +623,7 @@ class DVSAcl:
             elif k == "SAI_ACL_ENTRY_ATTR_ADMIN_STATE":
                 assert v == "true"
             elif k in sai_qualifiers:
-                assert sai_qualifiers[k](v)
+                assert sai_qualifiers[k](v), "Unexpected value for SAI qualifier: key={}, value={}".format(k, v)
             else:
                 assert False, "Unknown SAI qualifier: key={}, value={}".format(k, v)
 
