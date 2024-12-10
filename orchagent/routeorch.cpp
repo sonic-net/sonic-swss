@@ -2785,7 +2785,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     return true;
 }
 
-bool RouteOrch::hasBgpRoute(const IpPrefix& prefix)
+bool RouteOrch::isRouteExists(const IpPrefix& prefix)
 {
     SWSS_LOG_ENTER();
 
