@@ -74,13 +74,7 @@ bool RingBuffer::pop(AnyTask& ringEntry)
 
 void RingBuffer::addExecutor(Executor* executor)
 {
-    auto inserted = m_consumerSet.insert(executor->getName());
-
-    // If there is duplication of executorName, logic error
-    if (!inserted.second)
-    {
-        SWSS_LOG_THROW("Duplicated executorName in m_consumerSet: %s", executor->getName().c_str());
-    }
+    m_consumerSet.insert(executor->getName());
 }
 
 bool RingBuffer::Serves(const std::string& tableName)
