@@ -150,6 +150,7 @@ AC_CONFIG_FILES([
     fpmsyncd/Makefile
     neighsyncd/Makefile
     gearsyncd/Makefile
+    poesyncd/Makefile
     fdbsyncd/Makefile
     natsyncd/Makefile
     portsyncd/Makefile
