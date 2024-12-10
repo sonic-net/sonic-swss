@@ -1644,8 +1644,6 @@ class TestSrv6Vpn(object):
         # save exist asic db entries
         tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
         nexthop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
-        route_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        vpn_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID")
         map_entry_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
         map_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
 
@@ -1758,7 +1756,7 @@ class TestSrv6Vpn(object):
         vpn_list.append('3000::1')
         vpn_list.append('3000::2')
 
-        nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
+        self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
         tunnel_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries, 2)
         nh_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_entries, 2)
         nhg_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nexthop_group_entries)
@@ -1815,7 +1813,7 @@ class TestSrv6Vpn(object):
                 if fv[0] == "SAI_NEXT_HOP_ATTR_TYPE":
                     assert fv[1] == "SAI_NEXT_HOP_TYPE_SRV6_SIDLIST"
 
-        pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
+        self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
         map_entry_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY", map_entry_entries, 2)
         prefix_agg_id = "1"
 
@@ -1894,8 +1892,8 @@ class TestSrv6Vpn(object):
         ifname_list.append('unknown')
         ifname_list.append('unknown')
 
-        nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
-        pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
+        self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
+        self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
         route_key = self.create_srv6_vpn_route_with_nhg('5000::/64', nhg_index, pic_ctx_index)
         
         nhg_id = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nexthop_group_entries)
@@ -1957,12 +1955,8 @@ class TestSrv6Vpn(object):
         ifname_list = []
 
         # save exist asic db entries
-        tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
         nexthop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
-        route_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        vpn_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID")
         map_entry_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
-        map_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP")
 
         nexthop_group_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
         nexthop_group_member_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
@@ -2007,8 +2001,8 @@ class TestSrv6Vpn(object):
 
         map_entry_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
 
-        nhg_key = self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
-        pic_ctx_key = self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
+        self.create_nhg(nhg_index, nexthop_list, segsrc_list, ifname_list)
+        self.create_pic_context(pic_ctx_index, nexthop_list, vpn_list)
         self.update_srv6_vpn_route_attribute_with_nhg('5000::/64', nhg_index, pic_ctx_index)
 
         time.sleep(5)
