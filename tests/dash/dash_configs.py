@@ -48,6 +48,19 @@ ROUTE_GROUP2 = "RouteGroup2"
 ROUTE_GROUP1_GUID = "48af6ce8-26cc-4293-bfa6-0126e8fcdeb2"
 ROUTE_GROUP2_GUID = "58cf62e0-22cc-4693-baa6-012358fcdec9"
 
+METER_POLICY_V4 = "DashMeterV4Policy"
+METER_POLICY_V6 = "DashMeterV6Policy"
+METER_RULE_1_NUM = "44"
+METER_RULE_1_PRIORITY = "16"
+METER_RULE_1_METERING_CLASS = "36"
+METER_RULE_1_IP = "77.1.2.3"
+METER_RULE_1_IP_MASK = "255.255.255.255"
+METER_RULE_2_NUM = "66"
+METER_RULE_2_PRIORITY = "20"
+METER_RULE_2_METERING_CLASS = "50"
+METER_RULE_2_IP = "2001:108:0:d204:0::0"
+METER_RULE_2_IP_MASK = "ffff:ffff:ffff:ffff:ffff:ffff::"
+
 APPLIANCE_CONFIG = {
     "sip": {
         "ipv4": socket.htonl(int(IP(SIP)))
@@ -168,4 +181,31 @@ ENI_ROUTE_GROUP1_CONFIG = {
 
 ENI_ROUTE_GROUP2_CONFIG = {
     "group_id": ROUTE_GROUP2, 
+}
+
+
+METER_RULE_1_CONFIG = {
+    "priority": int(METER_RULE_1_PRIORITY),
+    "metering_class": int(METER_RULE_1_METERING_CLASS),
+    "ip_prefix": {
+        "ip": {
+            "ipv4": socket.htonl(int(IP(METER_RULE_1_IP)))
+        },
+        "mask": {
+            "ipv4": socket.htonl(int(IP(METER_RULE_1_IP_MASK)))
+        }
+    },
+}
+
+METER_RULE_2_CONFIG = {
+    "priority": int(METER_RULE_2_PRIORITY),
+    "metering_class": int(METER_RULE_2_METERING_CLASS),
+    "ip_prefix": {
+        "ip": {
+            "ipv6": base64.b64encode(IP(METER_RULE_2_IP).packed)
+        },
+        "mask": {
+            "ipv6": base64.b64encode(IP(METER_RULE_2_IP_MASK).packed)
+        }
+    },
 }

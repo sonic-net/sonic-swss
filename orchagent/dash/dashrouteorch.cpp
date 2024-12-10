@@ -144,6 +144,18 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 
+    if (ctxt.metadata.has_metering_class_or()) {
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR;
+        outbound_routing_attr.value.u32 = ctxt.metadata.metering_class_or();
+        outbound_routing_attrs.push_back(outbound_routing_attr);
+    }
+
+    if (ctxt.metadata.has_metering_class_and()) {
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND;
+        outbound_routing_attr.value.u32 = ctxt.metadata.metering_class_and();
+        outbound_routing_attrs.push_back(outbound_routing_attr);
+    }
+
     object_statuses.emplace_back();
     outbound_routing_bulker_.create_entry(&object_statuses.back(), &outbound_routing_entry,
                                             (uint32_t)outbound_routing_attrs.size(), outbound_routing_attrs.data());
@@ -425,6 +437,18 @@ bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkConte
     {
         inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_SRC_VNET_ID;
         inbound_routing_attr.value.oid = gVnetNameToId[ctxt.metadata.vnet()];
+        inbound_routing_attrs.push_back(inbound_routing_attr);
+    }
+
+    if (ctxt.metadata.has_metering_class_or()) {
+        inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR;
+        inbound_routing_attr.value.u32 = ctxt.metadata.metering_class_or();
+        inbound_routing_attrs.push_back(inbound_routing_attr);
+    }
+
+    if (ctxt.metadata.has_metering_class_and()) {
+        inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND;
+        inbound_routing_attr.value.u32 = ctxt.metadata.metering_class_and();
         inbound_routing_attrs.push_back(inbound_routing_attr);
     }
 

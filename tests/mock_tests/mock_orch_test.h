@@ -51,6 +51,7 @@ namespace mock_orch_test
         FlexCounterOrch *m_FlexCounterOrch;
         VxlanTunnelOrch *m_VxlanTunnelOrch;
         DashOrch *m_DashOrch;
+        DashMeterOrch *m_DashMeterOrch;
 
         void PrepareSai();
         void SetUp();
