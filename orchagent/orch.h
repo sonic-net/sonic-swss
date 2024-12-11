@@ -195,6 +195,7 @@ private:
 
     std::condition_variable cv;
     std::mutex mtx;
+    bool idle_status = true;
 
 protected:
     RingBuffer(): buffer(RING_SIZE) {}
@@ -208,23 +209,28 @@ public:
     RingBuffer& operator= (const RingBuffer&) = delete;
     RingBuffer& operator= (RingBuffer&&) = delete;
 
-    static RingBuffer* Get();
-    bool threadCreated = false;
-    bool Idle = true;
+    static void release();
+    static RingBuffer* reset();
+    static RingBuffer* get();
+
+    bool thread_created = false;
+    std::atomic<bool> thread_exited{false};
 
     // pause the ring thread if the buffer is empty
-    void pause_thread();
+    void pauseThread();
     // wake up the ring thread in case it's locked but not empty
     void notify();
 
-    bool IsFull();
-    bool IsEmpty();
+    bool IsFull() const;
+    bool IsEmpty() const;
+    bool IsIdle() const;
 
     bool push(AnyTask entry);
     bool pop(AnyTask& entry);
 
     void addExecutor(Executor* executor);
-    bool Serves(const std::string& tableName);
+    bool serves(const std::string& tableName);
+    void setIdle(bool idle);
 };
 
 class Consumer : public ConsumerBase {
