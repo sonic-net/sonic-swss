@@ -1180,13 +1180,17 @@ void RouteOrch::doTask(Consumer& consumer)
         }
 
         if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
+        {
             return;
-
+        }
         if (v4_default_nhg_key.getSize())
+        {
             updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
-        
+        }
         if (v6_default_nhg_key.getSize())
+        {
             updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
+        }
     }
 }
 
@@ -2647,9 +2651,13 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         SWSS_LOG_INFO("Set route %s next hop ID to NULL", ipPrefix.to_string().c_str());
 
         if (ipPrefix.isV4())
+        {
             v4_active_default_route_nhops.clear();
+        }
         else
+        {
             v6_active_default_route_nhops.clear();
+        }
     }
     else
     {
