@@ -50,6 +50,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::HOSTIF_TRAP,     FLOW_COUNTER_ID_LIST },
     { CounterType::ROUTE,           FLOW_COUNTER_ID_LIST },
     { CounterType::ENI,             ENI_COUNTER_ID_LIST },
+    { CounterType::POLICER,         POLICER_COUNTER_ID_LIST },
 };
 
 FlexManagerDirectory g_FlexManagerDirectory;
@@ -60,6 +61,7 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
                                                                    const bool enabled,
                                                                    FieldValueTuple fv_plugin)
 {
+    SWSS_LOG_DEBUG("create Flex Counter Manager %s", group_name.c_str());
     if (m_managers.find(group_name) != m_managers.end())
     {
         if (stats_mode != m_managers[group_name]->getStatsMode())
@@ -215,12 +217,14 @@ void FlexCounterManager::setCounterIdList(
     auto key = getFlexCounterTableKey(group_name, object_id);
     auto counter_ids = serializeCounterStats(counter_stats);
     auto effective_switch_id = switch_id == SAI_NULL_OBJECT_ID ? gSwitchId : switch_id;
+    SWSS_LOG_DEBUG("counter_ids: %s", counter_ids.c_str());
+    // SWSS_LOG_DEBUG("counter_type_it: %s", counter_type_it.second);
 
     startFlexCounterPolling(effective_switch_id, key, counter_ids, counter_type_it->second);
     installed_counters[object_id] = effective_switch_id;
 
-    SWSS_LOG_DEBUG("Updated flex counter id list for object '%" PRIu64 "' in group '%s'.",
-            object_id,
+    SWSS_LOG_DEBUG("Updated flex counter id list for object '%s' in group '%s'.",
+            sai_serialize_object_id(object_id).c_str(),
             group_name.c_str());
 }
 
