@@ -43,7 +43,7 @@ override_dh_auto_install:
 	dh_auto_install --destdir=debian/swss
 ifeq ($(ENABLE_GCOV), y)
 	mkdir -p debian/swss/tmp/gcov
-	lcov -c --directory . --no-external --exclude "$(shell pwd)/tests/*" --exclude "$(shell pwd)/**/tests/*" --output-file coverage.info
+	lcov -c --directory . --no-external --exclude "$(shell pwd)/tests/*" --exclude "$(shell pwd)/**/tests/*" --ignore-errors gcov --output-file coverage.info
 	lcov_cobertura coverage.info -o coverage.xml
 	find ./ -type f -regex '.*\.\(h\|cpp\|gcno\|info\)' | tar -cf debian/swss/tmp/gcov/gcov-source.tar -T -
 endif
