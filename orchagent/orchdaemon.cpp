@@ -88,9 +88,13 @@ OrchDaemon::~OrchDaemon()
     SWSS_LOG_ENTER();
 
     // Stop the ring thread before delete orch pointers
-    if (gRingBuffer) {
-        ring_thread_exited = true;
+    if (ring_thread.joinable()) {
+        // notify the ring_thread to exit
+        gRingBuffer->thread_exited = true;
+        gRingBuffer->notify();
+        // wait for the ring_thread to exit
         ring_thread.join();
+        disableRingBuffer();
     }
 
     /*
@@ -116,24 +120,24 @@ void OrchDaemon::popRingBuffer()
     SWSS_LOG_ENTER();
 
     // make sure there is only one thread created to run popRingBuffer()
-    if (!gRingBuffer || gRingBuffer->threadCreated)
+    if (!gRingBuffer || gRingBuffer->thread_created)
         return;
 
-    gRingBuffer->threadCreated = true;
+    gRingBuffer->thread_created = true;
     SWSS_LOG_NOTICE("OrchDaemon starts the popRingBuffer thread!");
 
-    while (!ring_thread_exited)
+    while (!gRingBuffer->thread_exited)
     {
-        gRingBuffer->pause_thread();
+        gRingBuffer->pauseThread();
 
-        gRingBuffer->Idle = false;
+        gRingBuffer->setIdle(false);
 
         AnyTask func;
         while (gRingBuffer->pop(func)) {
             func();
         }
 
-        gRingBuffer->Idle = true;
+        gRingBuffer->setIdle(true);
     }
 }
 
@@ -141,9 +145,15 @@ void OrchDaemon::popRingBuffer()
  * This function initializes gRingBuffer, otherwise it's nullptr.
  */
 void OrchDaemon::enableRingBuffer() {
-    gRingBuffer = RingBuffer::Get();
+    gRingBuffer = RingBuffer::get();
     Executor::gRingBuffer = gRingBuffer;
     Orch::gRingBuffer = gRingBuffer;
+}
+
+void OrchDaemon::disableRingBuffer() {
+    RingBuffer::release();
+    Executor::gRingBuffer = nullptr;
+    Orch::gRingBuffer = nullptr;
 }
 
 bool OrchDaemon::init()
@@ -918,7 +928,7 @@ void OrchDaemon::start(long heartBeatInterval)
             if (gRingBuffer)
             {
 
-                if (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle)
+                if (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle())
                 {
                     gRingBuffer->notify();
                 }
@@ -946,7 +956,7 @@ void OrchDaemon::start(long heartBeatInterval)
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
 
-        if (!gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->Idle))
+        if (!gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->IsIdle()))
             for (Orch *o : m_orchList)
                 o->doTask();
 
@@ -965,7 +975,7 @@ void OrchDaemon::start(long heartBeatInterval)
                 // but should finish data that already in the ring
                 if (gRingBuffer)
                 {
-                    while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle)
+                    while (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle())
                     {
                         gRingBuffer->notify();
                         std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
