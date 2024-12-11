@@ -17,7 +17,7 @@ queryPipelinesUrl="https://dev.azure.com/mssonic/build/_apis/pipelines"
 
 definitions=$(curl -s "${queryPipelinesUrl}" | jq -r ".value[] | select (.name == \"${pipelineName}\").id")
 
-queryBuildsUrl="https://dev.azure.com/mssonic/build/_apis/build/builds?definitions=${definitions}&branchName=refs/heads/${branchName}&resultFilter=latestFromBranch&statusFilter=completed&api-version=6.0"
+queryBuildsUrl="https://dev.azure.com/mssonic/build/_apis/build/builds?definitions=${definitions}&branchName=refs/heads/${branchName}&resultFilter=succeeded&statusFilter=completed&api-version=6.0"
 
 buildId=$(curl -s ${queryBuildsUrl} | jq -r '.value[0].id')
 
