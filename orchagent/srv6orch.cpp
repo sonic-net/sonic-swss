@@ -220,7 +220,7 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
         srv6_segment_id = sid_table_[srv6_segment].sid_object_id;
     }
 
-    if (nh.ip_address.to_string() == "0.0.0.0")
+    if (nh.ip_address.isZero())
     {
         srv6_tunnel_endpoint = srv6_source;
         srv6_tunnel_id = srv6_tunnel_table_[srv6_tunnel_endpoint].tunnel_object_id;
@@ -264,7 +264,7 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
         sid_table_[srv6_segment].nexthops.insert(nh);
     }
 
-    if (nh.ip_address.to_string() == "0.0.0.0")
+    if (nh.ip_address.isZero())
     {
         srv6TunnelUpdateNexthops(srv6_source, nh, true);
     }
@@ -318,7 +318,7 @@ bool Srv6Orch::deleteSrv6Nexthop(const NextHopKey &nh)
         SWSS_LOG_INFO("Delete NH %s from tunnel map",
             nh.to_string(false, true).c_str());
 
-        if (nh.ip_address.to_string() == "0.0.0.0")
+        if (nh.ip_address.isZero())
         {
             string srv6_source = nh.srv6_source;
             srv6TunnelUpdateNexthops(srv6_source, nh, false);
@@ -358,7 +358,7 @@ bool Srv6Orch::createSrv6NexthopWithoutVpn(const NextHopKey &nh, sai_object_id_t
     SWSS_LOG_ENTER();
 
     // 1. create tunnel
-    if (nh.ip_address.to_string() == "0.0.0.0")
+    if (nh.ip_address.isZero())
     {
         // create srv6 tunnel
         auto srv6_source = nh.srv6_source;
