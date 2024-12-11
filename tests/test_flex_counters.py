@@ -82,9 +82,7 @@ counter_group_meta = {
     'policer_counter': {
         'key': 'POLICER',
         'group_name': 'POLICER_STAT_COUNTER',
-        'name_map': 'COUNTERS_POLICER_NAME_MAP',
-        'pre_test': 'pre_policer_counter_test',
-        'post_test':  'post_policer_counter_test',
+        'name_map': 'COUNTERS_POLICER_NAME_MAP'
     }
 }
 
@@ -190,16 +188,6 @@ class TestFlexCounters(TestFlexCountersBase):
         time.sleep(2)
         dvs.servers[1].runcmd("ping -6 -c 1 2001::1")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 2000::/64 2001::2\"")
-
-    def pre_policer_counter_test(self, meta_data):
-        self.config_db.db_connection.hset("POLICER|policer1", "meter_type", "packets")
-        self.config_db.db_connection.hset("POLICER|policer1", "mode", "sr_tcm")
-        self.config_db.db_connection.hset("POLICER|policer1", "cir", "600")
-        self.config_db.db_connection.hset("POLICER|policer1", "cbs", "600")
-        self.config_db.db_connection.hset("POLICER|policer1", "red_packet_action", "drop")
-
-    def post_policer_counter_test(self, meta_data):
-        self.config_db.db_connection.hdel('POLICER|policer1', "NULL")
 
     def post_rif_counter_test(self, meta_data):
         self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")
@@ -773,11 +761,6 @@ class TestFlexCounters(TestFlexCountersBase):
             5. Verify counter is automatically removed
         """
         self.setup_dbs(dvs)
-        meta_data = counter_group_meta['policer_counter']
-        
-        # Enable flex counter group for policer
-        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
-        
         # Create a test policer
         self.config_db.create_entry('POLICER', 'policer1', {
             'meter_type': 'bytes',
@@ -786,7 +769,11 @@ class TestFlexCounters(TestFlexCountersBase):
             'cbs': '600000',
             'red_packet_action': 'drop'
         })
+        meta_data = counter_group_meta['policer_counter']
         
+        # Enable flex counter group for policer
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+                
         # Wait for counter to be created and verify
         for _ in range(NUMBER_OF_RETRIES):
             counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'policer1')
@@ -806,6 +793,4 @@ class TestFlexCounters(TestFlexCountersBase):
             if not counter_oid:
                 break
             time.sleep(1)
-        
         assert counter_oid is None, "Policer counter was not removed"
-        self.wait_for_id_list_remove(meta_data['group_name'], 'policer1', counter_oid)

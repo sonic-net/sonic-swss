@@ -13,7 +13,6 @@ extern sai_policer_api_t*   sai_policer_api;
 extern sai_port_api_t *sai_port_api;
 
 extern sai_object_id_t gSwitchId;
-extern sai_object_id_t m_counterOid;
 extern PortsOrch* gPortsOrch;
 
 #define ETHERNET_PREFIX "Ethernet"
@@ -146,7 +145,6 @@ PolicerOrch::PolicerOrch( vector<TableConnector> &tableNames, PortsOrch *portOrc
     m_FlexCounterUpdTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_FlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
     Orch::addExecutor(executorT);
-    SWSS_LOG_DEBUG("PolicerOrch created");
 }
 
 
@@ -441,7 +439,6 @@ void PolicerOrch::doTask(SelectableTimer &timer)
         const auto id = sai_serialize_object_id(it->first);
         if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
-            SWSS_LOG_INFO("Registering second %s, id %s", it->second.c_str(), id.c_str());
             vector<FieldValueTuple> policerNameVector;
 
             policerNameVector.emplace_back(it->second.c_str(), id);
@@ -471,11 +468,6 @@ std::unordered_set<std::string> PolicerOrch::generatePCounterStats()
     return counter_stats;
 }
 
-void PolicerOrch::addPolicerToFlexCounter(sai_object_id_t oid, const string &name)
-{
-    m_pendingPcAddToFlexCntr[oid] = name;
-}
-
 void PolicerOrch::generatePolicerCounterMap()
 {
     if (m_isPolicerCounterMapGenerated)
@@ -487,6 +479,12 @@ void PolicerOrch::generatePolicerCounterMap()
 
     m_isPolicerCounterMapGenerated = true;
 }
+
+void PolicerOrch::addPolicerToFlexCounter(sai_object_id_t oid, const string &name)
+{
+    m_pendingPcAddToFlexCntr[oid] = name;
+}
+
 
 void PolicerOrch::doTask(Consumer &consumer)
 {

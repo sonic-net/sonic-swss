@@ -27,8 +27,9 @@ public:
     bool increaseRefCount(const string &name);
     bool decreaseRefCount(const string &name);
     task_process_status handlePortStormControlTable(swss::KeyOpFieldsValuesTuple tuple);
-    void generatePolicerCounterMap();
     void addPolicerToFlexCounter(sai_object_id_t oid, const string &name);
+    void generatePolicerCounterMap();
+    
 private:
     PortsOrch *m_portsOrch;
     virtual void doTask(Consumer& consumer);
