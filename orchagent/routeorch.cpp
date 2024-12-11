@@ -2372,10 +2372,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
                 }
             }
-            // else if (ol_nextHops.is_srv6_nexthop())
-            // {
-            //    m_srv6Orch->removeSrv6Nexthops(ol_nextHops);
-            // }
             else if (ol_nextHops.getSize() == 1 && !ol_nextHops.is_srv6_nexthop())
             {
                 RouteKey r_key = { vrf_id, ipPrefix };
