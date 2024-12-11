@@ -1138,6 +1138,35 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
         }
     }
 }
+void FdbOrch::flushFdbByVlan(const string &alias)
+{
+    sai_status_t status;
+    swss::Port vlan;
+    sai_attribute_t vlan_attr[2];
+
+    if (!m_portsOrch->getPort(alias, vlan))
+    {
+        return;
+    }
+
+    vlan_attr[0].id = SAI_FDB_FLUSH_ATTR_BV_ID;
+    vlan_attr[0].value.oid = vlan.m_vlan_info.vlan_oid;
+    vlan_attr[1].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+    vlan_attr[1].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+    status = sai_fdb_api->flush_fdb_entries(gSwitchId, 2, vlan_attr);
+  
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
+    }
+    else
+    {
+        SWSS_LOG_INFO("Flush by vlan %s vlan_oid 0x%" PRIx64 "",
+                    alias.c_str(), vlan.m_vlan_info.vlan_oid);
+    }
+
+    return;
+}
 
 void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
 {

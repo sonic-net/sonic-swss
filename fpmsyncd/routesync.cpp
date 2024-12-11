@@ -2235,12 +2235,23 @@ bool RouteSync::sendOffloadReply(struct nlmsghdr* hdr)
 bool RouteSync::sendOffloadReply(struct rtnl_route* route_obj)
 {
     SWSS_LOG_ENTER();
+    int ret = 0;
 
     nl_msg* msg{};
-    rtnl_route_build_add_request(route_obj, NLM_F_CREATE, &msg);
+    ret = rtnl_route_build_add_request(route_obj, NLM_F_CREATE, &msg);
 
+    if (ret !=0)
+    {
+        SWSS_LOG_ERROR("Route build add returned %d", ret);
+        return false;
+    }
     auto nlMsg = makeUniqueWithDestructor(msg, nlmsg_free);
 
+    if (nlMsg.get() == NULL)
+    {
+        SWSS_LOG_ERROR("Error in allocation for sending offload reply");
+        return false;
+    }
     return sendOffloadReply(nlmsg_hdr(nlMsg.get()));
 }
 
