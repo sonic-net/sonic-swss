@@ -50,38 +50,61 @@ namespace orchdaemon_test
         orchd->logRotate();
     }
 
-    TEST_F(OrchDaemonTest, gRingMode)
+    TEST_F(OrchDaemonTest, RingThread)
     {
         orchd->enableRingBuffer();
+
         EXPECT_TRUE(Executor::gRingBuffer != nullptr);
-        EXPECT_TRUE(Orch::gRingBuffer != nullptr);
         EXPECT_TRUE(Executor::gRingBuffer == Orch::gRingBuffer);
+
+        orchd->ring_thread = std::thread(&OrchDaemon::popRingBuffer, orchd);
+
+        while (!RingBuffer::get()->thread_created)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        bool task_executed = false;
+        AnyTask task = [&task_executed]() { task_executed = true;};
+        RingBuffer::get()->push(task);
+
+        EXPECT_TRUE(RingBuffer::get()->IsIdle());
+
+        RingBuffer::get()->notify();
+
+        while (!RingBuffer::get()->IsEmpty() || !RingBuffer::get()->IsIdle())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        EXPECT_TRUE(task_executed);
+
+        EXPECT_TRUE(orchd->ring_thread.joinable());
+
+        delete orchd;
+
+        EXPECT_FALSE(orchd->ring_thread.joinable());
     }
 
     class RingTest : public ::testing::Test
     {
         public:
-            RingBuffer* gRingBuffer= RingBuffer::Get();
+            RingBuffer* gRingBuffer;
             std::shared_ptr<Consumer> consumer;
             std::shared_ptr<Orch> orch;
 
             void SetUp() override {
-                Orch::gRingBuffer = gRingBuffer;
-                Executor::gRingBuffer = gRingBuffer;
-                // clear the rings
-                while (!gRingBuffer->IsEmpty()) {
-                    AnyTask task;
-                    gRingBuffer->pop(task);
-                }
-                while (!gRingBuffer->IsEmpty()) {
-                    AnyTask task;
-                    gRingBuffer->pop(task);
-                }
+                RingBuffer::reset();
+                gRingBuffer = RingBuffer::get();
             }
 
+            void TearDown() override
+            {
+                RingBuffer::release();
+            }
     };
 
-    TEST_F(RingTest, basics)
+    TEST_F(RingTest, RingBasics)
     {
         AnyTask task = []() { };
         EXPECT_TRUE(gRingBuffer->push(task));
@@ -91,7 +114,7 @@ namespace orchdaemon_test
         EXPECT_TRUE(gRingBuffer->IsEmpty());
     }
 
-    TEST_F(RingTest, bufferFull) {
+    TEST_F(RingTest, BufferFull) {
         AnyTask task = []() { };
 
         // Fill the buffer
@@ -103,13 +126,13 @@ namespace orchdaemon_test
         EXPECT_FALSE(gRingBuffer->push(task));
     }
 
-    TEST_F(RingTest, bufferEmpty) {
+    TEST_F(RingTest, BufferEmpty) {
         AnyTask task;
         EXPECT_TRUE(gRingBuffer->IsEmpty());
         EXPECT_FALSE(gRingBuffer->pop(task));
     }
 
-    TEST_F(RingTest, bufferOverflow) {
+    TEST_F(RingTest, BufferOverflow) {
         AnyTask task = []() { };
 
         int halfSize = RING_SIZE / 2;
@@ -132,13 +155,15 @@ namespace orchdaemon_test
         }
     }
 
-    TEST_F(RingTest, ringBasics)
+    TEST_F(RingTest, PushAnyTask)
     {
+        Orch::gRingBuffer = gRingBuffer;
+        Executor::gRingBuffer = gRingBuffer;
         orch = make_shared<Orch>(&appl_db, "ROUTE_TABLE", 0);
         consumer = make_shared<Consumer>(new swss::ConsumerStateTable(&appl_db, "ROUTE_TABLE", 128, 1), orch.get(), "ROUTE_TABLE");
 
-        EXPECT_TRUE(gRingBuffer->Serves("ROUTE_TABLE"));
-        EXPECT_FALSE(gRingBuffer->Serves("OTHER_TABLE"));
+        EXPECT_TRUE(gRingBuffer->serves("ROUTE_TABLE"));
+        EXPECT_FALSE(gRingBuffer->serves("OTHER_TABLE"));
         EXPECT_TRUE(gRingBuffer->IsEmpty());
 
         int x = 1;
@@ -162,22 +187,25 @@ namespace orchdaemon_test
         consumer->pushRingBuffer([&](){x=3;});
         EXPECT_TRUE(x==3);
 
-        gRingBuffer->threadCreated = true;
+        gRingBuffer->thread_created = true;
         consumer->pushRingBuffer([&](){x=4;});
         EXPECT_TRUE(x==3);
 
         gRingBuffer->pop(t3);
         t3();
         EXPECT_TRUE(x==4);
+
+        Orch::gRingBuffer = nullptr;
+        Executor::gRingBuffer = nullptr;
     }
 
-    TEST_F(RingTest, threadPauseAndNotify) {
-        bool threadFinished = false;
+    TEST_F(RingTest, ThreadPauseAndNotify) {
+        bool thread_finished = false;
 
-        std::thread t([this, &threadFinished]() {
-            gRingBuffer->Idle = true;
-            gRingBuffer->pause_thread();
-            threadFinished = true;
+        std::thread t([this, &thread_finished]() {
+            gRingBuffer->setIdle(true);
+            gRingBuffer->pauseThread();
+            thread_finished = true;
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
@@ -186,10 +214,10 @@ namespace orchdaemon_test
         gRingBuffer->notify();
 
         t.join();
-        EXPECT_TRUE(threadFinished);
+        EXPECT_TRUE(thread_finished);
     }
 
-    TEST_F(RingTest, multiThread) {
+    TEST_F(RingTest, MultiThread) {
         std::vector<std::thread> producers;
         std::vector<std::thread> consumers;
 
@@ -222,15 +250,7 @@ namespace orchdaemon_test
         }
     }
 
-    TEST_F(RingTest, notify) {
-        gRingBuffer->Idle = true;
-        EXPECT_NO_THROW(gRingBuffer->notify());
-        AnyTask task = []() { };
-        gRingBuffer->push(task);
-        EXPECT_NO_THROW(gRingBuffer->notify());
-    }
-
-    TEST_F(RingTest, edgeCases) {
+    TEST_F(RingTest, EdgeCases) {
         AnyTask task = []() { };
         
         for (int cycle = 0; cycle < 3; cycle++) {
