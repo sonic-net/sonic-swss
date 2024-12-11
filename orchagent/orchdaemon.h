@@ -60,7 +60,7 @@ class OrchDaemon
 {
 public:
     OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
-    ~OrchDaemon();
+    virtual ~OrchDaemon();
 
     virtual bool init();
     void start(long heartBeatInterval);
@@ -92,13 +92,17 @@ public:
      * they are connected to the same ring.
      */
     void enableRingBuffer();
+    void disableRingBuffer();
     /**
      * This method describes how the ring consumer consumes this ring.
      */
     void popRingBuffer();
 
-private:
+    RingBuffer* gRingBuffer = nullptr;
+
     std::thread ring_thread;
+
+private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
@@ -120,10 +124,6 @@ private:
 
     void freezeAndHeartBeat(unsigned int duration, long interval);
 
-protected:
-    /* Orchdaemon instance points to the same ring buffer during its lifetime */
-    RingBuffer* gRingBuffer = nullptr;
-    std::atomic<bool> ring_thread_exited{false};
 };
 
 class FabricOrchDaemon : public OrchDaemon

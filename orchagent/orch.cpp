@@ -20,36 +20,48 @@ int gBatchSize = 0;
 RingBuffer* Orch::gRingBuffer = nullptr;
 RingBuffer* Executor::gRingBuffer = nullptr;
 
-void RingBuffer::pause_thread()
+void RingBuffer::pauseThread()
 {
     std::unique_lock<std::mutex> lock(mtx);
-    cv.wait(lock, [&](){ return !IsEmpty(); });
+    cv.wait(lock, [&](){ return !IsEmpty() || thread_exited; });
 }
 
 void RingBuffer::notify()
 {
-    if (!IsEmpty() && Idle)
+    // buffer not empty but rthread idle
+    bool task_pending = !IsEmpty() && IsIdle();
+
+    if (thread_exited || task_pending)
         cv.notify_all();
 }
 
 RingBuffer* RingBuffer::instance = nullptr;
 
-RingBuffer* RingBuffer::Get()
+RingBuffer* RingBuffer::get()
 {
     if (instance == nullptr) {
-        static RingBuffer instance_;
-        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)&instance_);
-        instance = &instance_;
+        instance = new RingBuffer();
+        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)instance);
     }
     return instance;
 }
 
-bool RingBuffer::IsFull()
+void RingBuffer::setIdle(bool idle)
+{
+    idle_status = idle;
+}
+
+bool RingBuffer::IsIdle() const
+{
+    return idle_status;
+}
+
+bool RingBuffer::IsFull() const
 {
     return (tail + 1) % RING_SIZE == head;
 }
 
-bool RingBuffer::IsEmpty()
+bool RingBuffer::IsEmpty() const
 {
     return tail == head;
 }
@@ -77,9 +89,21 @@ void RingBuffer::addExecutor(Executor* executor)
     m_consumerSet.insert(executor->getName());
 }
 
-bool RingBuffer::Serves(const std::string& tableName)
+bool RingBuffer::serves(const std::string& tableName)
 {
     return m_consumerSet.find(tableName) != m_consumerSet.end();  
+}
+
+void RingBuffer::release()
+{
+    if (instance)
+        delete instance;
+    instance = nullptr;
+}
+RingBuffer* RingBuffer::reset()
+{
+    release();
+    return get();
 }
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
@@ -338,15 +362,15 @@ void Consumer::execute()
 
 void Executor::pushRingBuffer(AnyTask&& task)
 {
-    if (!gRingBuffer || !gRingBuffer->threadCreated) 
+    if (!gRingBuffer || !gRingBuffer->thread_created) 
     {
         // execute the task right now in this thread if gRingBuffer is not initialized
         // or the ring thread is not created, or this executor is not served by gRingBuffer
         task();
     }
-    else if (!gRingBuffer->Serves(getName())) // not served by ring thread
+    else if (!gRingBuffer->serves(getName())) // not served by ring thread
     {
-        while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle) {
+        while (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()) {
             gRingBuffer->notify();
             std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
         }
