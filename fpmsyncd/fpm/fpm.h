@@ -92,7 +92,7 @@
 /*
  * Largest message that can be sent to or received from the FPM.
  */
-#define FPM_MAX_MSG_LEN 4096
+#define FPM_MAX_MSG_LEN 16384
 
 /*
  * Header that precedes each fpm message to/from the FPM.
