@@ -1678,22 +1678,25 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         NextHopGroup& nhg = itg->second;
         if(nhg.group.size() == 0)
         {
-            //Using route-table only for single next-hop
-            string nexthops, ifnames, weights;
+        // Using route-table only for single next-hop
+        string nexthops = nhg.nexthop.empty() ? (rtnl_route_get_family(route_obj) == AF_INET ? "0.0.0.0" : "::") : nhg.nexthop;
+        string ifnames, weights;
 
-            getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
-            FieldValueTuple gw("nexthop", nexthops.c_str());
-            FieldValueTuple intf("ifname", ifnames.c_str());
-            fvVector.push_back(gw);
-            fvVector.push_back(intf);
-            SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+        getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
+
+        FieldValueTuple gw("nexthop", nexthops.c_str());
+        FieldValueTuple intf("ifname", ifnames.c_str());
+        fvVector.push_back(gw);
+        fvVector.push_back(intf);
+
+        SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
         }
         else
         {
             nhg_id_key = getNextHopGroupKeyAsString(nhg_id);
             FieldValueTuple nhg("nexthop_group", nhg_id_key.c_str());
             fvVector.push_back(nhg);
-            updateNextHopGroup(nhg_id);
+            installNextHopGroup(nhg_id);
         }
 
         auto proto_num = rtnl_route_get_protocol(route_obj);
@@ -2635,7 +2638,7 @@ const string RouteSync::getNextHopGroupKeyAsString(uint32_t id) const
  * @arg nh_id     nexthop group id
  *
  */
-void RouteSync::updateNextHopGroup(uint32_t nh_id)
+void RouteSync::installNextHopGroup(uint32_t nh_id)
 {
     auto git = m_nh_groups.find(nh_id);
     if(git == m_nh_groups.end())
@@ -2705,7 +2708,6 @@ void RouteSync::updateNextHopGroupDb(const NextHopGroup& nhg)
     }
     SWSS_LOG_INFO("NextHopGroup table set: key [%s] nexthop[%s] ifname[%s] weight[%s]", key.c_str(), nexthops.c_str(), ifnames.c_str(), weights.c_str());
 
-    //TODO: Take care of warm reboot
     m_nexthop_groupTable.set(key.c_str(), fvVector);
 }
 

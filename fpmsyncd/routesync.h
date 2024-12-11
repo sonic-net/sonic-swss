@@ -188,7 +188,7 @@ private:
     void onNextHopMsg(struct nlmsghdr *h, int len);
     /* Get next hop group key */
     const string getNextHopGroupKeyAsString(uint32_t id) const;
-    void updateNextHopGroup(uint32_t nh_id);
+    void installNextHopGroup(uint32_t nh_id);
     void deleteNextHopGroup(uint32_t nh_id);
     void updateNextHopGroupDb(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);

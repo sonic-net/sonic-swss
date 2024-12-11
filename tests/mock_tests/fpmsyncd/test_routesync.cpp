@@ -388,7 +388,7 @@ TEST_F(FpmSyncdResponseTest, TestIPv6NextHopAdd)
     ASSERT_TRUE(fieldValues.empty());
 
     // Update the nexthop group to mark it as installed and write to DB
-    m_mockRouteSync.updateNextHopGroup(test_id);
+    m_mockRouteSync.installNextHopGroup(test_id);
     nexthop_group_table.get(key, fieldValues);
 
     string nexthop, ifname;
@@ -553,7 +553,7 @@ TEST_F(FpmSyncdResponseTest, TestUpdateNextHopGroupDb)
         m_mockRouteSync.m_nh_groups.insert({2, nhg2});
         m_mockRouteSync.m_nh_groups.insert({3, group});
 
-        m_mockRouteSync.updateNextHopGroup(3);
+        m_mockRouteSync.installNextHopGroup(3);
 
         auto it = m_mockRouteSync.m_nh_groups.find(3);
         ASSERT_NE(it, m_mockRouteSync.m_nh_groups.end());
@@ -736,7 +736,7 @@ TEST_F(FpmSyncdResponseTest, TestNextHopGroupAdd)
     EXPECT_EQ(group[2].second, 3);
 
     // Mark the group as installed and verify DB update
-    m_mockRouteSync.updateNextHopGroup(group_id);
+    m_mockRouteSync.installNextHopGroup(group_id);
 
     Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
     vector<FieldValueTuple> fieldValues;
