@@ -45,6 +45,7 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_f
     }
 
     dynamic_buffer_model = false;
+    fixed_cable_speed_len = true;
 }
 
 //# speed, cable, size,    xon,  xoff, threshold,  xon_offset
@@ -499,6 +500,12 @@ void BufferMgr::doTask(Consumer &consumer)
     if (table_name == CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
     {
         doBufferTableTask(consumer, m_applBufferEgressProfileListTable);
+        return;
+    }
+
+    if (fixed_cable_speed_len)
+    {
+        SWSS_LOG_DEBUG("Will not dynamically generate BUFFER_PG and BUFFER_PROFILE entries.");
         return;
     }
 
