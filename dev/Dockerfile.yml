@@ -62,14 +62,14 @@ RUN download_artifact.sh "${SAIREDIS_PROJECT_NAME}" "${BRANCH_NAME}" "${SAIREDIS
 ARG COMMON_LIB_PROJECT_NAME="Azure.sonic-buildimage.common_libs"
 ARG COMMON_LIB_ARTIFACT_NAME="common-lib"
 ARG COMMON_LIB_FILE_PATHS="\
-        /target/debs/${DEBIAN_VERSION}/libnl-3-200_3.5.0-1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libnl-3-dev_3.5.0-1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libnl-genl-3-200_3.5.0-1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libnl-genl-3-dev_3.5.0-1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libnl-route-3-200_3.5.0-1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libnl-route-3-dev_3.5.0-1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libnl-nf-3-200_3.5.0-1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libnl-nf-3-dev_3.5.0-1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-genl-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-genl-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-route-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-route-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-nf-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-nf-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
         /target/debs/${DEBIAN_VERSION}/libyang_1.0.73_${PLATFORM}.deb \
     "
 
