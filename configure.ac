@@ -20,6 +20,11 @@ AC_CHECK_LIB([team], [team_alloc],
 
 PKG_CHECK_MODULES([JANSSON], [jansson])
 
+AC_CHECK_FILE([/usr/include/stp_ipc.h],
+    AM_CONDITIONAL(HAVE_STP, true),
+   [AC_MSG_WARN([stp is not installed.])
+    AM_CONDITIONAL(HAVE_STP, false)])
+
 AC_CHECK_LIB([sai], [sai_object_type_query],
     AM_CONDITIONAL(HAVE_SAI, true),
    [AC_MSG_WARN([libsai is not installed.])
@@ -54,7 +59,7 @@ AC_CHECK_LIB([nl-genl-3], [nl_socket_get_cb])
 AC_CHECK_LIB([nl-route-3], [rtnl_route_nh_get_encap_mpls_dst])
 AC_CHECK_LIB([nl-nf-3], [nfnl_connect])
 
-CFLAGS_COMMON="-std=c++14 -Wall -fPIC -Wno-write-strings -I/usr/include/swss"
+CFLAGS_COMMON="-std=c++14 -Wall -fPIC -Wno-write-strings -I/usr/include/swss -I/usr/include"
 
 AC_ARG_WITH(libnl-3.0-inc,
 [  --with-libnl-3.0-inc=DIR
