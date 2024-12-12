@@ -105,14 +105,19 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     appliance_attr.value.u32 = entry.local_region_id();
     status = sai_dash_appliance_api->create_dash_appliance(&sai_appliance_id, gSwitchId,
                                                            attr_count, &appliance_attr);
-    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_IMPLEMENTED)
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
-        if (handle_status != task_success)
+        if (status != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
+        // ignore if not implemented in SAI
+        sai_appliance_id = 0;
     }
 
     sai_vip_entry_t vip_entry;
