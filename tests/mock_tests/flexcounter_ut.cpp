@@ -5,6 +5,8 @@
 #include "json.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "mock_orch_test.h"
+#include "dashorch.h"
 #include "mock_table.h"
 #include "notifier.h"
 #define private public
@@ -842,4 +844,33 @@ namespace flexcounter_test
             std::make_tuple(true, true),
             std::make_tuple(true, false))
     );
+
+    using namespace mock_orch_test;
+    class EniStatFlexCounterTest : public MockOrchTest
+    {
+        virtual void PostSetUp() {
+            _hook_sai_switch_api();
+        }
+
+        virtual void PreTearDown() {
+           _unhook_sai_switch_api();
+        }
+    };
+
+    TEST_F(EniStatFlexCounterTest, TestStatusUpdate)
+    {
+        /* Add a mock ENI */
+        EniEntry tmp_entry;
+        tmp_entry.eni_id = 0x7008000000020;
+        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7b"] = tmp_entry;
+
+        /* Should create ENI Counter stats for existing ENI's */
+        m_DashOrch->handleFCStatusUpdate(true);
+        m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
+        ASSERT_TRUE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+
+        /* This should delete the STATS */
+        m_DashOrch->handleFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+    }
 }

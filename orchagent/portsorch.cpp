@@ -7,6 +7,7 @@
 #include "directory.h"
 #include "subintf.h"
 #include "notifications.h"
+#include "stporch.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -55,6 +56,7 @@ extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
 extern SwitchOrch *gSwitchOrch;
+extern StpOrch *gStpOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_system_port_api_t *sai_system_port_api;
 extern string gMySwitchType;
@@ -660,6 +662,15 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         {
             bc_sup_flood_control_type.insert(static_cast<sai_vlan_flood_control_type_t>(values.list[idx]));
         }
+    }
+
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
+    {
+        m_supportsHostIfTxQueue = true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Hostif queue attribute not supported");
     }
 
     // Query whether SAI supports Host Tx Signal and Host Tx Notification
@@ -3320,17 +3331,7 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    bool set_hostif_tx_queue = false;
-    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
-    {
-        set_hostif_tx_queue = true;
-    }
-    else
-    {
-        SWSS_LOG_WARN("Hostif queue attribute not supported");
-    }
-
-    if (set_hostif_tx_queue)
+    if (m_supportsHostIfTxQueue)
     {
         attr.id = SAI_HOSTIF_ATTR_QUEUE;
         attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
@@ -3570,6 +3571,12 @@ bool PortsOrch::initPort(const PortConfig &port)
                     m_recircPortRole[alias] = role;
                 }
 
+                // We have to test the size of m_queue_ids here since it isn't initialized on some platforms (like DPU)
+                if (p.m_host_tx_queue_configured && p.m_queue_ids.size() > p.m_host_tx_queue)
+                {
+                    createPortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
+                }
+
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
             else
@@ -3598,6 +3605,11 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
         return;
+    }
+
+    if (p.m_host_tx_queue_configured && p.m_queue_ids.size() > p.m_host_tx_queue)
+    {
+        removePortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
     }
 
     /* remove port from flex_counter_table for updating counters  */
@@ -5998,21 +6010,14 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    bool set_hostif_tx_queue = false;
-    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
-    {
-        set_hostif_tx_queue = true;
-    }
-    else
-    {
-        SWSS_LOG_WARN("Hostif queue attribute not supported");
-    }
-
-    if (set_hostif_tx_queue)
+    if (m_supportsHostIfTxQueue)
     {
         attr.id = SAI_HOSTIF_ATTR_QUEUE;
         attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
         attrs.push_back(attr);
+
+        port.m_host_tx_queue = DEFAULT_HOSTIF_TX_QUEUE;
+        port.m_host_tx_queue_configured = true;
     }
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -6242,6 +6247,9 @@ bool PortsOrch::removeBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
+    
+    /* Remove STP ports before bridge port deletion*/
+    gStpOrch->removeStpPorts(port);
 
     //Flush the FDB entires corresponding to the port
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -6382,6 +6390,12 @@ bool PortsOrch::removeVlan(Port vlan)
     {
         SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
         return false;
+    }
+
+    /* If STP instance is associated with VLAN remove VLAN from STP before deletion */
+    if(vlan.m_stp_id != -1)
+    {
+        gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
     }
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
@@ -7320,6 +7334,10 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
+                else if (it.second.m_host_tx_queue_configured && it.second.m_host_tx_queue <= maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(it.second.m_host_tx_queue, it.second.m_host_tx_queue);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             generateQueueMapPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
@@ -7458,6 +7476,10 @@ void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesS
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
+                else if (it.second.m_host_tx_queue_configured && it.second.m_host_tx_queue <= maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(it.second.m_host_tx_queue, it.second.m_host_tx_queue);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -7539,6 +7561,10 @@ void PortsOrch::addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
+                else if (it.second.m_host_tx_queue_configured && it.second.m_host_tx_queue <= maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(it.second.m_host_tx_queue, it.second.m_host_tx_queue);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueWatermarkFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -7586,7 +7612,7 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& po
     startFlexCounterPolling(gSwitchId, key, counters_str, QUEUE_COUNTER_ID_LIST);
 }
 
-void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
+void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue)
 {
     SWSS_LOG_ENTER();
 
@@ -7606,6 +7632,11 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
+        if (queueIndex == (uint32_t)port.m_host_tx_queue && skip_host_tx_queue)
+        {
+            continue;
+        }
+
         std::ostringstream name;
         name << port.m_alias << ":" << queueIndex;
 
@@ -7643,7 +7674,7 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
     CounterCheckOrch::getInstance().addPort(port);
 }
 
-void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
+void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue)
 {
     SWSS_LOG_ENTER();
 
@@ -7659,6 +7690,11 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
+        if (queueIndex == (uint32_t)port.m_host_tx_queue && skip_host_tx_queue)
+        {
+            continue;
+        }
+
         std::ostringstream name;
         name << port.m_alias << ":" << queueIndex;
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
@@ -10009,4 +10045,3 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
         m_port_state_poller->stop();
     }
 }
-

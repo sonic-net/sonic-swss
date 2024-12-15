@@ -76,6 +76,7 @@ struct SystemLagInfo
     int32_t spa_id = 0;
 };
 
+typedef std::map<sai_uint16_t, sai_object_id_t> stp_port_ids_t;
 class PortOperErrorEvent
 {
 public:
@@ -201,6 +202,8 @@ public:
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
     uint8_t   m_pfc_bitmask = 0;        // PFC enable bit mask
     uint8_t   m_pfcwd_sw_bitmask = 0;   // PFC software watchdog enable
+    uint8_t   m_host_tx_queue = 0;
+    bool      m_host_tx_queue_configured = false;
     uint16_t  m_tpid = DEFAULT_TPID;
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
@@ -232,6 +235,8 @@ public:
     sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
+    stp_port_ids_t m_stp_port_ids; //STP Port object ids for each STP instance
+    sai_int16_t m_stp_id = -1; //STP instance for the VLAN
     /* Port oper error status to event map*/
     std::unordered_map<sai_port_error_status_t, PortOperErrorEvent> m_portOperErrorToEvent;
 

@@ -11,6 +11,7 @@
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "stporch.h"
 
 using namespace std;
 using namespace swss;
@@ -64,6 +65,8 @@ FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
+StpOrch *gStpOrch;
+MuxOrch *gMuxOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -165,6 +168,14 @@ bool OrchDaemon::init()
     };
     gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_configDb, route_pattern_tables);
     gDirectory.set(gFlowCounterRouteOrch);
+
+    vector<string> stp_tables = {
+        APP_STP_VLAN_INSTANCE_TABLE_NAME,
+        APP_STP_PORT_STATE_TABLE_NAME,
+        APP_STP_FASTAGEING_FLUSH_TABLE_NAME
+    };
+    gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
+    gDirectory.set(gStpOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -390,8 +401,8 @@ bool OrchDaemon::init()
         CFG_MUX_CABLE_TABLE_NAME,
         CFG_PEER_SWITCH_TABLE_NAME
     };
-    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
-    gDirectory.set(mux_orch);
+    gMuxOrch = new MuxOrch(m_configDb, mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
+    gDirectory.set(gMuxOrch);
 
     MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, m_stateDb, APP_MUX_CABLE_TABLE_NAME);
     gDirectory.set(mux_cb_orch);
@@ -419,7 +430,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch, gMonitorOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -590,9 +601,9 @@ bool OrchDaemon::init()
                     queueAttrIds,
                     PFC_WD_POLL_MSECS));
     }
-    else if ((platform == INVM_PLATFORM_SUBSTRING)
+    else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
+	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
-             || (platform == MRVL_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
 
@@ -624,7 +635,9 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING) || (platform == MRVL_PLATFORM_SUBSTRING))
+        if ((platform == MRVL_PRST_PLATFORM_SUBSTRING) ||
+	    (platform == MRVL_TL_PLATFORM_SUBSTRING) ||
+	    (platform == NPS_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
@@ -932,6 +945,10 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         o->bake();
     }
 
+    // let's cache the neighbor updates in mux orch and
+    // process them after everything being settled.
+    gMuxOrch->enableCachingNeighborUpdate();
+
     /*
      * Three iterations are needed.
      *
@@ -957,6 +974,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
             o->doTask();
         }
     }
+
+    gMuxOrch->updateCachedNeighbors();
+    gMuxOrch->disableCachingNeighborUpdate();
 
     // MirrorOrch depends on everything else being settled before it can run,
     // and mirror ACL rules depend on MirrorOrch, so run these two at the end
