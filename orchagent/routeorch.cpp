@@ -2433,8 +2433,14 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     size_t creating = gRouteBulker.creating_entries_count(route_entry);
     if (it_route == it_route_table->second.end() && creating == 0)
     {
-        SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
-                ipPrefix.to_string().c_str());
+       if (it_route_table->second.size() == 0)
+       {
+            m_syncdRoutes.erase(vrf_id);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
+       }
+       SWSS_LOG_NOTICE("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
+                       ipPrefix.to_string().c_str());
+ 
         return true;
     }
 
