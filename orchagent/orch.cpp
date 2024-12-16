@@ -17,8 +17,8 @@ using namespace swss;
 
 int gBatchSize = 0;
 
-RingBuffer* Orch::gRingBuffer = nullptr;
-RingBuffer* Executor::gRingBuffer = nullptr;
+std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
+std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
 
 void RingBuffer::pauseThread()
 {
@@ -33,17 +33,6 @@ void RingBuffer::notify()
 
     if (thread_exited || task_pending)
         cv.notify_all();
-}
-
-RingBuffer* RingBuffer::instance = nullptr;
-
-RingBuffer* RingBuffer::get()
-{
-    if (instance == nullptr) {
-        instance = new RingBuffer();
-        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)instance);
-    }
-    return instance;
 }
 
 void RingBuffer::setIdle(bool idle)
@@ -92,18 +81,6 @@ void RingBuffer::addExecutor(Executor* executor)
 bool RingBuffer::serves(const std::string& tableName)
 {
     return m_consumerSet.find(tableName) != m_consumerSet.end();  
-}
-
-void RingBuffer::release()
-{
-    if (instance)
-        delete instance;
-    instance = nullptr;
-}
-RingBuffer* RingBuffer::reset()
-{
-    release();
-    return get();
 }
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
