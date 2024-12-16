@@ -1,6 +1,3 @@
-import pytest
-import time
-
 from swsscommon import swsscommon
 
 #Replace with swsscommon.SOFTWARE_BFD_SESSION_STATE_TABLE once those changes are in master
@@ -170,7 +167,6 @@ class TestSoftBfd(object):
 
         # Check BFD session 3 in STATE_DB
         createdSessions = self.get_exist_bfd_session() - bfdSessions
-        bfdSessions = self.get_exist_bfd_session()
         assert len(createdSessions) == 1
 
         session4 = createdSessions.pop()

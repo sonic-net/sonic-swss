@@ -33,7 +33,6 @@ extern sai_switch_api_t*    sai_switch_api;
 extern Directory<Orch*>     gDirectory;
 extern string               gMySwitchType;
 
-
 const map<string, sai_bfd_session_type_t> session_type_map =
 {
     {"demand_active",       SAI_BFD_SESSION_TYPE_DEMAND_ACTIVE},
@@ -81,7 +80,6 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     {
         m_stateBfdSessionTable.del(alias);
     }
-
     // Clean up state database software BFD entries
     if (gMySwitchType == "dpu") {
         m_stateSoftBfdSessionTable->getKeys(keys);
@@ -90,7 +88,6 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
             m_stateSoftBfdSessionTable->del(alias);
         }
     }
-
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
 }
@@ -100,7 +97,7 @@ BfdOrch::~BfdOrch(void)
     SWSS_LOG_ENTER();
 }
 
-std::string BfdOrch::replaceFirstTwoColons(const std::string &input) {
+std::string BfdOrch::createStateDBKey(const std::string &input) {
     std::string result = input;
     size_t pos = result.find(':'); // Find the first colon
     if (pos != std::string::npos) {
@@ -137,7 +134,7 @@ void BfdOrch::doTask(Consumer &consumer)
         {
             if (gMySwitchType == "dpu") {
                 //program entry in software BFD table
-                m_stateSoftBfdSessionTable->set(replaceFirstTwoColons(key), data);
+                m_stateSoftBfdSessionTable->set(createStateDBKey(key), data);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -185,7 +182,7 @@ void BfdOrch::doTask(Consumer &consumer)
         {
             if (gMySwitchType == "dpu") {
                 //delete entry from software BFD table
-                m_stateSoftBfdSessionTable->del(replaceFirstTwoColons(key));
+                m_stateSoftBfdSessionTable->del(createStateDBKey(key));
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
