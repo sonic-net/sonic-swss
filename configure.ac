@@ -163,6 +163,7 @@ AC_CONFIG_FILES([
     mclagsyncd/Makefile
     swssconfig/Makefile
     cfgmgr/Makefile
+    dashoffloadmanager/Makefile
     tests/Makefile
     orchagent/p4orch/tests/Makefile
 ])
