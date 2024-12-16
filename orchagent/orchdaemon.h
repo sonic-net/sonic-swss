@@ -98,7 +98,7 @@ public:
      */
     void popRingBuffer();
 
-    RingBuffer* gRingBuffer = nullptr;
+    std::shared_ptr<RingBuffer> gRingBuffer = nullptr;
 
     std::thread ring_thread;
 
