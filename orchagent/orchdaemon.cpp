@@ -145,13 +145,14 @@ void OrchDaemon::popRingBuffer()
  * This function initializes gRingBuffer, otherwise it's nullptr.
  */
 void OrchDaemon::enableRingBuffer() {
-    gRingBuffer = RingBuffer::get();
+    gRingBuffer = std::make_shared<RingBuffer>();
     Executor::gRingBuffer = gRingBuffer;
     Orch::gRingBuffer = gRingBuffer;
+    SWSS_LOG_NOTICE("RingBuffer created at %p!", (void *)gRingBuffer.get());
 }
 
 void OrchDaemon::disableRingBuffer() {
-    RingBuffer::release();
+    gRingBuffer = nullptr;
     Executor::gRingBuffer = nullptr;
     Orch::gRingBuffer = nullptr;
 }

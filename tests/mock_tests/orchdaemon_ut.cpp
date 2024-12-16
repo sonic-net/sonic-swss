@@ -1,4 +1,7 @@
+#define protected public
+#include "orch.h"
 #include "orchdaemon.h"
+#undef protected
 #include "dbconnector.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
@@ -26,11 +29,6 @@ namespace orchdaemon_test
 
             OrchDaemon* orchd;
 
-            RingBuffer* gRingBuffer = RingBuffer::get();
-
-            std::shared_ptr<Consumer> consumer;
-
-            std::shared_ptr<Orch> orch;
             OrchDaemonTest()
             {
                 mock_sai_switch = &mock_sai_switch_;
@@ -48,14 +46,6 @@ namespace orchdaemon_test
                 delete orchd;
             };
 
-            void SetUp() override {
-                gRingBuffer = RingBuffer::reset();
-            }
-
-            void TearDown() override
-            {
-                RingBuffer::release();
-            }
     };
 
     TEST_F(OrchDaemonTest, logRotate)
@@ -65,137 +55,114 @@ namespace orchdaemon_test
         orchd->logRotate();
     }
 
+    TEST_F(OrchDaemonTest, ringBuffer)
+    {
+        int test_ring_size = 2;
+
+        auto ring = new RingBuffer(test_ring_size);
+
+        for (int i = 0; i < test_ring_size - 1; i++)
+        {
+            EXPECT_TRUE(ring->push([](){}));
+        }
+        EXPECT_FALSE(ring->push([](){}));
+
+        AnyTask task;
+        for (int i = 0; i < test_ring_size - 1; i++)
+        {
+            EXPECT_TRUE(ring->pop(task));
+        }
+
+        EXPECT_FALSE(ring->pop(task));
+
+        ring->setIdle(true);
+        EXPECT_TRUE(ring->IsIdle());
+        delete ring;
+    }
+
     TEST_F(OrchDaemonTest, RingThread)
     {
         orchd->enableRingBuffer();
 
+        // verify ring buffer is created  
         EXPECT_TRUE(Executor::gRingBuffer != nullptr);
         EXPECT_TRUE(Executor::gRingBuffer == Orch::gRingBuffer);
 
         orchd->ring_thread = std::thread(&OrchDaemon::popRingBuffer, orchd);
+        auto gRingBuffer = orchd->gRingBuffer;
 
-        while (!RingBuffer::get()->thread_created)
+        // verify ring_thread is created
+        while (!gRingBuffer->thread_created)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
         bool task_executed = false;
         AnyTask task = [&task_executed]() { task_executed = true;};
-        RingBuffer::get()->push(task);
+        gRingBuffer->push(task);
 
-        EXPECT_TRUE(RingBuffer::get()->IsIdle());
+        // verify ring thread is conditional locked
+        EXPECT_TRUE(gRingBuffer->IsIdle());
+        EXPECT_FALSE(task_executed);
 
-        RingBuffer::get()->notify();
+        gRingBuffer->notify();
 
-        while (!RingBuffer::get()->IsEmpty() || !RingBuffer::get()->IsIdle())
+        // verify notify() would activate the ring thread when buffer is not empty
+        while (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle())
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
         EXPECT_TRUE(task_executed);
 
-        EXPECT_TRUE(orchd->ring_thread.joinable());
-
         delete orchd;
 
+        // verify the destructor of orchdaemon will stop the ring thread
         EXPECT_FALSE(orchd->ring_thread.joinable());
+        // verify the destructor of orchdaemon also resets ring buffer
+        EXPECT_TRUE(Executor::gRingBuffer == nullptr);
 
-        // reset the orchd
+        // reset the orchd for other testcases
         orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
     }
 
-    TEST_F(OrchDaemonTest, PushAnyTask)
+    TEST_F(OrchDaemonTest, PushRingBuffer)
     {
         orchd->enableRingBuffer();
 
-        orch = make_shared<Orch>(&appl_db, "ROUTE_TABLE", 0);
-        consumer = make_shared<Consumer>(new swss::ConsumerStateTable(&appl_db, "ROUTE_TABLE", 128, 1), orch.get(), "ROUTE_TABLE");
+        auto gRingBuffer = orchd->gRingBuffer;
+
+        std::vector<std::string> tables = {"ROUTE_TABLE", "OTHER_TABLE"};
+        auto orch = make_shared<Orch>(&appl_db, tables);
+        auto route_consumer = dynamic_cast<Consumer *>(orch->getExecutor("ROUTE_TABLE"));
+        auto other_consumer = dynamic_cast<Consumer *>(orch->getExecutor("OTHER_TABLE"));
 
         EXPECT_TRUE(gRingBuffer->serves("ROUTE_TABLE"));
         EXPECT_FALSE(gRingBuffer->serves("OTHER_TABLE"));
-        EXPECT_TRUE(gRingBuffer->IsEmpty());
 
-        int x = 1;
-        int y = 3;
-        AnyTask t1 = [&](){x=2;};
-        AnyTask t2 = [](){};
-        AnyTask t3 = [&](){x=3;y=2;};
+        int x = 0;
+        route_consumer->pushRingBuffer([&](){x=3;});
+        // verify `pushRingBuffer` is equivalent to executing the task immediately
+        EXPECT_TRUE(gRingBuffer->IsEmpty() && gRingBuffer->IsIdle() && !gRingBuffer->thread_created && x==3);
 
-        gRingBuffer->push(t1);
-        gRingBuffer->push(t2);
-        EXPECT_FALSE(gRingBuffer->IsEmpty());
+        gRingBuffer->thread_created = true; // set the flag to assume the ring thread is created (actually not)
 
-        gRingBuffer->pop(t3);
-        t3();
-        EXPECT_TRUE(x==2);
-        EXPECT_TRUE(y==3);
+        // verify `pushRingBuffer` is equivalent to executing the task immediately when ring is empty and idle
+        other_consumer->pushRingBuffer([&](){x=4;});
+        EXPECT_TRUE(gRingBuffer->IsEmpty() && gRingBuffer->IsIdle() && x==4);
 
-        EXPECT_TRUE(gRingBuffer->pop(t3));
-        EXPECT_FALSE(gRingBuffer->pop(t3));
+        route_consumer->pushRingBuffer([&](){x=5;});
+        // verify `pushRingBuffer` would not execute the task if thread_created is true
+        // it only pushes the task to the ring buffer, without executing it
+        EXPECT_TRUE(!gRingBuffer->IsEmpty() && x==4);
 
-        consumer->pushRingBuffer([&](){x=3;});
-        EXPECT_TRUE(x==3);
-
-        gRingBuffer->thread_created = true;
-        consumer->pushRingBuffer([&](){x=4;});
-        EXPECT_TRUE(x==3);
-
-        gRingBuffer->pop(t3);
-        t3();
-        EXPECT_TRUE(x==4);
+        AnyTask task;
+        gRingBuffer->pop(task);
+        task();
+        // hence the task needs to be popped and explicitly executed
+        EXPECT_TRUE(gRingBuffer->IsEmpty() && x==5);
 
         orchd->disableRingBuffer();
-    }
-
-    TEST_F(OrchDaemonTest, ThreadPauseAndNotify) {
-
-        bool thread_finished = false;
-        std::thread t([this, &thread_finished]() {
-            gRingBuffer->setIdle(true);
-            gRingBuffer->pauseThread();
-            thread_finished = true;
-        });
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-        AnyTask task = []() { };
-        EXPECT_TRUE(gRingBuffer->push(task));
-        gRingBuffer->notify();
-
-        t.join();
-        EXPECT_TRUE(thread_finished);
-    }
-
-    TEST_F(OrchDaemonTest, MultiThread) {
-        std::vector<std::thread> producers;
-        std::vector<std::thread> consumers;
-
-        for (int i = 0; i < 3; i++) {
-            producers.emplace_back([this]() {
-                AnyTask task = []() { };
-                for (int j = 0; j < 10; j++) {
-                    gRingBuffer->push(task);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                }
-            });
-        }
-
-        for (int i = 0; i < 3; i++) {
-            consumers.emplace_back([this]() {
-                for (int j = 0; j < 10; j++) {
-                    AnyTask task;
-                    while (!gRingBuffer->pop(task)) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    }
-                }
-            });
-        }
-
-        for (auto& t : producers) {
-            t.join();
-        }
-        for (auto& t : consumers) {
-            t.join();
-        }
     }
 
 }

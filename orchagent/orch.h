@@ -134,7 +134,7 @@ public:
     }
 
     Orch *getOrch() const { return m_orch; }
-    static RingBuffer* gRingBuffer;
+    static std::shared_ptr<RingBuffer> gRingBuffer;
     void pushRingBuffer(AnyTask&& func);
 
 protected:
@@ -187,7 +187,6 @@ public:
 class RingBuffer
 {
 private:
-    static RingBuffer* instance;
     std::vector<AnyTask> buffer;
     int head = 0;
     int tail = 0;
@@ -197,22 +196,8 @@ private:
     std::mutex mtx;
     bool idle_status = true;
 
-protected:
-    RingBuffer(): buffer(RING_SIZE) {}
-    ~RingBuffer() {
-        instance = nullptr;
-    }
-
 public:
-    RingBuffer(const RingBuffer&) = delete;
-    RingBuffer(RingBuffer&&) = delete;
-    RingBuffer& operator= (const RingBuffer&) = delete;
-    RingBuffer& operator= (RingBuffer&&) = delete;
-
-    static void release();
-    static RingBuffer* reset();
-    static RingBuffer* get();
-
+    RingBuffer(int size=RING_SIZE);
     bool thread_created = false;
     std::atomic<bool> thread_exited{false};
 
@@ -290,7 +275,7 @@ public:
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
 
-    static RingBuffer* gRingBuffer;
+    static std::shared_ptr<RingBuffer> gRingBuffer;
 
     std::vector<swss::Selectable*> getSelectables();
 
