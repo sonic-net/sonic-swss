@@ -2438,8 +2438,8 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
             m_syncdRoutes.erase(vrf_id);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
        }
-       SWSS_LOG_NOTICE("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
-                       ipPrefix.to_string().c_str());
+       SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
+                     ipPrefix.to_string().c_str());
  
         return true;
     }
