@@ -197,7 +197,7 @@ private:
     bool idle_status = true;
 
 public:
-    RingBuffer(): buffer(RING_SIZE) {}
+    RingBuffer(int size=RING_SIZE);
     bool thread_created = false;
     std::atomic<bool> thread_exited{false};
 

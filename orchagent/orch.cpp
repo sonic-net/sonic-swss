@@ -20,6 +20,13 @@ int gBatchSize = 0;
 std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
 std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
 
+RingBuffer::RingBuffer(int size): buffer(size)
+{
+    if (size <= 1) {
+        throw std::invalid_argument("Buffer size must be greater than 1");
+    }
+}
+
 void RingBuffer::pauseThread()
 {
     std::unique_lock<std::mutex> lock(mtx);
@@ -47,12 +54,11 @@ bool RingBuffer::IsIdle() const
 
 bool RingBuffer::IsFull() const
 {
-    return (tail + 1) % RING_SIZE == head;
+    return (tail + 1) % static_cast<int>(buffer.size()) == head;
 }
 
 bool RingBuffer::IsEmpty() const
 {
-    std::cout << "IsEmpty() is called" << std::endl;
     return tail == head;
 }
 
@@ -61,7 +67,7 @@ bool RingBuffer::push(AnyTask ringEntry)
     if (IsFull())
         return false;
     buffer[tail] = std::move(ringEntry);
-    tail = (tail + 1) % RING_SIZE;
+    tail = (tail + 1) % static_cast<int>(buffer.size());
     return true;
 }
 
@@ -70,7 +76,7 @@ bool RingBuffer::pop(AnyTask& ringEntry)
     if (IsEmpty())
         return false;
     ringEntry = std::move(buffer[head]);
-    head = (head + 1) % RING_SIZE;
+    head = (head + 1) % static_cast<int>(buffer.size());
     return true;
 }
 
@@ -81,7 +87,6 @@ void RingBuffer::addExecutor(Executor* executor)
 
 bool RingBuffer::serves(const std::string& tableName)
 {
-    std::cout << "serves() is called" << std::endl;
     return m_consumerSet.find(tableName) != m_consumerSet.end();  
 }
 
