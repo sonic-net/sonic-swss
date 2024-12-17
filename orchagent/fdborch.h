@@ -102,6 +102,7 @@ public:
     static const int fdborch_pri;
     void flushFDBEntries(sai_object_id_t bridge_port_oid,
                          sai_object_id_t vlan_oid);
+    void flushFdbByVlan(const string &);
     void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
 
 private:
