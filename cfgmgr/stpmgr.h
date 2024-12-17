@@ -44,6 +44,7 @@
 typedef enum L2_PROTO_MODE{
     L2_NONE,
     L2_PVSTP,
+    L2_MSTP,
 }L2_PROTO_MODE;
 
 typedef enum STP_MSG_TYPE {
