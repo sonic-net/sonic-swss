@@ -52,6 +52,7 @@ bool RingBuffer::IsFull() const
 
 bool RingBuffer::IsEmpty() const
 {
+    std::cout << "IsEmpty() is called" << std::endl;
     return tail == head;
 }
 
@@ -80,6 +81,7 @@ void RingBuffer::addExecutor(Executor* executor)
 
 bool RingBuffer::serves(const std::string& tableName)
 {
+    std::cout << "serves() is called" << std::endl;
     return m_consumerSet.find(tableName) != m_consumerSet.end();  
 }
 
