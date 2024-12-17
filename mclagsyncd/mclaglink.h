@@ -54,7 +54,7 @@
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
 #define CTC_PLATFORM_SUBSTRING  "centec"
-#define MRVL_PRST_PLATFORM_SUBSTRING "marvell-prestera"
+#define MRVL_PLATFORM_SUBSTRING "marvell"
 
 using namespace std;
 
