@@ -45,7 +45,6 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_f
     }
 
     dynamic_buffer_model = false;
-    fixed_cable_speed_len = true;
 }
 
 //# speed, cable, size,    xon,  xoff, threshold,  xon_offset
@@ -173,7 +172,19 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     }
     pfc_enable = m_portPfcStatus[port];
 
-    speed = m_speedLookup[port];
+    auto speed_iter = m_speedLookup.find(port);
+    if (speed_iter != m_speedLookup.end() && s_autonegEnabled.find(port) == s_autonegEnabled.end())
+    {
+        SWSS_LOG_NOTICE("Skipping dynamic creation of BUFFER_PROFILE and related BUFFER_PG entries for port %s because "
+                        "port speed is set to %s Mbps and autoneg is not enabled for the port.",
+                        port.c_str(), speed_iter->second.c_str());
+        return task_process_status::task_success;
+    }
+    if (speed_iter == m_speedLookup.end())
+        speed = "";
+    else
+        speed = speed_iter->second;
+
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
@@ -503,12 +514,6 @@ void BufferMgr::doTask(Consumer &consumer)
         return;
     }
 
-    if (fixed_cable_speed_len)
-    {
-        SWSS_LOG_DEBUG("Will not dynamically generate BUFFER_PG and BUFFER_PROFILE entries.");
-        return;
-    }
-
     if (table_name == CFG_PORT_QOS_MAP_TABLE_NAME)
     {
         doPortQosTableTask(consumer);
@@ -548,6 +553,8 @@ void BufferMgr::doTask(Consumer &consumer)
                     {
                         m_portStatusLookup[port] = fvValue(i);
                     }
+                    else if (fvField(i) == "autoneg" && (fvValue(i) == "on" || fvValue(i) == "1"))
+                        s_autonegEnabled.insert(port);
                 }
 
                 if (m_speedLookup.count(port) != 0)
