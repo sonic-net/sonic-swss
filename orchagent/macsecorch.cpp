@@ -38,6 +38,7 @@ extern sai_switch_api_t *sai_switch_api;
 constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
 constexpr bool DEFAULT_SCI_IN_SECTAG = false;
 constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
+bool saiAclFieldSciMatchSupported = true;
 
 static const std::vector<std::string> macsec_sa_attrs =
     {
@@ -637,6 +638,17 @@ MACsecOrch::MACsecOrch(
                                 MACSEC_STAT_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
+    sai_attr_capability_t capability;
+    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE,
+                                            SAI_ACL_TABLE_ATTR_FIELD_MACSEC_SCI,
+                                            &capability) == SAI_STATUS_SUCCESS)
+    {
+        if (capability.create_implemented == false)
+        {
+            SWSS_LOG_DEBUG("SAI_ACL_TABLE_ATTR_FIELD_MACSEC_SCI is not supported");
+            saiAclFieldSciMatchSupported = false;
+        }
+    }
 }
 
 MACsecOrch::~MACsecOrch()
@@ -2570,9 +2582,12 @@ bool MACsecOrch::createMACsecACLTable(
     attr.value.booldata = true;
     attrs.push_back(attr);
 
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_MACSEC_SCI;
-    attr.value.booldata = sci_in_sectag;
-    attrs.push_back(attr);
+    if (saiAclFieldSciMatchSupported == true)
+    {
+       attr.id = SAI_ACL_TABLE_ATTR_FIELD_MACSEC_SCI;
+       attr.value.booldata = sci_in_sectag;
+       attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_acl_api->create_acl_table(
                                 &table_id,
@@ -2738,7 +2753,7 @@ bool MACsecOrch::createMACsecACLDataEntry(
     attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
     attr.value.aclaction.enable = true;
     attrs.push_back(attr);
-    if (sci_in_sectag)
+    if ((saiAclFieldSciMatchSupported == true) && sci_in_sectag)
     {
         attr.id = SAI_ACL_ENTRY_ATTR_FIELD_MACSEC_SCI;
         attr.value.aclfield.enable = true;
