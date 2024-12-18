@@ -44,25 +44,42 @@ struct MySidEntry
     sai_my_sid_entry_endpoint_behavior_t endBehavior;
     string            endVrfString; // Used for END.T, END.DT4, END.DT6 and END.DT46,
     string            endAdjString; // Used for END.X, END.DX4, END.DX6
+    sai_tunnel_dscp_mode_t dscp_mode; // Used for UDT46
+    sai_object_id_t   tunnel_term_entry; // Used for UDT46
+};
+
+struct MySidIpInIpTunnel
+{
+    sai_object_id_t overlay_rif_oid;
+    sai_object_id_t tunnel_oid;
+    uint64_t refcount;
+};
+
+struct MySidIpInIpTunnels
+{
+    MySidIpInIpTunnel dscp_uniform_tunnel;
+    MySidIpInIpTunnel dscp_pipe_tunnel;
 };
 
 typedef unordered_map<string, SidTableEntry> SidTable;
 typedef unordered_map<string, SidTunnelEntry> Srv6TunnelTable;
 typedef map<NextHopKey, sai_object_id_t> Srv6NextHopTable;
 typedef unordered_map<string, MySidEntry> Srv6MySidTable;
+typedef unordered_map<string, sai_tunnel_dscp_mode_t> Srv6MySidDscpCfg;
 
 #define SID_LIST_DELIMITER ','
 #define MY_SID_KEY_DELIMITER ':'
 class Srv6Orch : public Orch, public Observer
 {
     public:
-        Srv6Orch(DBConnector *applDb, vector<string> &tableNames, SwitchOrch *switchOrch, VRFOrch *vrfOrch, NeighOrch *neighOrch):
-          Orch(applDb, tableNames),
+        Srv6Orch(DBConnector *cfgDb, DBConnector *applDb, const vector<TableConnector>& tables, SwitchOrch *switchOrch, VRFOrch *vrfOrch, NeighOrch *neighOrch):
+          Orch(tables),
           m_vrfOrch(vrfOrch),
           m_switchOrch(switchOrch),
           m_neighOrch(neighOrch),
           m_sidTable(applDb, APP_SRV6_SID_LIST_TABLE_NAME),
-          m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME)
+          m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME),
+          m_mysidCfgTable(cfgDb, CFG_SRV6_MY_SID_TABLE_NAME)
         {
             m_neighOrch->attach(this);
         }
@@ -78,6 +95,7 @@ class Srv6Orch : public Orch, public Observer
         void doTask(Consumer &consumer);
         task_process_status doTaskSidTable(const KeyOpFieldsValuesTuple &tuple);
         void doTaskMySidTable(const KeyOpFieldsValuesTuple &tuple);
+        void doTaskCfgMySidTable(const KeyOpFieldsValuesTuple &tuple);
         bool createUpdateSidList(const string seg_name, const string ips, const string sidlist_type);
         task_process_status deleteSidList(const string seg_name);
         bool createSrv6Tunnel(const string srv6_source);
@@ -87,20 +105,31 @@ class Srv6Orch : public Orch, public Observer
         bool deleteMysidEntry(const string my_sid_string);
         bool sidEntryEndpointBehavior(const string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                       sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor);
+        bool getMySidEntryDscpMode(const string& my_sid, sai_tunnel_dscp_mode_t& dscp_mode);
         bool mySidExists(const string mysid_string);
         bool mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
+        bool mySidTunnelRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         void srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert);
         size_t srv6TunnelNexthopSize(const string srv6_source);
+        bool initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_t dscp_mode);
+        bool deinitIpInIpTunnel(MySidIpInIpTunnel& tunnel);
+        bool createMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode, sai_object_id_t& tunnel_oid);
+        bool removeMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode);
+        bool createMySidIpInIpTunnelTermEntry(sai_object_id_t tunnel_oid, const sai_ip6_t& sid_ip, sai_object_id_t& term_entry_oid);
+        bool removeMySidIpInIpTunnelTermEntry(sai_object_id_t term_entry_oid);
 
         void updateNeighbor(const NeighborUpdate& update);
 
         ProducerStateTable m_sidTable;
         ProducerStateTable m_mysidTable;
+        Table m_mysidCfgTable;
         SidTable sid_table_;
         Srv6TunnelTable srv6_tunnel_table_;
         Srv6NextHopTable srv6_nexthop_table_;
         Srv6MySidTable srv6_my_sid_table_;
+        MySidIpInIpTunnels my_sid_ipinip_tunnels_;
+        Srv6MySidDscpCfg my_sid_dscp_cfg_cache_;
         VRFOrch *m_vrfOrch;
         SwitchOrch *m_switchOrch;
         NeighOrch *m_neighOrch;
