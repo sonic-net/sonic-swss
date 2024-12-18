@@ -21,8 +21,9 @@ using namespace swss;
 
 extern MacAddress gMacAddress;
 
-VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
-        Orch(cfgDb, tableNames),
+VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames,
+        const vector<string> &stateTableNames) :
+        Orch(cfgDb, stateDb, tableNames, stateTableNames),
         m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME),
         m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
@@ -31,6 +32,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
         m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME),
+        m_appFdbTableProducer(appDb, APP_FDB_TABLE_NAME),
+        m_appPortTableProducer(appDb, APP_PORT_TABLE_NAME),
         replayDone(false)
 {
     SWSS_LOG_ENTER();
@@ -643,6 +646,7 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
 
                 m_vlanMemberReplay.erase(kfvKey(t));
+                m_PortVlanMember[port_alias][vlan_alias] = tagging_mode;
             }
             else
             {
@@ -661,6 +665,7 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 key += port_alias;
                 m_appVlanMemberTableProducer.del(key);
                 m_stateVlanMemberTable.del(kfvKey(t));
+                m_PortVlanMember[port_alias].erase(vlan_alias);
             }
             else
             {
@@ -687,6 +692,257 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
     }
 }
 
+void VlanMgr::doVlanPacPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &t = it->second;
+        string alias = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_DEBUG("processing %s operation %s", alias.c_str(),
+                                   op.empty() ? "none" : op.c_str());
+
+        if (op == SET_COMMAND)
+        {
+            string learn_mode;
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
+                }
+            }
+            if (!learn_mode.empty())
+            {
+                SWSS_LOG_NOTICE("set port learn mode port %s learn_mode %s\n", alias.c_str(), learn_mode.c_str());
+                vector<FieldValueTuple> fvVector;
+                FieldValueTuple portLearnMode("learn_mode", learn_mode);
+                fvVector.push_back(portLearnMode);
+                m_appPortTableProducer.set(alias, fvVector);
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (isMemberStateOk(alias))
+            {
+                vector<FieldValueTuple> fvVector;
+                FieldValueTuple portLearnMode("learn_mode", "hardware");
+                fvVector.push_back(portLearnMode);
+                m_appPortTableProducer.set(alias, fvVector);
+            }
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void VlanMgr::doVlanPacFdbTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        /* format: <VLAN_name>|<MAC_address> */
+        vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter, 1);
+        /* keys[0] is vlan as (Vlan10) and keys[1] is mac as (00-00-00-00-00-00) */
+        string op = kfvOp(t);
+
+        SWSS_LOG_NOTICE("VlanMgr process static MAC vlan: %s mac: %s ", keys[0].c_str(), keys[1].c_str());
+
+        int vlan_id;
+        vlan_id = stoi(keys[0].substr(4));
+
+        if (!m_vlans.count(keys[0]))
+        {
+            SWSS_LOG_NOTICE("Vlan %s not available yet, mac %s", keys[0].c_str(), keys[1].c_str());
+            it++;
+            continue;
+        }
+
+        MacAddress mac = MacAddress(keys[1]);
+
+        string key = VLAN_PREFIX + to_string(vlan_id);
+        key += DEFAULT_KEY_SEPARATOR;
+        key += mac.to_string();
+
+        if (op == SET_COMMAND)
+        {
+            string port, discard = "false", type = "static";
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "port")
+                {
+                    port = fvValue(i);
+                }
+                if (fvField(i) == "discard")
+                {
+                    discard = fvValue(i);
+                }
+                if (fvField(i) == "type")
+                {
+                    type = fvValue(i);
+                }
+            }
+            SWSS_LOG_NOTICE("PAC FDB SET %s port %s discard %s type %s\n",
+                key.c_str(), port.c_str(), discard.c_str(), type.c_str());
+            vector<FieldValueTuple> fvVector;
+            FieldValueTuple p("port", port);
+            fvVector.push_back(p);
+            FieldValueTuple t("type", type);
+            fvVector.push_back(t);
+            FieldValueTuple d("discard", discard);
+            fvVector.push_back(d);
+
+            m_appFdbTableProducer.set(key, fvVector);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_appFdbTableProducer.del(key);
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &t = it->second;
+
+        string key = kfvKey(t);
+
+        key = key.substr(4);
+        size_t found = key.find(CONFIGDB_KEY_SEPARATOR);
+        int vlan_id = 0;
+        string vlan_alias, port_alias;
+        if (found != string::npos)
+        {
+            vlan_id = stoi(key.substr(0, found));
+            port_alias = key.substr(found+1);
+        }
+
+        vlan_alias = VLAN_PREFIX + to_string(vlan_id);
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            /* Don't proceed if member port/lag is not ready yet */
+            if (!isMemberStateOk(port_alias) || !isVlanStateOk(vlan_alias))
+            {
+                SWSS_LOG_DEBUG("%s not ready, delaying", kfvKey(t).c_str());
+                it++;
+                continue;
+            }
+            string tagging_mode = "untagged";
+            auto vlans = m_PortVlanMember[port_alias];
+            for (const auto& vlan : vlans)
+            {
+                string vlan_alias = vlan.first;
+                removePortFromVlan(port_alias, vlan_alias);
+            }
+            SWSS_LOG_NOTICE("Add Vlan Member key: %s", kfvKey(t).c_str());
+            if (addHostVlanMember(vlan_id, port_alias, tagging_mode))
+            {
+                key = VLAN_PREFIX + to_string(vlan_id);
+                key += DEFAULT_KEY_SEPARATOR;
+                key += port_alias;
+                vector<FieldValueTuple> fvVector = kfvFieldsValues(t);
+                FieldValueTuple s("dynamic", "yes");
+                fvVector.push_back(s);
+                m_appVlanMemberTableProducer.set(key, fvVector);
+
+                vector<FieldValueTuple> fvVector1;
+                FieldValueTuple s1("state", "ok");
+                fvVector.push_back(s1);
+                m_stateVlanMemberTable.set(kfvKey(t), fvVector);
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (isVlanMemberStateOk(kfvKey(t)))
+            {
+                SWSS_LOG_NOTICE("Remove Vlan Member key: %s", kfvKey(t).c_str());
+                removeHostVlanMember(vlan_id, port_alias);
+                key = VLAN_PREFIX + to_string(vlan_id);
+                key += DEFAULT_KEY_SEPARATOR;
+                key += port_alias;
+                m_appVlanMemberTableProducer.del(key);
+                m_stateVlanMemberTable.del(kfvKey(t));
+            }
+
+            auto vlans = m_PortVlanMember[port_alias];
+            for (const auto& vlan : vlans)
+            {
+                string vlan_alias = vlan.first;
+                string tagging_mode = vlan.second;
+                SWSS_LOG_NOTICE("Add Vlan Member vlan: %s port %s tagging_mode %s",
+                    vlan_alias.c_str(), port_alias.c_str(), tagging_mode.c_str());
+                addPortToVlan(port_alias, vlan_alias, tagging_mode);
+            }
+        }
+        /* Other than the case of member port/lag is not ready, no retry will be performed */
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void VlanMgr::addPortToVlan(const std::string& membername, const std::string& vlan_alias,
+        const std::string& tagging_mode)
+{
+    SWSS_LOG_NOTICE("member %s vlan %s tagging_mode %s",
+        membername.c_str(), vlan_alias.c_str(), tagging_mode.c_str());
+    int vlan_id = stoi(vlan_alias.substr(4));
+    if (addHostVlanMember(vlan_id, membername, tagging_mode))
+    {
+        std::string key = VLAN_PREFIX + to_string(vlan_id);
+        key += DEFAULT_KEY_SEPARATOR;
+        key += membername;
+        vector<FieldValueTuple> fvVector;
+        FieldValueTuple s("tagging_mode", tagging_mode);
+        fvVector.push_back(s);
+        FieldValueTuple s1("dynamic", "no");
+        fvVector.push_back(s1);
+        SWSS_LOG_INFO("key: %s\n", key.c_str());
+        m_appVlanMemberTableProducer.set(key, fvVector);
+
+        vector<FieldValueTuple> fvVector1;
+        FieldValueTuple s2("state", "ok");
+        fvVector1.push_back(s2);
+        key = VLAN_PREFIX + to_string(vlan_id);
+        key += '|';
+        key += membername;
+        m_stateVlanMemberTable.set(key, fvVector1);
+    }
+}
+
+void VlanMgr::removePortFromVlan(const std::string& membername, const std::string& vlan_alias)
+{
+    SWSS_LOG_NOTICE("member %s vlan %s",
+        membername.c_str(), vlan_alias.c_str());
+    int vlan_id = stoi(vlan_alias.substr(4));
+    std::string key = VLAN_PREFIX + to_string(vlan_id);
+    key += '|';
+    key += membername;
+    if (isVlanMemberStateOk(key))
+    {
+        key = VLAN_PREFIX + to_string(vlan_id);
+        key += ':';
+        key += membername;
+        SWSS_LOG_INFO("key: %s\n", key.c_str());
+        m_appVlanMemberTableProducer.del(key);
+
+        key = VLAN_PREFIX + to_string(vlan_id);
+        key += '|';
+        key += membername;
+        m_stateVlanMemberTable.del(key);
+    }
+}
+
 void VlanMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -700,6 +956,18 @@ void VlanMgr::doTask(Consumer &consumer)
     else if (table_name == CFG_VLAN_MEMBER_TABLE_NAME)
     {
         doVlanMemberTask(consumer);
+    }
+    else if (table_name == STATE_OPER_PORT_TABLE_NAME)
+    {
+        doVlanPacPortTask(consumer);
+    }
+    else if (table_name == STATE_OPER_FDB_TABLE_NAME)
+    {
+        doVlanPacFdbTask(consumer);
+    }
+    else if (table_name == STATE_OPER_VLAN_MEMBER_TABLE_NAME)
+    {
+        doVlanPacVlanMemberTask(consumer);
     }
     else
     {
