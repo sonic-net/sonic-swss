@@ -251,6 +251,14 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // If it is exist and the value is 'true' we need to skip the iteration in order to delay the counter creation.
                     // The field will clear out and counter will be created when enable_counters script is called.
                 }
+                else if (field == BULK_CHUNK_SIZE_FIELD)
+                {
+                    setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key], value, false);
+                }
+                else if (field == BULK_CHUNK_SIZE_PER_PREFIX_FIELD)
+                {
+                    setFlexCounterGroupBulkChunkSizePerPrefix(flexCounterGroupMap[key], value, false);
+                }
                 else
                 {
                     SWSS_LOG_NOTICE("Unsupported field %s", field.c_str());
