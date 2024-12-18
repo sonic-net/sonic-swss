@@ -27,6 +27,10 @@
 #define L2_INSTANCE_MAX             MAX_VLANS
 #define STP_DEFAULT_MAX_INSTANCES   255
 #define INVALID_INSTANCE            -1 
+#define MST_DEFAULT_INSTANCE        0
+#define MST_MAX_INSTANCES           STP_DEFAULT_MAX_INSTANCES
+#define DEFAULT_INSTANCE_VLAN_LIST "1-4095"
+#define MST_NAME_SIZE               64
 
 
 #define GET_FIRST_FREE_INST_ID(_idx) \
@@ -56,7 +60,14 @@ typedef enum STP_MSG_TYPE {
     STP_PORT_CONFIG,
     STP_VLAN_MEM_CONFIG,
     STP_STPCTL_MSG,
-    STP_MAX_MSG
+    STP_MAX_MSG,
+
+    //MST config messages
+    STP_MST_GLOBAL_CONFIG,
+    STP_MST_INST_CONFIG,
+    STP_MST_VLAN_PORT_LIST_CONFIG,
+    STP_MST_INST_PORT_CONFIG,
+
 }STP_MSG_TYPE;
 
 typedef enum STP_CTL_TYPE {
@@ -159,6 +170,20 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
     int         priority;
 }__attribute__ ((packed))STP_VLAN_MEM_CONFIG_MSG;
 
+// MST messages definations
+typedef struct STP_MST_GLOBAL_CFG_MSG {
+    uint32_t    opcode;           // Operation code for the message
+    char        name[MST_NAME_SIZE];        // MST region name
+    uint32_t    revision;                   // MST revision number
+    uint8_t     max_hops;                   // MST max hops
+    uint8_t     hello_time;                 // MST hello time
+    uint8_t     max_age;                    // MST max age
+    uint8_t     forward_delay;              // MST forward delay
+    uint8_t     hold_count;                 // MST hold count
+} __attribute__((packed)) STP_MST_GLOBAL_CFG_MSG;
+
+
+
 namespace swss {
 
 class StpMgr : public Orch
@@ -186,6 +211,11 @@ private:
     Table m_stateLagTable;
     Table m_stateStpTable;
 
+    //MST new tables 
+    Table m_cfgStpMstGlobalTable;
+    Table m_cfgStpMstInstTable;
+    Table m_cfgStpMstPortTable;
+
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
     enum L2_PROTO_MODE l2ProtoEnabled;
@@ -204,6 +234,12 @@ private:
     void doStpVlanTask(Consumer &consumer);
     void doStpVlanPortTask(Consumer &consumer);
     void doStpPortTask(Consumer &consumer);
+    
+    //MST Do Tasks functions
+    void doStpMstGlobalTask(Consumer &consumer);
+    void doStpMstInstTask(Consumer &consumer);
+    void doStpMstPortTask(Consumer &consumer)
+
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
 

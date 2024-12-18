@@ -28,7 +28,11 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateVlanTable(statDb, STATE_VLAN_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
-    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME)
+    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
+    //MSTP TABLES CONFIG DB
+    m_cfgStpMstGlobalTable(confdb, CFG_STP_MST_GLOBAL_TABLE_NAME),
+    m_cfgStpMstInstTable(confdb,CFG_STP_MST_INST_TABLE_NAME),
+    m_cfgStpMstPortTable(confdb, CFG_STP_MST_PORT_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -56,10 +60,20 @@ void StpMgr::doTask(Consumer &consumer)
         doStpVlanPortTask(consumer);
     else if (table == CFG_STP_PORT_TABLE_NAME)
         doStpPortTask(consumer);
+    
+    // MST do function enhanced
+    else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
+        doStpMstGlobalTask(consumer);
+    else if (table == CFG_STP_MST_INST_TABLE_NAME)
+        doStpMstInstTask(consumer);
+    else if (table == CFG_STP_MST_PORT_TABLE_NAME)
+        doStpMstPortTask(consumer);
+
     else if (table == CFG_LAG_MEMBER_TABLE_NAME)
         doLagMemUpdateTask(consumer);
     else if (table == STATE_VLAN_MEMBER_TABLE_NAME)
         doVlanMemUpdateTask(consumer);
+    
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -89,6 +103,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
             for (auto i : kfvFieldsValues(t))
             {
                 SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+
                 if (fvField(i) == "mode")
                 {
                     if (fvValue(i) == "pvst")
@@ -106,8 +121,25 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
+                    else if (fvValue(i) == "mst")
+                    {
+                        if (l2ProtoEnabled == L2_NONE)
+                        {
+                            const std::string cmd = std::string("") + 
+                                " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
+                            std::string res;
+                            int ret = swss::exec(cmd, res);
+                            if (ret != 0)
+                                SWSS_LOG_ERROR("ebtables add failed %d", ret);
+
+                            l2ProtoEnabled = L2_MSTP;
+                        }
+                        msg.stp_mode = L2_MSTP;
+                    }
                     else
+                    {
                         SWSS_LOG_ERROR("Error invalid mode %s", fvValue(i).c_str());
+                    }
                 }
                 else if (fvField(i) == "rootguard_timeout")
                 {
@@ -120,24 +152,149 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             msg.opcode = STP_DEL_COMMAND;
-            l2ProtoEnabled = L2_NONE;
 
-            //Free Up all instances
+            // Check which protocol was previously enabled (PVST or MST)
+            if (l2ProtoEnabled == L2_PVSTP)
+            {
+                l2ProtoEnabled = L2_NONE;
+                // Delete PVST ebtables rule
+                const std::string cmd = std::string("") + 
+                    " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
+                std::string res;
+                int ret = swss::exec(cmd, res);
+                if (ret != 0)
+                    SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret);
+            }
+            else if (l2ProtoEnabled == L2_MSTP)
+            {
+                l2ProtoEnabled == L2_NONE;
+                // Delete MST ebtables rule
+                const std::string cmd = std::string("") + 
+                    " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
+                std::string res;
+                int ret = swss::exec(cmd, res);
+                if (ret != 0)
+                    SWSS_LOG_ERROR("ebtables del failed for MST %d", ret);
+            }
+            
+            // Free Up all instances
             FREE_ALL_INST_ID();
-    
+            
             // Initialize all VLANs to Invalid instance
             fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-            const std::string cmd = std::string("") + 
-                    " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-            std::string res;
-            int ret = swss::exec(cmd, res);
-            if (ret != 0)
-                SWSS_LOG_ERROR("ebtables del failed %d", ret);
         }
 
         sendMsgStpd(STP_BRIDGE_CONFIG, sizeof(msg), (void *)&msg);
 
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+
+void StpMgr::doStpMstGlobalTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    // Initialize the flag for task processing.
+    if (stpGlobalTask == false)
+        stpGlobalTask = true;
+
+    // Iterate through the messages in the consumer's sync queue
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        STP_MST_GLOBAL_CFG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_GLOBAL_CFG_MSG));
+
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_INFO("STP MST global key %s op %s", key.c_str(), op.c_str());
+
+        // If the operation is a SET_COMMAND, process the settings
+        if (op == SET_COMMAND)
+        {
+            msg.opcode = STP_SET_COMMAND;
+
+            // Iterate over the fields and values
+            for (auto i : kfvFieldsValues(t))
+            {
+                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+
+                // Check for the MST region name
+                if (fvField(i) == "name")
+                {
+                    strncpy(msg.name, fvValue(i).c_str(), MST_NAME_SIZE);
+                }
+                // Check for the MST revision
+                else if (fvField(i) == "revision")
+                {
+                    msg.revision = stoi(fvValue(i).c_str());
+                }
+                // Check for the MST max hops
+                else if (fvField(i) == "max_hops")
+                {
+                    msg.max_hops = stoi(fvValue(i).c_str());
+                }
+                // Check for the MST hello time
+                else if (fvField(i) == "hello_time")
+                {
+                    msg.hello_time = stoi(fvValue(i).c_str());
+                }
+                // Check for the MST max age
+                else if (fvField(i) == "max_age")
+                {
+                    msg.max_age = stoi(fvValue(i).c_str());
+                }
+                // Check for the MST forward delay
+                else if (fvField(i) == "forward_delay")
+                {
+                    msg.forward_delay = stoi(fvValue(i).c_str());
+                }
+                // Check for the MST hold count
+                else if (fvField(i) == "hold_count")
+                {
+                    msg.hold_count = stoi(fvValue(i).c_str());
+                }
+            }
+
+            // Check if MST is enabled before setting the values
+            if (l2ProtoEnabled == L2_MSTP)
+            {
+                // Send the message to the daemon
+                sendMsgStpd(STP_MST_GLOBAL_CFG, sizeof(msg), (void *)&msg);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("MST protocol is not enabled, cannot configure MST global settings.");
+            }
+        }
+        // If the operation is a DEL_COMMAND, process the deletion
+        else if (op == DEL_COMMAND)
+        {
+            msg.opcode = STP_DEL_COMMAND;
+
+            // Check if MST is enabled before attempting deletion
+            if (l2ProtoEnabled == L2_MSTP)
+            {
+                // Reset the MST settings to default values
+                memset(&msg, 0, sizeof(STP_MST_GLOBAL_CFG_MSG));
+                sendMsgStpd(STP_MST_GLOBAL_CFG, sizeof(msg), (void *)&msg);
+                SWSS_LOG_INFO("MST global configuration deleted.");
+            }
+            else
+            {
+                SWSS_LOG_ERROR("MST protocol is not enabled, cannot delete MST global settings.");
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid operation %s", op.c_str());
+        }
+
+        // Erase the processed item and move to the next one
         it = consumer.m_toSync.erase(it);
     }
 }
