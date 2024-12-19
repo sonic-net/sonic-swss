@@ -30,6 +30,20 @@ Orch::Orch(DBConnector *db, const vector<string> &tableNames)
     }
 }
 
+Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2, 
+    const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2)
+{
+    for(auto it : tableNames_1)
+    {
+        addConsumer(db1, it, default_orch_pri);
+    }
+
+    for(auto it : tableNames_2)
+    {
+        addConsumer(db2, it, default_orch_pri);
+    }
+}
+
 Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
 {
     for (const auto& it : tableNames_with_pri)
