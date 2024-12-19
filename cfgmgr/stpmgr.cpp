@@ -281,7 +281,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
             {
                 // Reset the MST settings to default values
                 memset(&msg, 0, sizeof(STP_MST_GLOBAL_CFG_MSG));
-                sendMsgStpd(STP_MST_GLOBAL_CFG, sizeof(msg), (void *)&msg);
+                sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
                 SWSS_LOG_INFO("MST global configuration deleted.");
             }
             else
