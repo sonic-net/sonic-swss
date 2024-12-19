@@ -91,7 +91,7 @@ lcov_genhtml_report()
         echo "gcda count: $GCDA_COUNT"
         if [ $GCDA_COUNT -ge 1 ]; then
             echo "Executing lcov -c -d . -o ${infoname}"
-            lcov -c -d . -o ${infoname} &>/dev/null
+            lcov -c -d . --base-directory $(realpath .) --normalize-path . -o ${infoname} &>/dev/null
             if [ "$?" != "0" ]; then
                 echo "lcov fail!"
                 rm ${infoname}
@@ -119,9 +119,9 @@ lcov_merge_all()
     while read line
     do
         if [ ! -f "total.info" ]; then
-            lcov -o total.info -a ${line}
+            lcov --normalize-path . -o total.info -a ${line}
         else
-            lcov -o total.info -a total.info -a ${line}
+            lcov --normalize-path . -o total.info -a total.info -a ${line}
         fi
     done < infolist
 
