@@ -64,9 +64,8 @@ typedef enum STP_MSG_TYPE {
 
     //MST config messages
     STP_MST_GLOBAL_CONFIG,
-    STP_MST_INST_CONFIG,
-    STP_MST_VLAN_PORT_LIST_CONFIG,
-    STP_MST_INST_PORT_CONFIG,
+    //STP_MST_INST_CONFIG,
+    //STP_MST_INST_PORT_CONFIG,
 
 }STP_MSG_TYPE;
 
@@ -171,7 +170,7 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
 }__attribute__ ((packed))STP_VLAN_MEM_CONFIG_MSG;
 
 // MST messages definations instances global configurations 
-typedef struct STP_MST_GLOBAL_CFG_MSG {
+typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint32_t    opcode;           // Operation code for the message
     char        name[MST_NAME_SIZE];        // MST region name
     uint32_t    revision;                   // MST revision number
@@ -180,7 +179,7 @@ typedef struct STP_MST_GLOBAL_CFG_MSG {
     uint8_t     max_age;                    // MST max age
     uint8_t     forward_delay;              // MST forward delay
     uint8_t     hold_count;                 // MST hold count
-} __attribute__((packed)) STP_MST_GLOBAL_CFG_MSG;
+} __attribute__((packed)) STP_MST_GLOBAL_CONFIG_MSG;
 
 namespace swss {
 

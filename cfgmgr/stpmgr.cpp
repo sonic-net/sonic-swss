@@ -198,14 +198,14 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
 
     // Initialize the flag for task processing.
     if (stpGlobalTask == false)
-        stpGlobalTask = true;
+        return;
 
     // Iterate through the messages in the consumer's sync queue
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        STP_MST_GLOBAL_CFG_MSG msg;
-        memset(&msg, 0, sizeof(STP_MST_GLOBAL_CFG_MSG));
+        STP_MST_GLOBAL_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
 
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
@@ -264,7 +264,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
             if (l2ProtoEnabled == L2_MSTP)
             {
                 // Send the message to the daemon
-                sendMsgStpd(STP_MST_GLOBAL_CFG, sizeof(msg), (void *)&msg);
+                sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
             }
             else
             {
