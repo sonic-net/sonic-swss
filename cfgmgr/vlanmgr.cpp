@@ -232,10 +232,16 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     }
     catch (const std::runtime_error& e)
     {
-        if (!isMemberStateOk(port_alias))
+        // Race conidtion can happen with portchannel removal might happen
+	// but state db is not updated yet so we can do retry instead of sending exception
+	if (!port_alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+	{
             return false;
+	}
         else
+	{
             EXEC_WITH_ERROR_THROW(cmds.str(), res);
+	}
     }
 
     return true;
