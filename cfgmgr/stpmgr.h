@@ -182,8 +182,6 @@ typedef struct STP_MST_GLOBAL_CFG_MSG {
     uint8_t     hold_count;                 // MST hold count
 } __attribute__((packed)) STP_MST_GLOBAL_CFG_MSG;
 
-
-
 namespace swss {
 
 class StpMgr : public Orch
@@ -238,7 +236,7 @@ private:
     //MST Do Tasks functions
     void doStpMstGlobalTask(Consumer &consumer);
     void doStpMstInstTask(Consumer &consumer);
-    void doStpMstPortTask(Consumer &consumer)
+    void doStpMstPortTask(Consumer &consumer);
 
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);

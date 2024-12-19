@@ -30,9 +30,9 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
     //MSTP TABLES CONFIG DB
-    m_cfgStpMstGlobalTable(confdb, CFG_STP_MST_GLOBAL_TABLE_NAME),
-    m_cfgStpMstInstTable(confdb,CFG_STP_MST_INST_TABLE_NAME),
-    m_cfgStpMstPortTable(confdb, CFG_STP_MST_PORT_TABLE_NAME)
+    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME),
+    m_cfgStpMstInstTable(confDb,CFG_STP_MST_INST_TABLE_NAME),
+    m_cfgStpMstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -167,7 +167,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
             }
             else if (l2ProtoEnabled == L2_MSTP)
             {
-                l2ProtoEnabled == L2_NONE;
+                l2ProtoEnabled = L2_NONE;
                 // Delete MST ebtables rule
                 const std::string cmd = std::string("") + 
                     " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
@@ -236,27 +236,27 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
                 // Check for the MST max hops
                 else if (fvField(i) == "max_hops")
                 {
-                    msg.max_hops = stoi(fvValue(i).c_str());
+                    msg.max_hops = static_cast<uint8_t>(stoi(fvValue(i).c_str()));
                 }
                 // Check for the MST hello time
                 else if (fvField(i) == "hello_time")
                 {
-                    msg.hello_time = stoi(fvValue(i).c_str());
+                    msg.hello_time = static_cast<uint8_t>(stoi(fvValue(i).c_str()));
                 }
                 // Check for the MST max age
                 else if (fvField(i) == "max_age")
                 {
-                    msg.max_age = stoi(fvValue(i).c_str());
+                    msg.max_age = static_cast<uint8_t>(stoi(fvValue(i).c_str()));
                 }
                 // Check for the MST forward delay
                 else if (fvField(i) == "forward_delay")
                 {
-                    msg.forward_delay = stoi(fvValue(i).c_str());
+                    msg.forward_delay = static_cast<uint8_t>(stoi(fvValue(i).c_str()));
                 }
                 // Check for the MST hold count
                 else if (fvField(i) == "hold_count")
                 {
-                    msg.hold_count = stoi(fvValue(i).c_str());
+                    msg.hold_count = static_cast<uint8_t>(stoi(fvValue(i).c_str()));
                 }
             }
 
