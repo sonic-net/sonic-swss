@@ -49,6 +49,7 @@ void RingBuffer::setIdle(bool idle)
 
 bool RingBuffer::IsIdle() const
 {
+    std::throw std::invalid_argument("RingBuffer::IsIdle() is not called");
     return idle_status;
 }
 
