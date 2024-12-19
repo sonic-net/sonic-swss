@@ -968,6 +968,11 @@ bool TunnelDecapOrch::addDecapTunnelTermEntry(
     sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(&tunnel_term_table_entry_id, gSwitchId, (uint32_t)tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_NOT_SUPPORTED)
+        {
+            SWSS_LOG_WARN("Creating SAI_API_TUNNEL returned SAI_STATUS_NOT_SUPPORTED for tunnel %s with IP %s.", tunnel_name.c_str(), dst_ip.to_string().c_str());
+            return false;
+        }
         SWSS_LOG_ERROR("Failed to create tunnel decap term entry %s.", dst_ip.to_string().c_str());
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
         if (handle_status != task_success)
