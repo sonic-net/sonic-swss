@@ -170,7 +170,7 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
     int         priority;
 }__attribute__ ((packed))STP_VLAN_MEM_CONFIG_MSG;
 
-// MST messages definations
+// MST messages definations instances global configurations 
 typedef struct STP_MST_GLOBAL_CFG_MSG {
     uint32_t    opcode;           // Operation code for the message
     char        name[MST_NAME_SIZE];        // MST region name
