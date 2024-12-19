@@ -89,7 +89,8 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"dest_nat_miss", SAI_HOSTIF_TRAP_TYPE_DNAT_MISS},
     {"ldp", SAI_HOSTIF_TRAP_TYPE_LDP},
     {"bfd_micro", SAI_HOSTIF_TRAP_TYPE_BFD_MICRO},
-    {"bfdv6_micro", SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO}
+    {"bfdv6_micro", SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO},
+    {"neighbor_miss", SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS}
 };
 
 
@@ -120,7 +121,8 @@ static map<string, sai_packet_action_t> packet_action_map = {
 
 const string default_trap_group = "default";
 const vector<sai_hostif_trap_type_t> default_trap_ids = {
-    SAI_HOSTIF_TRAP_TYPE_TTL_ERROR
+    SAI_HOSTIF_TRAP_TYPE_TTL_ERROR,
+    SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS
 };
 const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 
@@ -823,7 +825,8 @@ void CoppOrch::getTrapAddandRemoveList(string trap_group_name,
             {
                 if ((trap_group_name != default_trap_group) ||
                         ((trap_group_name == default_trap_group) &&
-                         (it.first != SAI_HOSTIF_TRAP_TYPE_TTL_ERROR)))
+                         ((it.first != SAI_HOSTIF_TRAP_TYPE_TTL_ERROR) ||
+                         (it.first != SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS))))
                 {
                     rem_trap_ids.push_back(it.first);
                 }
