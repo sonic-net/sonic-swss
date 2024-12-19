@@ -22,6 +22,28 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
 }
 
+bool PortMgr::isLag(const std::string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<string> keys;
+    m_cfgLagMemberTable.getKeys(keys);
+
+    for (auto key: keys)
+    {
+        auto tokens = tokenize(key, config_db_key_delimiter);
+        auto lag = tokens[0];
+        auto member = tokens[1];
+
+        if (port == member)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 {
     stringstream cmd;
@@ -128,6 +150,7 @@ void PortMgr::doSendToIngressPortTask(Consumer &consumer)
 
 }
 
+
 void PortMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -221,14 +244,18 @@ void PortMgr::doTask(Consumer &consumer)
 
             if (!mtu.empty())
             {
-                setPortMtu(alias, mtu);
-                SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
+                if (isLag(alias)) {
+                    SWSS_LOG_NOTICE("Skipping Configure %s MTU to %s as interface is part of a PortChannel", alias.c_str(), mtu.c_str());
+                } else {
+                    SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
+                    setPortMtu(alias, mtu);
+                }
             }
 
             if (!admin_status.empty())
             {
-                setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
+                setPortAdminStatus(alias, admin_status == "up");
             }
         }
         else if (op == DEL_COMMAND)
