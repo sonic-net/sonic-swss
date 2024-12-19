@@ -30,9 +30,9 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
     //MSTP TABLES CONFIG DB
-    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME),
-    m_cfgStpMstInstTable(confDb,CFG_STP_MST_INST_TABLE_NAME),
-    m_cfgStpMstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)
+    //m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME),
+    //(confDb,CFG_STP_MST_INST_TABLE_NAME),
+    //m_cfgStpMstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -64,10 +64,10 @@ void StpMgr::doTask(Consumer &consumer)
     // MST do function enhanced
     else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
         doStpMstGlobalTask(consumer);
-    else if (table == CFG_STP_MST_INST_TABLE_NAME)
+    /*else if (table == CFG_STP_MST_INST_TABLE_NAME)
         doStpMstInstTask(consumer);
     else if (table == CFG_STP_MST_PORT_TABLE_NAME)
-        doStpMstPortTask(consumer);
+        doStpMstPortTask(consumer);*/
 
     else if (table == CFG_LAG_MEMBER_TABLE_NAME)
         doLagMemUpdateTask(consumer);
@@ -280,7 +280,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
             if (l2ProtoEnabled == L2_MSTP)
             {
                 // Reset the MST settings to default values
-                memset(&msg, 0, sizeof(STP_MST_GLOBAL_CFG_MSG));
+                memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
                 sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
                 SWSS_LOG_INFO("MST global configuration deleted.");
             }

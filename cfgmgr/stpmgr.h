@@ -63,7 +63,7 @@ typedef enum STP_MSG_TYPE {
     STP_MAX_MSG,
 
     //MST config messages
-    STP_MST_GLOBAL_CONFIG,
+    //STP_MST_GLOBAL_CONFIG,
     //STP_MST_INST_CONFIG,
     //STP_MST_INST_PORT_CONFIG,
 
@@ -233,9 +233,9 @@ private:
     void doStpPortTask(Consumer &consumer);
     
     //MST Do Tasks functions
-    void doStpMstGlobalTask(Consumer &consumer);
-    void doStpMstInstTask(Consumer &consumer);
-    void doStpMstPortTask(Consumer &consumer);
+    //void doStpMstGlobalTask(Consumer &consumer);
+    //void doStpMstInstTask(Consumer &consumer);
+    //void doStpMstPortTask(Consumer &consumer);
 
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
