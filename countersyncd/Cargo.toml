@@ -25,6 +25,7 @@ log = "0.4.22"
 # simplelog = "0.12"
 
 rand = "0.8.5"
+once_cell = "1.18.0"
 
 # Command line utils
 clap = { version = "4", features = ["derive", "cargo", "wrap_help", "unicode", "string", "unstable-styles"] }
@@ -53,3 +54,5 @@ color-eyre = "0.6"
 # 
 # # Other utilities
 # once_cell = "1"
+
+swss-common = {git = "https://github.com/sonic-net/sonic-dash-ha.git", branch = "master"}

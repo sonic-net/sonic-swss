@@ -5,6 +5,7 @@ use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},
 };
+use once_cell::sync::Lazy;
 
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
@@ -209,10 +210,8 @@ impl Drop for IpfixActor {
     }
 }
 
-use std::sync::LazyLock;
-
-static OBSERVATION_TIME_KEY: LazyLock<DataRecordKey> =
-    LazyLock::new(|| DataRecordKey::Unrecognized(FieldSpecifier::new(None, 325, 8)));
+static OBSERVATION_TIME_KEY: Lazy<DataRecordKey> =
+Lazy::new(|| DataRecordKey::Unrecognized(FieldSpecifier::new(None, 325, 8)));
 
 fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
     let val = data_record.values.get(&*OBSERVATION_TIME_KEY);
