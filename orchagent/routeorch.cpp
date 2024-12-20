@@ -975,6 +975,7 @@ void RouteOrch::doTask(Consumer& consumer)
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
         m_bulkNhgReducedRefCnt.clear();
+        m_bulkNhReducedRefCnt.clear();
         while (it_prev != it)
         {
             KeyOpFieldsValuesTuple t = it_prev->second;
@@ -1069,6 +1070,13 @@ void RouteOrch::doTask(Consumer& consumer)
             {
                 removeNextHopGroup(it_nhg.first);
             }
+        }
+        for (auto& it_nh : m_bulkNhReducedRefCnt)
+        {
+            if (it_nh.isMplsNextHop() && (m_neighOrch->getNextHopRefCount(it_nh) == 0))
+            {
+                m_neighOrch->removeMplsNextHop(it_nh);
+            } 
         }
     }
 }
@@ -2608,7 +2616,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             if (nexthop.isMplsNextHop() &&
                 (m_neighOrch->getNextHopRefCount(nexthop) == 0))
             {
-                m_neighOrch->removeMplsNextHop(nexthop);
+                m_bulkNhReducedRefCnt.push_back(nexthop);
             }
             else if (nexthop.isSrv6NextHop() &&
                     (m_neighOrch->getNextHopRefCount(nexthop) == 0))
