@@ -13,13 +13,13 @@ use ipfix::get_message_length;
 use ipfixrw::{
     information_elements::Formatter,
     parse_ipfix_message,
-    parser::{DataRecord, DataRecordKey, DataRecordValue, FieldSpecifier},
+    parser::{DataRecord, DataRecordKey, DataRecordValue, FieldSpecifier, Message},
     template_store::TemplateStore,
 };
 
 use super::super::message::{
     buffer::SocketBufferMessage,
-    ipfix::IPFixTemplates,
+    ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
 
@@ -46,8 +46,10 @@ type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
 
 pub struct IpfixActor {
     saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
-    template_recipient: Receiver<IPFixTemplates>,
+    template_recipient: Receiver<IPFixTemplatesMessage>,
     record_recipient: Receiver<SocketBufferMessage>,
+    temporary_templates_map: HashMap<u16, String>,
+    applied_templates_map: HashMap<String, Vec<u16>>,
 
     #[cfg(test)]
     prober: Option<Sender<String>>,
@@ -55,13 +57,15 @@ pub struct IpfixActor {
 
 impl IpfixActor {
     pub fn new(
-        template_recipient: Receiver<IPFixTemplates>,
+        template_recipient: Receiver<IPFixTemplatesMessage>,
         record_recipient: Receiver<SocketBufferMessage>,
     ) -> Self {
         IpfixActor {
             saistats_recipients: LinkedList::new(),
             template_recipient,
             record_recipient,
+            temporary_templates_map: HashMap::new(),
+            applied_templates_map: HashMap::new(),
             #[cfg(test)]
             prober: None,
         }
@@ -71,7 +75,28 @@ impl IpfixActor {
         self.saistats_recipients.push_back(recipient);
     }
 
-    fn handle_template(&mut self, templates: IPFixTemplates) {
+    fn insert_temporary_template(&mut self, msg_key: &String, templates: Message) {
+        templates.iter_template_records().for_each(|record| {
+            self.temporary_templates_map
+                .insert(record.template_id, msg_key.clone());
+        });
+    }
+
+    fn update_applied_template(&mut self, template_id: u16) {
+        if !self.temporary_templates_map.contains_key(&template_id) {
+            return;
+        }
+        let msg_key = self.temporary_templates_map.get(&template_id).unwrap().clone();
+        let mut template_ids = Vec::new();
+        self.temporary_templates_map.iter().filter(|(_, v)| **v == msg_key).for_each(|(&k, _)| {
+            template_ids.push(k);
+        });
+        self.temporary_templates_map.retain(|_, v| *v != msg_key);
+        self.applied_templates_map.insert(msg_key, template_ids);
+    }
+
+    fn handle_template(&mut self, templates: IPFixTemplatesMessage) {
+        let (msg_key, templates) = templates;
         let cache_ref = Self::get_cache();
         let cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
@@ -79,8 +104,9 @@ impl IpfixActor {
             let len = get_message_length(&templates[read_size..]).unwrap();
             let template = &templates[read_size..read_size + len as usize];
             // We suppose that the template is always valid, otherwise we need to raise the panic
-            parse_ipfix_message(&template, cache.templates.clone(), cache.formatter.clone())
+            let new_templates: ipfixrw::parser::Message = parse_ipfix_message(&template, cache.templates.clone(), cache.formatter.clone())
                 .unwrap();
+            self.insert_temporary_template(&msg_key, new_templates);
             read_size += len as usize;
         }
         #[cfg(test)]
@@ -112,6 +138,11 @@ impl IpfixActor {
                 continue;
             }
             let data_message = data_message.unwrap();
+            data_message.sets.iter().for_each(|set| {
+                if let ipfixrw::parser::Records::Data{set_id, data: _} = set.records {
+                    self.update_applied_template(set_id);
+                }
+            });
             let datarecords: Vec<&DataRecord> = data_message.iter_data_records().collect();
             let mut observation_time: Option<u64>;
             for record in datarecords {
@@ -256,7 +287,7 @@ mod test {
             0x00, 0x00, 0x00, 0x01, // line 2
             0x00, 0x00, 0x00, 0x00, // line 3
             0x00, 0x02, 0x00, 0x1C, // line 4
-            0x01, 0x00, 0x00, 0x03, // line 5 Template ID 256, 3 fields
+            0x01, 0x01, 0x00, 0x03, // line 5 Template ID 257, 3 fields
             0x01, 0x45, 0x00, 0x08, // line 6 Field ID 325, 4 bytes
             0x80, 0x01, 0x00, 0x08, // line 7 Field ID 128, 8 bytes
             0x00, 0x01, 0x00, 0x02, // line 8 Enterprise Number 1, Field ID 1
@@ -295,7 +326,7 @@ mod test {
             0x00, 0x00, 0x00, 0x01, // line 26
             0x00, 0x00, 0x00, 0x00, // line 27
             0x00, 0x00, 0x00, 0x04, // line 28
-            0x01, 0x00, 0x00, 0x1C, // line 29 Record 2
+            0x01, 0x01, 0x00, 0x1C, // line 29 Record 2
             0x00, 0x00, 0x00, 0x00, // line 30
             0x00, 0x00, 0x00, 0x02, // line 31
             0x00, 0x00, 0x00, 0x00, // line 32
@@ -305,7 +336,7 @@ mod test {
         ];
 
         template_sender
-            .send(Arc::new(Vec::from(template_bytes)))
+            .send((String::from(""), Arc::new(Vec::from(template_bytes))))
             .await
             .unwrap();
         let pm = prober_reciver
