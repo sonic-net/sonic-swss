@@ -57,6 +57,10 @@ namespace swss
         }
     }
 
+    DBConnector::DBConnector(const std::string& dbName, unsigned int timeout, bool isTcpConn, const SonicDBKey &key)
+        : DBConnector(dbName, timeout, isTcpConn)
+    {}
+
     int DBConnector::getDbId() const
     {
         return m_dbId;
