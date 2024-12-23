@@ -118,6 +118,8 @@ void FlexCounterOrch::doTask(Consumer &consumer)
         {
             auto itDelay = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
             string poll_interval;
+            string bulk_chunk_size = "NULL";
+            string bulk_chunk_size_per_counter = "NULL";
 
             if (itDelay != data.end())
             {
@@ -253,17 +255,25 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 }
                 else if (field == BULK_CHUNK_SIZE_FIELD)
                 {
-                    setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key], value, false);
+                    bulk_chunk_size = value;
                 }
                 else if (field == BULK_CHUNK_SIZE_PER_PREFIX_FIELD)
                 {
-                    setFlexCounterGroupBulkChunkSizePerPrefix(flexCounterGroupMap[key], value, false);
+                    bulk_chunk_size_per_counter = value;
                 }
                 else
                 {
                     SWSS_LOG_NOTICE("Unsupported field %s", field.c_str());
                 }
             }
+
+            /*
+             * The bulk chunk sizes are stored in sairedis but not in orchagent.
+             * If user sets it and then removes it for a counter group without removing the counter group,
+             * the Flex Counter orch just receives a SET command without bulk chunk sizes field.
+             * To make it easy, we always send the fields to sairedis so that sairedis can handle removing flow*/
+            setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key], bulk_chunk_size);
+            setFlexCounterGroupBulkChunkSizePerPrefix(flexCounterGroupMap[key], bulk_chunk_size_per_counter);
         }
 
         consumer.m_toSync.erase(it++);
