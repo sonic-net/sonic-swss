@@ -299,6 +299,160 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
     }
 }
 
+void StpMgr::doStpMstInstTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    // Initialize the flag for task processing.
+    if (stpGlobalTask == false)
+        return;
+
+    // Iterate through the messages in the consumer's sync queue
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        STP_MST_INST_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_INST_CONFIG_MSG));
+
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_INFO("STP MST instance key %s op %s", key.c_str(), op.c_str());
+
+        // If the operation is a SET_COMMAND, process the settings
+        if (op == SET_COMMAND)
+        {
+            msg.opcode = STP_SET_COMMAND;
+
+            // Iterate over the fields and values
+            for (auto i : kfvFieldsValues(t))
+            {
+                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+
+                // Check for the MST instance ID
+                if (fvField(i) == "instance")
+                {
+                    msg.instance = stoi(fvValue(i).c_str());
+                }
+                // Check for the VLAN list (assuming list of VLANs)
+                else if (fvField(i) == "vlan_list")
+                {
+                    // Assuming the value is a comma-separated list of VLANs
+                    string vlan_str = fvValue(i);
+                    vector<string> vlan_ids;
+                    size_t start = 0;
+                    size_t end = vlan_str.find(",");
+                    while (end != string::npos)
+                    {
+                        vlan_ids.push_back(vlan_str.substr(start, end - start));
+                        start = end + 1;
+                        end = vlan_str.find(",", start);
+                    }
+                    vlan_ids.push_back(vlan_str.substr(start)); // Add last VLAN
+                    msg.vlan_list = list<string>(vlan_ids.begin(), vlan_ids.end());
+                }
+                // Check for the bridge priority
+                else if (fvField(i) == "bridge_priority")
+                {
+                    msg.bridge_priority = static_cast<uint16_t>(stoi(fvValue(i).c_str()));
+                }
+            }
+
+            // Check if MST is enabled before setting the values
+            if (l2ProtoEnabled == L2_MSTP)
+            {
+                // Send the message to the daemon
+                sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg), (void *)&msg);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("MST protocol is not enabled, cannot configure MST instance settings.");
+            }
+        }
+        // If the operation is a DEL_COMMAND, process the deletion
+        else if (op == DEL_COMMAND)
+        {
+            msg.opcode = STP_DEL_COMMAND;
+
+            memset(&msg, 0, sizeof(STP_MST_INST_CONFIG_MSG));
+            sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg), (void *)&msg);
+            SWSS_LOG_INFO("MST instance configuration deleted.");
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid operation %s", op.c_str());
+        }
+
+        // Erase the processed item and move to the next one
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void StpMgr::doStpMstPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        STP_MST_PORT_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_PORT_CONFIG_MSG));  // Clear the structure initially
+
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_INFO("STP MST Port key %s op %s", key.c_str(), op.c_str());
+        
+        if (op == SET_COMMAND)
+        {
+            msg.opcode = STP_SET_COMMAND;
+            for (auto i : kfvFieldsValues(t))
+            {
+                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+
+                if (fvField(i) == "port")
+                {
+                    // Assuming the port name can be obtained directly as a string
+                    strncpy(msg.port, fvValue(i).c_str(), PORT_NAME_SIZE - 1);
+                    msg.port[PORT_NAME_SIZE - 1] = '\0'; // Ensure null termination
+                }
+                else if (fvField(i) == "instance")
+                {
+                    msg.instance = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "port_priority")
+                {
+                    msg.port_priority = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "port_path_cost")
+                {
+                    msg.port_path_cost = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "admin_edge")
+                {
+                    msg.admin_edge = (fvValue(i) == "true") ? true : false;
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            msg.opcode = STP_DEL_COMMAND;
+            // Reset all fields to zero (default state) for DEL_COMMAND
+            memset(&msg, 0, sizeof(STP_MST_PORT_CONFIG_MSG));
+            // You can also ensure that the port name is reset to an empty string
+            memset(msg.port, 0, PORT_NAME_SIZE); // Reset the port name
+        }
+
+        // Send message to daemon
+        sendMsgStpd(STP_MST_PORT_CONFIG, sizeof(msg), (void *)&msg);
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void StpMgr::doStpVlanTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();

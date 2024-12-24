@@ -63,9 +63,9 @@ typedef enum STP_MSG_TYPE {
     STP_MAX_MSG,
 
     //MST config messages
-    //STP_MST_GLOBAL_CONFIG,
-    //STP_MST_INST_CONFIG,
-    //STP_MST_INST_PORT_CONFIG,
+    STP_MST_GLOBAL_CONFIG,
+    STP_MST_INST_CONFIG,
+    STP_MST_PORT_CONFIG
 
 }STP_MSG_TYPE;
 
@@ -181,6 +181,22 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     hold_count;                 // MST hold count
 } __attribute__((packed)) STP_MST_GLOBAL_CONFIG_MSG;
 
+struct STP_MST_INST_CONFIG_MSG {
+    uint8_t opcode;                // Operation code (SET/DEL)
+    uint32_t instance;             // MST instance ID
+    std::list<std::string> vlan_list; // List of VLAN IDs (as strings)
+    uint16_t bridge_priority;      // Bridge priority for the MST instance
+} __attribute__ ((packed)); STP_MST_INST_CONFIG_MSG;
+
+typedef struct STP_MST_PORT_CONFIG_MSG {
+    uint32_t    opcode;           // Operation code for the message
+    char        port[PORT_NAME_SIZE];  // Port identifier (e.g., Ethernet0)
+    uint32_t    instance;         // MST instance ID
+    uint16_t    port_priority;    // Port priority
+    uint32_t    port_path_cost;   // Port path cost
+    bool        admin_edge;       // Whether the port is configured as an edge port
+} __attribute__((packed)) STP_MST_PORT_CONFIG_MSG;
+
 namespace swss {
 
 class StpMgr : public Orch
@@ -221,6 +237,10 @@ private:
     uint16_t max_stp_instances;
     std::map<std::string, int> m_lagMap;
 
+    //MSTP variables 
+    std::map<int, std::set<int>> vlanToInstanceMap;
+
+
     bool stpGlobalTask;
     bool stpVlanTask;
     bool stpVlanPortTask;
@@ -233,9 +253,9 @@ private:
     void doStpPortTask(Consumer &consumer);
     
     //MST Do Tasks functions
-    //void doStpMstGlobalTask(Consumer &consumer);
-    //void doStpMstInstTask(Consumer &consumer);
-    //void doStpMstPortTask(Consumer &consumer);
+    void doStpMstGlobalTask(Consumer &consumer);
+    void doStpMstInstTask(Consumer &consumer);
+    void doStpMstPortTask(Consumer &consumer);
 
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
@@ -253,6 +273,7 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
+    void updateVLANsToInstance(int instance_id, const std::set<int>& vlans);
 };
 
 }
