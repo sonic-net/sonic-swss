@@ -63,6 +63,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 neighorch_ut.cpp \
                 dashorch_ut.cpp \
                 twamporch_ut.cpp \
+                stporch_ut.cpp \
                 flexcounter_ut.cpp \
                 mock_orch_test.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
@@ -139,7 +140,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
                 $(top_srcdir)/orchagent/dash/pbutils.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
-                $(top_srcdir)/orchagent/twamporch.cpp
+                $(top_srcdir)/orchagent/twamporch.cpp \
+                $(top_srcdir)/orchagent/stporch.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
@@ -232,6 +234,9 @@ tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 
 tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/test_routesync.cpp \
+                         fpmsyncd/receive_srv6_steer_routes_ut.cpp \
+                         fpmsyncd/receive_srv6_mysids_ut.cpp \
+                         fpmsyncd/ut_helpers_fpmsyncd.cpp \
                          fake_netlink.cpp \
                          fake_warmstarthelper.cpp \
                          fake_producerstatetable.cpp \
@@ -242,7 +247,8 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp
 
-tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
+tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
+tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name
 tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fpmsyncd_INCLUDES)
 tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
@@ -264,4 +270,3 @@ tests_response_publisher_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CF
 tests_response_publisher_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_response_publisher_INCLUDES)
 tests_response_publisher_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread
-

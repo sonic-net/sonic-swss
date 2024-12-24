@@ -146,12 +146,14 @@ public:
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
     void initHostTxReadyState(Port &port);
+    void initializePortOperErrors(Port &port);
     bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
     void updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus);
+    void updateDbPortOperError(Port& port, PortOperErrorEvent *pevent);
 
     bool createVlanHostIntf(Port& vl, string hostif_name);
     bool removeVlanHostIntf(Port vl);
@@ -184,8 +186,8 @@ public:
 
     void generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector);
     uint32_t getNumberOfPortSupportedQueueCounters(string port);
-    void createPortBufferQueueCounters(const Port &port, string queues);
-    void removePortBufferQueueCounters(const Port &port, string queues);
+    void createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void removePortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
     void addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
 
@@ -263,6 +265,7 @@ private:
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
     Table m_portStateTable;
+    Table m_portOpErrTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
@@ -343,6 +346,7 @@ private:
     bool oper_fec_sup = false;
     bool saiHwTxSignalSupported = false;
     bool saiTxReadyNotifySupported = false;
+    bool m_supportsHostIfTxQueue = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
@@ -502,6 +506,7 @@ private:
     bool initGearboxPort(Port &port);
     bool getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) const;
     void updateDbPortOperFec(Port &port, string fec_str);
+    void updatePortErrorStatus(Port &port, sai_port_error_status_t port_oper_eror);
 
     map<string, Port::Role> m_recircPortRole;
 
