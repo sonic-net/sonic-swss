@@ -234,6 +234,62 @@ namespace aclorch_test
         }
     };
 
+    struct MockPolicerOrch
+    {
+        PolicerOrch *m_policerOrch;
+        swss::DBConnector *config_db;
+
+        MockPolicerOrch(swss::DBConnector *config_db) :
+            config_db(config_db)
+        {
+            m_policerOrch = new PolicerOrch(config_db);
+        }
+
+        ~MockPolicerOrch()
+        {
+            delete m_policerOrch;
+        }
+
+        operator const PolicerOrch *() const
+        {
+            return m_policerOrch;
+        }
+
+        void doPolicerTask(const deque<KeyOpFieldsValuesTuple> &entries)
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(config_db, CFG_POLICER_TABLE_NAME, 1, 1), m_policerOrch, CFG_POLICER_TABLE_NAME));
+            consumer->addToSync(entries);
+            static_cast<Orch *>(m_policerOrch)->doTask(*consumer);
+        }
+
+        void createPolicer(const string &policerName, const map<string, string> &attributes)
+        {
+            deque<KeyOpFieldsValuesTuple> kvfPolicer = {{
+                policerName, SET_COMMAND, { attributes.begin(), attributes.end() }
+            }};
+            doPolicerTask(kvfPolicer);
+        }
+
+        void deletePolicer(const string &policerName)
+        {
+            deque<KeyOpFieldsValuesTuple> kvfPolicer = {{
+                policerName, DEL_COMMAND, {}
+            }};
+            doPolicerTask(kvfPolicer);
+        }
+
+        bool policerExists(const string &policerName) const
+        {
+            return m_policerOrch->policerExists(policerName);
+        }
+
+        int getPolicerRefCount(const string &policerName) const
+        {
+            return m_policerOrch->getRefCount(policerName);
+        }
+    };
+
     struct AclOrchTest : public AclTest
     {
 
@@ -1954,5 +2010,55 @@ namespace aclorch_test
 
         // Restore sai_switch_api.
         sai_switch_api = old_sai_switch_api;
+    }
+
+    TEST_F(AclOrchTest, ValidateAclPolicerIntegration)
+    {
+        const string aclTableTypeName = "CUSTOM_POLICER_TYPE";
+        const string aclTableName = "CUSTOM_ACL";
+        const string aclRuleName = "RULE_1";
+        const string policerName = "POLICER_1";
+        const string aclTablePorts = "Ethernet0";
+        const map<string, string> policerAttributes = {{"CIR", "1000"}, {"CBS", "200"}};
+        const string aclTableActions = "PACKET_ACTION,POLICER_ACTION";
+        const string aclTableMatch = "SRC_IP";
+        policer_action_attr = "POLICER_ACTION"
+
+        auto aclOrch = MockAclOrch(config_db, state_db, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch);
+        auto policerOrch = MockPolicerOrch(config_db);
+
+        // Create ACL Table Type
+        aclOrch.doAclTableTypeTask({
+            {aclTableTypeName, SET_COMMAND, {{"type", "L3"}, {"matches", aclTableMatch}, {"actions", aclTableActions}}}
+        });
+
+        // Create ACL Table
+        aclOrch.doAclTableTask({
+            {aclTableName, SET_COMMAND, {{"type", aclTableTypeName}, {"ports", aclTablePorts}}}
+        });
+
+        // Create and validate Policer
+        policerOrch.createPolicer(policerName, policerAttributes);
+        ASSERT_TRUE(policerOrch.policerExists(policerName));
+
+        // Add ACL Rule with Policer Action
+        auto rule = make_shared<AclRulePolicer>(aclOrch, aclRuleName, aclTableName);
+        ASSERT_TRUE(rule->validateAddAction(policer_action_attr, policerName));
+        ASSERT_TRUE(aclOrch.m_aclOrch->addAclRule(rule, aclTableName));
+
+        // Validate Policer Ref Count
+        ASSERT_EQ(policerOrch.getPolicerRefCount(policerName), 1);
+
+        // Ensure that deleting a referenced policer is not allowed
+        policerOrch.deletePolicer(policerName);
+        ASSERT_TRUE(policerOrch.policerExists(policerName));
+        ASSERT_EQ(policerOrch.getPolicerRefCount(policerName), 1);
+
+        // Cleanup
+        ASSERT_TRUE(aclOrch.m_aclOrch->removeAclRule(aclTableName, aclRuleName));
+        policerOrch.deletePolicer(policerName);
+
+        // Validate Policer Removal
+        ASSERT_FALSE(policerOrch.policerExists(policerName));
     }
 } // namespace nsAclOrchTest

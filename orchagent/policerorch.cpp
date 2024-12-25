@@ -79,6 +79,21 @@ bool PolicerOrch::getPolicerOid(const string &name, sai_object_id_t &oid)
     return false;
 }
 
+int PolicerOrch::getRefCount(const string &name)
+{
+    SWSS_LOG_ENTER();
+
+    if (!policerExists(name))
+    {
+        SWSS_LOG_WARN("Policer %s does not exist", name.c_str());
+        return false;
+    }
+
+    SWSS_LOG_INFO("Policer %s reference count is %d",
+            name.c_str(), m_policerRefCounts[name]);
+    return m_policerRefCounts[name];
+}
+
 bool PolicerOrch::increaseRefCount(const string &name)
 {
     SWSS_LOG_ENTER();
