@@ -143,6 +143,14 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                     }
                 }
+                else if (field == BULK_CHUNK_SIZE_FIELD)
+                {
+                    bulk_chunk_size = value;
+                }
+                else if (field == BULK_CHUNK_SIZE_PER_PREFIX_FIELD)
+                {
+                    bulk_chunk_size_per_counter = value;
+                }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
                     // Currently, the counters are disabled for polling by default
@@ -252,14 +260,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // This field is ignored since it is being used before getting into this loop.
                     // If it is exist and the value is 'true' we need to skip the iteration in order to delay the counter creation.
                     // The field will clear out and counter will be created when enable_counters script is called.
-                }
-                else if (field == BULK_CHUNK_SIZE_FIELD)
-                {
-                    bulk_chunk_size = value;
-                }
-                else if (field == BULK_CHUNK_SIZE_PER_PREFIX_FIELD)
-                {
-                    bulk_chunk_size_per_counter = value;
                 }
                 else
                 {
