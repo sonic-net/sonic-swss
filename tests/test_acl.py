@@ -792,6 +792,68 @@ class TestAcl:
 
         assert not match_range_qualifier
 
+    def test_validate_policer_rule_in_DBs(self, dvs_acl, dvs_policer):
+        """
+        Validate that a rule with a policer is correctly applied in CONFIG_DB and ASIC_DB.
+        """
+        table_type_name = "CUSTOM_POLICER_TYPE"
+        acl_name = "CUSTOM_ACL"
+        rule_name = "RULE_1"
+        policer_name = "POLICER_1"
+        ports = ["Ethernet0"]
+        actions = {"traffic_action": "PACKET_ACTION", "policer_action": "POLICER_ACTION"}
+        match_fields = ["SRC_IP"]
+        policer_attr = {"CIR": 1000, "CBS": 200}
+        acl_rule_attr = {"SRC_IP": "10.0.0.1/32", actions["policer_action"]: policer_name}
+
+        # Create custom ACL Table Type
+        dvs_acl.create_acl_table_type(table_type_name, match_fields, ports, actions.values())
+
+        # Validate CONFIG_DB for ACL Table Type
+        table_type_entry = dvs_acl.get_config_db_entry("ACL_TABLE_TYPE", table_type_name)
+        assert table_type_entry is not None
+        actions_in_db = table_type_entry["actions@"].split(",")
+        assert all(action in actions_in_db for action in actions.values())
+
+        # Create and validate ACL Table
+        dvs_acl.create_acl_table(acl_name, table_type_name, ports, "INGRESS")
+        dvs_acl.verify_acl_table_count(1)
+        acl_table_entry = dvs_acl.get_config_db_entry("ACL_TABLE", acl_name)
+        assert acl_table_entry is not None
+        assert acl_table_entry["type"] == table_type_name
+        dvs_acl.verify_acl_table_action_list(acl_name, actions.values())
+
+        # Create and validate Policer
+        dvs_policer.create_policer(policer_name, policer_attr)
+        policer_entry = dvs_policer.get_config_db_entry("POLICER", policer_name)
+        assert policer_entry is not None
+
+        # Create and validate ACL Rule with Policer Action
+        dvs_acl.create_acl_rule(acl_name, rule_name, acl_rule_attr)
+        dvs_acl.verify_acl_rule_count(1)
+        acl_rule_entry = dvs_acl.get_acl_rule(acl_name, rule_name)
+        assert acl_rule_entry[actions["policer_action"]] == policer_name
+
+        # Validate ASIC_DB for ACL Rule
+        acl_rule_asic_entry = dvs_acl.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", rule_name)
+        assert acl_rule_asic_entry is not None
+        policer_oid = dvs_policer.get_policer_oid(policer_name)
+        assert acl_rule_asic_entry["SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER"] == policer_oid
+
+        # validate ref count for policer
+        ref_count = dvs_policer.get_policer_ref_count(policer_name)
+        assert ref_count == 1
+
+        # Cleanup and validate
+        dvs_acl.remove_acl_rule(acl_name, rule_name)
+        dvs_policer.delete_policer(policer_name)
+        dvs_acl.remove_acl_table(acl_name)
+        dvs_acl.remove_acl_table_type(table_type_name)
+        assert dvs_policer.get_policer_ref_count(policer_name) == 0
+        assert dvs_policer.get_config_db_entry("POLICER", policer_name) is None
+        dvs_acl.verify_acl_table_count(0)
+        dvs_acl.verify_acl_rule_count(0)
+
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
     def configure_crm_polling_interval_for_test(self, dvs):

@@ -462,7 +462,7 @@ bool OrchDaemon::init()
     }
 
     gAclOrch = new AclOrch(acl_table_connectors, m_stateDb,
-        gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
+        gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch, gPolicerOrch);
 
     vector<string> mlag_tables = {
         { CFG_MCLAG_TABLE_NAME },
