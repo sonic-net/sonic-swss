@@ -8,6 +8,7 @@
 #include "shellcmd.h"
 #include <swss/redisutility.h>
 #include <swss/stringutility.h>
+#include "linkcache.h"
 
 using namespace std;
 using namespace swss;
@@ -17,6 +18,7 @@ using namespace swss;
 #define SUBINTF_LAG_PREFIX  "Po"
 #define SUBINTF_LAG_PREFIX  "Po"
 #define LOOPBACK_PREFIX     "Loopback"
+#define VRF_PREFIX          "Vrf"
 
 #define VRRP_V4_MAC_PREFIX "00:00:5e:00:01:"
 #define VRRP_V6_MAC_PREFIX "00:00:5e:00:02:"
@@ -159,6 +161,15 @@ bool VrrpMgr::setVrrpIntf(const std::string &intf_alias, const std::string &vrid
     {
         SWSS_LOG_INFO("No vrrp on interface[%s], set arp accept", intf_alias.c_str());
         setIntfArpAccept(intf_alias);
+    }
+    // set vrrp vrf
+    auto parent_link = LinkCache::getInstance().getLinkByName(intf_alias.c_str());
+    int vrf_id = rtnl_link_get_master(parent_link);
+    if (vrf_id != 0)
+    {
+        auto vrf_name = LinkCache::getInstance().ifindexToName(vrf_id);
+        setVirtualInterfaceVrf(vrrp.getVrrpName(), vrf_name);
+        SWSS_LOG_INFO("Set vrrp on intf[%s] vrid[%s] Vrf: %s", intf_alias.c_str(), vrid.c_str(), vrf_name.c_str());
     }
 
     SWSS_LOG_NOTICE("Set vrrp on intf[%s] vrid[%s] is_ipv4 %d", intf_alias.c_str(), vrid.c_str(), is_ipv4);
@@ -315,6 +326,36 @@ bool VrrpMgr::setVirtualInterfaceAdminStatus(const std::string &vrrp_name, const
     }
 
     SWSS_LOG_INFO("Add vitrual intf[%s]", vrrp_name.c_str());
+    return true;
+}
+
+bool VrrpMgr::setVirtualInterfaceVrf(const string &vrrp_name, const string &vrf_name)
+{
+    stringstream cmd;
+    string res;
+
+    if (!vrf_name.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+    {
+        SWSS_LOG_INFO("Vrf %s is invaild", vrf_name.c_str());
+        return false;
+    }
+
+    if (!vrf_name.empty())
+    {
+        cmd << IP_CMD << " link set " << shellquote(vrrp_name) << " master " << shellquote(vrf_name);
+    }
+    else
+    {
+        cmd << IP_CMD << " link set " << shellquote(vrrp_name) << " nomaster";
+    }
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        return false;
+    }
+    SWSS_LOG_INFO(" %s bind vrf [%s] successful", vrrp_name.c_str(), vrf_name.c_str());
     return true;
 }
 

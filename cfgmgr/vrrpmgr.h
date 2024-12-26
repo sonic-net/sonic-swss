@@ -60,6 +60,7 @@ private:
     bool addVirtualInterfaceIp(const std::string &vrid, const IpPrefix &ip_addr);
     bool delVirtualInterfaceIp(const std::string &vrid, const IpPrefix &ip_addr);
     bool setVirtualInterfaceAdminStatus(const std::string &vrrp_name, const std::string &admin_status);
+    bool setVirtualInterfaceVrf(const std::string &vrrp_name, const std::string &vrf_name);
 
     bool isIntfStateOk(const std::string &intf_alias);
     bool isVrrpOnIntf(const std::string &intf_alias);

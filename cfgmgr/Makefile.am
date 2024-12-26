@@ -121,7 +121,7 @@ natmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 coppmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 tunnelmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 macsecmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
-vrrpmgrd_LDADD += ../gcovpreload/gcovpreload.cpp
+vrrpmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
