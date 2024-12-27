@@ -93,6 +93,9 @@ class IpMulticastManager : public ObjectManagerInterface {
   // Creates a router interface object to be used by the RPF group member.
   ReturnCode createRouterInterfaceForDefaultRpfGroupMember();
 
+  // Deletes the default RPF group.
+  ReturnCode deleteDefaultRpfGroup();
+
   // Creates a list of IP multicast entries.
   std::vector<ReturnCode> createIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries);

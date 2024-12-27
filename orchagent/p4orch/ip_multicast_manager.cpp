@@ -683,6 +683,18 @@ ReturnCode IpMulticastManager::createDefaultRpfGroup() {
   return ReturnCode();
 }
 
+ReturnCode IpMulticastManager::deleteDefaultRpfGroup() {
+  SWSS_LOG_ENTER();
+  sai_status_t status =
+      sai_rpf_group_api->remove_rpf_group(ipmc_rpf_group_oid_);
+  if (status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(ReturnCode(status)
+                         << "Failed to delete default RPF group");
+  }
+  ipmc_rpf_group_oid_ = SAI_NULL_OBJECT_ID;
+  return ReturnCode();
+}
+
 sai_ipmc_entry_t IpMulticastManager::prepareSaiIpmcEntry(
     const P4IpMulticastEntry& ip_multicast_entry) const {
   sai_ipmc_entry_t sai_entry;
@@ -714,8 +726,6 @@ std::vector<ReturnCode> IpMulticastManager::createIpMulticastEntries(
   fillStatusArrayWithNotExecuted(statuses, 0);
 
   // Before the first entry add, we have to create a RPF group.
-  // Ideally, the RPF group would be empty, there has
-  // to be at least one RPF group member.
   if (ip_multicast_entries.size() > 0 &&
       (ipmc_rpf_group_oid_ == SAI_NULL_OBJECT_ID ||
        unused_rpf_group_member_oid_ == SAI_NULL_OBJECT_ID ||
@@ -873,9 +883,25 @@ std::vector<ReturnCode> IpMulticastManager::deleteIpMulticastEntries(
                             ip_multicast_entry.ip_multicast_entry_key);
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPMC_ENTRY);
     m_vrfOrch->decreaseVrfRefCount(ip_multicast_entry.vrf_id);
+    P4IpMulticastEntry old_entry =
+        m_ipMulticastTable[ip_multicast_entry.ip_multicast_entry_key];
     m_ipMulticastTable.erase(ip_multicast_entry.ip_multicast_entry_key);
 
-    statuses[i] = ReturnCode();
+    if (m_ipMulticastTable.size() == 0) {
+      // Remove the default RPF group if there is no IPMC entry.
+      statuses[i] = deleteDefaultRpfGroup();
+      if (!statuses[i].ok()) {
+        // Restore the entry if we fail to delete the RPF group.
+        auto restore_statuses = createIpMulticastEntries(
+            std::vector<P4IpMulticastEntry>{old_entry});
+        if (!restore_statuses[0].ok()) {
+          SWSS_RAISE_CRITICAL_STATE(
+              "Fail to recover from IPMC entry delete failure");
+        }
+      }
+    } else {
+      statuses[i] = ReturnCode();
+    }
   }
   return statuses;
 }
