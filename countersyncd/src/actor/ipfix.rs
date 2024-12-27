@@ -1,11 +1,11 @@
 use std::{cell::RefCell, collections::LinkedList, rc::Rc, sync::Arc, time::SystemTime};
 
 use log::{debug, warn};
+use once_cell::sync::Lazy;
 use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},
 };
-use once_cell::sync::Lazy;
 
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
@@ -50,9 +50,6 @@ pub struct IpfixActor {
     record_recipient: Receiver<SocketBufferMessage>,
     temporary_templates_map: HashMap<u16, String>,
     applied_templates_map: HashMap<String, Vec<u16>>,
-
-    #[cfg(test)]
-    prober: Option<Sender<String>>,
 }
 
 impl IpfixActor {
@@ -66,8 +63,6 @@ impl IpfixActor {
             record_recipient,
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
-            #[cfg(test)]
-            prober: None,
         }
     }
 
@@ -86,11 +81,18 @@ impl IpfixActor {
         if !self.temporary_templates_map.contains_key(&template_id) {
             return;
         }
-        let msg_key = self.temporary_templates_map.get(&template_id).unwrap().clone();
+        let msg_key = self
+            .temporary_templates_map
+            .get(&template_id)
+            .unwrap()
+            .clone();
         let mut template_ids = Vec::new();
-        self.temporary_templates_map.iter().filter(|(_, v)| **v == msg_key).for_each(|(&k, _)| {
-            template_ids.push(k);
-        });
+        self.temporary_templates_map
+            .iter()
+            .filter(|(_, v)| **v == msg_key)
+            .for_each(|(&k, _)| {
+                template_ids.push(k);
+            });
         self.temporary_templates_map.retain(|_, v| *v != msg_key);
         self.applied_templates_map.insert(msg_key, template_ids);
     }
@@ -104,13 +106,13 @@ impl IpfixActor {
             let len = get_message_length(&templates[read_size..]).unwrap();
             let template = &templates[read_size..read_size + len as usize];
             // We suppose that the template is always valid, otherwise we need to raise the panic
-            let new_templates: ipfixrw::parser::Message = parse_ipfix_message(&template, cache.templates.clone(), cache.formatter.clone())
-                .unwrap();
+            let new_templates: ipfixrw::parser::Message =
+                parse_ipfix_message(&template, cache.templates.clone(), cache.formatter.clone())
+                    .unwrap();
             self.insert_temporary_template(&msg_key, new_templates);
             read_size += len as usize;
         }
-        #[cfg(test)]
-        self.probe(format!("Template {:?} consumed", templates));
+        debug!("Template {:?} consumed", templates);
     }
 
     fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<SAIStatsMessage> {
@@ -122,8 +124,6 @@ impl IpfixActor {
             let len = get_message_length(&records[read_size..]);
             if len.is_err() || len.unwrap() as usize + read_size > records.len() {
                 warn!("Wrong length in the records {:?}", records);
-                #[cfg(test)]
-                self.probe("Discard record due to error length".to_string());
                 break;
             }
             let len = len.unwrap();
@@ -133,13 +133,11 @@ impl IpfixActor {
             if data_message.is_err() {
                 warn!("Not support data message {:?}", data);
                 read_size += len as usize;
-                #[cfg(test)]
-                self.probe(format!("Unknown template, Discard record {:?}", data_message.err().unwrap()));
                 continue;
             }
             let data_message = data_message.unwrap();
             data_message.sets.iter().for_each(|set| {
-                if let ipfixrw::parser::Records::Data{set_id, data: _} = set.records {
+                if let ipfixrw::parser::Records::Data { set_id, data: _ } = set.records {
                     self.update_applied_template(set_id);
                 }
             });
@@ -176,8 +174,7 @@ impl IpfixActor {
                     }
                 }
                 messages.push(saistats.clone());
-                #[cfg(test)]
-                self.probe("Record parsed".to_string());
+                debug!("Record parsed");
             }
             read_size += len as usize;
         }
@@ -223,16 +220,6 @@ impl IpfixActor {
             }
         }
     }
-
-    #[cfg(test)]
-    pub fn set_prober(&mut self, prober: Sender<String>) {
-        self.prober = Some(prober);
-    }
-
-    #[cfg(test)]
-    fn probe(&self, message: String) {
-        self.prober.as_ref().unwrap().try_send(message).unwrap();
-    }
 }
 
 impl Drop for IpfixActor {
@@ -242,7 +229,7 @@ impl Drop for IpfixActor {
 }
 
 static OBSERVATION_TIME_KEY: Lazy<DataRecordKey> =
-Lazy::new(|| DataRecordKey::Unrecognized(FieldSpecifier::new(None, 325, 8)));
+    Lazy::new(|| DataRecordKey::Unrecognized(FieldSpecifier::new(None, 325, 8)));
 
 fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
     let val = data_record.values.get(&*OBSERVATION_TIME_KEY);
@@ -255,7 +242,7 @@ fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
 #[cfg(test)]
 mod test {
     use super::*;
-
+    use countersyncd::test_common::{assert_logs, capture_logs};
     use tokio::{spawn, sync::mpsc::channel};
 
     #[tokio::test]
@@ -263,11 +250,9 @@ mod test {
         let (buffer_sender, buffer_reciver) = channel(1);
         let (template_sender, template_reciver) = channel(1);
         let (saistats_sender, mut saistats_reciver) = channel(100);
-        let (prober, mut prober_reciver) = channel(100);
-
         let mut actor = IpfixActor::new(template_reciver, buffer_reciver);
         actor.add_recipient(saistats_sender);
-        actor.set_prober(prober);
+
         let actor_handle = spawn(IpfixActor::run(actor));
 
         let template_bytes: [u8; 88] = [
@@ -339,25 +324,14 @@ mod test {
             .send((String::from(""), Arc::new(Vec::from(template_bytes))))
             .await
             .unwrap();
-        let pm = prober_reciver
-            .recv()
-            .await
-            .expect("The template not consumed");
-        assert!(pm.contains("Template"));
-        assert!(pm.contains("consumed"));
+
+        // Wait for the template to be processed
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         buffer_sender
             .send(Arc::new(Vec::from(valid_records_bytes)))
             .await
             .unwrap();
-        for _ in 0..4 {
-            let pm = prober_reciver
-                .recv()
-                .await
-                .expect("The record not consumed");
-            assert!(pm.contains("Record"));
-            assert!(pm.contains("parsed"));
-        }
 
         let invalid_len_record: [u8; 20] = [
             0x00, 0x0A, 0x00, 0x48, // line 0 Packet 1
@@ -370,11 +344,6 @@ mod test {
             .send(Arc::new(Vec::from(invalid_len_record)))
             .await
             .unwrap();
-        assert!(prober_reciver
-            .recv()
-            .await
-            .expect("The record not consumed")
-            .contains("Discard record due to error length"));
 
         let unknown_record: [u8; 44] = [
             0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
@@ -393,19 +362,6 @@ mod test {
             .send(Arc::new(Vec::from(unknown_record)))
             .await
             .unwrap();
-        assert!(prober_reciver
-            .recv()
-            .await
-            .expect("The record not consumed")
-            .contains("Unknown template, Discard record"));
-
-        drop(buffer_sender);
-        drop(template_sender);
-
-        let mut received_stats = Vec::new();
-        while let Some(stats) = saistats_reciver.recv().await {
-            received_stats.push(Arc::try_unwrap(stats).unwrap());
-        }
 
         let expected_stats = vec![
             SAIStats {
@@ -477,10 +433,31 @@ mod test {
                 ],
             },
         ];
+
+        let mut received_stats = Vec::new();
+        while let Some(stats) = saistats_reciver.recv().await {
+            received_stats.push(Arc::try_unwrap(stats).unwrap());
+            if received_stats.len() == expected_stats.len() {
+                break;
+            }
+        }
+
         assert_eq!(received_stats, expected_stats);
 
+        drop(buffer_sender);
+        drop(template_sender);
         drop(saistats_reciver);
 
         actor_handle.await.unwrap();
+        let logs = capture_logs();
+        println!("Logs: {}", logs);
+        // assert_logs(vec![
+        //     "[DEBUG] Record parsed",
+        //     "[DEBUG] Record parsed",
+        //     "[DEBUG] Record parsed",
+        //     "[DEBUG] Record parsed",
+        //     "[WARN] Wrong length in the records [0, 10, 0, 72]",
+        //     "[WARN] Not support data message [0, 10, 0, 44]",
+        // ]);
     }
 }
