@@ -389,7 +389,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
         // Send message to daemon
         size_t msg_size = sizeof(MSTP_CONFIG_MSG) + (msg.vlan_port_map.size() * sizeof(VlanPortMapEntry));
-        sendMsgStpd(STP_MST_VLAN_CONFIG, msg_size, (void *)&msg);
+        sendMsgStpd(STP_MST_INST_CONFIG, msg_size, (void *)&msg);
 
         // Erase processed entry
         it = consumer.m_toSync.erase(it);
