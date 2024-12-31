@@ -299,15 +299,14 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
     }
 }
 
-void StpMgr::doStpMstInstTask(Consumer &consumer)
+void StpMgr::doStpMstVlanTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    // Initialize the flag for task processing.
+    // Check if global and VLAN tasks are ready
     if (stpGlobalTask == false)
         return;
 
-    // Iterate through the messages in the consumer's sync queue
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -318,27 +317,31 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        SWSS_LOG_INFO("STP MST instance key %s op %s", key.c_str(), op.c_str());
+        SWSS_LOG_INFO("STP MST VLAN key %s op %s", key.c_str(), op.c_str());
 
-        // If the operation is a SET_COMMAND, process the settings
+        // Initialize variables
+        msg.opcode = (op == SET_COMMAND) ? STP_SET_COMMAND : STP_DEL_COMMAND;
+        uint8_t instance_id = 0;
+        uint16_t bridge_priority = 0;
+        vector<int> vlan_list;
+
         if (op == SET_COMMAND)
         {
-            msg.opcode = STP_SET_COMMAND;
-
-            // Iterate over the fields and values
+            // Parse fields and populate MSTP_CONFIG_MSG
             for (auto i : kfvFieldsValues(t))
             {
-                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+                SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
 
-                // Check for the MST instance ID
-                if (fvField(i) == "instance")
+                if (fvField(i) == "instance_id")
                 {
-                    msg.instance = stoi(fvValue(i).c_str());
+                    instance_id = static_cast<uint8_t>(stoi(fvValue(i).c_str()));
                 }
-                // Check for the VLAN list (assuming list of VLANs)
+                else if (fvField(i) == "bridge_priority")
+                {
+                    bridge_priority = static_cast<uint16_t>(stoi(fvValue(i).c_str()));
+                }
                 else if (fvField(i) == "vlan_list")
                 {
-                    // Assuming the value is a comma-separated list of VLANs
                     string vlan_str = fvValue(i);
                     vector<string> vlan_ids;
                     size_t start = 0;
@@ -350,44 +353,49 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
                         end = vlan_str.find(",", start);
                     }
                     vlan_ids.push_back(vlan_str.substr(start)); // Add last VLAN
-                    msg.vlan_list = list<string>(vlan_ids.begin(), vlan_ids.end());
-                }
-                // Check for the bridge priority
-                else if (fvField(i) == "bridge_priority")
-                {
-                    msg.bridge_priority = static_cast<uint16_t>(stoi(fvValue(i).c_str()));
+                    for (const auto &vlan : vlan_ids)
+                    {
+                        vlan_list.push_back(stoi(vlan));
+                    }
                 }
             }
 
-            // Check if MST is enabled before setting the values
-            if (l2ProtoEnabled == L2_MSTP)
+            // Populate MSTP_CONFIG_MSG fields
+            msg.instance_id = instance_id;
+            msg.bridge_priority = bridge_priority;
+            msg.vlan_list = vlan_list;
+
+            // Populate VlanPortMapEntry for each VLAN
+            for (int vlan_id : vlan_list)
             {
-                // Send the message to the daemon
-                sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg), (void *)&msg);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("MST protocol is not enabled, cannot configure MST instance settings.");
+                VlanPortMapEntry entry;
+                entry.vlan_number = vlan_id;
+
+                // Retrieve port attributes for the VLAN
+                vector<PORT_ATTR> port_list;
+                int port_cnt = getAllVlanMem("Vlan" + to_string(vlan_id), port_list);
+                if (port_cnt > 0)
+                {
+                    entry.ports = port_list;
+                }
+                msg.vlan_port_map.push_back(entry);
             }
         }
-        // If the operation is a DEL_COMMAND, process the deletion
         else if (op == DEL_COMMAND)
         {
             msg.opcode = STP_DEL_COMMAND;
-
-            memset(&msg, 0, sizeof(STP_MST_INST_CONFIG_MSG));
-            sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg), (void *)&msg);
-            SWSS_LOG_INFO("MST instance configuration deleted.");
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Invalid operation %s", op.c_str());
+            msg.vlan_list = vlan_list;
         }
 
-        // Erase the processed item and move to the next one
+        // Send message to daemon
+        size_t msg_size = sizeof(MSTP_CONFIG_MSG) + (msg.vlan_port_map.size() * sizeof(VlanPortMapEntry));
+        sendMsgStpd(STP_MST_VLAN_CONFIG, msg_size, (void *)&msg);
+
+        // Erase processed entry
         it = consumer.m_toSync.erase(it);
     }
 }
+
 
 void StpMgr::doStpMstPortTask(Consumer &consumer)
 {
@@ -529,8 +537,8 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
 
         len = sizeof(STP_VLAN_CONFIG_MSG); 
         if (stpEnable == true)
-        {
-            vector<PORT_ATTR> port_list;
+        {port_list
+            vector<PORT_ATTR> ;
             if (m_vlanInstMap[vlan_id] == INVALID_INSTANCE)
             {
                 /* VLAN is being added to the instance. Get all members for VLAN Mapping*/

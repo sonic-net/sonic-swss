@@ -115,6 +115,11 @@ typedef struct PORT_ATTR {
     uint8_t    enabled;
 }PORT_ATTR;
 
+typedef struct VlanPortMapEntry {
+    int vlan_number;                   // VLAN number
+    std::vector<PORT_ATTR> ports; // List of ports with attributes
+} VlanPortMapEntry;
+
 typedef struct STP_VLAN_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
     uint8_t     newInstance;
@@ -182,10 +187,11 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
 } __attribute__((packed)) STP_MST_GLOBAL_CONFIG_MSG;
 
 struct STP_MST_INST_CONFIG_MSG {
-    uint8_t opcode;                // Operation code (SET/DEL)
-    uint32_t instance;             // MST instance ID
-    std::list<std::string> vlan_list; // List of VLAN IDs (as strings)
-    uint16_t bridge_priority;      // Bridge priority for the MST instance
+    uint8_t opcode;                   // 1 byte: enable/disable
+    uint8_t instance_id;              // 1 byte: instance ID
+    uint16_t bridge_priority;         // 2 bytes: bridge priority
+    std::vector<int> vlan_list;       // Vector of VLANs (VLANs range: 1-4095)
+    std::vector<VlanPortMapEntry> vlan_port_map;
 } __attribute__ ((packed)); STP_MST_INST_CONFIG_MSG;
 
 typedef struct STP_MST_PORT_CONFIG_MSG {
