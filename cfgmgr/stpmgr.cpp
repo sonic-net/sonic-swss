@@ -299,7 +299,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
     }
 }
 
-void StpMgr::doStpMstVlanTask(Consumer &consumer)
+void StpMgr::doStpMstInstTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
