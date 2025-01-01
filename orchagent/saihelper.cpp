@@ -1023,6 +1023,7 @@ void setFlexCounterGroupStatsMode(const std::string &group,
 
 void setFlexCounterGroupBulkChunkSize(const std::string &group,
                                       const std::string &bulk_chunk_size,
+                                      const std::string &bulk_chunk_size_per_prefix,
                                       bool is_gearbox)
 {
     sai_attribute_t attr;
@@ -1034,22 +1035,6 @@ void setFlexCounterGroupBulkChunkSize(const std::string &group,
     initSaiRedisCounterEmptyParameter(flex_counter_group_param);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_chunk_size, bulk_chunk_size);
-
-    notifySyncdCounterOperation(is_gearbox, attr);
-}
-
-void setFlexCounterGroupBulkChunkSizePerPrefix(const std::string &group,
-                                               const std::string &bulk_chunk_size_per_prefix,
-                                               bool is_gearbox)
-{
-    sai_attribute_t attr;
-    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-    attr.value.ptr = &flex_counter_group_param;
-
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
-    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_chunk_size_per_prefix, bulk_chunk_size_per_prefix);
 
     notifySyncdCounterOperation(is_gearbox, attr);
