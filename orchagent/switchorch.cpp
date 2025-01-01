@@ -1115,8 +1115,17 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     const string &severity_str = switch_asic_sdk_health_event_severity_reverse_map.at(severity);
     const string &category_str = switch_asic_sdk_health_event_category_reverse_map.at(category);
     string description_str;
-    const std::time_t &t = (std::time_t)timestamp.tv_sec;
+    std::time_t t = (std::time_t)timestamp.tv_sec;
+    const std::time_t now = std::time(0);
+    const double year_in_seconds = 86400 * 365;
     stringstream time_ss;
+
+    if (difftime(t, now) > year_in_seconds)
+    {
+        SWSS_LOG_ERROR("Invalid timestamp second %lu in received ASIC/SDK health event, reset to current time", timestamp.tv_sec);
+        t = now;
+    }
+
     time_ss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
 
     switch (data.data_type)
