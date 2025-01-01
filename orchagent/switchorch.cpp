@@ -1122,7 +1122,7 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
 
     if (difftime(t, now) > year_in_seconds)
     {
-        SWSS_LOG_ERROR("Invalid timestamp second %lu in received ASIC/SDK health event, reset to current time", timestamp.tv_sec);
+        SWSS_LOG_ERROR("Invalid timestamp second %" PRIx64 " in received ASIC/SDK health event, reset to current time", timestamp.tv_sec);
         t = now;
     }
 
