@@ -65,6 +65,7 @@ typedef enum STP_MSG_TYPE {
     //MST config messages
     STP_MST_GLOBAL_CONFIG,
     STP_MST_INST_CONFIG,
+    STP_MST_INST_PORT_CONFIG,
     STP_MST_PORT_CONFIG
 
 }STP_MSG_TYPE;
@@ -141,6 +142,15 @@ typedef struct STP_VLAN_PORT_CONFIG_MSG {
     int         path_cost;
     int         priority;
 }__attribute__ ((packed))STP_VLAN_PORT_CONFIG_MSG;
+
+typedef struct STP_MST_INST_PORT_CONFIG_MSG {
+    uint8_t     opcode; // enable/disable
+    int         msti;   // MST Instance ID
+    char        intf_name[IFNAMSIZ];
+    int         path_cost;
+    int         priority;
+}__attribute__ ((packed)) STP_MST_INST_PORT_CONFIG_MSG;
+
 
 typedef struct VLAN_ATTR {
     int         inst_id;
@@ -252,6 +262,8 @@ private:
     bool stpVlanPortTask;
     bool stpPortTask;
 
+    bool stpMstInstPortTask;
+
     void doTask(Consumer &consumer);
     void doStpGlobalTask(Consumer &consumer);
     void doStpVlanTask(Consumer &consumer);
@@ -280,6 +292,8 @@ private:
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
     void updateVLANsToInstance(int instance_id, const std::set<int>& vlans);
+    void processStpMstInstPortAttr(const string op, int msti, const string intfName, 
+        vector<FieldValueTuple>& tupEntry);
 };
 
 }
