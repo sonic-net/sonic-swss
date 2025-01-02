@@ -1120,6 +1120,11 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     const double year_in_seconds = 86400 * 365;
     stringstream time_ss;
 
+    /*
+     * In case vendor SAI passed a very large timestamp, put_time can cause segment fault which can not be caught by try/catch infra
+     * We check the difference between the timestamp from SAI and the current time and force to use current time if the gap is too large
+     * By doing so, we can avoid the segment fault
+     */
     if (difftime(t, now) > year_in_seconds)
     {
         SWSS_LOG_ERROR("Invalid timestamp second %" PRIx64 " in received ASIC/SDK health event, reset to current time", timestamp.tv_sec);
