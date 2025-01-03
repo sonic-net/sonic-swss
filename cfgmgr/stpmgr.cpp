@@ -29,10 +29,10 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    //MSTP TABLES CONFIG DB
+    /*//MSTP TABLES CONFIG DB
     m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME),
     m_cfgStpMstInstTable(confDb,CFG_STP_MST_INST_TABLE_NAME),
-    m_cfgStpMstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)
+    m_cfgStpMstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)*/
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -64,13 +64,13 @@ void StpMgr::doTask(Consumer &consumer)
         doLagMemUpdateTask(consumer);
     else if (table == STATE_VLAN_MEMBER_TABLE_NAME)
         doVlanMemUpdateTask(consumer);
-    // MST do function enhanced
+    /*// MST do function enhanced
     else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
         doStpMstGlobalTask(consumer);
     else if (table == CFG_STP_MST_INST_TABLE_NAME)
         doStpMstInstTask(consumer);
     else if (table == CFG_STP_MST_PORT_TABLE_NAME)
-        doStpMstInstPortTask(consumer);
+        doStpMstInstPortTask(consumer);*/
     
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
@@ -119,7 +119,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
-                    else if (fvValue(i) == "mst")
+                    /*else if (fvValue(i) == "mst")
                     {
                         if (l2ProtoEnabled == L2_NONE)
                         {
@@ -132,7 +132,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
 
                             l2ProtoEnabled = L2_MSTP;
                         }
-                        msg.stp_mode = L2_MSTP;
+                        msg.stp_mode = L2_MSTP;*/
                     }
                     else
                     {
@@ -679,7 +679,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
     }
 }
 
-void StpMgr::doStpMstGlobalTask(Consumer &consumer)
+/*void StpMgr::doStpMstGlobalTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -1048,7 +1048,7 @@ void StpMgr::doStpMstPortTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 }
-
+*/
 void StpMgr::doLagMemUpdateTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();

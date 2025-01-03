@@ -27,10 +27,10 @@
 #define L2_INSTANCE_MAX             MAX_VLANS
 #define STP_DEFAULT_MAX_INSTANCES   255
 #define INVALID_INSTANCE            -1 
-#define MST_DEFAULT_INSTANCE        0
+/*#define MST_DEFAULT_INSTANCE        0
 #define MST_MAX_INSTANCES           STP_DEFAULT_MAX_INSTANCES
 #define DEFAULT_INSTANCE_VLAN_LIST "1-4095"
-#define MST_NAME_SIZE               64
+#define MST_NAME_SIZE               64*/
 
 
 #define GET_FIRST_FREE_INST_ID(_idx) \
@@ -48,7 +48,7 @@
 typedef enum L2_PROTO_MODE{
     L2_NONE,
     L2_PVSTP,
-    L2_MSTP,
+//    L2_MSTP,
 }L2_PROTO_MODE;
 
 typedef enum STP_MSG_TYPE {
@@ -62,11 +62,11 @@ typedef enum STP_MSG_TYPE {
     STP_STPCTL_MSG,
     STP_MAX_MSG,
 
-    //MST config messages
+   /*//MST config messages
     STP_MST_GLOBAL_CONFIG,
     STP_MST_INST_CONFIG,
     STP_MST_INST_PORT_CONFIG,
-    STP_MST_PORT_CONFIG
+    STP_MST_PORT_CONFIG*/ 
 
 }STP_MSG_TYPE;
 
@@ -116,10 +116,10 @@ typedef struct PORT_ATTR {
     uint8_t    enabled;
 }PORT_ATTR;
 
-typedef struct VlanPortMapEntry {
-    int vlan_number;                   // VLAN number
-    std::vector<PORT_ATTR> ports; // List of ports with attributes
-} VlanPortMapEntry;
+// typedef struct VlanPortMapEntry {
+//     int vlan_number;                   // VLAN number
+//     std::vector<PORT_ATTR> ports; // List of ports with attributes
+// } VlanPortMapEntry;
 
 typedef struct STP_VLAN_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
@@ -143,13 +143,13 @@ typedef struct STP_VLAN_PORT_CONFIG_MSG {
     int         priority;
 }__attribute__ ((packed))STP_VLAN_PORT_CONFIG_MSG;
 
-typedef struct STP_MST_INST_PORT_CONFIG_MSG {
-    uint8_t     opcode; // enable/disable
-    int         msti;   // MST Instance ID
-    char        intf_name[IFNAMSIZ];
-    int         path_cost;
-    int         priority;
-}__attribute__ ((packed)) STP_MST_INST_PORT_CONFIG_MSG;
+// typedef struct STP_MST_INST_PORT_CONFIG_MSG {
+//     uint8_t     opcode; // enable/disable
+//     int         msti;   // MST Instance ID
+//     char        intf_name[IFNAMSIZ];
+//     int         path_cost;
+//     int         priority;
+// }__attribute__ ((packed)) STP_MST_INST_PORT_CONFIG_MSG;
 
 
 typedef struct VLAN_ATTR {
@@ -184,34 +184,34 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
     int         priority;
 }__attribute__ ((packed))STP_VLAN_MEM_CONFIG_MSG;
 
-// MST messages definations instances global configurations 
-typedef struct STP_MST_GLOBAL_CONFIG_MSG {
-    uint32_t    opcode;           // Operation code for the message
-    char        name[MST_NAME_SIZE];        // MST region name
-    uint32_t    revision;                   // MST revision number
-    uint8_t     max_hops;                   // MST max hops
-    uint8_t     hello_time;                 // MST hello time
-    uint8_t     max_age;                    // MST max age
-    uint8_t     forward_delay;              // MST forward delay
-    uint8_t     hold_count;                 // MST hold count
-} __attribute__((packed)) STP_MST_GLOBAL_CONFIG_MSG;
+// // MST messages definations instances global configurations 
+// typedef struct STP_MST_GLOBAL_CONFIG_MSG {
+//     uint32_t    opcode;           // Operation code for the message
+//     char        name[MST_NAME_SIZE];        // MST region name
+//     uint32_t    revision;                   // MST revision number
+//     uint8_t     max_hops;                   // MST max hops
+//     uint8_t     hello_time;                 // MST hello time
+//     uint8_t     max_age;                    // MST max age
+//     uint8_t     forward_delay;              // MST forward delay
+//     uint8_t     hold_count;                 // MST hold count
+// } __attribute__((packed)) STP_MST_GLOBAL_CONFIG_MSG;
 
-struct STP_MST_INST_CONFIG_MSG {
-    uint8_t opcode;                   // 1 byte: enable/disable
-    uint8_t instance_id;              // 1 byte: instance ID
-    uint16_t bridge_priority;         // 2 bytes: bridge priority
-    std::vector<int> vlan_list;       // Vector of VLANs (VLANs range: 1-4095)
-    std::vector<VlanPortMapEntry> vlan_port_map;
-} __attribute__ ((packed)); STP_MST_INST_CONFIG_MSG;
+// struct STP_MST_INST_CONFIG_MSG {
+//     uint8_t opcode;                   // 1 byte: enable/disable
+//     uint8_t instance_id;              // 1 byte: instance ID
+//     uint16_t bridge_priority;         // 2 bytes: bridge priority
+//     std::vector<int> vlan_list;       // Vector of VLANs (VLANs range: 1-4095)
+//     std::vector<VlanPortMapEntry> vlan_port_map;
+// } __attribute__ ((packed)); STP_MST_INST_CONFIG_MSG;
 
-typedef struct STP_MST_PORT_CONFIG_MSG {
-    uint32_t    opcode;           // Operation code for the message
-    char        port[PORT_NAME_SIZE];  // Port identifier (e.g., Ethernet0)
-    uint32_t    instance;         // MST instance ID
-    uint16_t    port_priority;    // Port priority
-    uint32_t    port_path_cost;   // Port path cost
-    bool        admin_edge;       // Whether the port is configured as an edge port
-} __attribute__((packed)) STP_MST_PORT_CONFIG_MSG;
+// typedef struct STP_MST_PORT_CONFIG_MSG {
+//     uint32_t    opcode;           // Operation code for the message
+//     char        port[PORT_NAME_SIZE];  // Port identifier (e.g., Ethernet0)
+//     uint32_t    instance;         // MST instance ID
+//     uint16_t    port_priority;    // Port priority
+//     uint32_t    port_path_cost;   // Port path cost
+//     bool        admin_edge;       // Whether the port is configured as an edge port
+// } __attribute__((packed)) STP_MST_PORT_CONFIG_MSG;
 
 namespace swss {
 
@@ -240,10 +240,10 @@ private:
     Table m_stateLagTable;
     Table m_stateStpTable;
 
-    //MST new tables 
-    Table m_cfgStpMstGlobalTable;
-    Table m_cfgStpMstInstTable;
-    Table m_cfgStpMstPortTable;
+    // //MST new tables 
+    // Table m_cfgStpMstGlobalTable;
+    // Table m_cfgStpMstInstTable;
+    // Table m_cfgStpMstPortTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
@@ -253,8 +253,8 @@ private:
     uint16_t max_stp_instances;
     std::map<std::string, int> m_lagMap;
 
-    //MSTP variables 
-    std::map<int, std::set<int>> vlanToInstanceMap;
+    // //MSTP variables 
+    // std::map<int, std::set<int>> vlanToInstanceMap;
 
 
     bool stpGlobalTask;
@@ -262,7 +262,7 @@ private:
     bool stpVlanPortTask;
     bool stpPortTask;
 
-    bool stpMstInstPortTask;
+    // bool stpMstInstPortTask;
 
     void doTask(Consumer &consumer);
     void doStpGlobalTask(Consumer &consumer);
@@ -270,10 +270,10 @@ private:
     void doStpVlanPortTask(Consumer &consumer);
     void doStpPortTask(Consumer &consumer);
     
-    //MST Do Tasks functions
-    void doStpMstGlobalTask(Consumer &consumer);
-    void doStpMstInstTask(Consumer &consumer);
-    void doStpMstPortTask(Consumer &consumer);
+    // //MST Do Tasks functions
+    // void doStpMstGlobalTask(Consumer &consumer);
+    // void doStpMstInstTask(Consumer &consumer);
+    // void doStpMstPortTask(Consumer &consumer);
 
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
@@ -291,9 +291,9 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
-    void updateVLANsToInstance(int instance_id, const std::set<int>& vlans);
-    void processStpMstInstPortAttr(const string op, int msti, const string intfName, 
-        vector<FieldValueTuple>& tupEntry);
+    // void updateVLANsToInstance(int instance_id, const std::set<int>& vlans);
+    // void processStpMstInstPortAttr(const string op, int msti, const string intfName, 
+    //     vector<FieldValueTuple>& tupEntry);
 };
 
 }

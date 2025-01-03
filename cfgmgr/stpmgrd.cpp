@@ -62,9 +62,9 @@ int main(int argc, char **argv)
             conf_stp_port_table,
             conf_lag_member_table,
             state_vlan_member_table,
-            conf_stp_mst_global_table,
-            //conf_stp_mst_inst_table,
-            //conf_stp_mst_port_table
+            // conf_stp_mst_global_table,
+            // //conf_stp_mst_inst_table,
+            // //conf_stp_mst_port_table
         };
 
 
