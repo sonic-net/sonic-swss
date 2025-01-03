@@ -227,11 +227,11 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     int         hello_time;
     int         max_age;
     int         max_hop;
-}_attribute_ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
+}__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
 typedef struct VLAN_LIST{
     uint16_t    vlan_id;
-} _attribute_ ((packed))VLAN_LIST;
+} __attribute__ ((packed))VLAN_LIST;
 
 typedef struct MST_INST_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
@@ -239,12 +239,12 @@ typedef struct MST_INST_CONFIG_MSG {
     int         priority;
     uint16_t    vlan_count;
     VLAN_LIST   vlan_list[0];
-}_attribute_ ((packed))MST_INST_CONFIG_MSG;
+}__attribute__ ((packed))MST_INST_CONFIG_MSG;
 
 typedef struct STP_MST_INSTANCE_CONFIG_MSG {
     uint8_t    mst_count;
     MST_INST_CONFIG_MSG mst_list[0];
-}_attribute_ ((packed))STP_MST_INSTANCE_CONFIG_MSG; 
+}__attribute__ ((packed))STP_MST_INSTANCE_CONFIG_MSG; 
 
 typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
@@ -252,7 +252,7 @@ typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint16_t    mst_id;
     int         path_cost;
     int         priority;
-}_attribute_ ((packed))STP_MST_INST_PORT_CONFIG_MSG;
+}__attribute__ ((packed))STP_MST_INST_PORT_CONFIG_MSG;
 
 typedef struct PORT_LIST{
     char        intf_name[IFNAMSIZ];
