@@ -249,6 +249,6 @@ namespace teammgr_ut
         teammgr.cleanTeamProcesses();
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
         EXPECT_EQ(mockKillCommands.size(), 0);
-        EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count(), 400);
+        EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count(), 200);
     }
 }

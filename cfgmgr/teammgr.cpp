@@ -174,17 +174,13 @@ void TeamMgr::cleanTeamProcesses()
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
 
     std::unordered_map<std::string, int> aliasPidMap;
-    uint32_t sleepCounter = 0;
 
     for (const auto& alias: m_lagList)
     {
         pid_t pid;
-        if (++sleepCounter % 10 == 0) {
-            // Sleep for 100 milliseconds so as to not overwhelm the netlink
-            // socket buffers with events about interfaces going down
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            sleepCounter = 0;
-        }
+        // Sleep for 10 milliseconds so as to not overwhelm the netlink
+        // socket buffers with events about interfaces going down
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         try
         {
