@@ -31,7 +31,7 @@
 #define MST_MAX_INSTANCES           STP_DEFAULT_MAX_INSTANCES
 #define DEFAULT_INSTANCE_VLAN_LIST "1-4095"
 */
-define MST_NAME_SIZE               64
+#define MST_NAME_SIZE               64
 
 #define GET_FIRST_FREE_INST_ID(_idx) \
     while (_idx < (int)l2InstPool.size() && l2InstPool.test(_idx)) ++_idx; \
