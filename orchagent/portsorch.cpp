@@ -4692,7 +4692,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 initializePortOperErrors(p);
 
                 // Restore admin status if the port was brought down
-                if (admin_status != p.m_admin_state_up)
+                if (admin_status != p.m_admin_state_up && pCfg.admin_status.is_set == false)
                 {
                     pCfg.admin_status.is_set = true;
                     pCfg.admin_status.value = admin_status;
