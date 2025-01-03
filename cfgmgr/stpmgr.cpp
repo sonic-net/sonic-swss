@@ -28,11 +28,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateVlanTable(statDb, STATE_VLAN_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
-    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    /*//MSTP TABLES CONFIG DB
-    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME),
-    m_cfgStpMstInstTable(confDb,CFG_STP_MST_INST_TABLE_NAME),
-    m_cfgStpMstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)*/
+    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -64,14 +60,6 @@ void StpMgr::doTask(Consumer &consumer)
         doLagMemUpdateTask(consumer);
     else if (table == STATE_VLAN_MEMBER_TABLE_NAME)
         doVlanMemUpdateTask(consumer);
-    /*// MST do function enhanced
-    else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
-        doStpMstGlobalTask(consumer);
-    else if (table == CFG_STP_MST_INST_TABLE_NAME)
-        doStpMstInstTask(consumer);
-    else if (table == CFG_STP_MST_PORT_TABLE_NAME)
-        doStpMstInstPortTask(consumer);*/
-    
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -101,7 +89,6 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
             for (auto i : kfvFieldsValues(t))
             {
                 SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
-
                 if (fvField(i) == "mode")
                 {
                     if (fvValue(i) == "pvst")
@@ -119,25 +106,8 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
-                    /*else if (fvValue(i) == "mst")
-                    {
-                        if (l2ProtoEnabled == L2_NONE)
-                        {
-                            const std::string cmd = std::string("") + 
-                                " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                            std::string res;
-                            int ret = swss::exec(cmd, res);
-                            if (ret != 0)
-                                SWSS_LOG_ERROR("ebtables add failed %d", ret);
-
-                            l2ProtoEnabled = L2_MSTP;
-                        }
-                        msg.stp_mode = L2_MSTP;*/
-                    }
                     else
-                    {
                         SWSS_LOG_ERROR("Error invalid mode %s", fvValue(i).c_str());
-                    }
                 }
                 else if (fvField(i) == "rootguard_timeout")
                 {
@@ -150,37 +120,20 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             msg.opcode = STP_DEL_COMMAND;
+            l2ProtoEnabled = L2_NONE;
 
-            // Check which protocol was previously enabled (PVST or MST)
-            if (l2ProtoEnabled == L2_PVSTP)
-            {
-                l2ProtoEnabled = L2_NONE;
-                // Delete PVST ebtables rule
-                const std::string cmd = std::string("") + 
-                    " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                std::string res;
-                int ret = swss::exec(cmd, res);
-                if (ret != 0)
-                    SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret);
-            }
-            else if (l2ProtoEnabled == L2_MSTP)
-            {
-                l2ProtoEnabled = L2_NONE;
-                // Delete MST ebtables rule
-                const std::string cmd = std::string("") + 
-                    " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                std::string res;
-                int ret = swss::exec(cmd, res);
-                if (ret != 0)
-                    SWSS_LOG_ERROR("ebtables del failed for MST %d", ret);
-            }
-            
-            // Free Up all instances
+            //Free Up all instances
             FREE_ALL_INST_ID();
 
             // Initialize all VLANs to Invalid instance
             fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
+            const std::string cmd = std::string("") + 
+                    " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
+            std::string res;
+            int ret = swss::exec(cmd, res);
+            if (ret != 0)
+                SWSS_LOG_ERROR("ebtables del failed %d", ret);
         }
 
         sendMsgStpd(STP_BRIDGE_CONFIG, sizeof(msg), (void *)&msg);
@@ -188,7 +141,6 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 }
-
 
 void StpMgr::doStpVlanTask(Consumer &consumer)
 {
