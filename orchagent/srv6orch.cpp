@@ -901,7 +901,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     sai_attribute_t attr;
     string key_string = my_sid_string;
     sai_my_sid_entry_endpoint_behavior_t end_behavior;
-    sai_my_sid_entry_endpoint_behavior_flavor_t end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
+    sai_my_sid_entry_endpoint_behavior_flavor_t end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE;
 
     bool entry_exists = false;
     if (mySidExists(key_string))
@@ -1051,9 +1051,12 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     attr.value.s32 = end_behavior;
     attributes.push_back(attr);
 
-    attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR;
-    attr.value.s32 = end_flavor;
-    attributes.push_back(attr);
+    if (end_flavor != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE)
+    {
+        attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR;
+        attr.value.s32 = end_flavor;
+        attributes.push_back(attr);
+    }
 
     sai_status_t status = SAI_STATUS_SUCCESS;
     if (!entry_exists)
