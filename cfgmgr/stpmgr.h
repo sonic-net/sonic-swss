@@ -48,7 +48,7 @@
 typedef enum L2_PROTO_MODE{
     L2_NONE,
     L2_PVSTP,
-//    L2_MSTP,
+  L2_MSTP,
 }L2_PROTO_MODE;
 
 typedef enum STP_MSG_TYPE {
@@ -67,13 +67,7 @@ typedef enum STP_MSG_TYPE {
     STP_MST_VLAN_PORT_LIST_CONFIG,
     STP_MST_INST_PORT_CONFIG
 
-   /*//MST config messages
-    STP_MST_GLOBAL_CONFIG,
-    STP_MST_INST_CONFIG,
-    STP_MST_INST_PORT_CONFIG,
-    STP_MST_PORT_CONFIG*/ 
-
-}STP_MSG_TYPE;
+   }STP_MSG_TYPE;
 
 typedef enum STP_CTL_TYPE {
     STP_CTL_HELP,
@@ -121,11 +115,6 @@ typedef struct PORT_ATTR {
     uint8_t    enabled;
 }PORT_ATTR;
 
-// typedef struct VlanPortMapEntry {
-//     int vlan_number;                   // VLAN number
-//     std::vector<PORT_ATTR> ports; // List of ports with attributes
-// } VlanPortMapEntry;
-
 typedef struct STP_VLAN_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
     uint8_t     newInstance;
@@ -147,14 +136,6 @@ typedef struct STP_VLAN_PORT_CONFIG_MSG {
     int         path_cost;
     int         priority;
 }__attribute__ ((packed))STP_VLAN_PORT_CONFIG_MSG;
-
-// typedef struct STP_MST_INST_PORT_CONFIG_MSG {
-//     uint8_t     opcode; // enable/disable
-//     int         msti;   // MST Instance ID
-//     char        intf_name[IFNAMSIZ];
-//     int         path_cost;
-//     int         priority;
-// }__attribute__ ((packed)) STP_MST_INST_PORT_CONFIG_MSG;
 
 
 typedef struct VLAN_ATTR {
@@ -189,35 +170,6 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
     int         priority;
 }__attribute__ ((packed))STP_VLAN_MEM_CONFIG_MSG;
 
-// // // MST messages definations instances global configurations 
-// typedef struct STP_MST_GLOBAL_CONFIG_MSG {
-//     uint32_t    opcode;           // Operation code for the message
-//     char        name[MST_NAME_SIZE];        // MST region name
-//     uint32_t    revision;                   // MST revision number
-//     uint8_t     max_hops;                   // MST max hops
-//     uint8_t     hello_time;                 // MST hello time
-//     uint8_t     max_age;                    // MST max age
-//     uint8_t     forward_delay;              // MST forward delay
-//     uint8_t     hold_count;                 // MST hold count
-// } __attribute__((packed)) STP_MST_GLOBAL_CONFIG_MSG;
-
-// struct STP_MST_INST_CONFIG_MSG {
-//     uint8_t opcode;                   // 1 byte: enable/disable
-//     uint8_t instance_id;              // 1 byte: instance ID
-//     uint16_t bridge_priority;         // 2 bytes: bridge priority
-//     std::vector<int> vlan_list;       // Vector of VLANs (VLANs range: 1-4095)
-//     std::vector<VlanPortMapEntry> vlan_port_map;
-// } __attribute__ ((packed)); STP_MST_INST_CONFIG_MSG;
-
-// typedef struct STP_MST_PORT_CONFIG_MSG {
-//     uint32_t    opcode;           // Operation code for the message
-//     char        port[PORT_NAME_SIZE];  // Port identifier (e.g., Ethernet0)
-//     uint32_t    instance;         // MST instance ID
-//     uint16_t    port_priority;    // Port priority
-//     uint32_t    port_path_cost;   // Port path cost
-//     bool        admin_edge;       // Whether the port is configured as an edge port
-// } __attribute__((packed)) STP_MST_PORT_CONFIG_MSG;
-
 
 typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
@@ -231,7 +183,7 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
 
 typedef struct VLAN_LIST{
     uint16_t    vlan_id;
-} __attribute__ ((packed))VLAN_LIST;
+}VLAN_LIST;
 
 typedef struct MST_INST_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
@@ -337,9 +289,7 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
-    // void updateVLANsToInstance(int instance_id, const std::set<int>& vlans);
-    // void processStpMstInstPortAttr(const string op, int msti, const string intfName, 
-    //     vector<FieldValueTuple>& tupEntry);
+   
 };
 
 }
