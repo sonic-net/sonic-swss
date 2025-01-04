@@ -211,6 +211,7 @@ typedef struct PORT_LIST{
     int8_t      tagging_mode;
 }PORT_LIST;
 
+
 namespace swss {
 
 class StpMgr : public Orch
