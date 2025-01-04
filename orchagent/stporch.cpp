@@ -30,7 +30,8 @@ StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableN
     status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw runtime_error("StpOrch initialization failure");
+        SWSS_LOG_NOTICE("StpOrch initialization failure");
+        return;
     }
     
     m_defaultStpId = attrs[0].value.oid;
