@@ -35,7 +35,7 @@ StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableN
 	    ret = true;
     }
 
-    SWSS_LOG_NOTICE("StpOrch initialization %s", (ret == true)?"success", "failure");
+    SWSS_LOG_NOTICE("StpOrch initialization %s", (ret == true)?"success":"failure");
 };
 
 
