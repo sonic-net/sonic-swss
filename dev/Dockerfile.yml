@@ -1,0 +1,92 @@
+ARG DEBIAN_VERSION="bookworm"
+FROM sonicdev-microsoft.azurecr.io:443/sonic-slave-${DEBIAN_VERSION}:latest
+
+ARG UID=1000
+ARG GID=1000
+
+RUN groupadd -g ${GID} sonicdev && \
+    useradd -u ${UID} -g ${GID} -ms /bin/bash sonicdev
+
+RUN mkdir -p /workspace && \
+    mkdir -p /workspace/debs && \
+    mkdir -p /workspace/tools && \
+    chown -R sonicdev:sonicdev /workspace
+
+ENV PATH="${PATH}:/workspace/tools"
+
+RUN apt-get update && \
+    sudo apt-get install -y \
+    libhiredis-dev \
+    libzmq3-dev \
+    swig4.0 \
+    libdbus-1-dev \
+    libteam-dev \
+    protobuf-compiler \
+    libprotobuf-dev && \
+    sudo pip3 install lcov_cobertura
+
+COPY dev/download_artifact.sh /workspace/tools/download_artifact.sh
+
+WORKDIR /workspace/debs
+
+ARG BRANCH_NAME="master"
+ARG PLATFORM="amd64"
+ARG DEBIAN_VERSION
+
+# SWSS COMMON
+
+ARG SWSS_COMMON_PROJECT_NAME="Azure.sonic-swss-common"
+ARG SWSS_COMMON_ARTIFACT_NAME="sonic-swss-common"
+ARG SWSS_COMMON_FILE_PATHS="/libswsscommon_1.0.0_${PLATFORM}.deb /libswsscommon-dev_1.0.0_${PLATFORM}.deb"
+
+RUN download_artifact.sh "${SWSS_COMMON_PROJECT_NAME}" "${BRANCH_NAME}" "${SWSS_COMMON_ARTIFACT_NAME}" "${SWSS_COMMON_FILE_PATHS}"
+
+# SAIREDIS
+
+ARG SAIREDIS_PROJECT_NAME="Azure.sonic-sairedis"
+ARG SAIREDIS_ARTIFACT_NAME="sonic-sairedis"
+ARG SAIREDIS_FILE_PATHS="\
+        /libsaivs_1.0.0_${PLATFORM}.deb \
+        /libsaivs-dev_1.0.0_${PLATFORM}.deb \
+        /libsairedis_1.0.0_${PLATFORM}.deb \
+        /libsairedis-dev_1.0.0_${PLATFORM}.deb \
+        /libsaimetadata_1.0.0_${PLATFORM}.deb \
+        /libsaimetadata-dev_1.0.0_${PLATFORM}.deb \
+        /syncd-vs_1.0.0_${PLATFORM}.deb \
+    "
+
+RUN download_artifact.sh "${SAIREDIS_PROJECT_NAME}" "${BRANCH_NAME}" "${SAIREDIS_ARTIFACT_NAME}" "${SAIREDIS_FILE_PATHS}"
+
+# COMMON LIB
+
+ARG COMMON_LIB_PROJECT_NAME="Azure.sonic-buildimage.common_libs"
+ARG COMMON_LIB_ARTIFACT_NAME="common-lib"
+ARG COMMON_LIB_FILE_PATHS="\
+        /target/debs/${DEBIAN_VERSION}/libnl-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-genl-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-genl-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-route-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-route-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-nf-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libnl-nf-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libyang_1.0.73_${PLATFORM}.deb \
+    "
+
+RUN download_artifact.sh "${COMMON_LIB_PROJECT_NAME}" "${BRANCH_NAME}" "${COMMON_LIB_ARTIFACT_NAME}" "${COMMON_LIB_FILE_PATHS}"
+
+# DASH API
+
+ARG DASH_API_PROJECT_NAME="sonic-net.sonic-dash-api"
+ARG DASH_API_ARTIFACT_NAME="sonic-dash-api"
+ARG DASH_API_FILE_PATHS="/libdashapi_1.0.0_${PLATFORM}.deb"
+
+RUN download_artifact.sh "${DASH_API_PROJECT_NAME}" "${BRANCH_NAME}" "${DASH_API_ARTIFACT_NAME}" "${DASH_API_FILE_PATHS}"
+
+RUN dpkg -i *.deb
+
+WORKDIR /workspace
+
+USER sonicdev
+
+ENTRYPOINT [ "bash" ]

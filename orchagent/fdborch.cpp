@@ -772,6 +772,7 @@ void FdbOrch::doTask(Consumer& consumer)
             string esi = "";
             unsigned int vni = 0;
             string sticky = "";
+            string discard = "false";
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -783,6 +784,10 @@ void FdbOrch::doTask(Consumer& consumer)
                 if (fvField(i) == "type")
                 {
                     type = fvValue(i);
+                }
+                if (fvField(i) == "discard")
+                {
+                    discard = fvValue(i);
                 }
 
                 if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
@@ -859,6 +864,7 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.esi = esi;
             fdbData.vni = vni;
             fdbData.is_flush_pending = false;
+            fdbData.discard = discard;
             if (addFdbEntry(entry, port, fdbData))
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
@@ -1480,7 +1486,9 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
     }
-
+    attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = (fdbData.discard == "true") ? SAI_PACKET_ACTION_DROP: SAI_PACKET_ACTION_FORWARD;
+    attrs.push_back(attr);
     if (macUpdate)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
