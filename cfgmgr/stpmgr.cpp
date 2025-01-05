@@ -15,7 +15,12 @@
 
 using namespace std;
 using namespace swss;
-
+StpMgr::StpMgr(swss::DBConnector* configDb, swss::DBConnector* appDb, swss::DBConnector* statDb,
+               const std::vector<std::pair<swss::DBConnector*, std::string>>& otherDbs)
+    : m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME) // Corrected
+{
+    // Constructor body
+}
 StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
     Orch(tables),
