@@ -233,7 +233,7 @@ class TestVlan(object):
 
         self.dvs_vlan.create_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(1)
-
+        
         self.dvs_vlan.create_vlan_member(vlan, lag_interface, "tagged")
         self.dvs_vlan.get_and_verify_vlan_member_ids(1)
 
@@ -248,6 +248,58 @@ class TestVlan(object):
 
         self.dvs_lag.remove_port_channel(lag_id)
         self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
+
+    def test_AddPortChannelToVlanRaceCondition(self, dvs):
+
+        vlan = "2"
+        lag_member = "Ethernet0"
+        lag_id = "0001"
+        lag_interface = "PortChannel{}".format(lag_id)
+
+        self.dvs_lag.create_port_channel(lag_id)
+        lag_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
+
+        self.dvs_lag.create_port_channel_member(lag_id, lag_member)
+
+        # Verify the LAG has been initialized properly
+        lag_member_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
+        fvs = self.dvs_vlan.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", lag_member_entries[0])
+        assert len(fvs) == 4
+        assert fvs.get("SAI_LAG_MEMBER_ATTR_LAG_ID") == lag_entries[0]
+        assert self.dvs_vlan.asic_db.port_to_id_map[fvs.get("SAI_LAG_MEMBER_ATTR_PORT_ID")] == lag_member
+
+        self.dvs_vlan.create_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(1)
+        # Kill teamsyncd
+        dvs.stop_teamsyncd()
+
+        # Delete netdevice
+        dvs.runcmd("ip link del PortChannel" + lag_id)
+
+        self.dvs_vlan.create_vlan_member(vlan, lag_interface, "tagged")
+
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+        #Start teamsyncd
+        dvs.start_teamsyncd()
+
+        #Start teammgrd
+        dvs.restart_teammgrd()
+        
+        self.dvs_vlan.get_and_verify_vlan_member_ids(1)
+
+        self.dvs_vlan.remove_vlan_member(vlan, lag_interface)
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
+        self.dvs_lag.remove_port_channel_member(lag_id, lag_member)
+        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 0)
+
+        self.dvs_lag.remove_port_channel(lag_id)
+        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
+
+
 
     def test_AddVlanMemberWithNonExistVlan(self, dvs):
 
