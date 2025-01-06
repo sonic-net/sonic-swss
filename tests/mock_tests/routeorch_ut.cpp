@@ -281,6 +281,7 @@ namespace routeorch_test
             for (const auto &it : ports)
             {
                 portTable.set(it.first, it.second);
+                portTable.set(it.first, {{ "oper_status", "up" }});
             }
 
             // Set PortConfigDone
