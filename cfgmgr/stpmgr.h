@@ -44,6 +44,7 @@
 typedef enum L2_PROTO_MODE{
     L2_NONE,
     L2_PVSTP,
+    L2_MSTP
 }L2_PROTO_MODE;
 
 typedef enum STP_MSG_TYPE {
@@ -55,7 +56,8 @@ typedef enum STP_MSG_TYPE {
     STP_PORT_CONFIG,
     STP_VLAN_MEM_CONFIG,
     STP_STPCTL_MSG,
-    STP_MAX_MSG
+    STP_MAX_MSG,
+    STP_MST_GLOBAL_CONFIG
 }STP_MSG_TYPE;
 
 typedef enum STP_CTL_TYPE {
@@ -205,6 +207,7 @@ private:
     void doStpPortTask(Consumer &consumer);
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
+    void doStpMstGlobalTask(Consumer &consumer);
 
     bool isVlanStateOk(const std::string &alias);
     bool isLagStateOk(const std::string &alias);
