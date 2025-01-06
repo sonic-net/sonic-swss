@@ -186,6 +186,7 @@ private:
     Table m_stateVlanMemberTable;
     Table m_stateLagTable;
     Table m_stateStpTable;
+    Table m_cfgStpMstGlobalTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
