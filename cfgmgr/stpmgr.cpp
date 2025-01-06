@@ -29,7 +29,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME)
+    //m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME)
 
 {
     SWSS_LOG_ENTER();
@@ -62,8 +62,8 @@ void StpMgr::doTask(Consumer &consumer)
         doLagMemUpdateTask(consumer);
     else if (table == STATE_VLAN_MEMBER_TABLE_NAME)
         doVlanMemUpdateTask(consumer);
-    else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
-        doStpMstGlobalTask(consumer);
+    //else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
+    //    doStpMstGlobalTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
