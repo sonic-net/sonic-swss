@@ -17,10 +17,10 @@
 using namespace std;
 using namespace swss;
 
-#define VXLAN_IF_NAME_PREFIX    "Brvxlan"
-#define VNET_PREFIX             "Vnet"
-#define VRF_PREFIX              "Vrf"
-#define MGMT_VRF_PREFIX         "mgmt"
+#define VXLAN_IF_NAME_PREFIX "Brvxlan"
+#define VNET_PREFIX "Vnet"
+#define VRF_PREFIX "Vrf"
+#define MGMT_VRF_PREFIX "mgmt"
 
 #define NHG_DELIMITER ','
 #define MY_SID_KEY_DELIMITER ':'
@@ -30,80 +30,84 @@ using namespace swss;
 #endif
 
 #ifndef NDA_RTA
-#define NDA_RTA(r)                                                             \
+#define NDA_RTA(r) \
     ((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct ndmsg))))
 #endif
 
-#define VXLAN_VNI             0
-#define VXLAN_RMAC            1
-#define NH_ENCAP_VXLAN      100
+#define VXLAN_VNI 0
+#define VXLAN_RMAC 1
+#define NH_ENCAP_VXLAN 100
 
-#define NH_ENCAP_SRV6_ROUTE         101
+#define NH_ENCAP_SRV6_ROUTE 101
 
-#define IPV4_MAX_BYTE       4
-#define IPV6_MAX_BYTE      16
-#define IPV4_MAX_BITLEN    32
-#define IPV6_MAX_BITLEN    128
+#define IPV4_MAX_BYTE 4
+#define IPV6_MAX_BYTE 16
+#define IPV4_MAX_BITLEN 32
+#define IPV6_MAX_BITLEN 128
 
-#define ETHER_ADDR_STRLEN (3*ETH_ALEN)
+#define ETHER_ADDR_STRLEN (3 * ETH_ALEN)
 
 #define DEFAULT_SRV6_MY_SID_BLOCK_LEN "32"
 #define DEFAULT_SRV6_MY_SID_NODE_LEN "16"
 #define DEFAULT_SRV6_MY_SID_FUNC_LEN "16"
 #define DEFAULT_SRV6_MY_SID_ARG_LEN "0"
 
-enum srv6_localsid_action {
-	SRV6_LOCALSID_ACTION_UNSPEC				= 0,
-	SRV6_LOCALSID_ACTION_END				= 1,
-	SRV6_LOCALSID_ACTION_END_X				= 2,
-	SRV6_LOCALSID_ACTION_END_T				= 3,
-	SRV6_LOCALSID_ACTION_END_DX2			= 4,
-	SRV6_LOCALSID_ACTION_END_DX6			= 5,
-	SRV6_LOCALSID_ACTION_END_DX4			= 6,
-	SRV6_LOCALSID_ACTION_END_DT6			= 7,
-	SRV6_LOCALSID_ACTION_END_DT4			= 8,
-	SRV6_LOCALSID_ACTION_END_DT46			= 9,
-	SRV6_LOCALSID_ACTION_B6_ENCAPS			= 10,
-	SRV6_LOCALSID_ACTION_B6_ENCAPS_RED		= 11,
-	SRV6_LOCALSID_ACTION_B6_INSERT			= 12,
-	SRV6_LOCALSID_ACTION_B6_INSERT_RED		= 13,
-	SRV6_LOCALSID_ACTION_UN					= 14,
-	SRV6_LOCALSID_ACTION_UA					= 15,
-	SRV6_LOCALSID_ACTION_UDX2				= 16,
-	SRV6_LOCALSID_ACTION_UDX6				= 17,
-	SRV6_LOCALSID_ACTION_UDX4				= 18,
-	SRV6_LOCALSID_ACTION_UDT6				= 19,
-	SRV6_LOCALSID_ACTION_UDT4				= 20,
-	SRV6_LOCALSID_ACTION_UDT46				= 21,
+enum srv6_localsid_action
+{
+    SRV6_LOCALSID_ACTION_UNSPEC = 0,
+    SRV6_LOCALSID_ACTION_END = 1,
+    SRV6_LOCALSID_ACTION_END_X = 2,
+    SRV6_LOCALSID_ACTION_END_T = 3,
+    SRV6_LOCALSID_ACTION_END_DX2 = 4,
+    SRV6_LOCALSID_ACTION_END_DX6 = 5,
+    SRV6_LOCALSID_ACTION_END_DX4 = 6,
+    SRV6_LOCALSID_ACTION_END_DT6 = 7,
+    SRV6_LOCALSID_ACTION_END_DT4 = 8,
+    SRV6_LOCALSID_ACTION_END_DT46 = 9,
+    SRV6_LOCALSID_ACTION_B6_ENCAPS = 10,
+    SRV6_LOCALSID_ACTION_B6_ENCAPS_RED = 11,
+    SRV6_LOCALSID_ACTION_B6_INSERT = 12,
+    SRV6_LOCALSID_ACTION_B6_INSERT_RED = 13,
+    SRV6_LOCALSID_ACTION_UN = 14,
+    SRV6_LOCALSID_ACTION_UA = 15,
+    SRV6_LOCALSID_ACTION_UDX2 = 16,
+    SRV6_LOCALSID_ACTION_UDX6 = 17,
+    SRV6_LOCALSID_ACTION_UDX4 = 18,
+    SRV6_LOCALSID_ACTION_UDT6 = 19,
+    SRV6_LOCALSID_ACTION_UDT4 = 20,
+    SRV6_LOCALSID_ACTION_UDT46 = 21,
 };
 
-enum {
-	SRV6_LOCALSID_UNSPEC			= 0,
-	SRV6_LOCALSID_SID_VALUE			= 1,
-	SRV6_LOCALSID_FORMAT			= 2,
-	SRV6_LOCALSID_ACTION			= 3,
-	SRV6_LOCALSID_VRFNAME			= 4,
-	SRV6_LOCALSID_NH6				= 5,
-	SRV6_LOCALSID_NH4				= 6,
-	SRV6_LOCALSID_IIF				= 7,
-	SRV6_LOCALSID_OIF				= 8,
-	SRV6_LOCALSID_BPF				= 9,
-	SRV6_LOCALSID_SIDLIST			= 10,
-	SRV6_LOCALSID_ENCAP_SRC_ADDR	= 11,
+enum
+{
+    SRV6_LOCALSID_UNSPEC = 0,
+    SRV6_LOCALSID_SID_VALUE = 1,
+    SRV6_LOCALSID_FORMAT = 2,
+    SRV6_LOCALSID_ACTION = 3,
+    SRV6_LOCALSID_VRFNAME = 4,
+    SRV6_LOCALSID_NH6 = 5,
+    SRV6_LOCALSID_NH4 = 6,
+    SRV6_LOCALSID_IIF = 7,
+    SRV6_LOCALSID_OIF = 8,
+    SRV6_LOCALSID_BPF = 9,
+    SRV6_LOCALSID_SIDLIST = 10,
+    SRV6_LOCALSID_ENCAP_SRC_ADDR = 11,
 };
 
-enum {
-	SRV6_LOCALSID_FORMAT_UNSPEC			= 0,
-	SRV6_LOCALSID_FORMAT_BLOCK_LEN		= 1,
-	SRV6_LOCALSID_FORMAT_NODE_LEN		= 2,
-	SRV6_LOCALSID_FORMAT_FUNC_LEN		= 3,
-	SRV6_LOCALSID_FORMAT_ARG_LEN		= 4,
+enum
+{
+    SRV6_LOCALSID_FORMAT_UNSPEC = 0,
+    SRV6_LOCALSID_FORMAT_BLOCK_LEN = 1,
+    SRV6_LOCALSID_FORMAT_NODE_LEN = 2,
+    SRV6_LOCALSID_FORMAT_FUNC_LEN = 3,
+    SRV6_LOCALSID_FORMAT_ARG_LEN = 4,
 };
 
-enum {
-    ROUTE_ENCAP_SRV6_UNSPEC            = 0,
-    ROUTE_ENCAP_SRV6_VPN_SID           = 1,
-    ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
+enum
+{
+    ROUTE_ENCAP_SRV6_UNSPEC = 0,
+    ROUTE_ENCAP_SRV6_VPN_SID = 1,
+    ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR = 2,
 };
 
 /* Returns name of the protocol passed number represents */
@@ -121,30 +125,28 @@ static string getProtocolString(int proto)
 }
 
 /* Helper to create unique pointer with custom destructor */
-template<typename T, typename F>
-static decltype(auto) makeUniqueWithDestructor(T* ptr, F func)
+template <typename T, typename F>
+static decltype(auto) makeUniqueWithDestructor(T *ptr, F func)
 {
     return std::unique_ptr<T, F>(ptr, func);
 }
 
-template<typename T>
-static decltype(auto) makeNlAddr(const T& ip)
+template <typename T>
+static decltype(auto) makeNlAddr(const T &ip)
 {
-    nl_addr* addr;
+    nl_addr *addr;
     nl_addr_parse(ip.to_string().c_str(), AF_UNSPEC, &addr);
     return makeUniqueWithDestructor(addr, nl_addr_put);
 }
 
-
-RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
-    m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
-    m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
-    m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
-    m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
-    m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
-    m_nl_sock(NULL), m_link_cache(NULL)
+RouteSync::RouteSync(RedisPipeline *pipeline) : m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
+                                                m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
+                                                m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
+                                                m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
+                                                m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+                                                m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
+                                                m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
+                                                m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
@@ -165,9 +167,9 @@ char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
     }
 
     snprintf(ptr, (ETHER_ADDR_STRLEN), "%02x:%02x:%02x:%02x:%02x:%02x",
-            (uint8_t)mac[0], (uint8_t)mac[1],
-            (uint8_t)mac[2], (uint8_t)mac[3],
-            (uint8_t)mac[4], (uint8_t)mac[5]);
+             (uint8_t)mac[0], (uint8_t)mac[1],
+             (uint8_t)mac[2], (uint8_t)mac[3],
+             (uint8_t)mac[4], (uint8_t)mac[5]);
     return ptr;
 }
 
@@ -178,9 +180,9 @@ char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
  * @rta:        Pointer to rtattr to look for nested items in.
  */
 void RouteSync::parseRtAttrNested(struct rtattr **tb, int max,
-                                                            struct rtattr *rta)
+                                  struct rtattr *rta)
 {
-	netlink_parse_rtattr(tb, max, (struct rtattr *)RTA_DATA(rta), (int)RTA_PAYLOAD(rta));
+    netlink_parse_rtattr(tb, max, (struct rtattr *)RTA_DATA(rta), (int)RTA_PAYLOAD(rta));
 }
 
 /**
@@ -193,15 +195,15 @@ void RouteSync::parseRtAttrNested(struct rtattr **tb, int max,
 void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac)
 {
     struct rtattr *tb_encap[3] = {0};
-    char mac_buf[MAX_ADDR_SIZE+1];
-    char mac_val[MAX_ADDR_SIZE+1];
+    char mac_buf[MAX_ADDR_SIZE + 1];
+    char mac_val[MAX_ADDR_SIZE + 1];
 
     parseRtAttrNested(tb_encap, 3, tb);
     encap_value = *(uint32_t *)RTA_DATA(tb_encap[VXLAN_VNI]);
     memcpy(&mac_buf, RTA_DATA(tb_encap[VXLAN_RMAC]), MAX_ADDR_SIZE);
 
     SWSS_LOG_INFO("Rx MAC %s VNI %d",
-        prefixMac2Str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value);
+                  prefixMac2Str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value);
     rmac = mac_val;
 
     return;
@@ -216,7 +218,7 @@ void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rma
  * Return:      void.
  */
 void RouteSync::parseEncapSrv6SteerRoute(struct rtattr *tb, string &vpn_sid,
-                               string &src_addr)
+                                         string &src_addr)
 {
     struct rtattr *tb_encap[256] = {};
     char vpn_sid_buf[MAX_ADDR_SIZE + 1] = {0};
@@ -247,40 +249,40 @@ const char *RouteSync::mySidAction2Str(uint32_t action)
 {
     switch (action)
     {
-        case SRV6_LOCALSID_ACTION_UNSPEC:
-            return "unspec";
-        case SRV6_LOCALSID_ACTION_END:
-            return "end";
-        case SRV6_LOCALSID_ACTION_END_X:
-            return "end.x";
-        case SRV6_LOCALSID_ACTION_END_T:
-            return "end.t";
-        case SRV6_LOCALSID_ACTION_END_DX6:
-            return "end.dx6";
-        case SRV6_LOCALSID_ACTION_END_DX4:
-            return "end.dx4";
-        case SRV6_LOCALSID_ACTION_END_DT6:
-            return "end.dt6";
-        case SRV6_LOCALSID_ACTION_END_DT4:
-            return "end.dt4";
-        case SRV6_LOCALSID_ACTION_END_DT46:
-            return "end.dt46";
-        case SRV6_LOCALSID_ACTION_UN:
-            return "un";
-        case SRV6_LOCALSID_ACTION_UA:
-            return "ua";
-        case SRV6_LOCALSID_ACTION_UDX6:
-            return "udx6";
-        case SRV6_LOCALSID_ACTION_UDX4:
-            return "udx4";
-        case SRV6_LOCALSID_ACTION_UDT6:
-            return "udt6";
-        case SRV6_LOCALSID_ACTION_UDT4:
-            return "udt4";
-        case SRV6_LOCALSID_ACTION_UDT46:
-            return "udt46";
-        default:
-            return "unknown";
+    case SRV6_LOCALSID_ACTION_UNSPEC:
+        return "unspec";
+    case SRV6_LOCALSID_ACTION_END:
+        return "end";
+    case SRV6_LOCALSID_ACTION_END_X:
+        return "end.x";
+    case SRV6_LOCALSID_ACTION_END_T:
+        return "end.t";
+    case SRV6_LOCALSID_ACTION_END_DX6:
+        return "end.dx6";
+    case SRV6_LOCALSID_ACTION_END_DX4:
+        return "end.dx4";
+    case SRV6_LOCALSID_ACTION_END_DT6:
+        return "end.dt6";
+    case SRV6_LOCALSID_ACTION_END_DT4:
+        return "end.dt4";
+    case SRV6_LOCALSID_ACTION_END_DT46:
+        return "end.dt46";
+    case SRV6_LOCALSID_ACTION_UN:
+        return "un";
+    case SRV6_LOCALSID_ACTION_UA:
+        return "ua";
+    case SRV6_LOCALSID_ACTION_UDX6:
+        return "udx6";
+    case SRV6_LOCALSID_ACTION_UDX4:
+        return "udx4";
+    case SRV6_LOCALSID_ACTION_UDT6:
+        return "udt6";
+    case SRV6_LOCALSID_ACTION_UDT4:
+        return "udt4";
+    case SRV6_LOCALSID_ACTION_UDT46:
+        return "udt46";
+    default:
+        return "unknown";
     }
 }
 
@@ -295,9 +297,9 @@ const char *RouteSync::mySidAction2Str(uint32_t action)
  * Return:      true on success, false otherwise.
  */
 bool RouteSync::parseSrv6MySidFormat(struct rtattr *tb,
-                                        string &block_len,
-                                        string &node_len, string &func_len,
-                                        string &arg_len)
+                                     string &block_len,
+                                     string &node_len, string &func_len,
+                                     string &arg_len)
 {
     struct rtattr *tb_my_sid_format[256] = {};
     uint8_t block_len_buf, node_len_buf, func_len_buf, arg_len_buf;
@@ -370,9 +372,9 @@ bool RouteSync::parseSrv6MySidFormat(struct rtattr *tb,
  * Return:      true on success, false otherwise.
  */
 bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
-                                  string &node_len, string &func_len,
-                                  string &arg_len, string &action,
-                                  string &vrf, string &adj)
+                               string &node_len, string &func_len,
+                               string &arg_len, string &action,
+                               string &vrf, string &adj)
 {
     uint32_t action_buf = SRV6_LOCALSID_ACTION_UNSPEC;
     char vrf_buf[IFNAMSIZ + 1] = {0};
@@ -381,11 +383,11 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
     if (tb[SRV6_LOCALSID_FORMAT])
     {
         if (!parseSrv6MySidFormat(tb[SRV6_LOCALSID_FORMAT], block_len,
-                                node_len, func_len, arg_len))
+                                  node_len, func_len, arg_len))
         {
             SWSS_LOG_ERROR("Invalid Srv6 MySid format: block_len=%s, "
-                "node_len=%s, func_len=%s, arg_len=%s",
-                block_len.c_str(), node_len.c_str(), func_len.c_str(), arg_len.c_str());
+                           "node_len=%s, func_len=%s, arg_len=%s",
+                           block_len.c_str(), node_len.c_str(), func_len.c_str(), arg_len.c_str());
 
             return false;
         }
@@ -436,32 +438,32 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
     return true;
 }
 
-void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,  
-                   string& mac_list, string& intf_list)
+void RouteSync::getEvpnNextHopSep(string &nexthops, string &vni_list,
+                                  string &mac_list, string &intf_list)
 {
-    nexthops  += NHG_DELIMITER;
-    vni_list  += NHG_DELIMITER;
-    mac_list  += NHG_DELIMITER;
+    nexthops += NHG_DELIMITER;
+    vni_list += NHG_DELIMITER;
+    mac_list += NHG_DELIMITER;
     intf_list += NHG_DELIMITER;
 
     return;
 }
 
-void RouteSync::getEvpnNextHopGwIf(char *gwaddr, int vni_value, 
-                               string& nexthops, string& vni_list,  
-                               string& mac_list, string& intf_list,
-                               string rmac, string vlan_id)
+void RouteSync::getEvpnNextHopGwIf(char *gwaddr, int vni_value,
+                                   string &nexthops, string &vni_list,
+                                   string &mac_list, string &intf_list,
+                                   string rmac, string vlan_id)
 {
-    nexthops+= gwaddr;
-    vni_list+= to_string(vni_value);
-    mac_list+=rmac;
-    intf_list+=vlan_id;
+    nexthops += gwaddr;
+    vni_list += to_string(vni_value);
+    mac_list += rmac;
+    intf_list += vlan_id;
 }
 
-bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes, 
-                               struct rtattr *tb[], string& nexthops, 
-                               string& vni_list, string& mac_list, 
-                               string& intf_list)
+bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
+                               struct rtattr *tb[], string &nexthops,
+                               string &vni_list, string &mac_list,
+                               string &intf_list)
 {
     void *gate = NULL;
     char nexthopaddr[MAX_ADDR_SIZE] = {0};
@@ -480,9 +482,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
     if (tb[RTA_GATEWAY])
         gate = RTA_DATA(tb[RTA_GATEWAY]);
 
-    if (h->nlmsg_type == RTM_NEWROUTE) 
+    if (h->nlmsg_type == RTM_NEWROUTE)
     {
-        if (!tb[RTA_MULTIPATH]) 
+        if (!tb[RTA_MULTIPATH])
         {
             gw_af = AF_INET; // default value
             if (gate)
@@ -495,15 +497,15 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 else
                 {
                     memcpy(ipv6_address.s6_addr, gate, IPV6_MAX_BYTE);
-                    gw_af = AF_INET6;                    
+                    gw_af = AF_INET6;
                 }
             }
 
-            if(gw_af == AF_INET6)
+            if (gw_af == AF_INET6)
             {
                 if (IN6_IS_ADDR_V4MAPPED(&ipv6_address))
                 {
-                    memcpy(gateaddr, (ipv6_address.s6_addr+12), IPV4_MAX_BYTE);
+                    memcpy(gateaddr, (ipv6_address.s6_addr + 12), IPV4_MAX_BYTE);
                     gw_af = AF_INET;
                 }
                 else
@@ -534,13 +536,12 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 encap = *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
             }
 
-            if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE]
-                && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN)) 
+            if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE] && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
             {
                 parseEncap(tb[RTA_ENCAP], encap_value, rmac);
             }
             SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s", h->nlmsg_type,
-                            nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
+                           nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
             if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
             {
@@ -558,7 +559,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
             len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
 
-            for (;;) 
+            for (;;)
             {
                 uint16_t encap = 0;
                 if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
@@ -567,12 +568,12 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 }
 
                 gate = 0;
-                if (rtnh->rtnh_len > sizeof(*rtnh)) 
+                if (rtnh->rtnh_len > sizeof(*rtnh))
                 {
                     memset(subtb, 0, sizeof(subtb));
 
                     netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
-                                          (int)(rtnh->rtnh_len - sizeof(*rtnh)));
+                                         (int)(rtnh->rtnh_len - sizeof(*rtnh)));
 
                     if (subtb[RTA_GATEWAY])
                     {
@@ -589,15 +590,15 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                         else
                         {
                             memcpy(ipv6_address.s6_addr, gate, IPV6_MAX_BYTE);
-                            gw_af = AF_INET6;                    
+                            gw_af = AF_INET6;
                         }
                     }
-                    
-                    if(gw_af == AF_INET6)
+
+                    if (gw_af == AF_INET6)
                     {
                         if (IN6_IS_ADDR_V4MAPPED(&ipv6_address))
                         {
-                            memcpy(gateaddr, (ipv6_address.s6_addr+12), IPV4_MAX_BYTE);
+                            memcpy(gateaddr, (ipv6_address.s6_addr + 12), IPV4_MAX_BYTE);
                             gw_af = AF_INET;
                         }
                         else
@@ -607,9 +608,8 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                             return false;
                         }
                     }
-                    
-                    inet_ntop(gw_af, gateaddr, nexthopaddr, MAX_ADDR_SIZE);
 
+                    inet_ntop(gw_af, gateaddr, nexthopaddr, MAX_ADDR_SIZE);
 
                     if (rtnh->rtnh_ifindex)
                     {
@@ -629,13 +629,12 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                         encap = *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]);
                     }
 
-                    if (subtb[RTA_ENCAP] && subtb[RTA_ENCAP_TYPE]
-                        && (*(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
+                    if (subtb[RTA_ENCAP] && subtb[RTA_ENCAP_TYPE] && (*(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
                     {
                         parseEncap(subtb[RTA_ENCAP], encap_value, rmac);
                     }
                     SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s",
-                                    nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
+                                   nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
                     if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
                     {
@@ -661,7 +660,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
 
                 len -= NLMSG_ALIGN(rtnh->rtnh_len);
                 rtnh = RTNH_NEXT(rtnh);
-            }			
+            }
         }
     }
     return true;
@@ -674,7 +673,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     void *dest = NULL;
     char anyaddr[16] = {0};
     char dstaddr[16] = {0};
-    int  dst_len = 0;
+    int dst_len = 0;
     char buf[MAX_ADDR_SIZE];
     char destipprefix[IFNAMSIZ + MAX_ADDR_SIZE + 2] = {0};
     int nlmsg_type = h->nlmsg_type;
@@ -705,7 +704,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     }
     else if (rtm->rtm_family == AF_INET6)
     {
-        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN) 
+        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN)
         {
             return;
         }
@@ -714,7 +713,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     }
 
     SWSS_LOG_DEBUG("Rx MsgType:%d Family:%d Prefix:%s/%d", h->nlmsg_type, rtm->rtm_family,
-                    inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
+                   inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
 
     /* Table corresponding to route. */
     if (tb[RTA_TABLE])
@@ -745,22 +744,21 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
         destipprefix[strlen(destipprefix)] = ':';
     }
 
-    if((rtm->rtm_family == AF_INET && dst_len == IPV4_MAX_BITLEN)
-        || (rtm->rtm_family == AF_INET6 && dst_len == IPV6_MAX_BITLEN))
+    if ((rtm->rtm_family == AF_INET && dst_len == IPV4_MAX_BITLEN) || (rtm->rtm_family == AF_INET6 && dst_len == IPV6_MAX_BITLEN))
     {
         snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s",
-                inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE));
+                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE));
     }
     else
     {
         snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s/%u",
-                inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
+                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
     }
 
     auto proto_str = getProtocolString(rtm->rtm_protocol);
-    SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s", 
-                    destipprefix,
-                    nlmsg_type == RTM_NEWROUTE ? "add":"del");
+    SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s",
+                  destipprefix,
+                  nlmsg_type == RTM_NEWROUTE ? "add" : "del");
 
     /*
      * Upon arrival of a delete msg we could either push the change right away,
@@ -797,24 +795,24 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 
     switch (rtm->rtm_type)
     {
-        case RTN_BLACKHOLE:
-        case RTN_UNREACHABLE:
-        case RTN_PROHIBIT:
-        {
-            SWSS_LOG_ERROR("RTN_BLACKHOLE route not expected (%s)", destipprefix);
-            return;
-        }
-        case RTN_UNICAST:
-            break;
+    case RTN_BLACKHOLE:
+    case RTN_UNREACHABLE:
+    case RTN_PROHIBIT:
+    {
+        SWSS_LOG_ERROR("RTN_BLACKHOLE route not expected (%s)", destipprefix);
+        return;
+    }
+    case RTN_UNICAST:
+        break;
 
-        case RTN_MULTICAST:
-        case RTN_BROADCAST:
-        case RTN_LOCAL:
-            SWSS_LOG_NOTICE("BUM routes aren't supported yet (%s)", destipprefix);
-            return;
+    case RTN_MULTICAST:
+    case RTN_BROADCAST:
+    case RTN_LOCAL:
+        SWSS_LOG_NOTICE("BUM routes aren't supported yet (%s)", destipprefix);
+        return;
 
-        default:
-            return;
+    default:
+        return;
     }
 
     /* Get nexthop lists */
@@ -828,7 +826,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     if (ret == false)
     {
         SWSS_LOG_NOTICE("EVPN Route issue with RouteTable msg: %s vtep:%s vni:%s mac:%s intf:%s",
-                       destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str());
+                        destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str());
         return;
     }
 
@@ -877,8 +875,8 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 }
 
 bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
-                               struct rtattr *tb[], string &vpn_sid,
-                               string &src_addr)
+                                         struct rtattr *tb[], string &vpn_sid,
+                                         string &src_addr)
 {
     uint16_t encap = 0;
 
@@ -896,8 +894,8 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
             parseEncapSrv6SteerRoute(tb[RTA_ENCAP], vpn_sid, src_addr);
         }
         SWSS_LOG_DEBUG("Rx MsgType:%d encap:%d vpn_sid:%s src_addr:%s",
-                        h->nlmsg_type, encap, vpn_sid.c_str(),
-                        src_addr.c_str());
+                       h->nlmsg_type, encap, vpn_sid.c_str(),
+                       src_addr.c_str());
 
         if (vpn_sid.empty())
         {
@@ -1034,24 +1032,24 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 
     switch (rtm->rtm_type)
     {
-        case RTN_BLACKHOLE:
-        case RTN_UNREACHABLE:
-        case RTN_PROHIBIT:
-            SWSS_LOG_ERROR(
-                "RTN_BLACKHOLE route not expected (%s)", destipprefix);
-            return;
-        case RTN_UNICAST:
-            break;
+    case RTN_BLACKHOLE:
+    case RTN_UNREACHABLE:
+    case RTN_PROHIBIT:
+        SWSS_LOG_ERROR(
+            "RTN_BLACKHOLE route not expected (%s)", destipprefix);
+        return;
+    case RTN_UNICAST:
+        break;
 
-        case RTN_MULTICAST:
-        case RTN_BROADCAST:
-        case RTN_LOCAL:
-            SWSS_LOG_NOTICE(
-                "BUM routes aren't supported yet (%s)", destipprefix);
-            return;
+    case RTN_MULTICAST:
+    case RTN_BROADCAST:
+    case RTN_LOCAL:
+        SWSS_LOG_NOTICE(
+            "BUM routes aren't supported yet (%s)", destipprefix);
+        return;
 
-        default:
-            return;
+    default:
+        return;
     }
 
     /* Get nexthop lists */
@@ -1112,7 +1110,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 
         m_srv6SidListTable.set(srv6SidListTableKey, fvVectorSidList);
         SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
-                        srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+                       srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
 
         /* Write route to ROUTE_TABLE */
 
@@ -1130,14 +1128,14 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         {
             m_routeTable.set(routeTableKey, fvVectorRoute);
             SWSS_LOG_DEBUG("RouteTable set msg: %s vpn_sid: %s src_addr:%s",
-                        routeTableKey, vpn_sid_str.c_str(),
-                        src_addr_str.c_str());
+                           routeTableKey, vpn_sid_str.c_str(),
+                           src_addr_str.c_str());
         }
 
         /*
-        * During routing-stack restarting scenarios route-updates will be
-        * temporarily put on hold by warm-reboot logic.
-        */
+         * During routing-stack restarting scenarios route-updates will be
+         * temporarily put on hold by warm-reboot logic.
+         */
         else
         {
             SWSS_LOG_INFO(
@@ -1208,7 +1206,7 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
     inet_ntop(AF_INET6, sid_value, sid_value_str, MAX_ADDR_SIZE);
 
     SWSS_LOG_INFO("Rx MsgType:%d SidValue:%s", nlmsg_type,
-                   sid_value_str);
+                  sid_value_str);
 
     if (nlmsg_type != RTM_NEWSRV6LOCALSID && nlmsg_type != RTM_DELSRV6LOCALSID)
     {
@@ -1228,8 +1226,8 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
     string my_sid_table_key;
 
     if (!parseSrv6MySid(tb, block_len_str, node_len_str,
-                      func_len_str, arg_len_str, action_str, vrf_str,
-                      adj_str))
+                        func_len_str, arg_len_str, action_str, vrf_str,
+                        adj_str))
     {
         SWSS_LOG_ERROR("Invalid Srv6 MySid");
         return;
@@ -1441,24 +1439,20 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
 {
     int len;
 
-    if ((h->nlmsg_type != RTM_NEWROUTE)
-        && (h->nlmsg_type != RTM_DELROUTE)
-        && (h->nlmsg_type != RTM_NEWSRV6LOCALSID)
-        && (h->nlmsg_type != RTM_DELSRV6LOCALSID))
+    if ((h->nlmsg_type != RTM_NEWROUTE) && (h->nlmsg_type != RTM_DELROUTE) && (h->nlmsg_type != RTM_NEWSRV6LOCALSID) && (h->nlmsg_type != RTM_DELSRV6LOCALSID))
         return;
 
     /* Length validity. */
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
-    if (len < 0) 
+    if (len < 0)
     {
         SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
-            __PRETTY_FUNCTION__, h->nlmsg_len,
-            (size_t)NLMSG_LENGTH(sizeof(struct ndmsg)));
+                       __PRETTY_FUNCTION__, h->nlmsg_len,
+                       (size_t)NLMSG_LENGTH(sizeof(struct ndmsg)));
         return;
     }
 
-    if ((h->nlmsg_type == RTM_NEWSRV6LOCALSID)
-        || (h->nlmsg_type == RTM_DELSRV6LOCALSID))
+    if ((h->nlmsg_type == RTM_NEWSRV6LOCALSID) || (h->nlmsg_type == RTM_DELSRV6LOCALSID))
     {
         onSrv6MySidMsg(h, len);
         return;
@@ -1466,20 +1460,20 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
 
     switch (getEncapType(h))
     {
-        case NH_ENCAP_SRV6_ROUTE:
-            onSrv6SteerRouteMsg(h, len);
-            break;
-        default:
-            /*
-             * Currently only SRv6 route, SRv6 My SID, and EVPN
-             * encapsulation types are supported. If the encapsulation
-             * type is not SRv6 route or SRv6 My SID, we fall back
-             * to EVPN. The onEvpnRouteMsg() handler will verify that the
-             * route is actually an EVPN route. If it is not, this handler
-             * will reject the route.
-             */
-            onEvpnRouteMsg(h, len);
-            break;
+    case NH_ENCAP_SRV6_ROUTE:
+        onSrv6SteerRouteMsg(h, len);
+        break;
+    default:
+        /*
+         * Currently only SRv6 route, SRv6 My SID, and EVPN
+         * encapsulation types are supported. If the encapsulation
+         * type is not SRv6 route or SRv6 My SID, we fall back
+         * to EVPN. The onEvpnRouteMsg() handler will verify that the
+         * route is actually an EVPN route. If it is not, this handler
+         * will reject the route.
+         */
+        onEvpnRouteMsg(h, len);
+        break;
     }
 
     return;
@@ -1518,7 +1512,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         /* Get the name of the master device */
         getIfName(master_index, master_name, IFNAMSIZ);
-    
+
         /* If the master device name starts with VNET_PREFIX, it is a VNET route.
            The VNET name is exactly the name of the associated master device. */
         if (string(master_name).find(VNET_PREFIX) == 0)
@@ -1537,8 +1531,8 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
-/* 
- * Handle regular route (include VRF route) 
+/*
+ * Handle regular route (include VRF route)
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
  * @arg vrf             Vrf name
@@ -1557,7 +1551,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
          */
         if (memcmp(vrf, VRF_PREFIX, strlen(VRF_PREFIX)))
         {
-            if(memcmp(vrf, MGMT_VRF_PREFIX, strlen(MGMT_VRF_PREFIX)))
+            if (memcmp(vrf, MGMT_VRF_PREFIX, strlen(MGMT_VRF_PREFIX)))
             {
                 SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
             }
@@ -1566,7 +1560,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                 dip = rtnl_route_get_dst(route_obj);
                 nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
                 SWSS_LOG_INFO("Skip routes for Mgmt VRF name %s (ifindex %u) prefix: %s", vrf,
-                        rtnl_route_get_table(route_obj), destipprefix);
+                              rtnl_route_get_table(route_obj), destipprefix);
             }
             return;
         }
@@ -1616,25 +1610,25 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     switch (rtnl_route_get_type(route_obj))
     {
-        case RTN_BLACKHOLE:
-        {
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple fv("blackhole", "true");
-            fvVector.push_back(fv);
-            m_routeTable.set(destipprefix, fvVector);
-            return;
-        }
-        case RTN_UNICAST:
-            break;
+    case RTN_BLACKHOLE:
+    {
+        vector<FieldValueTuple> fvVector;
+        FieldValueTuple fv("blackhole", "true");
+        fvVector.push_back(fv);
+        m_routeTable.set(destipprefix, fvVector);
+        return;
+    }
+    case RTN_UNICAST:
+        break;
 
-        case RTN_MULTICAST:
-        case RTN_BROADCAST:
-        case RTN_LOCAL:
-            SWSS_LOG_INFO("BUM routes aren't supported yet (%s)", destipprefix);
-            return;
+    case RTN_MULTICAST:
+    case RTN_BROADCAST:
+    case RTN_LOCAL:
+        SWSS_LOG_INFO("BUM routes aren't supported yet (%s)", destipprefix);
+        return;
 
-        default:
-            return;
+    default:
+        return;
     }
 
     struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
@@ -1661,25 +1655,25 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         if (alias == "eth0" || alias == "docker0")
         {
             SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
-                    destipprefix, gw_list.c_str(), intf_list.c_str());
-            // If intf_list has only this interface, that means all of the next hops of this route 
-            // have been removed and the next hop on the eth0/docker0 has become the only next hop. 
-            // In this case since we do not want the route with next hop on eth0/docker0, we return. 
-            // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data 
+                           destipprefix, gw_list.c_str(), intf_list.c_str());
+            // If intf_list has only this interface, that means all of the next hops of this route
+            // have been removed and the next hop on the eth0/docker0 has become the only next hop.
+            // In this case since we do not want the route with next hop on eth0/docker0, we return.
+            // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data
             // path will be left with stale route entry
-            if(alsv.size() == 1)
+            if (alsv.size() == 1)
             {
                 if (!warmRestartInProgress)
                 {
                     SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
-                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+                                    destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 
                     m_routeTable.del(destipprefix);
                 }
                 else
                 {
                     SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
-                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+                                    destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 
                     vector<FieldValueTuple> fvVector;
                     const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
@@ -1737,7 +1731,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     }
 }
 
-/* 
+/*
  * Handle label route
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
@@ -1751,7 +1745,8 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     daddr = rtnl_route_get_dst(route_obj);
     nl_addr2str(daddr, destaddr, MAX_ADDR_SIZE);
     SWSS_LOG_INFO("Receive new LabelRoute message dest addr: %s", destaddr);
-    if (nl_addr_iszero(daddr)) return;
+    if (nl_addr_iszero(daddr))
+        return;
 
     if (nlmsg_type == RTM_DELROUTE)
     {
@@ -1778,25 +1773,25 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 
     switch (rtnl_route_get_type(route_obj))
     {
-        case RTN_BLACKHOLE:
-        {
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple fv("blackhole", "true");
-            fvVector.push_back(fv);
-            m_label_routeTable.set(destaddr, fvVector);
-            return;
-        }
-        case RTN_UNICAST:
-            break;
+    case RTN_BLACKHOLE:
+    {
+        vector<FieldValueTuple> fvVector;
+        FieldValueTuple fv("blackhole", "true");
+        fvVector.push_back(fv);
+        m_label_routeTable.set(destaddr, fvVector);
+        return;
+    }
+    case RTN_UNICAST:
+        break;
 
-        case RTN_MULTICAST:
-        case RTN_BROADCAST:
-        case RTN_LOCAL:
-            SWSS_LOG_INFO("BUM routes aren't supported yet (%s)", destaddr);
-            return;
+    case RTN_MULTICAST:
+    case RTN_BROADCAST:
+    case RTN_LOCAL:
+        SWSS_LOG_INFO("BUM routes aren't supported yet (%s)", destaddr);
+        return;
 
-        default:
-            return;
+    default:
+        return;
     }
 
     struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
@@ -1832,11 +1827,11 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 }
 
 /*
- * Handle vnet route 
+ * Handle vnet route
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
  * @arg vnet            Vnet name
- */     
+ */
 void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
@@ -1846,13 +1841,13 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     char destipprefix[MAX_ADDR_SIZE + 1] = {0};
     nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
 
-    string vnet_dip =  vnet + string(":") + destipprefix;
+    string vnet_dip = vnet + string(":") + destipprefix;
     SWSS_LOG_DEBUG("Receive new vnet route message %s", vnet_dip.c_str());
 
     /* Ignore IPv6 link-local and mc addresses as Vnet routes */
     auto family = rtnl_route_get_family(route_obj);
     if (family == AF_INET6 &&
-       (IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(dip)) || IN6_IS_ADDR_MULTICAST(nl_addr_get_binary_addr(dip))))
+        (IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(dip)) || IN6_IS_ADDR_MULTICAST(nl_addr_get_binary_addr(dip))))
     {
         SWSS_LOG_INFO("Ignore linklocal vnet routes %d for %s", nlmsg_type, vnet_dip.c_str());
         return;
@@ -1875,22 +1870,22 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
 
     switch (rtnl_route_get_type(route_obj))
     {
-        case RTN_UNICAST:
-            break;
+    case RTN_UNICAST:
+        break;
 
-        /* We may support blackhole in the future */
-        case RTN_BLACKHOLE:
-            SWSS_LOG_INFO("Blackhole route is supported yet (%s)", vnet_dip.c_str());
-            return;
+    /* We may support blackhole in the future */
+    case RTN_BLACKHOLE:
+        SWSS_LOG_INFO("Blackhole route is supported yet (%s)", vnet_dip.c_str());
+        return;
 
-        case RTN_MULTICAST:
-        case RTN_BROADCAST:
-        case RTN_LOCAL:
-            SWSS_LOG_INFO("BUM routes aren't supported yet (%s)", vnet_dip.c_str());
-            return;
+    case RTN_MULTICAST:
+    case RTN_BROADCAST:
+    case RTN_LOCAL:
+        SWSS_LOG_INFO("BUM routes aren't supported yet (%s)", vnet_dip.c_str());
+        return;
 
-        default:
-            return;
+    default:
+        return;
     }
 
     struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
@@ -1973,13 +1968,13 @@ bool RouteSync::getIfName(int if_index, char *if_name, size_t name_len)
     return true;
 }
 
-rtnl_link* RouteSync::getLinkByName(const char *name)
+rtnl_link *RouteSync::getLinkByName(const char *name)
 {
     auto link = rtnl_link_get_by_name(m_link_cache, name);
     if (link == nullptr)
     {
         /* Trying to refill cache */
-        nl_cache_refill(m_nl_sock ,m_link_cache);
+        nl_cache_refill(m_nl_sock, m_link_cache);
         link = rtnl_link_get_by_name(m_link_cache, name);
     }
     return link;
@@ -1994,8 +1989,8 @@ rtnl_link* RouteSync::getLinkByName(const char *name)
  *
  * Return void
  */
-void RouteSync::getNextHopList(struct rtnl_route *route_obj, string& gw_list,
-                               string& mpls_list, string& intf_list)
+void RouteSync::getNextHopList(struct rtnl_route *route_obj, string &gw_list,
+                               string &mpls_list, string &intf_list)
 {
     bool mpls_found = false;
 
@@ -2152,9 +2147,11 @@ string RouteSync::getNextHopIf(struct rtnl_route *route_obj)
         /* If we cannot get the interface name */
         if (!getIfName(if_index, if_name, IFNAMSIZ))
         {
-            strcpy(if_name, "unknown");
+            if (IFNAMSIZ <= 16) // adding the if condition to insure being in boundaries of the string
+            {
+                strcpy(if_name, "unknown");
+            }
         }
-
         result += if_name;
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
@@ -2199,7 +2196,7 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
     return result;
 }
 
-bool RouteSync::sendOffloadReply(struct nlmsghdr* hdr)
+bool RouteSync::sendOffloadReply(struct nlmsghdr *hdr)
 {
     SWSS_LOG_ENTER();
 
@@ -2211,7 +2208,7 @@ bool RouteSync::sendOffloadReply(struct nlmsghdr* hdr)
     // Add request flag (required by zebra)
     hdr->nlmsg_flags |= NLM_F_REQUEST;
 
-    rtmsg *rtm = static_cast<rtmsg*>(NLMSG_DATA(hdr));
+    rtmsg *rtm = static_cast<rtmsg *>(NLMSG_DATA(hdr));
 
     // Add offload flag
     rtm->rtm_flags |= RTM_F_OFFLOAD;
@@ -2232,15 +2229,15 @@ bool RouteSync::sendOffloadReply(struct nlmsghdr* hdr)
     return true;
 }
 
-bool RouteSync::sendOffloadReply(struct rtnl_route* route_obj)
+bool RouteSync::sendOffloadReply(struct rtnl_route *route_obj)
 {
     SWSS_LOG_ENTER();
     int ret = 0;
 
-    nl_msg* msg{};
+    nl_msg *msg{};
     ret = rtnl_route_build_add_request(route_obj, NLM_F_CREATE, &msg);
 
-    if (ret !=0)
+    if (ret != 0)
     {
         SWSS_LOG_ERROR("Route build add returned %d", ret);
         return false;
@@ -2261,10 +2258,10 @@ void RouteSync::setSuppressionEnabled(bool enabled)
 
     m_isSuppressionEnabled = enabled;
 
-    SWSS_LOG_NOTICE("Pending routes suppression is %s", (m_isSuppressionEnabled ? "enabled": "disabled"));
+    SWSS_LOG_NOTICE("Pending routes suppression is %s", (m_isSuppressionEnabled ? "enabled" : "disabled"));
 }
 
-void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues)
+void RouteSync::onRouteResponse(const std::string &key, const std::vector<FieldValueTuple> &fieldValues)
 {
     IpPrefix prefix;
     std::string vrfName;
@@ -2289,7 +2286,7 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
         prefix = IpPrefix{key};
     }
 
-    for (const auto& fieldValue: fieldValues)
+    for (const auto &fieldValue : fieldValues)
     {
         std::string field = fvField(fieldValue);
         std::string value = fvValue(fieldValue);
@@ -2311,14 +2308,14 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
     if (!isSetOperation)
     {
         SWSS_LOG_DEBUG("Received response for prefix %s(%s) deletion, ignoring ",
-            prefix.to_string().c_str(), vrfName.c_str());
+                       prefix.to_string().c_str(), vrfName.c_str());
         return;
     }
 
     if (!isSuccessReply)
     {
         SWSS_LOG_INFO("Received failure response for prefix %s(%s)",
-            prefix.to_string().c_str(), vrfName.c_str());
+                      prefix.to_string().c_str(), vrfName.c_str());
         return;
     }
 
@@ -2339,12 +2336,13 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
     unsigned int vrfIfIndex = 0;
     if (!vrfName.empty())
     {
-        auto* link = getLinkByName(vrfName.c_str());
+        auto *link = getLinkByName(vrfName.c_str());
         if (!link)
         {
             SWSS_LOG_DEBUG("Failed to find VRF when constructing response message for prefix %s(%s). "
-                "This message is probably outdated", prefix.to_string().c_str(),
-                vrfName.c_str());
+                           "This message is probably outdated",
+                           prefix.to_string().c_str(),
+                           vrfName.c_str());
             return;
         }
         vrfIfIndex = rtnl_link_get_ifindex(link);
@@ -2355,15 +2353,15 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
     if (!sendOffloadReply(routeObject.get()))
     {
         SWSS_LOG_ERROR("Failed to send RTM_NEWROUTE message to zebra on prefix %s(%s)",
-            prefix.to_string().c_str(), vrfName.c_str());
+                       prefix.to_string().c_str(), vrfName.c_str());
         return;
     }
 
     SWSS_LOG_INFO("Sent response to zebra for prefix %s(%s)",
-        prefix.to_string().c_str(), vrfName.c_str());
+                  prefix.to_string().c_str(), vrfName.c_str());
 }
 
-void RouteSync::sendOffloadReply(DBConnector& db, const std::string& tableName)
+void RouteSync::sendOffloadReply(DBConnector &db, const std::string &tableName)
 {
     SWSS_LOG_ENTER();
 
@@ -2372,7 +2370,7 @@ void RouteSync::sendOffloadReply(DBConnector& db, const std::string& tableName)
     std::vector<std::string> keys;
     routeTable.getKeys(keys);
 
-    for (const auto& key: keys)
+    for (const auto &key : keys)
     {
         std::vector<FieldValueTuple> fieldValues;
         routeTable.get(key, fieldValues);
@@ -2382,14 +2380,14 @@ void RouteSync::sendOffloadReply(DBConnector& db, const std::string& tableName)
     }
 }
 
-void RouteSync::markRoutesOffloaded(swss::DBConnector& db)
+void RouteSync::markRoutesOffloaded(swss::DBConnector &db)
 {
     SWSS_LOG_ENTER();
 
     sendOffloadReply(db, APP_ROUTE_TABLE_NAME);
 }
 
-void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
+void RouteSync::onWarmStartEnd(DBConnector &applStateDb)
 {
     SWSS_LOG_ENTER();
 
