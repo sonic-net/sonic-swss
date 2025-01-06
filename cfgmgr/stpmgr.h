@@ -27,11 +27,7 @@
 #define L2_INSTANCE_MAX             MAX_VLANS
 #define STP_DEFAULT_MAX_INSTANCES   255
 #define INVALID_INSTANCE            -1 
-/*#define MST_DEFAULT_INSTANCE        0
-#define MST_MAX_INSTANCES           STP_DEFAULT_MAX_INSTANCES
-#define DEFAULT_INSTANCE_VLAN_LIST "1-4095"
-*/
-#define MST_NAME_SIZE               64
+
 
 #define GET_FIRST_FREE_INST_ID(_idx) \
     while (_idx < (int)l2InstPool.size() && l2InstPool.test(_idx)) ++_idx; \
@@ -48,7 +44,6 @@
 typedef enum L2_PROTO_MODE{
     L2_NONE,
     L2_PVSTP,
-  L2_MSTP,
 }L2_PROTO_MODE;
 
 typedef enum STP_MSG_TYPE {
@@ -60,14 +55,8 @@ typedef enum STP_MSG_TYPE {
     STP_PORT_CONFIG,
     STP_VLAN_MEM_CONFIG,
     STP_STPCTL_MSG,
-    STP_MAX_MSG,
-
-    STP_MST_GLOBAL_CONFIG,
-    STP_MST_INST_CONFIG,
-    STP_MST_VLAN_PORT_LIST_CONFIG,
-    STP_MST_INST_PORT_CONFIG
-
-   }STP_MSG_TYPE;
+    STP_MAX_MSG
+}STP_MSG_TYPE;
 
 typedef enum STP_CTL_TYPE {
     STP_CTL_HELP,
@@ -137,7 +126,6 @@ typedef struct STP_VLAN_PORT_CONFIG_MSG {
     int         priority;
 }__attribute__ ((packed))STP_VLAN_PORT_CONFIG_MSG;
 
-
 typedef struct VLAN_ATTR {
     int         inst_id;
     int         vlan_id;
@@ -170,48 +158,6 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
     int         priority;
 }__attribute__ ((packed))STP_VLAN_MEM_CONFIG_MSG;
 
-
-typedef struct STP_MST_GLOBAL_CONFIG_MSG {
-    uint8_t     opcode; // enable/disable
-    uint16_t    revision_number;
-    char        name[MST_NAME_SIZE];
-    int         forward_delay;
-    int         hello_time;
-    int         max_age;
-    int         max_hop;
-}__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
-
-typedef struct VLAN_LIST{
-    uint16_t    vlan_id;
-}VLAN_LIST;
-
-typedef struct MST_INST_CONFIG_MSG {
-    uint8_t     opcode; // enable/disable
-    uint16_t    mst_id;
-    int         priority;
-    uint16_t    vlan_count;
-    VLAN_LIST   vlan_list[0];
-}__attribute__ ((packed))MST_INST_CONFIG_MSG;
-
-typedef struct STP_MST_INSTANCE_CONFIG_MSG {
-    uint8_t mst_count;
-    MST_INST_CONFIG_MSG mst_list[0];
-} STP_MST_INSTANCE_CONFIG_MSG; 
-
-typedef struct STP_MST_INST_PORT_CONFIG_MSG {
-    uint8_t     opcode; // enable/disable
-    char        intf_name[IFNAMSIZ];
-    uint16_t    mst_id;
-    int         path_cost;
-    int         priority;
-}__attribute__ ((packed))STP_MST_INST_PORT_CONFIG_MSG;
-
-typedef struct PORT_LIST{
-    char        intf_name[IFNAMSIZ];
-    int8_t      tagging_mode;
-}PORT_LIST;
-
-
 namespace swss {
 
 class StpMgr : public Orch
@@ -239,11 +185,6 @@ private:
     Table m_stateLagTable;
     Table m_stateStpTable;
 
-    // //MST new tables 
-    Table m_cfgStpMstGlobalTable;
-    Table m_cfgStpMstInstTable;
-    Table m_cfgStpMstPortTable;
-
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
     enum L2_PROTO_MODE l2ProtoEnabled;
@@ -252,28 +193,16 @@ private:
     uint16_t max_stp_instances;
     std::map<std::string, int> m_lagMap;
 
-    // //MSTP variables 
-    // std::map<int, std::set<int>> vlanToInstanceMap;
-
-
     bool stpGlobalTask;
     bool stpVlanTask;
     bool stpVlanPortTask;
     bool stpPortTask;
-
-    // bool stpMstInstPortTask;
 
     void doTask(Consumer &consumer);
     void doStpGlobalTask(Consumer &consumer);
     void doStpVlanTask(Consumer &consumer);
     void doStpVlanPortTask(Consumer &consumer);
     void doStpPortTask(Consumer &consumer);
-    
-    // //MST Do Tasks functions
-    void doStpMstGlobalTask(Consumer &consumer);
-    void doStpMstInstTask(Consumer &consumer);
-    void doStpMstPortTask(Consumer &consumer);
-
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
 
@@ -290,7 +219,6 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
-   
 };
 
 }
