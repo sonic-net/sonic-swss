@@ -14,11 +14,13 @@ namespace swss {
 class VlanMgr : public Orch
 {
 public:
-    VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames,
+        const std::vector<std::string> &stateTableNames);
     using Orch::doTask;
 
 private:
     ProducerStateTable m_appVlanTableProducer, m_appVlanMemberTableProducer;
+    ProducerStateTable m_appFdbTableProducer, m_appPortTableProducer;
     Table m_cfgVlanTable, m_cfgVlanMemberTable;
     Table m_statePortTable, m_stateLagTable;
     Table m_stateVlanTable, m_stateVlanMemberTable;
@@ -26,6 +28,7 @@ private:
     std::set<std::string> m_vlanReplay;
     std::set<std::string> m_vlanMemberReplay;
     bool replayDone;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_PortVlanMember;
     
     void doTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
@@ -43,6 +46,11 @@ private:
     bool isVlanStateOk(const std::string &alias);
     bool isVlanMacOk();
     bool isVlanMemberStateOk(const std::string &vlanMemberKey);
+    void doVlanPacPortTask(Consumer &consumer);
+    void doVlanPacFdbTask(Consumer &consumer);
+    void doVlanPacVlanMemberTask(Consumer &consumer);
+    void addPortToVlan(const std::string& port_alias, const std::string& vlan_alias, const std::string& tagging_mode);
+    void removePortFromVlan(const std::string& port_alias, const std::string& vlan_alias);
 };
 
 }

@@ -393,7 +393,7 @@ class TestSubPortIntf(object):
         assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
         return oids[0]
 
-    def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None):
+    def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None, prefix_present=True):
         if vrf_oid is None:
             vrf_oid = self.default_vrf_oid
 
@@ -407,18 +407,24 @@ class TestSubPortIntf(object):
                     route_entry_found = True
                     assert route_entry_key["vr"] == vrf_oid
                     break
-
-            return (route_entry_found, raw_route_entry_key)
+            if prefix_present:
+                return (route_entry_found, raw_route_entry_key)
+            else:
+                return (not route_entry_found, None)
 
         (route_entry_found, raw_route_entry_key) = wait_for_result(_access_function)
 
-        fvs = self.asic_db.get_entry(ASIC_ROUTE_ENTRY_TABLE, raw_route_entry_key)
+        if not prefix_present:
+            assert raw_route_entry_key == None
+            return None
+        else:
+            fvs = self.asic_db.get_entry(ASIC_ROUTE_ENTRY_TABLE, raw_route_entry_key)
 
-        nhg_oid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "")
-        assert nhg_oid != ""
-        assert nhg_oid != "oid:0x0"
+            nhg_oid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "")
+            assert nhg_oid != ""
+            assert nhg_oid != "oid:0x0"
 
-        return nhg_oid
+            return nhg_oid
 
     def check_sub_port_intf_key_existence(self, db, table_name, key):
         db.wait_for_matching_keys(table_name, [key])
@@ -1543,21 +1549,26 @@ class TestSubPortIntf(object):
             self.add_route_appl_db(ip_prefix, nhop_ips, ifnames, vrf_name)
 
             # Verify route entry created in ASIC_DB and get next hop group oid
-            nhg_oid = self.get_ip_prefix_nhg_oid(ip_prefix, vrf_oid)
+            nhg_oid = self.get_ip_prefix_nhg_oid(ip_prefix, vrf_oid, prefix_present = i < (nhop_num - 1))
 
-            # Verify next hop group of the specified oid created in ASIC_DB
-            self.check_sub_port_intf_key_existence(self.asic_db, ASIC_NEXT_HOP_GROUP_TABLE, nhg_oid)
+            if i < (nhop_num - 1):
+                # Verify next hop group of the specified oid created in ASIC_DB
+                self.check_sub_port_intf_key_existence(self.asic_db, ASIC_NEXT_HOP_GROUP_TABLE, nhg_oid)
 
-            # Verify next hop group member # created in ASIC_DB
-            nhg_member_oids = self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_GROUP_MEMBER_TABLE,
-                                                           (nhop_num - 1) - i if create_intf_on_parent_port == False else ((nhop_num - 1) - i) * 2)
+                # Verify next hop group member # created in ASIC_DB
+                nhg_member_oids = self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_GROUP_MEMBER_TABLE,
+                                                               (nhop_num - 1) - i if create_intf_on_parent_port == False \
+                                                               else ((nhop_num - 1) - i) * 2)
 
-            # Verify that next hop group members all belong to the next hop group of the specified oid
-            fv_dict = {
-                "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID": nhg_oid,
-            }
-            for nhg_member_oid in nhg_member_oids:
-                self.check_sub_port_intf_fvs(self.asic_db, ASIC_NEXT_HOP_GROUP_MEMBER_TABLE, nhg_member_oid, fv_dict)
+                # Verify that next hop group members all belong to the next hop group of the specified oid
+                fv_dict = {
+                    "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID": nhg_oid,
+                }
+                for nhg_member_oid in nhg_member_oids:
+                    self.check_sub_port_intf_fvs(self.asic_db, ASIC_NEXT_HOP_GROUP_MEMBER_TABLE, nhg_member_oid, fv_dict)
+            else:
+                assert nhg_oid == None
+                self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_GROUP_MEMBER_TABLE, 0)
 
             nhop_cnt = len(self.asic_db.get_keys(ASIC_NEXT_HOP_TABLE))
             # Remove next hop objects on sub port interfaces

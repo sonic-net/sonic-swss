@@ -11,6 +11,7 @@
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "stporch.h"
 
 using namespace std;
 using namespace swss;
@@ -64,6 +65,7 @@ FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
+StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 
 bool gIsNatSupported = false;
@@ -166,6 +168,14 @@ bool OrchDaemon::init()
     };
     gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_configDb, route_pattern_tables);
     gDirectory.set(gFlowCounterRouteOrch);
+
+    vector<string> stp_tables = {
+        APP_STP_VLAN_INSTANCE_TABLE_NAME,
+        APP_STP_PORT_STATE_TABLE_NAME,
+        APP_STP_FASTAGEING_FLUSH_TABLE_NAME
+    };
+    gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
+    gDirectory.set(gStpOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -420,7 +430,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
