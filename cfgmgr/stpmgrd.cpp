@@ -48,7 +48,7 @@ int main(int argc, char **argv)
 
         // LAG Tables
         TableConnector conf_lag_member_table(&conf_db, CFG_LAG_MEMBER_TABLE_NAME);
-        TableConnector conf_stp_mst_global_table(&conf_db, CFG_STP_MST_GLOBAL_TABLE_NAME);
+        //TableConnector conf_stp_mst_global_table(&conf_db, CFG_STP_MST_GLOBAL_TABLE_NAME);
         vector<TableConnector> tables = {
             conf_stp_global_table,
             conf_stp_vlan_table,
@@ -56,7 +56,7 @@ int main(int argc, char **argv)
             conf_stp_port_table,
             conf_lag_member_table,
             state_vlan_member_table,
-            conf_stp_mst_global_table
+            //conf_stp_mst_global_table
         };
 
 
