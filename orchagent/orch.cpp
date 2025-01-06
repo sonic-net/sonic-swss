@@ -30,15 +30,15 @@ Orch::Orch(DBConnector *db, const vector<string> &tableNames)
     }
 }
 
-Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2, 
-    const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2)
+Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2,
+           const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2)
 {
-    for(auto it : tableNames_1)
+    for (auto it : tableNames_1)
     {
         addConsumer(db1, it, default_orch_pri);
     }
 
-    for(auto it : tableNames_2)
+    for (auto it : tableNames_2)
     {
         addConsumer(db2, it, default_orch_pri);
     }
@@ -46,13 +46,13 @@ Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2,
 
 Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
 {
-    for (const auto& it : tableNames_with_pri)
+    for (const auto &it : tableNames_with_pri)
     {
         addConsumer(db, it.first, it.second);
     }
 }
 
-Orch::Orch(const vector<TableConnector>& tables)
+Orch::Orch(const vector<TableConnector> &tables)
 {
     for (auto it : tables)
     {
@@ -67,7 +67,7 @@ Orch::Orch()
 vector<Selectable *> Orch::getSelectables()
 {
     vector<Selectable *> selectables;
-    for (auto& it : m_consumerMap)
+    for (auto &it : m_consumerMap)
     {
         selectables.push_back(it.second.get());
     }
@@ -79,16 +79,16 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
     SWSS_LOG_ENTER();
 
     string key = kfvKey(entry);
-    string op  = kfvOp(entry);
+    string op = kfvOp(entry);
 
     /* Record incoming tasks */
     Recorder::Instance().swss.record(dumpTuple(entry));
 
     /*
-    * m_toSync is a multimap which will allow one key with multiple values,
-    * Also, the order of the key-value pairs whose keys compare equivalent
-    * is the order of insertion and does not change. (since C++11)
-    */
+     * m_toSync is a multimap which will allow one key with multiple values,
+     * Also, the order of the key-value pairs whose keys compare equivalent
+     * is the order of insertion and does not change. (since C++11)
+     */
 
     /* If a new task comes we directly put it into getConsumerTable().m_toSync map */
     if (m_toSync.find(key) == m_toSync.end())
@@ -105,16 +105,16 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
     else
     {
         /*
-        * Now we are trying to add the key-value with SET.
-        * We maintain maximum two values per key.
-        * In case there is one key-value, it should be DEL or SET
-        * In case there are two key-value pairs, it should be DEL then SET
-        * The code logic is following:
-        * We iterate the values with the key, we skip the value with DEL and then
-        * check if that was the only one (I,E, the iter pointer now points to end or next key),
-        * in such case, we insert the key-value with SET.
-        * If there was a SET already (I,E, the pointer still points to the same key), we combine the kfv.
-        */
+         * Now we are trying to add the key-value with SET.
+         * We maintain maximum two values per key.
+         * In case there is one key-value, it should be DEL or SET
+         * In case there are two key-value pairs, it should be DEL then SET
+         * The code logic is following:
+         * We iterate the values with the key, we skip the value with DEL and then
+         * check if that was the only one (I,E, the iter pointer now points to end or next key),
+         * in such case, we insert the key-value with SET.
+         * If there was a SET already (I,E, the pointer still points to the same key), we combine the kfv.
+         */
         auto ret = m_toSync.equal_range(key);
         auto iter = ret.first;
         for (; iter != ret.second; ++iter)
@@ -133,7 +133,6 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 
             auto new_values = kfvFieldsValues(entry);
             auto existing_values = kfvFieldsValues(existing_data);
-
 
             for (auto it : new_values)
             {
@@ -154,14 +153,13 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
             iter->second = KeyOpFieldsValuesTuple(key, op, existing_values);
         }
     }
-
 }
 
 size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
 
-    for (auto& entry: entries)
+    for (auto &entry : entries)
     {
         addToSync(entry);
     }
@@ -170,12 +168,12 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
 }
 
 // TODO: Table should be const
-size_t ConsumerBase::refillToSync(Table* table)
+size_t ConsumerBase::refillToSync(Table *table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
     table->getKeys(keys);
-    for (const auto &key: keys)
+    for (const auto &key : keys)
     {
         KeyOpFieldsValuesTuple kco;
 
@@ -229,8 +227,7 @@ size_t ConsumerBase::refillToSync()
 
 string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
-    string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
-               + "|" + kfvOp(tuple);
+    string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple) + "|" + kfvOp(tuple);
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
         s += "|" + fvField(*i) + ":" + fvValue(*i);
@@ -243,7 +240,7 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &tm : m_toSync)
     {
-        KeyOpFieldsValuesTuple& tuple = tm.second;
+        KeyOpFieldsValuesTuple &tuple = tm.second;
 
         string s = dumpTuple(tuple);
 
@@ -269,10 +266,10 @@ void Consumer::execute()
 void Consumer::drain()
 {
     if (!m_toSync.empty())
-        ((Orch *)m_orch)->doTask((Consumer&)*this);
+        ((Orch *)m_orch)->doTask((Consumer &)*this);
 }
 
-size_t Orch::addExistingData(const string& tableName)
+size_t Orch::addExistingData(const string &tableName)
 {
     auto consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
@@ -288,7 +285,7 @@ size_t Orch::addExistingData(const string& tableName)
 size_t Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
-    ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
+    ConsumerBase *consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -346,7 +343,7 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, const string &typ
         return true;
     }
 
-    if ((ref_in[0] == ref_start) || (ref_in[ref_in.size()-1] == ref_end))
+    if ((ref_in[0] == ref_start) || (ref_in[ref_in.size() - 1] == ref_end))
     {
         SWSS_LOG_ERROR("malformed reference:%s. Must not be surrounded by [ ]\n", ref_in.c_str());
         return false;
@@ -460,7 +457,10 @@ void Orch::setObjectReference(
     if (field_ref != obj.m_objsReferencingByMe.end())
         removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field, field_ref->second, false);
 
-    obj.m_objsReferencingByMe[field] = referenced_obj;
+    if (field >= 0 && field < 4)
+    {
+        obj.m_objsReferencingByMe[field] = referenced_obj;
+    }
 
     // Add the reference to the new object being referenced
     vector<string> objs = tokenize(referenced_obj, list_item_delimiter);
@@ -558,7 +558,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &it : m_consumerMap)
     {
-        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        ConsumerBase *consumer = dynamic_cast<ConsumerBase *>(it.second.get());
         if (consumer == NULL)
         {
             SWSS_LOG_DEBUG("Executor is not a Consumer");
@@ -682,7 +682,7 @@ unsigned long Orch::generateBitMapFromIdsStr(const string &idsStr)
     if (!parseIndexRange(idsStr, lowerBound, upperBound))
         return 0;
 
-    for (sai_uint32_t id = lowerBound; id <= upperBound; id ++)
+    for (sai_uint32_t id = lowerBound; id <= upperBound; id++)
     {
         idsMap |= (1 << id);
     }
@@ -711,7 +711,7 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
     bool started = false, needGenerateMap = false;
     sai_uint32_t lower = 0, upper = 0;
     set<string> idStringList;
-    for (sai_uint32_t id = 0; id <= maxId; id ++)
+    for (sai_uint32_t id = 0; id <= maxId; id++)
     {
         // currentIdMask represents the bit mask corresponding to id: (1<<id)
         if (idsMap & currentIdMask)
@@ -751,7 +751,6 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
     return idStringList;
 }
 
-
 /*
  * isItemIdsMapContinuous
  *
@@ -772,7 +771,7 @@ bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
     unsigned long currentIdMask = 1;
     bool isCurrentBitValid = false, hasValidBits = false, hasZeroAfterValidBit = false;
 
-    for (sai_uint32_t id = 0; id < maxId; id ++)
+    for (sai_uint32_t id = 0; id < maxId; id++)
     {
         isCurrentBitValid = ((idsMap & currentIdMask) != 0);
         if (isCurrentBitValid)
@@ -805,11 +804,11 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
     }
 }
 
-void Orch::addExecutor(Executor* executor)
+void Orch::addExecutor(Executor *executor)
 {
     auto inserted = m_consumerMap.emplace(std::piecewise_construct,
-            std::forward_as_tuple(executor->getName()),
-            std::forward_as_tuple(executor));
+                                          std::forward_as_tuple(executor->getName()),
+                                          std::forward_as_tuple(executor));
 
     // If there is duplication of executorName in m_consumerMap, logic error
     if (!inserted.second)
@@ -857,15 +856,15 @@ void Orch2::doTask(Consumer &consumer)
                 SWSS_LOG_ERROR("Wrong operation. Check RequestParser: %s", op.c_str());
             }
         }
-        catch (const std::invalid_argument& e)
+        catch (const std::invalid_argument &e)
         {
             SWSS_LOG_ERROR("Parse error in %s: %s", typeid(*this).name(), e.what());
         }
-        catch (const std::logic_error& e)
+        catch (const std::logic_error &e)
         {
             SWSS_LOG_ERROR("Logic error in %s: %s", typeid(*this).name(), e.what());
         }
-        catch (const std::exception& e)
+        catch (const std::exception &e)
         {
             SWSS_LOG_ERROR("Exception was caught in the request parser in %s: %s", typeid(*this).name(), e.what());
         }
