@@ -28,9 +28,8 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateVlanTable(statDb, STATE_VLAN_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
-    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    //m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME)
-
+    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME)
+        //m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
