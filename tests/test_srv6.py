@@ -1260,7 +1260,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("sysctl -w net.vrf.strict_mode=1")
 
         # create an empty entry in confg db. The UDT46 entry processing will query config db for optional dscp_mode configuration
-        self.cdb.create_entry("SRV6_MY_SIDS", "fc00:0:2:ff05::", {"NULL": "NULL"})
+        self.cdb.create_entry("SRV6_MY_SIDS", "loc1|fc00:0:2:ff05::", {"NULL": "NULL"})
 
         # configure srv6 usid locator
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
@@ -1294,7 +1294,7 @@ class TestSrv6MySidFpmsyncd(object):
         # verify that the mysid has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries))
 
-        self.cdb.delete_entry("SRV6_MY_SIDS", "fc00:0:2:ff05::")
+        self.cdb.delete_entry("SRV6_MY_SIDS", "loc1|fc00:0:2:ff05::")
 
         # unconfigure srv6 locator
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
@@ -1307,6 +1307,14 @@ class TestSrv6MySidFpmsyncd(object):
         for fv in fvs:
             if fv[0] == attribute:
                 assert fv[1] == expected_value
+
+    def add_mysid_cfgdb(self, locator, prefix, addr, dscp_mode):
+        self.cdb.create_entry("SRV6_MY_LOCATORS", locator, {"prefix": prefix, "block_len": "32", "node_len": "16", "func_len": "16", "arg_len": "0"})
+        self.cdb.create_entry("SRV6_MY_SIDS", f'{locator}|{addr}', {"decap_dscp_mode": dscp_mode})
+
+    def remove_mysid_cfgdb(self, locator, addr):
+        self.cdb.delete_entry("SRV6_MY_SIDS", f"{locator}|{addr}")
+        self.cdb.delete_entry("SRV6_MY_LOCATORS", locator)
 
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.14'),
                         reason="This test requires Linux kernel 5.14 or higher")
@@ -1325,9 +1333,9 @@ class TestSrv6MySidFpmsyncd(object):
         tunnel_term_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY")
 
         # Confiure the dcsp_mode in config db
-        self.cdb.create_entry("SRV6_MY_SIDS", "fc00:0:2:ff05::", {"dscp_mode": "uniform"})
-        self.cdb.create_entry("SRV6_MY_SIDS", "fd00:0:2:ff05::", {"dscp_mode": "pipe"})
-        self.cdb.create_entry("SRV6_MY_SIDS", "fe00:0:2:ff05::", {"dscp_mode": "pipe"})
+        self.add_mysid_cfgdb("loc1", "fc00:0:2::", "fc00:0:2:ff05::", "uniform")
+        self.add_mysid_cfgdb("loc2", "fd00:0:2::", "fd00:0:2:ff05::", "pipe")
+        self.add_mysid_cfgdb("loc3", "fe00:0:2::", "fe00:0:2:ff05::", "pipe")
 
         # Create MySID entry with dscp_mode uniform
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
@@ -1387,9 +1395,9 @@ class TestSrv6MySidFpmsyncd(object):
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fd00:0:2:ff05::")
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fe00:0:2:ff05::")
 
-        self.cdb.delete_entry("SRV6_MY_SIDS", "fc00:0:2:ff05::")
-        self.cdb.delete_entry("SRV6_MY_SIDS", "fd00:0:2:ff05::")
-        self.cdb.delete_entry("SRV6_MY_SIDS", "fe00:0:2:ff05::")
+        self.remove_mysid_cfgdb("loc1", "fc00:0:2:ff05::")
+        self.remove_mysid_cfgdb("loc2", "fd00:0:2:ff05::")
+        self.remove_mysid_cfgdb("loc3", "fe00:0:2:ff05::")
 
         # Verify that the MySID and tunnel configuration is removed
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries))

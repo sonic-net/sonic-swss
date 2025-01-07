@@ -1,5 +1,6 @@
 #include <iostream>
 #include <sstream>
+#include <iterator>
 
 #include "routeorch.h"
 #include "logger.h"
@@ -83,40 +84,176 @@ static bool mySidDscpModeToSai(const string& mode, sai_tunnel_dscp_mode_t& sai_m
     return false;
 }
 
-bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid, sai_tunnel_dscp_mode_t& dscp_mode)
+MySidLocatorCfg Srv6Orch::getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_entry) const
 {
-    auto found = my_sid_dscp_cfg_cache_.find(my_sid);
-    if (found != end(my_sid_dscp_cfg_cache_))
-    {
-        dscp_mode = found->second;
-        return true;
-    }
+    return {
+        sai_entry.locator_block_len,
+        sai_entry.locator_node_len,
+        sai_entry.function_len,
+        sai_entry.args_len,
+    };
+}
 
-    // The entry is not available in the cache, get from CONFIG_DB directly
+bool Srv6Orch::getLocatorCfgFromDb(const string& locator, MySidLocatorCfg& cfg)
+{
     vector<FieldValueTuple> fvs;
-    auto exists = m_mysidCfgTable.get(my_sid, fvs);
+    auto exists = m_locatorCfgTable.get(locator, fvs);
     if (!exists)
     {
-        SWSS_LOG_ERROR("Failed to query MySID %s from CONFIG_DB", my_sid.c_str());
+        SWSS_LOG_ERROR("Failed to get the SRv6 locator %s - not present in the CONFIG_DB", locator.c_str());
         return false;
     }
 
-    dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
+    auto blen = fvsGetValue(fvs, "block_len", true);
+    auto nlen = fvsGetValue(fvs, "node_len", true);
+    auto flen = fvsGetValue(fvs, "func_len", true);
+    auto alen = fvsGetValue(fvs, "arg_len", true);
 
-    auto value = fvsGetValue(fvs, "dscp_mode", true);
-    if (value)
+    if (!blen || !nlen || !flen || !alen)
     {
-        auto is_valid = mySidDscpModeToSai(*value, dscp_mode);
-        if (!is_valid)
+        SWSS_LOG_ERROR("Invalid configuration for SRv6 locator %s in CONFIG DB\n", locator.c_str());
+        return false;
+    }
+
+    cfg = {
+        (uint8_t)stoi(blen.get_value_or("0")),
+        (uint8_t)stoi(nlen.get_value_or("0")),
+        (uint8_t)stoi(flen.get_value_or("0")),
+        (uint8_t)stoi(alen.get_value_or("0"))
+    };
+
+    return true;
+}
+
+bool Srv6Orch::reverseLookupLocator(const vector<string>& candidates, const MySidLocatorCfg& locator_cfg, string& locator)
+{
+    for (const auto& canididate: candidates)
+    {
+        MySidLocatorCfg cfg;
+        auto ok = getLocatorCfgFromDb(canididate, cfg);
+        if (!ok) {
+            continue;
+        }
+
+        if (locator_cfg == cfg)
         {
-            SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid.c_str(), (*value).c_str());
+            SWSS_LOG_DEBUG("Found a locator %s matching the config", canididate.c_str());
+            locator = canididate;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void Srv6Orch::addMySidCfgCacheEntry(const string& my_sid_key, const vector<FieldValueTuple>& fvs)
+{
+    auto key_list = tokenize(my_sid_key, '|');
+    auto locator = key_list[0];
+    auto my_sid_addr = key_list[1];
+
+    string dscp_mode_cfg = "uniform";
+    sai_tunnel_dscp_mode_t dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
+    for (const auto& fv : fvs)
+    {
+        if (fvField(fv) == "decap_dscp_mode")
+        {
+            dscp_mode_cfg = fvValue(fv);
+            if (!mySidDscpModeToSai(dscp_mode_cfg, dscp_mode))
+            {
+                SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid_addr.c_str(), dscp_mode_cfg.c_str());
+                return;
+            }
+            break;
+        }
+    }
+
+    my_sid_dscp_cfg_cache_.insert({my_sid_addr, {locator, dscp_mode}});
+    SWSS_LOG_INFO("Saving MySID entry %s %s DSCP mode %s", locator.c_str(), my_sid_addr.c_str(), dscp_mode_cfg.c_str());
+}
+
+void Srv6Orch::removeMySidCfgCacheEntry(const string& my_sid_key)
+{
+    auto key_list = tokenize(my_sid_key, '|');
+    auto locator = key_list[0];
+    auto my_sid_addr = key_list[1];
+
+    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_addr);
+    for (auto it = cfg_cache.first; it != cfg_cache.second; ++it)
+    {
+        if (it->second.first == locator)
+        {
+            my_sid_dscp_cfg_cache_.erase(it);
+            break;
+        }
+    }
+}
+
+void Srv6Orch::mySidCfgCacheRefresh()
+{
+    SWSS_LOG_INFO("Refreshing SRv6 MySID configuration cache");
+
+    vector<KeyOpFieldsValuesTuple> entries;
+    m_mysidCfgTable.getContent(entries);
+
+    for (const auto& entry : entries)
+    {
+        addMySidCfgCacheEntry(kfvKey(entry), kfvFieldsValues(entry));
+    }
+}
+
+bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode)
+{
+    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_addr);
+    if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
+    {
+        mySidCfgCacheRefresh();
+
+        cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_addr);
+        if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
+        {
+            SWSS_LOG_ERROR("SRv6 MySID entry %s is not available in the CONFIG_DB", my_sid_addr.c_str());
             return false;
         }
     }
 
-    my_sid_dscp_cfg_cache_[my_sid] = dscp_mode;
+    auto cache_start = cfg_cache.first;
+    auto cache_end = cfg_cache.second;
 
-    return true;
+    if (distance(cache_start, cache_end) == 1)
+    {
+        const Srv6MySidDscpCfgCacheVal& cache_val = cache_start->second;
+        dscp_mode = cache_val.second;
+
+        SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s in the cache", my_sid_addr.c_str(), cache_val.first.c_str());
+        return true;
+    }
+
+    // There are multiple mysid entries with the same address but different locators
+    vector<string> locator_candidates;
+    transform(cache_start, cache_end, back_inserter(locator_candidates),
+               [](const auto& v) { return v.second.first; });
+
+    string locator;
+    auto found = reverseLookupLocator(locator_candidates, locator_cfg, locator);
+    if (!found)
+    {
+        SWSS_LOG_ERROR("Cannot find a locator in the CONFIG DB for MySID Entry %s", my_sid_addr.c_str());
+        return false;
+    }
+
+    for (auto it = cache_start; it != cache_end; ++it)
+    {
+        const Srv6MySidDscpCfgCacheVal& cache_val = it->second;
+        if (cache_val.first == locator)
+        {
+            SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s after locator reverse lookup", my_sid_addr.c_str(), locator.c_str());
+            dscp_mode = cache_val.second;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool Srv6Orch::initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_t dscp_mode)
@@ -1016,7 +1153,8 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     if (mySidTunnelRequired(end_behavior))
     {
         sai_tunnel_dscp_mode_t dcsp_mode;
-        auto ok = getMySidEntryDscpMode(my_sid_string, dcsp_mode);
+        auto locator_cfg = getMySidEntryLocatorCfg(my_sid_entry);
+        auto ok = getMySidEntryDscpMode(my_sid_string, locator_cfg, dcsp_mode);
         if (!ok)
         {
             SWSS_LOG_ERROR("Failed to get dscp mode for MySID %s", my_sid_string.c_str());
@@ -1216,34 +1354,17 @@ void Srv6Orch::doTaskCfgMySidTable(const KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
-    string dscp_mode_cfg = "uniform";
-    sai_tunnel_dscp_mode_t dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
     auto op = kfvOp(tuple);
-    auto my_sid_key = kfvKey(tuple);
-
-    for (auto i : kfvFieldsValues(tuple))
-    {
-        if (fvField(i) == "dscp_mode")
-        {
-            dscp_mode_cfg = fvValue(i);
-            if (!mySidDscpModeToSai(dscp_mode_cfg, dscp_mode))
-            {
-                SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid_key.c_str(), dscp_mode_cfg.c_str());
-                return;
-            }
-
-            break;
-        }
-    }
+    auto key = kfvKey(tuple);
+    auto& fvs = kfvFieldsValues(tuple);
 
     if (op == SET_COMMAND)
     {
-        my_sid_dscp_cfg_cache_[my_sid_key] = dscp_mode;
-        SWSS_LOG_INFO("Saving MySID entry %s DSCP mode %s", my_sid_key.c_str(), dscp_mode_cfg.c_str());
+        addMySidCfgCacheEntry(key, fvs);
     }
     else if (op == DEL_COMMAND)
     {
-        my_sid_dscp_cfg_cache_.erase(my_sid_key);
+        removeMySidCfgCacheEntry(key);
     }
     else
     {

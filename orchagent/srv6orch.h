@@ -61,11 +61,24 @@ struct MySidIpInIpTunnels
     MySidIpInIpTunnel dscp_pipe_tunnel;
 };
 
+struct MySidLocatorCfg
+{
+    uint8_t block_len;
+    uint8_t node_len;
+    uint8_t func_len;
+    uint8_t arg_len;
+
+    bool operator==(const MySidLocatorCfg& rhs) const {
+        return std::tie(block_len, node_len, func_len, arg_len) == std::tie(rhs.block_len, rhs.node_len, rhs.func_len, rhs.arg_len);
+    }
+};
+
 typedef unordered_map<string, SidTableEntry> SidTable;
 typedef unordered_map<string, SidTunnelEntry> Srv6TunnelTable;
 typedef map<NextHopKey, sai_object_id_t> Srv6NextHopTable;
 typedef unordered_map<string, MySidEntry> Srv6MySidTable;
-typedef unordered_map<string, sai_tunnel_dscp_mode_t> Srv6MySidDscpCfg;
+typedef pair<string, sai_tunnel_dscp_mode_t> Srv6MySidDscpCfgCacheVal;
+typedef std::unordered_multimap<string, Srv6MySidDscpCfgCacheVal> Srv6MySidDscpCfg;
 
 #define SID_LIST_DELIMITER ','
 #define MY_SID_KEY_DELIMITER ':'
@@ -79,7 +92,8 @@ class Srv6Orch : public Orch, public Observer
           m_neighOrch(neighOrch),
           m_sidTable(applDb, APP_SRV6_SID_LIST_TABLE_NAME),
           m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME),
-          m_mysidCfgTable(cfgDb, CFG_SRV6_MY_SID_TABLE_NAME)
+          m_mysidCfgTable(cfgDb, CFG_SRV6_MY_SID_TABLE_NAME),
+          m_locatorCfgTable(cfgDb, CFG_SRV6_MY_LOCATOR_TABLE_NAME)
         {
             m_neighOrch->attach(this);
         }
@@ -105,7 +119,13 @@ class Srv6Orch : public Orch, public Observer
         bool deleteMysidEntry(const string my_sid_string);
         bool sidEntryEndpointBehavior(const string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                       sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor);
-        bool getMySidEntryDscpMode(const string& my_sid, sai_tunnel_dscp_mode_t& dscp_mode);
+        MySidLocatorCfg getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_entry) const;
+        bool getLocatorCfgFromDb(const string& locator, MySidLocatorCfg& cfg);
+        bool reverseLookupLocator(const vector<string>& candidates, const MySidLocatorCfg& locator_cfg, string& locator);
+        void mySidCfgCacheRefresh();
+        void addMySidCfgCacheEntry(const string& my_sid_key, const vector<FieldValueTuple>& fvs);
+        void removeMySidCfgCacheEntry(const string& my_sid_key);
+        bool getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode);
         bool mySidExists(const string mysid_string);
         bool mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
@@ -124,6 +144,7 @@ class Srv6Orch : public Orch, public Observer
         ProducerStateTable m_sidTable;
         ProducerStateTable m_mysidTable;
         Table m_mysidCfgTable;
+        Table m_locatorCfgTable;
         SidTable sid_table_;
         Srv6TunnelTable srv6_tunnel_table_;
         Srv6NextHopTable srv6_nexthop_table_;
