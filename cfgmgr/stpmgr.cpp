@@ -976,6 +976,77 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
     }
 }
 
+void StpMgr::doStpMstInstTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    if (stpMstInstTask == false)
+        stpMstInstTask = true;
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        MST_INST_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(MST_INST_CONFIG_MSG));
+
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_INFO("STP MST Instance key %s op %s", key.c_str(), op.c_str());
+        
+        if (op == SET_COMMAND)
+        {
+            msg.opcode = STP_SET_COMMAND;
+
+            // Extract instance ID from the key
+            uint16_t mst_id = stoi(key);
+            msg.mst_id = mst_id;
+
+            // Retrieve bridge priority and VLAN list from the table
+            for (auto i : kfvFieldsValues(t))
+            {
+                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+                if (fvField(i) == "bridge_priority")
+                {
+                    msg.priority = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "vlan_list")
+                {
+                    // Split the VLAN list string and populate the vlan_list
+                    string vlanList = fvValue(i);
+                    vector<int> vlanVec = parseVlanList(vlanList);
+                    msg.vlan_count = vlanVec.size();
+
+                    int index = 0;
+                    for (auto vlanId : vlanVec)
+                    {
+                        msg.vlan_list[index].vlan_id = vlanId;
+                        index++;
+                    }
+                }
+            }
+
+            // Send the message to the daemon
+            sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg) + sizeof(VLAN_LIST) * msg.vlan_count, (void *)&msg);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            msg.opcode = STP_DEL_COMMAND;
+
+            // Handle deletion (Reset the VLAN list and bridge priority)
+            msg.mst_id = stoi(key);
+            msg.priority = 0;
+            msg.vlan_count = 0;
+
+            sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg), (void *)&msg);
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 // Send Message to STPd
 int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
 {
@@ -1173,4 +1244,67 @@ uint16_t StpMgr::getStpMaxInstances(void)
     }
 
     return max_stp_instances;
+}
+
+vector<string> StpMgr::tokenize(const string &str, const string &delimiter)
+{
+    vector<string> tokens;
+    size_t pos = 0;
+    string token;
+    string s = str;
+
+    while ((pos = s.find(delimiter)) != string::npos)
+    {
+        token = s.substr(0, pos);
+        tokens.push_back(token);
+        s.erase(0, pos + delimiter.length());
+    }
+    tokens.push_back(s); // Last token
+    return tokens;
+}
+
+// Function to parse the VLAN list and handle ranges
+vector<int> StpMgr::parseVlanList(const string &vlanList)
+{
+    vector<int> vlanVec;
+    vector<string> vlanTokens = tokenize(vlanList, ",");
+
+    for (auto vlanToken : vlanTokens)
+    {
+        // Trim whitespace
+        vlanToken = trim(vlanToken);
+
+        // Check if the token is a range (e.g., "10-20")
+        size_t dashPos = vlanToken.find('-');
+        if (dashPos != string::npos)
+        {
+            // Range format found
+            int startVlan = stoi(vlanToken.substr(0, dashPos));
+            int endVlan = stoi(vlanToken.substr(dashPos + 1));
+
+            // Add all VLANs in the range
+            for (int vlanId = startVlan; vlanId <= endVlan; vlanId++)
+            {
+                vlanVec.push_back(vlanId);
+            }
+        }
+        else
+        {
+            // Single VLAN ID
+            vlanVec.push_back(stoi(vlanToken));
+        }
+    }
+
+    return vlanVec;
+}
+
+// Utility function to trim leading and trailing spaces from a string
+string StpMgr::trim(const string &str)
+{
+    size_t first = str.find_first_not_of(" \t");
+    if (first == string::npos)
+        return "";
+
+    size_t last = str.find_last_not_of(" \t");
+    return str.substr(first, (last - first + 1));
 }

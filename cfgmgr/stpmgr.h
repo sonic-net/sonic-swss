@@ -212,6 +212,7 @@ private:
     Table m_stateLagTable;
     Table m_stateStpTable;
     Table m_cfgStpMstGlobalTable;
+    Table m_cfgStpMstInstTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
@@ -234,6 +235,7 @@ private:
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
     void doStpMstGlobalTask(Consumer &consumer);
+    void doStpMstInstTask(Consumer &consumer)
 
     bool isVlanStateOk(const std::string &alias);
     bool isLagStateOk(const std::string &alias);
@@ -248,6 +250,9 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
+    vector<string> tokenize(const string &str, const string &delimiter);
+    vector<int> parseVlanList(const string &vlanList);
+    string trim(const string &str)
 };
 
 }
