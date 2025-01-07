@@ -456,7 +456,6 @@ void Orch::setObjectReference(
 
     if (field_ref != obj.m_objsReferencingByMe.end())
         removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field, field_ref->second, false);
-
     try
     {
         obj.m_objsReferencingByMe[field] = referenced_obj;
