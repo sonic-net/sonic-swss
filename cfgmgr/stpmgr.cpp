@@ -61,8 +61,8 @@ void StpMgr::doTask(Consumer &consumer)
         doLagMemUpdateTask(consumer);
     else if (table == STATE_VLAN_MEMBER_TABLE_NAME)
         doVlanMemUpdateTask(consumer);
-    //else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
-    //    doStpMstGlobalTask(consumer);
+    else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
+        doStpMstGlobalTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -894,6 +894,86 @@ int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
     }
 
     return (int)vlan_list.size();
+}
+
+void StpMgr::doStpMstGlobalTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    if (stpGlobalTask == false)
+        return;
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        STP_MST_GLOBAL_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
+
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_INFO("STP MST global key %s op %s", key.c_str(), op.c_str());
+        if (op == SET_COMMAND)
+        {
+            if (l2ProtoEnabled != L2_MSTP)
+            {
+                // Wait till STP is configured
+                it++;
+                continue;
+            }
+            msg.opcode = STP_SET_COMMAND;
+            for (auto i : kfvFieldsValues(t))
+            {
+                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+                if (fvField(i) == "revision_number")
+                {
+                    msg.revision_number = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "name")
+                {
+                    strncpy(msg.name, fvValue(i).c_str(), sizeof(msg.name) - 1);
+                }
+                else if (fvField(i) == "forward_delay")
+                {
+                    msg.forward_delay = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "hello_time")
+                {
+                    msg.hello_time = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "max_age")
+                {
+                    msg.max_age = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "max_hop")
+                {
+                    msg.max_hop = stoi(fvValue(i).c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Error invalid field %s", fvField(i).c_str());
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            msg.opcode = STP_DEL_COMMAND;
+
+            // Reset to default values if required
+            msg.revision_number = 0;
+            memset(msg.name, 0, sizeof(msg.name));
+            msg.forward_delay = 0;
+            msg.hello_time = 0;
+            msg.max_age = 0;
+            msg.max_hop = 0;
+        }
+
+        sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
+
+        it = consumer.m_toSync.erase(it);
+    }
 }
 
 // Send Message to STPd
