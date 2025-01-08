@@ -30,6 +30,20 @@ Orch::Orch(DBConnector *db, const vector<string> &tableNames)
     }
 }
 
+Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2, 
+    const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2)
+{
+    for(auto it : tableNames_1)
+    {
+        addConsumer(db1, it, default_orch_pri);
+    }
+
+    for(auto it : tableNames_2)
+    {
+        addConsumer(db2, it, default_orch_pri);
+    }
+}
+
 Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
 {
     for (const auto& it : tableNames_with_pri)
@@ -845,19 +859,19 @@ void Orch2::doTask(Consumer &consumer)
         }
         catch (const std::invalid_argument& e)
         {
-            SWSS_LOG_ERROR("Parse error: %s", e.what());
+            SWSS_LOG_ERROR("Parse error in %s: %s", typeid(*this).name(), e.what());
         }
         catch (const std::logic_error& e)
         {
-            SWSS_LOG_ERROR("Logic error: %s", e.what());
+            SWSS_LOG_ERROR("Logic error in %s: %s", typeid(*this).name(), e.what());
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception was catched in the request parser: %s", e.what());
+            SWSS_LOG_ERROR("Exception was caught in the request parser in %s: %s", typeid(*this).name(), e.what());
         }
         catch (...)
         {
-            SWSS_LOG_ERROR("Unknown exception was catched in the request parser");
+            SWSS_LOG_ERROR("Unknown exception was caught in the request parser");
         }
         request_.clear();
 

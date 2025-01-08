@@ -44,6 +44,7 @@ class TestDash(TestFlexCountersBase):
         direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
         dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
         assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION")
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC")
 
         vip_keys = dash_db.wait_for_asic_db_keys(ASIC_VIP_TABLE)
         vip_attrs = dash_db.get_asic_db_entry(ASIC_VIP_TABLE, vip_keys[0])
@@ -125,6 +126,7 @@ class TestDash(TestFlexCountersBase):
         pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
         pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
+        pb.use_dst_vni = False
 
         dash_db.create_vnet_mapping(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
         dash_db.create_vnet_mapping(self.vnet, self.ip2, {"pb": pb.SerializeToString()})

@@ -7,6 +7,7 @@
 #include "directory.h"
 #include "subintf.h"
 #include "notifications.h"
+#include "stporch.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -55,6 +56,7 @@ extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
 extern SwitchOrch *gSwitchOrch;
+extern StpOrch *gStpOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_system_port_api_t *sai_system_port_api;
 extern string gMySwitchType;
@@ -660,6 +662,15 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         {
             bc_sup_flood_control_type.insert(static_cast<sai_vlan_flood_control_type_t>(values.list[idx]));
         }
+    }
+
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
+    {
+        m_supportsHostIfTxQueue = true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Hostif queue attribute not supported");
     }
 
     // Query whether SAI supports Host Tx Signal and Host Tx Notification
@@ -2062,6 +2073,10 @@ bool PortsOrch::setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set PFC mode %d to port id 0x%" PRIx64 " (rc:%d)", pfc_asym, port.m_port_id, status);
+        if (status == SAI_STATUS_NOT_SUPPORTED)
+        {
+            return true;
+        }
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -3320,17 +3335,7 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    bool set_hostif_tx_queue = false;
-    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
-    {
-        set_hostif_tx_queue = true;
-    }
-    else
-    {
-        SWSS_LOG_WARN("Hostif queue attribute not supported");
-    }
-
-    if (set_hostif_tx_queue)
+    if (m_supportsHostIfTxQueue)
     {
         attr.id = SAI_HOSTIF_ATTR_QUEUE;
         attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
@@ -6009,17 +6014,7 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    bool set_hostif_tx_queue = false;
-    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
-    {
-        set_hostif_tx_queue = true;
-    }
-    else
-    {
-        SWSS_LOG_WARN("Hostif queue attribute not supported");
-    }
-
-    if (set_hostif_tx_queue)
+    if (m_supportsHostIfTxQueue)
     {
         attr.id = SAI_HOSTIF_ATTR_QUEUE;
         attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
@@ -6256,6 +6251,9 @@ bool PortsOrch::removeBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
+    
+    /* Remove STP ports before bridge port deletion*/
+    gStpOrch->removeStpPorts(port);
 
     //Flush the FDB entires corresponding to the port
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -6396,6 +6394,12 @@ bool PortsOrch::removeVlan(Port vlan)
     {
         SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
         return false;
+    }
+
+    /* If STP instance is associated with VLAN remove VLAN from STP before deletion */
+    if(vlan.m_stp_id != -1)
+    {
+        gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
     }
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
@@ -10045,4 +10049,3 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
         m_port_state_poller->stop();
     }
 }
-

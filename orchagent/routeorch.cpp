@@ -1305,7 +1305,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         else if (it.isMplsNextHop() &&
                  m_neighOrch->hasNextHop(NextHopKey(it.ip_address, it.alias)))
         {
-            m_neighOrch->addNextHop(it);
+            NeighborContext ctx = NeighborContext(it);
+            m_neighOrch->addNextHop(ctx);
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         else
@@ -1331,7 +1332,11 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             nhopgroup_shared_set[next_hop_id].insert(it);
         }
     }
-
+    if (!next_hop_ids.size())
+    {
+        SWSS_LOG_INFO("Skipping creation of nexthop group as none of nexthop are active");
+        return false;
+    }
     sai_attribute_t nhg_attr;
     vector<sai_attribute_t> nhg_attrs;
 
@@ -1716,9 +1721,15 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
             SWSS_LOG_INFO("Failed to get next hop %s for %s",
                    (*it).to_string().c_str(), ipPrefix.to_string().c_str());
             it = next_hop_set.erase(it);
+            continue;
         }
-        else
-            it++;
+        if(m_neighOrch->isNextHopFlagSet(*it, NHFLAGS_IFDOWN))
+        {
+            SWSS_LOG_INFO("Interface down for NH %s, skip this NH", (*it).to_string().c_str());
+            it = next_hop_set.erase(it);
+            continue;
+        }
+        it++;
     }
 
     /* Return if next_hop_set is empty */
@@ -1839,7 +1850,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                      m_neighOrch->isNeighborResolved(nexthop))
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
-                m_neighOrch->addNextHop(nexthop);
+                NeighborContext ctx = NeighborContext(nexthop);
+                m_neighOrch->addNextHop(ctx);
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
             /* IP neighbor is not yet resolved */
@@ -2421,8 +2433,14 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     size_t creating = gRouteBulker.creating_entries_count(route_entry);
     if (it_route == it_route_table->second.end() && creating == 0)
     {
-        SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
-                ipPrefix.to_string().c_str());
+       if (it_route_table->second.size() == 0)
+       {
+            m_syncdRoutes.erase(vrf_id);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
+       }
+       SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
+                     ipPrefix.to_string().c_str());
+ 
         return true;
     }
 
@@ -2637,6 +2655,51 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
 
     return true;
+}
+
+bool RouteOrch::isRouteExists(const IpPrefix& prefix)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t& vrf_id = gVirtualRouterId;
+
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vrf_id;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, prefix);
+    auto it_route_table = m_syncdRoutes.find(vrf_id);
+    if (it_route_table == m_syncdRoutes.end())
+    {
+        SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%" PRIx64 "\n", vrf_id);
+        return true;
+    }
+    auto it_route = it_route_table->second.find(prefix);
+    size_t creating = gRouteBulker.creating_entries_count(route_entry);
+    if (it_route == it_route_table->second.end() && creating == 0)
+    {
+        SWSS_LOG_INFO("No Route exists for vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
+                      prefix.to_string().c_str());
+        return false;
+    }
+    return true;
+}
+
+bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
+{
+    // This function removes the route if it exists.
+
+    string key = "ROUTE_TABLE:" + prefix.to_string();
+    RouteBulkContext context(key, false);
+    context.ip_prefix = prefix;
+    context.vrf_id = gVirtualRouterId;
+    if (removeRoute(context))
+    {
+        SWSS_LOG_INFO("Could not find the route  with prefix %s", prefix.to_string().c_str());
+        return true;
+    }
+    gRouteBulker.flush();
+    return removeRoutePost(context);
+
 }
 
 bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextHop)
