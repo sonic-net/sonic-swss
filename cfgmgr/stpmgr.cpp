@@ -3,6 +3,8 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "warm_restart.h"
+#include <vector>
+#include <string>
 
 #include <iostream>
 #include <algorithm>
