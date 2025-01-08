@@ -7,6 +7,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <bitset>
+#include <vector>
+#include <string>
 
 #include "dbconnector.h"
 #include "netmsg.h"
@@ -139,7 +141,7 @@ typedef struct VLAN_ATTR {
 
 typedef struct VLAN_LIST{
     uint16_t    vlan_id;
-}__attribute__ ((packed))VLAN_LIST;
+}VLAN_LIST;
 
 typedef struct STP_PORT_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
@@ -261,8 +263,37 @@ private:
 
 
 /*
+STP_MST_GLOBAL_CONFIG,
 
+ 
 
+STP_MST_INST_CONFIG,
+
+ 
+
+STP_MST_VLAN_PORT_LIST_CONFIG,
+
+ 
+
+STP_MST_INST_PORT_CONFIG,
+
+typedef struct STP_MST_GLOBAL_CONFIG_MSG {
+
+    uint8_t     opcode; // enable/disable
+
+    uint16_t    revision_number;
+
+    char        name[STP_SYNC_MSTP_NAME_LEN];
+
+    int         forward_delay;
+
+    int         hello_time;
+
+    int         max_age;
+
+    int         max_hop;
+
+}_attribute_ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
  
 
@@ -324,4 +355,4 @@ typedef struct PORT_LIST
 
     int8_t      tagging_mode;
 
-}PORT_LIST*/
+}PORT_LIST;*/
