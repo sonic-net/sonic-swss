@@ -27,7 +27,6 @@ using namespace swss;
 #define VLAN_DRV_NAME   "bridge"
 #define TEAM_DRV_NAME   "team"
 
-const string MGMT_PREFIX = "eth";
 const string INTFS_PREFIX = "Ethernet";
 const string LAG_PREFIX = "PortChannel";
 
@@ -42,14 +41,6 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
 {
     std::shared_ptr<struct if_nameindex> if_ni(if_nameindex(), if_freenameindex);
     struct if_nameindex *idx_p;
-
-    for (idx_p = if_ni.get();
-            idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
-            idx_p++)
-    {
-        string key = idx_p->if_name;
-
-    }
 
     if (!WarmStart::isWarmStart())
     {
@@ -130,8 +121,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     string key = rtnl_link_get_name(link);
 
     if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX) &&
-        key.compare(0, LAG_PREFIX.length(), LAG_PREFIX) &&
-        key.compare(0, MGMT_PREFIX.length(), MGMT_PREFIX))
+        key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
     {
         return;
     }
