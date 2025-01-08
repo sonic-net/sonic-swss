@@ -459,9 +459,22 @@ void Orch::setObjectReference(
 
     if (field_ref != obj.m_objsReferencingByMe.end())
         removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field, field_ref->second, false);
-
-    obj.m_objsReferencingByMe[field] = referenced_obj;
-
+    try
+    {
+        obj.m_objsReferencingByMe[field] = referenced_obj;
+    }
+    catch (const std::bad_alloc &e)
+    {
+        std::cerr << "Memory allocation error: " << e.what() << '\n';
+    }
+    catch (const std::out_of_range &e)
+    {
+        std::cerr << "Out of range error: " << e.what() << '\n';
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "An error occurred: " << e.what() << '\n';
+    }
     // Add the reference to the new object being referenced
     vector<string> objs = tokenize(referenced_obj, list_item_delimiter);
     for (auto &obj : objs)
