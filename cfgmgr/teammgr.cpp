@@ -185,11 +185,14 @@ void TeamMgr::cleanTeamProcesses()
         try
         {
             ifstream pidFile("/var/run/teamd/" + alias + ".pid");
-            if (pidFile.is_open()) {
+            if (pidFile.is_open())
+            {
                 pidFile >> pid;
                 aliasPidMap[alias] = pid;
                 SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
-            } else {
+            }
+            else
+            {
                 SWSS_LOG_NOTICE("Unable to read pid file for %s, skipping...", alias.c_str());
                 continue;
             }
@@ -201,10 +204,13 @@ void TeamMgr::cleanTeamProcesses()
             continue;
         }
 
-        if (kill(pid, SIGTERM)) {
+        if (kill(pid, SIGTERM))
+        {
             SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, strerror(errno));
             aliasPidMap.erase(alias);
-        } else {
+        }
+        else
+        {
             SWSS_LOG_NOTICE("Sent SIGTERM to port channel %s pid %d", alias.c_str(), pid);
         }
     }
@@ -216,7 +222,8 @@ void TeamMgr::cleanTeamProcesses()
 
         SWSS_LOG_NOTICE("Waiting for port channel %s pid %d to stop...", alias.c_str(), pid);
 
-        while (!kill(pid, 0)) {
+        while (!kill(pid, 0))
+        {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }

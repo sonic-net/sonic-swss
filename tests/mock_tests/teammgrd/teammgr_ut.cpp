@@ -14,17 +14,21 @@ static std::pair<bool, FILE*> (*callback_fopen)(const char *pathname, const char
 static int cb_kill(pid_t pid, int sig)
 {
     mockKillCommands.push_back(std::make_pair(pid, sig));
-    if (!sig) {
+    if (!sig)
+    {
         errno = ESRCH;
         return -1;
-    } else {
+    }
+    else
+    {
         return 0;
     }
 }
 
 int kill(pid_t pid, int sig)
 {
-    if (callback_kill) {
+    if (callback_kill)
+    {
         return callback_kill(pid, sig);
     }
     int (*realfunc)(pid_t, int) =
@@ -35,21 +39,27 @@ int kill(pid_t pid, int sig)
 static std::pair<bool, FILE*> cb_fopen(const char *pathname, const char *mode)
 {
     auto pidFileSearch = pidFiles.find(pathname);
-    if (pidFileSearch != pidFiles.end()) {
-        if (!pidFileSearch->second) {
+    if (pidFileSearch != pidFiles.end())
+    {
+        if (!pidFileSearch->second)
+        {
             errno = ENOENT;
         }
         return std::make_pair(true, pidFileSearch->second);
-    } else {
+    }
+    else
+    {
         return std::make_pair(false, (FILE*)NULL);
     }
 }
 
 FILE* fopen(const char *pathname, const char *mode)
 {
-    if (callback_fopen) {
+    if (callback_fopen)
+    {
         std::pair<bool, FILE*> callback_fd = callback_fopen(pathname, mode);
-        if (callback_fd.first) {
+        if (callback_fd.first)
+        {
             return callback_fd.second;
         }
     }
@@ -60,9 +70,11 @@ FILE* fopen(const char *pathname, const char *mode)
 
 FILE* fopen64(const char *pathname, const char *mode)
 {
-    if (callback_fopen) {
+    if (callback_fopen)
+    {
         std::pair<bool, FILE*> callback_fd = callback_fopen(pathname, mode);
-        if (callback_fd.first) {
+        if (callback_fd.first)
+        {
             return callback_fd.second;
         }
     }
