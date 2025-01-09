@@ -284,7 +284,6 @@ def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         dvs.port_admin_set(if_name_key, "up")
         shutdown_link(dvs, app_db, i)
         startup_link(dvs, app_db, i)
-        time.sleep(5)
         bank = 1
         if i >= (nh_range_end - nh_range_start)/2:
             bank = 0
