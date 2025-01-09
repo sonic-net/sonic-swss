@@ -15,6 +15,10 @@ using namespace swss;
 
 #define ADJ_DELIMITER ','
 #define OVERLAY_RIF_DEFAULT_MTU 9100
+#define LOCATOR_DEFAULT_BLOCK_LEN "32"
+#define LOCATOR_DEFAULT_NODE_LEN "16"
+#define LOCATOR_DEFAULT_FUNC_LEN "16"
+#define LOCATOR_DEFAULT_ARG_LEN "0"
 
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t  gVirtualRouterId;
@@ -109,17 +113,11 @@ bool Srv6Orch::getLocatorCfgFromDb(const string& locator, MySidLocatorCfg& cfg)
     auto flen = fvsGetValue(fvs, "func_len", true);
     auto alen = fvsGetValue(fvs, "arg_len", true);
 
-    if (!blen || !nlen || !flen || !alen)
-    {
-        SWSS_LOG_ERROR("Invalid configuration for SRv6 locator %s in CONFIG DB\n", locator.c_str());
-        return false;
-    }
-
     cfg = {
-        (uint8_t)stoi(blen.get_value_or("0")),
-        (uint8_t)stoi(nlen.get_value_or("0")),
-        (uint8_t)stoi(flen.get_value_or("0")),
-        (uint8_t)stoi(alen.get_value_or("0"))
+        (uint8_t)stoi(blen.get_value_or(LOCATOR_DEFAULT_BLOCK_LEN)),
+        (uint8_t)stoi(nlen.get_value_or(LOCATOR_DEFAULT_NODE_LEN)),
+        (uint8_t)stoi(flen.get_value_or(LOCATOR_DEFAULT_FUNC_LEN)),
+        (uint8_t)stoi(alen.get_value_or(LOCATOR_DEFAULT_ARG_LEN))
     };
 
     return true;
