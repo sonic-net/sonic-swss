@@ -20,6 +20,7 @@ StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableN
 
     sai_attribute_t attr;
     sai_status_t status;
+    bool ret = false;
 
     m_stpTable = unique_ptr<Table>(new Table(stateDb, STATE_STP_TABLE_NAME));
     
@@ -28,12 +29,13 @@ StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableN
     attrs.push_back(attr);
     
     status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        throw runtime_error("StpOrch initialization failure");
+	    m_defaultStpId = attrs[0].value.oid;
+	    ret = true;
     }
-    
-    m_defaultStpId = attrs[0].value.oid;
+
+    SWSS_LOG_NOTICE("StpOrch initialization %s", (ret == true)?"success":"failure");
 };
 
 

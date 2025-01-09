@@ -65,6 +65,7 @@ struct FdbData
     string    esi;
     unsigned int vni;
     sai_fdb_entry_type_t sai_fdb_type;
+    string discard;
 };
 
 struct SavedFdbEntry

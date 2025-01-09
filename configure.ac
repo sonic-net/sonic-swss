@@ -106,6 +106,7 @@ CFLAGS_COMMON+=" -Wvariadic-macros"
 CFLAGS_COMMON+=" -Wno-switch-default"
 CFLAGS_COMMON+=" -Wno-long-long"
 CFLAGS_COMMON+=" -Wno-redundant-decls"
+CFLAGS_COMMON+=" -Wno-error=missing-field-initializers"
 
 # Code testing coverage with gcov
 AC_MSG_CHECKING(whether to build with gcov testing)
