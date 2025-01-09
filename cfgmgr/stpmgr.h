@@ -179,13 +179,20 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     int         max_hop;
 }__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
+typedef struct VLAN_MST_ATTR {
+    uint16_t    vlan_id;           // VLAN ID
+    uint8_t     port_count;        // Number of ports in this VLAN
+    PORT_ATTR   ports[0];         // Flexible array for Port attributes
+}__attribute__ ((packed))VLAN_MST_ATTR;
+
 typedef struct MST_INST_CONFIG_MSG{
-    uint8_t     opcode; // enable/disable
-    uint16_t    mst_id;
-    int         priority;
-    uint16_t    vlan_count;
-    VLAN_LIST   vlan_list[0];
+    uint8_t         opcode; // enable/disable
+    uint16_t        mst_id;
+    int             priority;
+    uint16_t        vlan_count;
+    VLAN_MST_ATTR   vlan_list[0];
 }__attribute__ ((packed))MST_INST_CONFIG_MSG;
+
 
 namespace swss {
 
@@ -252,9 +259,7 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
-    vector<string> tokenize(const string &str, const string &delimiter);
     vector<int> parseVlanList(const string &vlanList);
-    string trim(const string &str)
 };
 
 }
@@ -263,20 +268,12 @@ private:
 
 
 /*
-STP_MST_GLOBAL_CONFIG,
+
 STP_MST_INST_CONFIG,
 STP_MST_VLAN_PORT_LIST_CONFIG,
 STP_MST_INST_PORT_CONFIG,
 
-typedef struct STP_MST_GLOBAL_CONFIG_MSG {
-    uint8_t     opcode; // enable/disable
-    uint16_t    revision_number;
-    char        name[STP_SYNC_MSTP_NAME_LEN];
-    int         forward_delay;
-    int         hello_time;
-    int         max_age;
-    int         max_hop;
-}_attribute_ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
+
 
 typedef struct VLAN_LIST{
     uint16_t    vlan_id;

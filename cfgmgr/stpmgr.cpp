@@ -898,89 +898,13 @@ int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
     return (int)vlan_list.size();
 }
 
-void StpMgr::doStpMstGlobalTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
-
-    if (stpGlobalTask == false)
-        return;
-
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        STP_MST_GLOBAL_CONFIG_MSG msg;
-        memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
-
-        KeyOpFieldsValuesTuple t = it->second;
-
-        string key = kfvKey(t);
-        string op = kfvOp(t);
-
-        SWSS_LOG_INFO("STP MST global key %s op %s", key.c_str(), op.c_str());
-        if (op == SET_COMMAND)
-        {
-            if (l2ProtoEnabled != L2_MSTP)
-            {
-                // Wait till STP is configured
-                it++;
-                continue;
-            }
-            msg.opcode = STP_SET_COMMAND;
-            for (auto i : kfvFieldsValues(t))
-            {
-                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
-                if (fvField(i) == "revision_number")
-                {
-                    msg.revision_number = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "name")
-                {
-                    strncpy(msg.name, fvValue(i).c_str(), sizeof(msg.name) - 1);
-                }
-                else if (fvField(i) == "forward_delay")
-                {
-                    msg.forward_delay = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "hello_time")
-                {
-                    msg.hello_time = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "max_age")
-                {
-                    msg.max_age = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "max_hop")
-                {
-                    msg.max_hop = stoi(fvValue(i).c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Error invalid field %s", fvField(i).c_str());
-                }
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            msg.opcode = STP_DEL_COMMAND;
-
-            // Reset to default values if required
-            msg.revision_number = 0;
-            memset(msg.name, 0, sizeof(msg.name));
-            msg.forward_delay = 0;
-            msg.hello_time = 0;
-            msg.max_age = 0;
-            msg.max_hop = 0;
-        }
-
-        sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
-
-        it = consumer.m_toSync.erase(it);
-    }
-}
-
 void StpMgr::doStpMstInstTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
+    // Check if the global task is enabled and if port/mst tasks are enabled
+    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
+        return;
 
     if (stpMstInstTask == false)
         stpMstInstTask = true;
@@ -988,63 +912,117 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        MST_INST_CONFIG_MSG msg;
-        memset(&msg, 0, sizeof(MST_INST_CONFIG_MSG));
+        MST_INST_CONFIG_MSG *msg = NULL;
+        uint32_t len = 0;
+        bool stpEnable = false;
+        int mst_id, priority = 0;
+        string vlanList;
+        int vlanCount = 0;
 
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        SWSS_LOG_INFO("STP MST Instance key %s op %s", key.c_str(), op.c_str());
-        
+        // Extract the MST instance ID from the key
+        string mstKey = key.substr(7); // Remove "STP_MST" prefix
+        size_t colonPos = mstKey.find(":");
+        mst_id = stoi(mstKey.substr(colonPos + 1));
+
+        SWSS_LOG_INFO("MST instance key %s op %s", key.c_str(), op.c_str());
+
         if (op == SET_COMMAND)
         {
-            msg.opcode = STP_SET_COMMAND;
+            if (l2ProtoEnabled == L2_NONE || !isMstInstanceStateOk(key))
+            {
+                // Wait until MST is properly configured
+                it++;
+                continue;
+            }
 
-            // Extract instance ID from the key
-            uint16_t mst_id = stoi(key);
-            msg.mst_id = mst_id;
-
-            // Retrieve bridge priority and VLAN list from the table
             for (auto i : kfvFieldsValues(t))
             {
-                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
-                if (fvField(i) == "bridge_priority")
-                {
-                    msg.priority = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "vlan_list")
-                {
-                    // Split the VLAN list string and populate the vlan_list
-                    string vlanList = fvValue(i);
-                    vector<int> vlanVec = parseVlanList(vlanList);
-                    msg.vlan_count = vlanVec.size();
+                SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
 
-                    int index = 0;
-                    for (auto vlanId : vlanVec)
-                    {
-                        msg.vlan_list[index].vlan_id = vlanId;
-                        index++;
-                    }
+                if (fvField(i) == "priority")
+                {
+                    priority = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "vlans")
+                {
+                    vlanList = fvValue(i);
                 }
             }
 
-            // Send the message to the daemon
-            sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg) + sizeof(VLAN_LIST) * msg.vlan_count, (void *)&msg);
+            // Parse VLAN list
+            vector<int> vlanIds = parseVlanList(vlanList);
+            vlanCount = vlanIds.size();
+
+            // Allocate memory for MST instance message
+            len = sizeof(MST_INST_CONFIG_MSG) + vlanCount * sizeof(VLAN_MST_ATTR);
+            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
+            if (!msg)
+            {
+                SWSS_LOG_ERROR("Memory allocation failed for MST config message for instance %d", mst_id);
+                return;
+            }
+
+            msg->opcode = STP_SET_COMMAND;
+            msg->mst_id = mst_id;
+            msg->priority = priority;
+            msg->vlan_count = vlanCount;
+
+            // Populate VLAN attributes
+            uint16_t idx = 0;
+            for (auto vlan_id : vlanIds)
+            {
+                VLAN_MST_ATTR *vlanAttr = &msg->vlan_list[idx];
+                vlanAttr->vlan_id = vlan_id;
+                vector<PORT_ATTR> portList;
+                int portCnt = getAllVlanMem(vlan_id, portList);
+                vlanAttr->port_count = portCnt;
+
+                // Populate port information for each VLAN
+                for (int i = 0; i < portCnt; i++)
+                {
+                    strncpy(vlanAttr->ports[i].intf_name, portList[i].intf_name, IFNAMSIZ);
+                    vlanAttr->ports[i].mode = portList[i].mode;
+                    vlanAttr->ports[i].enabled = portList[i].enabled;
+                }
+                idx++;
+            }
+
         }
         else if (op == DEL_COMMAND)
         {
-            msg.opcode = STP_DEL_COMMAND;
+            stpEnable = false;
+            if (l2ProtoEnabled == L2_NONE)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
-            // Handle deletion (Reset the VLAN list and bridge priority)
-            msg.mst_id = stoi(key);
-            msg.priority = 0;
-            msg.vlan_count = 0;
+            // Handle disabling/deallocating MST instance
+            len = sizeof(MST_INST_CONFIG_MSG);
+            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
+            if (!msg)
+            {
+                SWSS_LOG_ERROR("Memory allocation failed for MST config message for instance %d", mst_id);
+                return;
+            }
 
-            sendMsgStpd(STP_MST_INST_CONFIG, sizeof(msg), (void *)&msg);
+            msg->opcode = STP_DEL_COMMAND;
+            msg->mst_id = mst_id;
         }
 
+        // Send the MST configuration message to the daemon
+        sendMsgMstp(STP_MST_INST_CONFIG, len, (void *)msg);
+
+        // Free allocated memory
+        if (msg)
+            free(msg);
+
+        // Remove the processed entry from the queue
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -1247,66 +1225,27 @@ uint16_t StpMgr::getStpMaxInstances(void)
 
     return max_stp_instances;
 }
-
-vector<string> StpMgr::tokenize(const string &str, const string &delimiter)
-{
-    vector<string> tokens;
-    size_t pos = 0;
-    string token;
-    string s = str;
-
-    while ((pos = s.find(delimiter)) != string::npos)
-    {
-        token = s.substr(0, pos);
-        tokens.push_back(token);
-        s.erase(0, pos + delimiter.length());
-    }
-    tokens.push_back(s); // Last token
-    return tokens;
-}
-
 // Function to parse the VLAN list and handle ranges
-vector<int> StpMgr::parseVlanList(const string &vlanList)
-{
-    vector<int> vlanVec;
-    vector<string> vlanTokens = tokenize(vlanList, ",");
+vector<int> StpMgr::parseVlanList(const string &vlanList) {
+    vector<int> vlanIds;
+    stringstream ss(vlanList);
+    string item;
 
-    for (auto vlanToken : vlanTokens)
-    {
-        // Trim whitespace
-        vlanToken = trim(vlanToken);
+    while (getline(ss, item, ',')) {
+        if (item.find('-') != string::npos) {
+            // This item is a range, e.g., "5-8"
+            size_t dashPos = item.find('-');
+            int startVlan = stoi(item.substr(0, dashPos));
+            int endVlan = stoi(item.substr(dashPos + 1));
 
-        // Check if the token is a range (e.g., "10-20")
-        size_t dashPos = vlanToken.find('-');
-        if (dashPos != string::npos)
-        {
-            // Range format found
-            int startVlan = stoi(vlanToken.substr(0, dashPos));
-            int endVlan = stoi(vlanToken.substr(dashPos + 1));
-
-            // Add all VLANs in the range
-            for (int vlanId = startVlan; vlanId <= endVlan; vlanId++)
-            {
-                vlanVec.push_back(vlanId);
+            for (int vlan = startVlan; vlan <= endVlan; ++vlan) {
+                vlanIds.push_back(vlan);
             }
-        }
-        else
-        {
-            // Single VLAN ID
-            vlanVec.push_back(stoi(vlanToken));
+        } else {
+            // This is a single VLAN ID, e.g., "2"
+            vlanIds.push_back(stoi(item));
         }
     }
 
-    return vlanVec;
-}
-
-// Utility function to trim leading and trailing spaces from a string
-string StpMgr::trim(const string &str)
-{
-    size_t first = str.find_first_not_of(" \t");
-    if (first == string::npos)
-        return "";
-
-    size_t last = str.find_last_not_of(" \t");
-    return str.substr(first, (last - first + 1));
+    return vlanIds;
 }
