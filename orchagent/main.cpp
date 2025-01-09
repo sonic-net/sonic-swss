@@ -73,7 +73,7 @@ uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -95,6 +95,7 @@ void usage()
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
     cout << "    -t Override create switch timeout, in sec" << endl;
     cout << "    -v vrf: VRF name (default empty)" << endl;
+    cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -448,6 +449,12 @@ int main(int argc, char **argv)
             if (optarg)
             {
                 vrf = optarg;
+            }
+            break;
+        case 'I':
+            if (optarg)
+            {
+                g_heart_beat_interval = atoi(optarg);
             }
             break;
         default: /* '?' */

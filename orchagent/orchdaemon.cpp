@@ -24,7 +24,8 @@ using namespace swss;
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
 
 /* orchagent heart beat message interval */
-#define HEART_BEAT_INTERVAL_MSECS 10 * 1000
+#define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
+long int g_heart_beat_interval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -1093,7 +1094,7 @@ void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_
 {
     // output heart beat message to SYSLOG
     auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - m_lastHeartBeat);
-    if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
+    if (diff.count() >= g_heart_beat_interval)
     {
         m_lastHeartBeat = tcurrent;
         // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html

@@ -56,6 +56,8 @@
 
 using namespace swss;
 
+extern long int g_heart_beat_interval;
+
 class OrchDaemon
 {
 public:
