@@ -1092,6 +1092,12 @@ void OrchDaemon::addOrchList(Orch *o)
 
 void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent)
 {
+    if (g_heart_beat_interval <= 0)
+    {
+        // disable heart beat feature when interval is 0
+        return;
+    }
+
     // output heart beat message to SYSLOG
     auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - m_lastHeartBeat);
     if (diff.count() >= g_heart_beat_interval)
