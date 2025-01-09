@@ -294,39 +294,34 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         return false;
     }
 
-    for (auto action: route_type_actions.items())
-    {
-        if (action.action_type() == dash::route_type::ACTION_TYPE_STATICENCAP)
-        {
-            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION;
-            if (action.encap_type() == dash::route_type::ENCAP_TYPE_VXLAN)
-            {
-                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_VXLAN;
-            }
-            else if (action.encap_type() == dash::route_type::ENCAP_TYPE_NVGRE)
-            {
-                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_NVGRE;
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
-                return false;
-            }
-            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
-
-            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY;
-            outbound_ca_to_pa_attr.value.u32 = action.vni();
-            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
-
-            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
-            to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
-            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
-
-        }
-    }
-
     if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
     {
+        for (auto action: route_type_actions.items())
+        {
+            if (action.action_type() == dash::route_type::ACTION_TYPE_STATICENCAP)
+            {
+                outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION;
+                if (action.encap_type() == dash::route_type::ENCAP_TYPE_VXLAN)
+                {
+                    outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_VXLAN;
+                }
+                else if (action.encap_type() == dash::route_type::ENCAP_TYPE_NVGRE)
+                {
+                    outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_NVGRE;
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
+                    return false;
+                }
+                outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+                outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY;
+                outbound_ca_to_pa_attr.value.u32 = action.vni();
+                outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+            }
+        }
+
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
         outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING;
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
@@ -348,20 +343,35 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         to_sai(ctxt.metadata.overlay_sip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
-
-    if (ctxt.metadata.has_mac_address())
+    else if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_VNET_ENCAP)
     {
-        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
-        memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
+        outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_TUNNEL_MAPPING;
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        if (ctxt.metadata.has_mac_address())
+        {
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
+            memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        }
+        if (ctxt.metadata.has_use_dst_vni())
+        {
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
+            outbound_ca_to_pa_attr.value.booldata = ctxt.metadata.use_dst_vni();
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Invalid routing type %d for OutboundCaToPa", ctxt.metadata.routing_type());
+        return false;
     }
 
-    if (ctxt.metadata.has_use_dst_vni())
-    {
-        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
-        outbound_ca_to_pa_attr.value.booldata = ctxt.metadata.use_dst_vni();
-        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
-    }
+    // mandatory attr for both routing_type PRIVATELINK and VNET_ENCAP
+    outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
+    to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
+    outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,

@@ -119,7 +119,6 @@ class TestDash(TestFlexCountersBase):
         route_action = RouteTypeItem()
         route_action.action_name = "action1"
         route_action.action_type = ACTION_TYPE_STATICENCAP
-        route_action.encap_type = ENCAP_TYPE_NVGRE
         route_type_msg.items.append(route_action)
         dash_db.create_routing_type(self.routing_type, {"pb": route_type_msg.SerializeToString()})
         pb = VnetMapping()
@@ -133,9 +132,10 @@ class TestDash(TestFlexCountersBase):
 
         vnet_ca_to_pa_maps = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_CA_TO_PA_TABLE, min_keys=2)
         attrs = dash_db.get_asic_db_entry(ASIC_OUTBOUND_CA_TO_PA_TABLE, vnet_ca_to_pa_maps[0])
+        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION", attrs, "SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_TUNNEL_MAPPING")
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP", attrs, self.underlay_ip)
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC", attrs, self.mac_address)
-        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION", attrs, "SAI_DASH_ENCAPSULATION_NVGRE")
+        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI", attrs, "false")
 
         vnet_pa_validation_maps = dash_db.wait_for_asic_db_keys(ASIC_PA_VALIDATION_TABLE)
         pa_validation_attrs = dash_db.get_asic_db_entry(ASIC_PA_VALIDATION_TABLE, vnet_pa_validation_maps[0])
