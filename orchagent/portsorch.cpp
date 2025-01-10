@@ -5099,7 +5099,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            string tagging_mode = (port.m_type == Port::TUNNEL)?"tagged":"untagged";
+            string tagging_mode = "untagged";
 
             for (auto i : kfvFieldsValues(t))
             {
