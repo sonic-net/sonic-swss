@@ -657,16 +657,20 @@ bool TeamMgr::removeLag(const string &alias)
 
     {
         ifstream pidfile("/var/run/teamd/" + alias + ".pid");
-        if (pidfile.is_open()) {
+        if (pidfile.is_open())
+        {
             pidfile >> pid;
             SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
-        } else {
+        }
+        else
+        {
             SWSS_LOG_NOTICE("Failed to remove non-existent port channel %s pid...", alias.c_str());
             return false;
         }
     }
 
-    if (kill(pid, SIGTERM)) {
+    if (kill(pid, SIGTERM))
+    {
         SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, strerror(errno));
         return false;
     }

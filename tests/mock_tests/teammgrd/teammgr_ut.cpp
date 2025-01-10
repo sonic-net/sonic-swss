@@ -113,7 +113,8 @@ int cb(const std::string &cmd, std::string &stdout)
     {
         pidFiles["/var/run/teamd/PortChannel198.pid"] = NULL;
     }
-    else {
+    else
+    {
         for (int i = 600; i < 620; i++)
         {
             if (cmd.find(std::string("/usr/bin/teamd -r -t PortChannel") + std::to_string(i)) != std::string::npos)
