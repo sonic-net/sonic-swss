@@ -310,8 +310,6 @@ const request_description_t vnet_route_description = {
         { "adv_prefix",                     REQ_T_IP_PREFIX },
         { "rx_monitor_timer",               REQ_T_UINT },
         { "tx_monitor_timer",               REQ_T_UINT },
-        { "check_directly_connected",       REQ_T_BOOL },
-
     },
     { }
 };
@@ -481,7 +479,6 @@ private:
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
-                    bool check_directly_connected,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>

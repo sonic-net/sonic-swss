@@ -3942,7 +3942,7 @@ class TestVnetOrch(object):
 
         create_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::1,fd:10:1::2,fd:10:1::3',
                            ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3', profile="test_profile",
-                           tx_timer=tx_timer, rx_timer=rx_timer,check_directly_connected=True)
+                           tx_timer=tx_timer, rx_timer=rx_timer,check_directly_connected=False)
 
         # default bfd status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])

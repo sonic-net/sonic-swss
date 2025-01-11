@@ -1080,7 +1080,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                                                NextHopGroupKey& nexthops, string& op, string& profile,
                                                const string& monitoring, NextHopGroupKey& nexthops_secondary,
                                                const IpPrefix& adv_prefix,
-                                               bool check_directly_connected,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -1859,6 +1858,8 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         // when the device goes into TSA.  The following parameter ensures that these session are
         // brought down while transitioning to TSA and brought back up when transitioning to TSB.
         data.emplace_back("shutdown_bfd_during_tsa", "true");
+        // if the monitor invterval is set, use it to override the default value used is the the one set by the BFD Orch
+        // which is 1 second (BFD_SESSION_DEFAULT_TX_INTERVAL, BFD_SESSION_DEFAULT_RX_INTERVAL).
         if (has_monitor_interval)
         {
             FieldValueTuple fvTuple1("tx_interval", to_string(tx_monitor_interval));
@@ -2644,7 +2645,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     bool has_monitor_intervals = false;
     uint64_t rx_monitor_timer = 0;
     uint64_t tx_monitor_timer = 0;
-    bool check_directly_connected = false;
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
@@ -2691,10 +2691,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         {
             tx_monitor_timer = request.getAttrUint(name);
             has_monitor_intervals = true;
-        }
-        else if (name == "check_directly_connected")
-        {
-            check_directly_connected = request.getAttrBool(name);
         }
         else
         {
@@ -2792,7 +2788,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         intervals.tx_monitor_timer = tx_monitor_timer;
         prefix_to_monitor_intervals_[ip_pfx] = intervals;
     }
-    if ( op == DEL_COMMAND)
+    if (op == DEL_COMMAND)
     {
         if (prefix_to_monitor_intervals_.find(ip_pfx) != prefix_to_monitor_intervals_.end())
         {
@@ -2809,7 +2805,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             monitoring,
             nhg_secondary,
             adv_prefix,
-            check_directly_connected,
             monitors);
     }
 
