@@ -130,10 +130,10 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
 
         vid = create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vnet_2000", "100.100.3.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan100", 'Vnet_2000', vid, intf_type="vlan")
+        vnet_obj.check_router_interface(dvs, "Vlan100", 'Vnet_2000', vid)
 
         vid = create_vlan_interface(dvs, "Vlan101", "Ethernet28", "Vnet_2000", "100.100.4.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan101", 'Vnet_2000', vid, intf_type="vlan")
+        vnet_obj.check_router_interface(dvs, "Vlan101", 'Vnet_2000', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000', '10.10.10.1')
@@ -143,12 +143,10 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.1/32")
 
         create_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet_2000', 'Vlan100')
-        # The route to Vlan100's subnet must have already been added to self.ASIC_ROUTE_ENTRY
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000')
 
         create_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet_2000', 'Vlan101')
-        # The route to Vlan101's subnet must have already been added to self.ASIC_ROUTE_ENTRY
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000')
 
         #Create Physical Interface in another Vnet
 
@@ -228,7 +226,7 @@ class TestVnetOrch(object):
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
 
         vid = create_vlan_interface(dvs, "Vlan1001", "Ethernet0", "Vnet_1", "1.1.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan1001", 'Vnet_1', vid, intf_type="vlan")
+        vnet_obj.check_router_interface(dvs, "Vlan1001", 'Vnet_1', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.10/32", 'Vnet_1', '100.1.1.10')
@@ -258,7 +256,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "1.1.1.14/32")
 
         create_vnet_local_routes(dvs, "1.1.10.0/24", 'Vnet_1', 'Vlan1001')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_1', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_1')
 
         create_vnet_entry(dvs, 'Vnet_2', tunnel_name, '2222', "")
 
@@ -266,7 +264,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2', '2222')
 
         vid = create_vlan_interface(dvs, "Vlan1002", "Ethernet4", "Vnet_2", "2.2.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan1002", 'Vnet_2', vid, intf_type="vlan")
+        vnet_obj.check_router_interface(dvs, "Vlan1002", 'Vnet_2', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.10/32", 'Vnet_2', '100.1.1.20')
@@ -283,7 +281,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "2.2.2.11/32")
 
         create_vnet_local_routes(dvs, "2.2.10.0/24", 'Vnet_2', 'Vlan1002')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2')
 
         # Clean-up and verify remove flows
 
@@ -363,10 +361,10 @@ class TestVnetOrch(object):
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
 
         vid = create_vlan_interface(dvs, "Vlan2001", "Ethernet8", "Vnet_10", "5.5.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan2001", 'Vnet_10', vid, intf_type="vlan-one-peer")
+        vnet_obj.check_router_interface(dvs, "Vlan2001", 'Vnet_10', vid)
 
         vid = create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan2002", 'Vnet_20', vid, intf_type="vlan-one-peer")
+        vnet_obj.check_router_interface(dvs, "Vlan2002", 'Vnet_20', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10', '50.1.1.10')
@@ -383,10 +381,10 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "8.8.8.10/32")
 
         create_vnet_local_routes(dvs, "5.5.10.0/24", 'Vnet_10', 'Vlan2001')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_10', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_10')
 
         create_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20', 'Vlan2002')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_20', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_20')
 
         # Clean-up and verify remove flows
 
@@ -440,10 +438,10 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
 
         vid = create_vlan_interface(dvs, "Vlan300", "Ethernet24", 'Vnet3001', "100.100.3.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan300", 'Vnet3001', vid, intf_type="vlan")
+        vnet_obj.check_router_interface(dvs, "Vlan300", 'Vnet3001', vid)
 
         vid = create_vlan_interface(dvs, "Vlan301", "Ethernet28", 'Vnet3001', "100.100.4.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan301",  'Vnet3001', vid, intf_type="vlan")
+        vnet_obj.check_router_interface(dvs, "Vlan301",  'Vnet3001', vid)
 
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000')
         vnet_obj.check_vnet_routes(dvs, 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000', tunnel_name)
@@ -458,10 +456,10 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.2/32")
 
         create_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001', 'Vlan300')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
 
         create_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001', 'Vlan301')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001', vlan_subnet_route=True)
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
 
         #Create Physical Interface in another Vnet
 
