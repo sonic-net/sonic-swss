@@ -6500,7 +6500,8 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
 
     /* Use untagged VLAN as pvid of the member port */
-    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
+    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
+        port.m_type != Port::TUNNEL)
     {
         if(!setPortPvid(port, vlan.m_vlan_info.vlan_id))
         {
@@ -6835,7 +6836,8 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
     /* Restore to default pvid if this port joined this VLAN in untagged mode previously */
-    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
+    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
+        port.m_type != Port::TUNNEL)
     {
         if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
         {
