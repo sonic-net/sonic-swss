@@ -846,6 +846,19 @@ void IntfsOrch::doTask(Consumer &consumer)
                         m_syncdIntfses[alias] = intfs_entry;
                         m_vrfOrch->increaseVrfRefCount(vrf_id);
                     }
+                    else if (m_syncdIntfses[alias].vrf_id != vrf_id)
+                    {
+                        if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                        {
+                            m_vrfOrch->decreaseVrfRefCount(m_syncdIntfses[alias].vrf_id);
+                            m_vrfOrch->increaseVrfRefCount(vrf_id);
+                            m_syncdIntfses[alias].vrf_id = vrf_id;
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%d' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                        }
+                    }
                 }
                 else
                 {
