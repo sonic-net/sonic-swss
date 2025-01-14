@@ -972,12 +972,11 @@ int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
     return (int)vlan_list.size();
 }
 
-void StpMgr::doStpMstInstTask(Consumer &consumer)
+void StpMgr::doStpMSTInstTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    // Check if the global task is enabled and if port/mst tasks are enabled
-    if ((stpGlobalTask and stpMstGlobalTask) == false || (stpPortTask == false && !isStpPortEmpty()))
+    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
         return;
 
     if (stpMstInstTask == false)
@@ -988,115 +987,94 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
     {
         MST_INST_CONFIG_MSG *msg = NULL;
         uint32_t len = 0;
-        bool stpEnable = false;
-        int mst_id, priority = 0;
-        string vlanList;
-        int vlanCount = 0;
 
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        // Extract the MST instance ID from the key
-        string mstKey = key.substr(7); // Remove "STP_MST" prefix
-        size_t colonPos = mstKey.find(":");
-        mst_id = stoi(mstKey.substr(colonPos + 1));
+        string instance = key.substr(11); // Remove "STP_MST|" prefix
+        uint16_t instance_id = static_cast<uint16_t>(stoi(instance.c_str()));
 
-        SWSS_LOG_INFO("MST instance key %s op %s", key.c_str(), op.c_str());
+        uint16_t priority = 32768; // Default bridge priority
+        string vlan_list_str;
+        vector<uint16_t> vlan_ids;
 
+        SWSS_LOG_INFO("STP_MST instance key %s op %s", key.c_str(), op.c_str());
         if (op == SET_COMMAND)
         {
-            if (l2ProtoEnabled == L2_NONE || !isMstInstanceStateOk(key))
-            {
-                // Wait until MST is properly configured
-                it++;
-                continue;
-            }
-
             for (auto i : kfvFieldsValues(t))
             {
                 SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
 
-                if (fvField(i) == "priority")
+                if (fvField(i) == "bridge_priority")
                 {
-                    priority = stoi(fvValue(i).c_str());
+                    priority = static_cast<uint16_t>(stoi((fvValue(i).c_str())));
                 }
-                else if (fvField(i) == "vlans")
+                else if (fvField(i) == "vlan_list")
                 {
-                    vlanList = fvValue(i);
+                    vlan_list_str = fvValue(i);
+                    vlan_ids = parseVlanList(vlan_list_str);
                 }
             }
 
-            // Parse VLAN list
-            vector<int> vlanIds = parseVlanList(vlanList);
-            vlanCount = vlanIds.size();
+            uint32_t vlan_count = vlan_ids.size();
+            len = sizeof(MST_INST_CONFIG_MSG) + vlan_count * sizeof(VLAN_MST_ATTR);
 
-            // Allocate memory for MST instance message
-            len = sizeof(MST_INST_CONFIG_MSG) + vlanCount * sizeof(VLAN_MST_ATTR);
+            for (auto vlan_id : vlan_ids)
+            {
+                vector<PORT_ATTR> port_list;
+                uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_id), port_list);
+
+                len += port_count * sizeof(PORT_ATTR);
+            }
+
             msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
-                SWSS_LOG_ERROR("Memory allocation failed for MST config message for instance %d", mst_id);
+                SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
                 return;
             }
 
             msg->opcode = STP_SET_COMMAND;
-            msg->mst_id = mst_id;
+            msg->mst_id = instance_id;
             msg->priority = priority;
-            msg->vlan_count = vlanCount;
+            msg->vlan_count = vlan_ids.size();
 
-            // Populate VLAN attributes
-            uint16_t idx = 0;
-            for (auto vlan_id : vlanIds)
+            VLAN_MST_ATTR *vlan_attr = msg->vlan_list;
+            for (size_t i = 0; i < vlan_ids.size(); i++)
             {
-                VLAN_MST_ATTR *vlanAttr = &msg->vlan_list[idx];
-                vlanAttr->vlan_id = vlan_id;
-                vector<PORT_ATTR> portList;
-                int portCnt = getAllVlanMem(vlan_id, portList);
-                vlanAttr->port_count = portCnt;
+                vlan_attr->vlan_id = vlan_ids[i];
+                vector<PORT_ATTR> port_list;
+                uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_ids[i]), port_list);
+                vlan_attr->port_count = port_count;
 
-                // Populate port information for each VLAN
-                for (int i = 0; i < portCnt; i++)
+                for (size_t j = 0; j < port_count; j++)
                 {
-                    strncpy(vlanAttr->ports[i].intf_name, portList[i].intf_name, IFNAMSIZ);
-                    vlanAttr->ports[i].mode = portList[i].mode;
-                    vlanAttr->ports[i].enabled = portList[i].enabled;
+                    vlan_attr->ports[j] = port_list[j];
                 }
-                idx++;
-            }
 
+                vlan_attr = (VLAN_MST_ATTR *)((char *)vlan_attr + sizeof(VLAN_MST_ATTR) + port_count * sizeof(PORT_ATTR));
+            }
         }
         else if (op == DEL_COMMAND)
         {
-            stpEnable = false;
-            if (l2ProtoEnabled == L2_NONE)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
-            // Handle disabling/deallocating MST instance
             len = sizeof(MST_INST_CONFIG_MSG);
             msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
-                SWSS_LOG_ERROR("Memory allocation failed for MST config message for instance %d", mst_id);
+                SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
                 return;
             }
 
             msg->opcode = STP_DEL_COMMAND;
-            msg->mst_id = mst_id;
+            msg->mst_id = instance_id;
         }
 
-        // Send the MST configuration message to the daemon
-        sendMsgMstp(STP_MST_INST_CONFIG, len, (void *)msg);
-
-        // Free allocated memory
+        sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
         if (msg)
             free(msg);
 
-        // Remove the processed entry from the queue
         it = consumer.m_toSync.erase(it);
     }
 }
