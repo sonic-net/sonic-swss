@@ -184,23 +184,21 @@ typedef struct VLAN_MST_ATTR {
     PORT_ATTR   ports[0];         // Flexible array for Port attributes
 }__attribute__ ((packed))VLAN_MST_ATTR;
 
-typedef struct MST_INST_CONFIG_MSG{
+typedef struct STP_MST_INST_CONFIG_MSG{
     uint8_t         opcode; // enable/disable
     uint16_t        mst_id;
     int             priority;
     uint16_t        vlan_count;
     VLAN_MST_ATTR   vlan_list[0];
-}__attribute__ ((packed))MST_INST_CONFIG_MSG;
+}__attribute__ ((packed))STP_MST_INST_CONFIG_MSG;
 
 typedef struct STP_MST_INST_PORT_CONFIG_MSG {
-    uint8_t     opcode;  // Command (enable/disable)
-    char        intf_name[STP_IFALIASZ];  // Interface name
-    uint16_t    mst_id;  // MST instance ID
-    VLAN_LIST   vlan_list;  // List of VLAN IDs for the instance
-    int         path_cost;  // Port path cost
-    int         priority;  // Port priority
-}__attribute__ ((packed))STP_MST_INST_PORT_CONFIG_MSG;
-
+    uint8_t     opcode;         // enable/disable
+    char        intf_name[IFNAMSIZ];  // Interface name
+    uint16_t    mst_id;         // MST instance ID
+    int         path_cost;      // Path cost
+    int         priority;       // Port priority
+} __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;
 
 namespace swss {
 
@@ -271,7 +269,8 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
-    void processStpMstInstPortAttr();
+    void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
+                                       vector<FieldValueTuple>& tupEntry);
 };
 
 }

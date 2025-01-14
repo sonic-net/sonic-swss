@@ -32,7 +32,9 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME)
+    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME),
+    m_cfgStpMstInstTable(confDb, CFG_STP_MST_INST_TABLE_NAME),
+    m_cfgStpMstInstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -66,6 +68,8 @@ void StpMgr::doTask(Consumer &consumer)
         doVlanMemUpdateTask(consumer);
     else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
         doStpMstGlobalTask(consumer);
+    else if (table == CFG_STP_MST_PORT_TABLE_NAME)
+        doStpMstInstPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -972,7 +976,7 @@ int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
     return (int)vlan_list.size();
 }
 
-void StpMgr::doStpMSTInstTask(Consumer &consumer)
+void StpMgr::doStpMstInstTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -985,7 +989,7 @@ void StpMgr::doStpMSTInstTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        MST_INST_CONFIG_MSG *msg = NULL;
+        STP_MST_INST_CONFIG_MSG *msg = NULL;
         uint32_t len = 0;
 
         KeyOpFieldsValuesTuple t = it->second;
@@ -1019,7 +1023,7 @@ void StpMgr::doStpMSTInstTask(Consumer &consumer)
             }
 
             uint32_t vlan_count = vlan_ids.size();
-            len = sizeof(MST_INST_CONFIG_MSG) + vlan_count * sizeof(VLAN_MST_ATTR);
+            len = sizeof(STP_MST_INST_CONFIG_MSG) + vlan_count * sizeof(VLAN_MST_ATTR);
 
             for (auto vlan_id : vlan_ids)
             {
@@ -1029,10 +1033,10 @@ void StpMgr::doStpMSTInstTask(Consumer &consumer)
                 len += port_count * sizeof(PORT_ATTR);
             }
 
-            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
+            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
-                SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
+                SWSS_LOG_ERROR("Memory allocation failed for STP_MST_INST_CONFIG_MSG");
                 return;
             }
 
@@ -1059,8 +1063,8 @@ void StpMgr::doStpMSTInstTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            len = sizeof(MST_INST_CONFIG_MSG);
-            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
+            len = sizeof(STP_MST_INST_CONFIG_MSG);
+            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
                 SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
@@ -1074,6 +1078,110 @@ void StpMgr::doStpMSTInstTask(Consumer &consumer)
         sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
         if (msg)
             free(msg);
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
+                                       vector<FieldValueTuple>& tupEntry)
+{
+    STP_MST_INST_PORT_CONFIG_MSG msg;
+    memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
+
+    // Populate the message fields
+    msg.mst_id = mst_id;
+    strncpy(msg.intf_name, intfName.c_str(), STP_IFALIASZ - 1);
+
+    // Set opcode and process the fields from the tuple
+    if (op == SET_COMMAND)
+    {
+        msg.opcode = STP_SET_COMMAND;
+        msg.priority = -1;
+
+        for (auto i : tupEntry)
+        {
+            SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
+
+            if (fvField(i) == "path_cost")
+            {
+                msg.path_cost = stoi(fvValue(i).c_str());
+            }
+            else if (fvField(i) == "priority")
+            {
+                msg.priority = stoi(fvValue(i).c_str());
+            }
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        msg.opcode = STP_DEL_COMMAND;
+    }
+
+    // Send the message to the daemon
+    sendMsgStpd(STP_MST_INST_PORT_CONFIG, sizeof(msg), (void *)&msg);
+}
+
+
+void StpMgr::doStpMstInstPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false)
+        return;
+
+    if (stpMstInstPortTask == false)
+        stpMstInstPortTask = true;
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        STP_MST_INST_PORT_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
+
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        string mstKey = key.substr(10);//Remove MST_INSTANCE keyword
+        size_t found = mstKey.find(CONFIGDB_KEY_SEPARATOR);
+
+        uint16_t mst_id;
+        string intfName;
+        if (found != string::npos)
+        {
+            mst_id = stoi(mstKey.substr(0, found));
+            intfName = mstKey.substr(found + 1);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid key format %s", kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        SWSS_LOG_INFO("STP MST intf key:%s op:%s", key.c_str(), op.c_str());
+
+        if (op == SET_COMMAND)
+        {
+            if ((l2ProtoEnabled == L2_NONE))
+            {
+                // Wait till STP/MST instance is configured
+                it++;
+                continue;
+            }
+        }
+        else
+        {
+            if (l2ProtoEnabled == L2_NONE || (m_mstInstMap[mst_id] == INVALID_INSTANCE))
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
+
+        processStpMstInstPortAttr(op, mst_id, intfName, kfvFieldsValues(t));
 
         it = consumer.m_toSync.erase(it);
     }
