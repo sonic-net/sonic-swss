@@ -5,6 +5,7 @@
 #include "warm_restart.h"
 #include <vector>
 #include <string>
+#include <cstdlib>
 
 #include <iostream>
 #include <algorithm>
@@ -30,19 +31,19 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateVlanTable(statDb, STATE_VLAN_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
-    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME)
-        //m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME)
+    m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
+    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
 
-    stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = false;
+    stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = stpMstGlobalTask = false;
 
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
     int ret = system("ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP");
-    SWSS_LOG_DEBUG("ebtables ret %d", ret); 
+    SWSS_LOG_DEBUG("ebtables ret %d", ret);
 }
 
 void StpMgr::doTask(Consumer &consumer)
@@ -100,7 +101,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     {
                         if (l2ProtoEnabled == L2_NONE)
                         {
-                            const std::string cmd = std::string("") + 
+                            const std::string cmd = std::string("") +
                                 " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
                             std::string res;
                             int ret = swss::exec(cmd, res);
@@ -129,11 +130,11 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
 
             //Free Up all instances
             FREE_ALL_INST_ID();
-    
+
             // Initialize all VLANs to Invalid instance
             fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-            const std::string cmd = std::string("") + 
+            const std::string cmd = std::string("") +
                     " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
             std::string res;
             int ret = swss::exec(cmd, res);
@@ -171,7 +172,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
 
         string key = kfvKey(t);
         string op = kfvOp(t);
-        
+
         string vlanKey = key.substr(4); // Remove Vlan prefix
         int vlan_id = stoi(vlanKey.c_str());
 
@@ -221,7 +222,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
             }
         }
 
-        len = sizeof(STP_VLAN_CONFIG_MSG); 
+        len = sizeof(STP_VLAN_CONFIG_MSG);
         if (stpEnable == true)
         {
             vector<PORT_ATTR> port_list;
@@ -242,17 +243,17 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
                     portCnt = getAllVlanMem(key, port_list);
                     SWSS_LOG_DEBUG("Port count %d", portCnt);
                 }
-            
+
                 len += (uint32_t)(portCnt * sizeof(PORT_ATTR));
             }
 
-            msg = (STP_VLAN_CONFIG_MSG *)calloc(1, len); 
+            msg = (STP_VLAN_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
                 SWSS_LOG_ERROR("mem failed for vlan %d", vlan_id);
                 return;
             }
-            
+
             msg->opcode      = STP_SET_COMMAND;
             msg->vlan_id     = vlan_id;
             msg->newInstance = newInstance;
@@ -281,13 +282,13 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
         {
             if (m_vlanInstMap[vlan_id] == INVALID_INSTANCE)
             {
-                // Already deallocated. NoOp. This can happen when STP 
+                // Already deallocated. NoOp. This can happen when STP
                 // is disabled on a VLAN more than once
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            msg = (STP_VLAN_CONFIG_MSG *)calloc(1, len); 
+            msg = (STP_VLAN_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
                 SWSS_LOG_ERROR("mem failed for vlan %d", vlan_id);
@@ -299,11 +300,85 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
 
             deallocL2Instance(vlan_id);
         }
-        
+
         sendMsgStpd(STP_VLAN_CONFIG, len, (void *)msg);
         if (msg)
             free(msg);
 
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void StpMgr::doStpMstGlobalTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    if (stpMstGlobalTask == false)
+        stpMstGlobalTask = true;
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        STP_MST_GLOBAL_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
+
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_INFO("STP MST global key %s op %s", key.c_str(), op.c_str());
+
+        if (op == SET_COMMAND)
+        {
+            msg.opcode = STP_SET_COMMAND;
+            for (auto i : kfvFieldsValues(t))
+            {
+                SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
+
+                if (fvField(i) == "name")
+                {
+                    strncpy(msg.name, fvValue(i).c_str(), sizeof(msg.name) - 1);
+                }
+                else if (fvField(i) == "revision")
+                {
+                    msg.revision_number = static_cast<uint32_t>(stoi(fvValue(i)));
+                }
+                else if (fvField(i) == "forward_delay")
+                {
+                    msg.forward_delay = static_cast<uint8_t>(stoi(fvValue(i)));
+                }
+                else if (fvField(i) == "hello_time")
+                {
+                    msg.hello_time = static_cast<uint8_t>(stoi(fvValue(i)));
+                }
+                else if (fvField(i) == "max_age")
+                {
+                    msg.max_age = static_cast<uint8_t>(stoi(fvValue(i)));
+                }
+                else if (fvField(i) == "max_hop")
+                {
+                    msg.max_hop = static_cast<uint8_t>(stoi(fvValue(i)));
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid field: %s", fvField(i).c_str());
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            msg.opcode = STP_DEL_COMMAND;
+
+            // Reset all MST global configurations to default
+            memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
+            SWSS_LOG_INFO("MST global configuration deleted.");
+        }
+
+        // Send the populated message to the STP daemon
+        sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
+
+        // Remove the processed task from the queue
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -434,7 +509,7 @@ void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntr
     }
 
     strncpy(msg->intf_name, intfName.c_str(), IFNAMSIZ-1);
-    msg->count = vlanCnt; 
+    msg->count = vlanCnt;
     SWSS_LOG_INFO("Vlan count %d", vlanCnt);
 
     if(msg->count)
@@ -586,7 +661,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
             continue;
         }
-            
+
         SWSS_LOG_INFO("STP vlan mem key:%s op:%s inst:%d", key.c_str(), op.c_str(), m_vlanInstMap[vlan_id]);
         // If STP is running on this VLAN, notify STPd
         if (m_vlanInstMap[vlan_id] != INVALID_INSTANCE && !isLagEmpty(intfName))
@@ -676,7 +751,7 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
             auto elm = m_lagMap.find(po_name);
             if (elm == m_lagMap.end())
             {
-                // First Member added to the LAG 
+                // First Member added to the LAG
                 m_lagMap[po_name] = 1;
                 notifyStpd = true;
             }
@@ -694,7 +769,7 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
 
                 if (elm->second == 0)
                 {
-                    // Last Member deleted from the LAG 
+                    // Last Member deleted from the LAG
                     m_lagMap.erase(po_name);
                     //notifyStpd = true;
                 }
@@ -712,7 +787,7 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
             {
                 //Push STP_PORT configs for this port
                 processStpPortAttr(op, tupEntry, po_name);
-                            
+
                 getAllPortVlan(po_name, vlan_list);
                 //Push STP_VLAN_PORT configs for this port
                 for (auto p = vlan_list.begin(); p != vlan_list.end(); p++)
@@ -727,9 +802,9 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
         }
 
         SWSS_LOG_DEBUG("LagMap");
-        for (auto itr = m_lagMap.begin(); itr != m_lagMap.end(); ++itr) { 
+        for (auto itr = m_lagMap.begin(); itr != m_lagMap.end(); ++itr) {
             SWSS_LOG_DEBUG("PO: %s Cnt:%d", itr->first.c_str(), itr->second);
-        } 
+        }
 
         it = consumer.m_toSync.erase(it);
     }
@@ -842,7 +917,6 @@ int StpMgr::getAllVlanMem(const string &vlanKey, vector<PORT_ATTR>&port_list)
                 SWSS_LOG_ERROR("invalid mode %s", key.c_str());
                 continue;
             }
-
             port_id.enabled = isStpEnabled(intfName);
             strncpy(port_id.intf_name, intfName.c_str(), IFNAMSIZ-1);
             port_list.push_back(port_id);
@@ -885,7 +959,7 @@ int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
                         SWSS_LOG_ERROR("invalid mode %s", key.c_str());
                         continue;
                     }
-            
+
                     vlan.vlan_id = vlan_id;
                     vlan.inst_id = m_vlanInstMap[vlan_id];
                     vlan_list.push_back(vlan);
@@ -903,7 +977,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
     SWSS_LOG_ENTER();
 
     // Check if the global task is enabled and if port/mst tasks are enabled
-    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
+    if ((stpGlobalTask and stpMstGlobalTask) == false || (stpPortTask == false && !isStpPortEmpty()))
         return;
 
     if (stpMstInstTask == false)
@@ -1057,7 +1131,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     if (rc == -1)
     {
 		SWSS_LOG_ERROR("tx_msg send error\n");
-    }   
+    }
     else
     {
         SWSS_LOG_INFO("tx_msg sent %d", rc);
@@ -1118,7 +1192,7 @@ bool StpMgr::isLagStateOk(const string &alias)
 
 bool StpMgr::isLagEmpty(const string &key)
 {
-    size_t po_find = key.find("PortChannel"); 
+    size_t po_find = key.find("PortChannel");
     if (po_find != string::npos)
     {
         // If Lag, check if members present
@@ -1166,7 +1240,7 @@ bool StpMgr::isStpEnabled(const string &intf_name)
             }
         }
     }
-    
+
     SWSS_LOG_NOTICE("STP NOT enabled on %s", intf_name.c_str());
     return false;
 }
@@ -1226,26 +1300,27 @@ uint16_t StpMgr::getStpMaxInstances(void)
     return max_stp_instances;
 }
 // Function to parse the VLAN list and handle ranges
-vector<int> StpMgr::parseVlanList(const string &vlanList) {
-    vector<int> vlanIds;
-    stringstream ss(vlanList);
-    string item;
+std::vector<int> parseVlanList(const std::string &vlanStr) {
+    std::vector<int> vlanList;
+    std::stringstream ss(vlanStr);
+    std::string segment;
 
-    while (getline(ss, item, ',')) {
-        if (item.find('-') != string::npos) {
-            // This item is a range, e.g., "5-8"
-            size_t dashPos = item.find('-');
-            int startVlan = stoi(item.substr(0, dashPos));
-            int endVlan = stoi(item.substr(dashPos + 1));
+    // Split the string by commas
+    while (std::getline(ss, segment, ',')) {
+        size_t dashPos = segment.find('-');
+        if (dashPos != std::string::npos) {
+            // If a dash is found, it's a range like "22-25"
+            int start = std::stoi(segment.substr(0, dashPos));
+            int end = std::stoi(segment.substr(dashPos + 1));
 
-            for (int vlan = startVlan; vlan <= endVlan; ++vlan) {
-                vlanIds.push_back(vlan);
+            // Add all VLANs in the range to the list
+            for (int i = start; i <= end; ++i) {
+                vlanList.push_back(i);
             }
         } else {
-            // This is a single VLAN ID, e.g., "2"
-            vlanIds.push_back(stoi(item));
+            // Single VLAN, add it to the list
+            vlanList.push_back(std::stoi(segment));
         }
     }
-
-    return vlanIds;
+    return vlanList;
 }
