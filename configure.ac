@@ -117,7 +117,7 @@ if test "x$enable_gcov" = "xyes"; then
         AC_MSG_ERROR(not compiling with gcc, which is required for gcov testing)
     fi
 
-    CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage"
+    CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage -fno-inline"
     AC_SUBST(CFLAGS_COMMON)
 
     LDFLAGS+=" -fprofile-arcs -lgcov"
