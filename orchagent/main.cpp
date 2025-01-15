@@ -62,6 +62,9 @@ extern bool gIsNatSupported;
 #define SWSS_RECORD_ENABLE (0x1 << 1)
 #define RESPONSE_PUBLISHER_RECORD_ENABLE (0x1 << 2)
 
+/* orchagent heart beat message interval */
+#define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
+
 string gMySwitchType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
@@ -350,6 +353,7 @@ int main(int argc, char **argv)
     bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
+    long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
     while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:")) != -1)
     {
@@ -454,7 +458,17 @@ int main(int argc, char **argv)
         case 'I':
             if (optarg)
             {
-                g_heart_beat_interval = atoi(optarg);
+                auto interval = atoi(optarg);
+                if (interval >= 0)
+                {
+                    heartBeatInterval = interval;
+                    SWSS_LOG_NOTICE("Setting heartbeat interval as %ld", heartBeatInterval);
+                }
+                else
+                {
+                    heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
+                    SWSS_LOG_ERROR("Invalid input for heartbeat interval: %d. use default interval: %ld", interval, heartBeatInterval);
+                }
             }
             break;
         default: /* '?' */
@@ -822,7 +836,7 @@ int main(int argc, char **argv)
         syncd_apply_view();
     }
 
-    orchDaemon->start();
+    orchDaemon->start(heartBeatInterval);
 
     return 0;
 }

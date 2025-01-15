@@ -56,8 +56,6 @@
 
 using namespace swss;
 
-extern long int g_heart_beat_interval;
-
 class OrchDaemon
 {
 public:
@@ -65,7 +63,7 @@ public:
     ~OrchDaemon();
 
     virtual bool init();
-    void start();
+    void start(long heartBeatInterval);
     bool warmRestoreAndSyncUp();
     void getTaskToSync(vector<string> &ts);
     bool warmRestoreValidation();
@@ -104,9 +102,9 @@ private:
 
     void flush();
 
-    void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent);
+    void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval);
 
-    void freezeAndHeartBeat(unsigned int duration);
+    void freezeAndHeartBeat(unsigned int duration, long interval);
 };
 
 class FabricOrchDaemon : public OrchDaemon
