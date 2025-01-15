@@ -9,6 +9,7 @@
 #include <bitset>
 #include <vector>
 #include <string>
+#include <unordered_set>
 
 #include "dbconnector.h"
 #include "netmsg.h"
@@ -273,6 +274,8 @@ private:
                     std::vector<FieldValueTuple>&tupEntry);
     void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
                                        vector<FieldValueTuple>& tupEntry);
+    std::vector<int> parseVlanList(const std::string &vlanStr);
+    void updateVlanInstanceMap(int instance, const std::vector<int>& newVlanList, bool operation);
 };
 
 }

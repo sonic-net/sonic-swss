@@ -146,7 +146,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     // For MSTP, skip setting rootguard_timeout or set to 0
                     if (msg.stp_mode == L2_MSTP)
                     {
-                        msg.rootguard_timeout = 0;  // Set to zero for MSTP
+                        msg.rootguard_timeout = -1;  // Set to zero for MSTP
                     }
                     else
                     {
@@ -363,6 +363,9 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
 void StpMgr::doStpMstGlobalTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
+        return;
 
     if (stpMstGlobalTask == false)
         stpMstGlobalTask = true;
@@ -1044,7 +1047,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        string instance = key.substr(11); // Remove "STP_MST|" prefix
+        string instance = key.substr(8); // Remove "STP_MST|" prefix
         uint16_t instance_id = static_cast<uint16_t>(stoi(instance.c_str()));
 
         uint16_t priority = 32768; // Default bridge priority
@@ -1067,6 +1070,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
                     vlan_list_str = fvValue(i);
                     vlan_ids = parseVlanList(vlan_list_str);
                 }
+                updateVlanInstanceMap(instance_id, vlan_ids,true);
             }
 
             uint32_t vlan_count = vlan_ids.size();
@@ -1120,6 +1124,8 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
             msg->opcode = STP_DEL_COMMAND;
             msg->mst_id = instance_id;
+            updateVlanInstanceMap(instance_id, vlan_ids,false)
+
         }
 
         sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
@@ -1191,7 +1197,7 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        string mstKey = key.substr(10);//Remove MST_INSTANCE keyword
+        string mstKey = key.substr(9);//Remove INSTANCE keyword
         size_t found = mstKey.find(CONFIGDB_KEY_SEPARATOR);
 
         uint16_t mst_id;
@@ -1433,7 +1439,7 @@ uint16_t StpMgr::getStpMaxInstances(void)
     return max_stp_instances;
 }
 // Function to parse the VLAN list and handle ranges
-std::vector<int> parseVlanList(const std::string &vlanStr) {
+std::vector<int> StpMgr::parseVlanList(const std::string &vlanStr) {
     std::vector<int> vlanList;
     std::stringstream ss(vlanStr);
     std::string segment;
@@ -1456,4 +1462,36 @@ std::vector<int> parseVlanList(const std::string &vlanStr) {
         }
     }
     return vlanList;
+}
+
+void StpMgr::updateVlanInstanceMap(int instance, const std::vector<int>& newVlanList, bool operation) {
+    if (!operation) {
+        // Delete instance: Reset all VLANs mapped to this instance
+        for (int vlan = 0; vlan < MAX_VLANS; ++vlan) {
+            if (m_vlanInstMap[vlan] == instance) {
+                m_vlanInstMap[vlan] = 0; // Reset to default instance
+            }
+        }
+    } else {
+        // Add/Update instance: Handle additions and deletions
+        // Use an unordered_set for efficient lookup of new VLAN list
+        std::unordered_set<int> newVlanSet(newVlanList.begin(), newVlanList.end());
+
+        // Iterate over the current mapping to handle deletions
+        for (int vlan = 0; vlan < MAX_VLANS; ++vlan) {
+            if (m_vlanInstMap[vlan] == instance) {
+                // If a VLAN is mapped to this instance but not in the new list, reset it to 0
+                if (newVlanSet.find(vlan) == newVlanSet.end()) {
+                    m_vlanInstMap[vlan] = 0;
+                }
+            }
+        }
+
+        // Handle additions
+        for (int vlan : newVlanList) {
+            if (vlan >= 0 && vlan < MAX_VLANS) {
+                m_vlanInstMap[vlan] = instance;
+            }
+        }
+    }
 }
