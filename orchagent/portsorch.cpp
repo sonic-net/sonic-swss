@@ -3062,6 +3062,21 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     return rc;
 }
 
+task_process_status PortsOrch::setPortUnreliableLOS(Port &port, bool enabled)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+    attr.id = SAI_PORT_ATTR_UNRELIABLE_LOS_ENABLE;
+    attr.value.booldata = enabled;
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+    return task_success;
+}
+
 task_process_status PortsOrch::setPortAdvSpeeds(Port &port, std::set<sai_uint32_t> &speed_list)
 {
     SWSS_LOG_ENTER();
@@ -4413,6 +4428,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), m_portHlpr.getPortInterfaceTypeStr(pCfg).c_str()
                         );
                     }
+                }
+
+
+                if (pCfg.unreliable_los.is_set)
+		{
+			auto status = setPortUnreliableLOS(p, pCfg.unreliable_los.value);
+			if (status != task_success)
+			{
+			    SWSS_LOG_ERROR(
+				"Failed to set port %s AN from %d to %d",
+				p.m_alias.c_str(), p.m_unreloable_los, pCfg.unreliable_los.value
+                            );
+			}
+                        p.m_unreliable_los = pCfg.unreliable_los.value;
                 }
 
                 if (pCfg.adv_interface_types.is_set)

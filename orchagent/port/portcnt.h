@@ -53,6 +53,12 @@ public:
     } autoneg; // Port autoneg
 
     struct {
+        bool value;
+        bool is_set = false;
+    } unreliable_los; // Port unreliable_los
+
+
+    struct {
         std::set<std::uint32_t> value;
         bool is_set = false;
     } adv_speeds; // Port advertised speeds
