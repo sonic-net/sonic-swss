@@ -214,6 +214,7 @@ def shutdown_link(dvs, db, port):
 def startup_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
+    time.sleep(5)
 
 def run_warm_reboot(dvs):
     dvs.warm_restart_swss("true")
@@ -775,8 +776,7 @@ class TestFineGrainedNextHopGroup(object):
             startup_link(dvs, app_db, i)
             dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
 
-        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)
-
+        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)  
         # Program the route
         ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.5"),
