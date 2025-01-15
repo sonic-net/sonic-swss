@@ -2409,8 +2409,8 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     }
 
     // SAI Call to add tunnel to the VLAN flood domain
-
-    string tagging_mode = "untagged"; 
+    // NOTE: does 'untagged' make the most sense here?
+    string tagging_mode = "untagged";
     gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode);
 
     SWSS_LOG_INFO("remote_vtep=%s vni=%d vlanid=%d ",
@@ -2569,7 +2569,7 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     }
 
     // SAI Call to add tunnel to the VLAN flood domain
-
+    // NOTE: does 'untagged' make the most sense here?
     string tagging_mode = "untagged";
     gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode, end_point_ip);
 
