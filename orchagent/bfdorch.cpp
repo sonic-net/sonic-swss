@@ -23,7 +23,7 @@ using namespace swss;
 #define NUM_BFD_SRCPORT_RETRIES 3
 
 //TODO: remove once this definition is committed in swss-common schema
-#define STATE_BFD_SOFTWARE_SESSION_TABLE_NAME       "SOFTWARE_BFD_SESSION_TABLE"
+#define STATE_BFD_SOFTWARE_SESSION_TABLE_NAME       "BFD_SOFTWARE_SESSION_TABLE"
 
 extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
