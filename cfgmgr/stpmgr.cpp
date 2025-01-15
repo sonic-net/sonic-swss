@@ -70,6 +70,8 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstGlobalTask(consumer);
     else if (table == CFG_STP_MST_PORT_TABLE_NAME)
         doStpMstInstPortTask(consumer);
+    else if (table == CFG_STP_PORT_TABLE_NAME)
+        doStpMstPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -110,18 +112,46 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                             std::string res;
                             int ret = swss::exec(cmd, res);
                             if (ret != 0)
-                                SWSS_LOG_ERROR("ebtables add failed %d", ret);
+                                SWSS_LOG_ERROR("ebtables add failed for PVST %d", ret);
 
                             l2ProtoEnabled = L2_PVSTP;
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
+                    else if (fvValue(i) == "mst")
+                    {
+                        if (l2ProtoEnabled == L2_NONE)
+                        {
+                            const std::string cmd = std::string("") +
+                                " ebtables -A FORWARD -d 01:80:c2:00:00:00 -j DROP";
+                            std::string res;
+                            int ret = swss::exec(cmd, res);
+                            if (ret != 0)
+                                SWSS_LOG_ERROR("ebtables add failed for MSTP %d", ret);
+
+                            l2ProtoEnabled = L2_MSTP;
+                        }
+                        msg.stp_mode = L2_MSTP;
+
+                        // Assign all VLANs to zero instance for MSTP
+                        fill_n(m_vlanInstMap, MAX_VLANS, 0);
+                    }
                     else
-                        SWSS_LOG_ERROR("Error invalid mode %s", fvValue(i).c_str());
+                    {
+                        SWSS_LOG_ERROR("Error: Invalid mode %s", fvValue(i).c_str());
+                    }
                 }
                 else if (fvField(i) == "rootguard_timeout")
                 {
-                    msg.rootguard_timeout = stoi(fvValue(i).c_str());
+                    // For MSTP, skip setting rootguard_timeout or set to 0
+                    if (msg.stp_mode == L2_MSTP)
+                    {
+                        msg.rootguard_timeout = 0;  // Set to zero for MSTP
+                    }
+                    else
+                    {
+                        msg.rootguard_timeout = stoi(fvValue(i).c_str());
+                    }
                 }
             }
 
@@ -130,27 +160,44 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             msg.opcode = STP_DEL_COMMAND;
-            l2ProtoEnabled = L2_NONE;
 
-            //Free Up all instances
+            // Free Up all instances
             FREE_ALL_INST_ID();
 
             // Initialize all VLANs to Invalid instance
             fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-            const std::string cmd = std::string("") +
-                    " ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-            std::string res;
-            int ret = swss::exec(cmd, res);
-            if (ret != 0)
-                SWSS_LOG_ERROR("ebtables del failed %d", ret);
+            // Remove ebtables rule based on protocol mode
+            if (l2ProtoEnabled == L2_PVSTP)
+            {
+                const std::string pvst_cmd =
+                    "ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
+                std::string res_pvst;
+                int ret_pvst = swss::exec(pvst_cmd, res_pvst);
+                if (ret_pvst != 0)
+                    SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
+            }
+            else if (l2ProtoEnabled == L2_MSTP)
+            {
+                const std::string mst_cmd =
+                    "ebtables -D FORWARD -d 01:80:c2:00:00:00 -j DROP";
+                std::string res_mst;
+                int ret_mst = swss::exec(mst_cmd, res_mst);
+                if (ret_mst != 0)
+                    SWSS_LOG_ERROR("ebtables del failed for MSTP %d", ret_mst);
+            }
+
+            l2ProtoEnabled = L2_NONE;
         }
 
+        // Send the message to the daemon
         sendMsgStpd(STP_BRIDGE_CONFIG, sizeof(msg), (void *)&msg);
 
+        // Move to the next item
         it = consumer.m_toSync.erase(it);
     }
 }
+
 
 void StpMgr::doStpVlanTask(Consumer &consumer)
 {
@@ -175,7 +222,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
-        string op = kfvOp(t);
+        string op  = kfvOp(t);
 
         string vlanKey = key.substr(4); // Remove Vlan prefix
         int vlan_id = stoi(vlanKey.c_str());

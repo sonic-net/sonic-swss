@@ -243,6 +243,7 @@ private:
     bool stpVlanPortTask;
     bool stpPortTask;
     bool stpMstGlobalTask;
+    bool stpMstInstTask;
     bool stpMstInstPortTask;
 
     void doTask(Consumer &consumer);
@@ -255,6 +256,7 @@ private:
     void doStpMstGlobalTask(Consumer &consumer);
     void doStpMstInstTask(Consumer &consumer);
     void doStpMstInstPortTask(Consumer &consumer);
+    void doStpMstPortTask(Consumer &consumer);
 
     bool isVlanStateOk(const std::string &alias);
     bool isLagStateOk(const std::string &alias);
@@ -275,54 +277,3 @@ private:
 
 }
 #endif
-
-
-
-/*
-
-/*
-STP_MST_GLOBAL_CONFIG,
-STP_MST_INST_CONFIG,
-STP_MST_VLAN_PORT_LIST_CONFIG,
-STP_MST_INST_PORT_CONFIG,
-
-typedef struct STP_MST_GLOBAL_CONFIG_MSG {
-    uint8_t     opcode; // enable/disable
-    uint16_t    revision_number;
-    char        name[STP_SYNC_MSTP_NAME_LEN];
-    int         forward_delay;
-    int         hello_time;
-    int         max_age;
-    int         max_hop;
-}_attribute_ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
-
-typedef struct VLAN_LIST{
-    uint16_t    vlan_id;
-} _attribute_ ((packed))VLAN_LIST;
-
-typedef struct MST_INST_CONFIG_MSG{
-    uint8_t     opcode; // enable/disable
-    uint16_t    mst_id;
-    int         priority;
-    uint16_t    vlan_count;
-    VLAN_LIST   vlan_list[0];
-}_attribute_ ((packed))MST_INST_CONFIG_MSG;
-
-typedef struct STP_MST_INSTANCE_CONFIG_MSG {
-    uint8_t    mst_count;
-    MST_INST_CONFIG_MSG mst_list[0];
-}_attribute_ ((packed))STP_MST_INSTANCE_CONFIG_MSG;
-
-typedef struct STP_MST_INST_PORT_CONFIG_MSG {
-    uint8_t     opcode; // enable/disable
-    char        intf_name[STP_IFALIASZ];
-    uint16_t    mst_id;
-    int         path_cost;
-    int         priority;
-}_attribute_ ((packed))STP_MST_INST_PORT_CONFIG_MSG;
-
-typedef struct PORT_LIST{
-    char        intf_name[STP_IFALIASZ];
-    int8_t      tagging_mode;
-}PORT_LIST;
-*/
