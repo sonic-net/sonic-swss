@@ -278,7 +278,6 @@ private:
     void doStpMstGlobalTask(Consumer &consumer);
     void doStpMstInstTask(Consumer &consumer);
     void doStpMstInstPortTask(Consumer &consumer);
-    void doStpMstPortTask(Consumer &consumer);
 
     bool isVlanStateOk(const std::string &alias);
     bool isLagStateOk(const std::string &alias);
@@ -293,8 +292,8 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
-    void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
-                                       vector<FieldValueTuple>& tupEntry);
+    void processStpMstInstPortAttr(const std::string op, uint16_t mst_id, const string std::intfName,
+                                       std::vector<FieldValueTuple>& tupEntry);
     std::vector<int> parseVlanList(const std::string &vlanStr);
     void updateVlanInstanceMap(int instance, const std::vector<int>& newVlanList, bool operation);
 };
