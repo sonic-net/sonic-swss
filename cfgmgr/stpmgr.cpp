@@ -544,7 +544,7 @@ void StpMgr::doStpVlanPortTask(Consumer &consumer)
     }
 }
 
-void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntry, const string intfName)
+void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>& tupEntry, const string intfName)
 {
     STP_PORT_CONFIG_MSG *msg;
     uint32_t len = 0;
@@ -562,11 +562,11 @@ void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntr
         return;
     }
 
-    strncpy(msg->intf_name, intfName.c_str(), IFNAMSIZ-1);
+    strncpy(msg->intf_name, intfName.c_str(), IFNAMSIZ - 1);
     msg->count = vlanCnt;
     SWSS_LOG_INFO("Vlan count %d", vlanCnt);
 
-    if(msg->count)
+    if (msg->count)
     {
         int i = 0;
 #pragma GCC diagnostic push
@@ -576,7 +576,7 @@ void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntr
         for (auto p = vlan_list.begin(); p != vlan_list.end(); p++)
         {
             attr[i].inst_id = p->inst_id;
-            attr[i].mode    = p->mode;
+            attr[i].mode = p->mode;
             SWSS_LOG_DEBUG("Inst:%d Mode:%d", p->inst_id, p->mode);
             i++;
         }
@@ -614,13 +614,21 @@ void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntr
             {
                 msg->priority = stoi(fvValue(i).c_str());
             }
-            else if (fvField(i) == "portfast")
+            else if (fvField(i) == "portfast" && l2ProtoEnabled == L2_PVSTP)
             {
-                msg->portfast = (fvValue(i) == "true") ? 1 : 0;
+                msg->pvst_fields.portfast = (fvValue(i) == "true") ? 1 : 0;
             }
-            else if (fvField(i) == "uplink_fast")
+            else if (fvField(i) == "uplink_fast" && l2ProtoEnabled ==L2_PVSTP)
             {
-                msg->uplink_fast = (fvValue(i) == "true") ? 1 : 0;
+                msg->pvst_fields.uplink_fast = (fvValue(i) == "true") ? 1 : 0;
+            }
+            else if (fvField(i) == "edge_port" && l2ProtoEnabled ==L2_MSTP)
+            {
+                msg->mstp_fields.edge_port = (fvValue(i) == "true") ? 1 : 0;
+            }
+            else if (fvField(i) == "link_type" && l2ProtoEnabled == L2_MSTP)
+            {
+                msg->mstp_fields.link_type = static_cast<LinkType>(stoi(fvValue(i).c_str()));
             }
         }
     }
