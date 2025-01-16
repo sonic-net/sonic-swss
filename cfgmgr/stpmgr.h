@@ -291,6 +291,8 @@ private:
                                        std::vector<FieldValueTuple>&tupEntry);
     std::vector<uint16_t> parseVlanList(const std::string &vlanStr);
     void updateVlanInstanceMap(int instance, const std::vector<int>&newVlanList, bool operation);
+    bool isInstanceMapped(uint16_t instance);
+
 };
 
 }

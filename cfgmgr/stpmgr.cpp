@@ -1081,7 +1081,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
                 updateVlanInstanceMap(instance_id, vlan_ids,true);
             }
 
-            uint32_t vlan_count = static_cast<uint32_t> vlan_ids.size();
+            uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
             len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_MST_ATTR));
 
             for (auto vlan_id : vlan_ids)
@@ -1132,7 +1132,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
             msg->opcode = STP_DEL_COMMAND;
             msg->mst_id = instance_id;
-            updateVlanInstanceMap(instance_id, vlan_ids,false)
+            updateVlanInstanceMap(instance_id, static_cast<uint16_t>(vlan_ids),false)
 
         }
 
@@ -1235,7 +1235,7 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
         }
         else
         {
-            if (l2ProtoEnabled == L2_NONE || (m_vlanInstMap[vlan_id] == INVALID_INSTANCE))
+            if (l2ProtoEnabled == L2_NONE || !(isInstanceMapped(mst_id)))
             {
                 it = consumer.m_toSync.erase(it);
                 continue;
@@ -1502,4 +1502,13 @@ void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& ne
             }
         }
     }
+}
+
+bool StpMgr::isInstanceMapped(uint16_t instance) {
+    for (int i = 0; i < 4095; ++i) {
+        if (vlanToInstanceMap[i] == instance) {
+            return true; // Instance found
+        }
+    }
+    return false; // Instance not found
 }

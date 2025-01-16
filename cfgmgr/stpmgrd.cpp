@@ -43,6 +43,8 @@ int main(int argc, char **argv)
         TableConnector conf_stp_vlan_port_table(&conf_db, CFG_STP_VLAN_PORT_TABLE_NAME);
         TableConnector conf_stp_port_table(&conf_db, CFG_STP_PORT_TABLE_NAME);
         TableConnector conf_stp_mst_gloabl_table(&conf_db,CFG_STP_MST_GLOBAL_TABLE_NAME);
+        TableConnector conf_stp_mst_inst_table(&conf_db, CFG_STP_MST_INST_TABLE_NAME);
+        TableConnector conf_stp_mst_inst_port_table(&conf_db, CFG_STP_MST_INST_PORT_TABLE_NAME);
         // VLAN DB Tables
         TableConnector state_vlan_member_table(&state_db, STATE_VLAN_MEMBER_TABLE_NAME);
 
@@ -56,7 +58,9 @@ int main(int argc, char **argv)
             conf_stp_port_table,
             conf_lag_member_table,
             state_vlan_member_table,
-            conf_stp_mst_gloabl_table
+            conf_stp_mst_gloabl_table,
+            conf_stp_mst_inst_table,
+            conf_stp_mst_inst_port_table
         };
 
 
