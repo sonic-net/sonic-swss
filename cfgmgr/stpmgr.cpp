@@ -1038,7 +1038,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || stpMstGlobalTask == false (stpPortTask == false && !isStpPortEmpty()))
+    if (stpGlobalTask == false || stpMstGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
         return;
 
     if (stpMstInstTask == false)
@@ -1060,7 +1060,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
         uint16_t priority = 32768; // Default bridge priority
         string vlan_list_str;
-        vector<uint16_t> vlan_ids;
+        vector<int> vlan_ids;
 
         SWSS_LOG_INFO("STP_MST instance key %s op %s", key.c_str(), op.c_str());
         if (op == SET_COMMAND)
@@ -1081,15 +1081,15 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
                 updateVlanInstanceMap(instance_id, vlan_ids,true);
             }
 
-            uint32_t vlan_count = vlan_ids.size();
+            uint32_t vlan_count = static_cast<uint32_t> vlan_ids.size();
             len = sizeof(STP_MST_INST_CONFIG_MSG) + vlan_count * sizeof(VLAN_MST_ATTR);
 
             for (auto vlan_id : vlan_ids)
             {
                 vector<PORT_ATTR> port_list;
-                uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_id), port_list);
+                uint32_t port_count = (uint32_t)getAllVlanMem("Vlan" + to_string(vlan_id), port_list);
 
-                len += port_count * sizeof(PORT_ATTR);
+                len += static_cast<uint32_t>(port_count * sizeof(PORT_ATTR));
             }
 
             msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
@@ -1102,7 +1102,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->opcode = STP_SET_COMMAND;
             msg->mst_id = instance_id;
             msg->priority = priority;
-            msg->vlan_count = vlan_ids.size();
+            msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
 
             VLAN_MST_ATTR *vlan_attr = msg->vlan_list;
             for (size_t i = 0; i < vlan_ids.size(); i++)

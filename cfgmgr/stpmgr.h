@@ -149,11 +149,6 @@ typedef struct VLAN_LIST{
     uint16_t    vlan_id;
 }VLAN_LIST;
 
-typedef enum {
-    PVST = 0,
-    MSTP = 1
-} StpProtocolType;
-
 typedef struct STP_PORT_CONFIG_MSG {
     uint8_t     opcode;             // enable/disable
     char        intf_name[IFNAMSIZ];
@@ -292,10 +287,10 @@ private:
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
                     std::vector<FieldValueTuple>&tupEntry);
-    void processStpMstInstPortAttr(const std::string op, uint16_t mst_id, const string std::intfName,
-                                       std::vector<FieldValueTuple>& tupEntry);
+    void processStpMstInstPortAttr(const std::string op, uint16_t mst_id, const std::string intfName,
+                                       std::vector<FieldValueTuple>&tupEntry);
     std::vector<int> parseVlanList(const std::string &vlanStr);
-    void updateVlanInstanceMap(int instance, const std::vector<int>& newVlanList, bool operation);
+    void updateVlanInstanceMap(int instance, const std::vector<int>&newVlanList, bool operation);
 };
 
 }
