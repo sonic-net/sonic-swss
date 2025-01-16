@@ -68,10 +68,12 @@ void StpMgr::doTask(Consumer &consumer)
         doVlanMemUpdateTask(consumer);
     else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
         doStpMstGlobalTask(consumer);
+    else if (table == CFG_STP_MST_INST_TABLE_NAME)
+        doStpMstInstTask();
     else if (table == CFG_STP_MST_PORT_TABLE_NAME)
         doStpMstInstPortTask(consumer);
     else if (table == CFG_STP_PORT_TABLE_NAME)
-        doStpMstPortTask(consumer);
+        doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -1132,7 +1134,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
             msg->opcode = STP_DEL_COMMAND;
             msg->mst_id = instance_id;
-            updateVlanInstanceMap(instance_id, vlan_ids,false)
+            updateVlanInstanceMap(instance_id, vlan_ids,false);
 
         }
 
