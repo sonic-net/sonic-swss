@@ -39,7 +39,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
 
-    stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = stpMstGlobalTask = false;
+    stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = stpMstGlobalTask = stpMstInstTask = stpMstInstPortTask = false;
 
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
@@ -364,7 +364,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
+    if (stpGlobalTask == false )
         return;
 
     if (stpMstGlobalTask == false)
@@ -1038,7 +1038,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
+    if (stpGlobalTask == false || stpMstGlobalTask == false (stpPortTask == false && !isStpPortEmpty()))
         return;
 
     if (stpMstInstTask == false)
@@ -1188,7 +1188,7 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false)
+    if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false || stpMstGlobalTask == false)
         return;
 
     if (stpMstInstPortTask == false)
