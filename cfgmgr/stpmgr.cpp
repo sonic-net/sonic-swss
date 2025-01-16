@@ -1060,7 +1060,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
         uint16_t priority = 32768; // Default bridge priority
         string vlan_list_str;
-        vector<int> vlan_ids;
+        vector<uint16_t> vlan_ids;
 
         SWSS_LOG_INFO("STP_MST instance key %s op %s", key.c_str(), op.c_str());
         if (op == SET_COMMAND)
@@ -1071,7 +1071,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
                 if (fvField(i) == "bridge_priority")
                 {
-                    priority = static_cast<uint16_t>(stoi((fvValue(i).c_str())));
+                    priority = stoi((fvValue(i).c_str()));
                 }
                 else if (fvField(i) == "vlan_list")
                 {
@@ -1082,7 +1082,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             }
 
             uint32_t vlan_count = static_cast<uint32_t> vlan_ids.size();
-            len = sizeof(STP_MST_INST_CONFIG_MSG) + vlan_count * sizeof(VLAN_MST_ATTR);
+            len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_MST_ATTR));
 
             for (auto vlan_id : vlan_ids)
             {
@@ -1447,8 +1447,8 @@ uint16_t StpMgr::getStpMaxInstances(void)
     return max_stp_instances;
 }
 // Function to parse the VLAN list and handle ranges
-std::vector<int> StpMgr::parseVlanList(const std::string &vlanStr) {
-    std::vector<int> vlanList;
+std::vector<uint16_t> StpMgr::parseVlanList(const std::string &vlanStr) {
+    std::vector<uint16_t> vlanList;
     std::stringstream ss(vlanStr);
     std::string segment;
 
@@ -1469,10 +1469,10 @@ std::vector<int> StpMgr::parseVlanList(const std::string &vlanStr) {
             vlanList.push_back(std::stoi(segment));
         }
     }
-    return vlanList;
+    return static_cast<uint16_t>(vlanList);
 }
 
-void StpMgr::updateVlanInstanceMap(int instance, const std::vector<int>& newVlanList, bool operation) {
+void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& newVlanList, bool operation) {
     if (!operation) {
         // Delete instance: Reset all VLANs mapped to this instance
         for (int vlan = 0; vlan < MAX_VLANS; ++vlan) {
