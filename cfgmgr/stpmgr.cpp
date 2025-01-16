@@ -1132,7 +1132,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
             msg->opcode = STP_DEL_COMMAND;
             msg->mst_id = instance_id;
-            updateVlanInstanceMap(instance_id, static_cast<uint16_t>(vlan_ids),false)
+            updateVlanInstanceMap(instance_id, vlan_ids,false)
 
         }
 
@@ -1506,7 +1506,7 @@ void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& ne
 
 bool StpMgr::isInstanceMapped(uint16_t instance) {
     for (int i = 0; i < 4095; ++i) {
-        if (vlanToInstanceMap[i] == instance) {
+        if (m_vlanInstMap[i] == static_cast<int>(instance)) {
             return true; // Instance found
         }
     }
