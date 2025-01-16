@@ -1071,7 +1071,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
                 if (fvField(i) == "bridge_priority")
                 {
-                    priority = stoi((fvValue(i).c_str()));
+                    priority = static_cast<uint16_t>(stoi((fvValue(i).c_str())));
                 }
                 else if (fvField(i) == "vlan_list")
                 {
@@ -1152,7 +1152,7 @@ void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const s
 
     // Populate the message fields
     msg.mst_id = mst_id;
-    strncpy(msg.intf_name, intfName.c_str(), STP_IFALIASZ - 1);
+    strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ - 1);
 
     // Set opcode and process the fields from the tuple
     if (op == SET_COMMAND)
@@ -1462,14 +1462,14 @@ std::vector<uint16_t> StpMgr::parseVlanList(const std::string &vlanStr) {
 
             // Add all VLANs in the range to the list
             for (int i = start; i <= end; ++i) {
-                vlanList.push_back(i);
+                vlanList.push_back(static_cast<uint16_t>(i));
             }
         } else {
             // Single VLAN, add it to the list
-            vlanList.push_back(std::stoi(segment));
+            vlanList.push_back(static_cast<uint16_t>(std::stoi(segment)));
         }
     }
-    return static_cast<uint16_t>(vlanList);
+    return vlanList;
 }
 
 void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& newVlanList, bool operation) {
