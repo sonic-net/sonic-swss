@@ -1212,7 +1212,7 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
         string intfName;
         if (found != string::npos)
         {
-            mst_id = stoi(mstKey.substr(0, found));
+            mst_id = static_cast<uint16_t>(stoi(mstKey.substr(0, found)));
             intfName = mstKey.substr(found + 1);
         }
         else
@@ -1235,7 +1235,7 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
         }
         else
         {
-            if (l2ProtoEnabled == L2_NONE || (m_mstInstMap[mst_id] == INVALID_INSTANCE))
+            if (l2ProtoEnabled == L2_NONE || (m_vlanInstMap[vlan_id] == INVALID_INSTANCE))
             {
                 it = consumer.m_toSync.erase(it);
                 continue;
