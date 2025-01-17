@@ -32,9 +32,9 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    m_cfgStpMstGlobalTable(confDb, CFG_STP_MST_GLOBAL_TABLE_NAME),
-    m_cfgStpMstInstTable(confDb, CFG_STP_MST_INST_TABLE_NAME),
-    m_cfgStpMstInstPortTable(confDb, CFG_STP_MST_PORT_TABLE_NAME)
+    m_cfgStpMstGlobalTable(confDb, "STP_MST"),
+    m_cfgStpMstInstTable(confDb, "STP_MST_INST"),
+    m_cfgStpMstInstPortTable(confDb, "STP_MST_PORT")
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -69,7 +69,7 @@ void StpMgr::doTask(Consumer &consumer)
     else if (table == "STP_MST")
         doStpMstGlobalTask(consumer);
     else if (table == "STP_MST_INST")
-        doStpMstInstTask();
+        doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
     else if (table == CFG_STP_PORT_TABLE_NAME)
