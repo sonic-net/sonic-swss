@@ -330,5 +330,63 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_create_count + 1, create_rif_count);
         ASSERT_EQ(current_remove_count + 1, remove_rif_count);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchVrfUpdate)
+    {
+        //create a new vrf
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask(); 
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+        auto new_vrf_reference_count = gVrfOrch->getVrfRefCount("Vrf-Blue");
+        ASSERT_EQ(new_vrf_reference_count, 0);
+
+        // create an interface
+        entries.clear();
+        entries.push_back({"Loopback2", "SET", {}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        IntfsTable m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Loopback2"].vrf_id, gVirtualRouterId);
+
+        // change vrf and check if it worked
+        entries.clear();
+        entries.push_back({"Loopback2", "SET", { {"vrf_name", "Vrf-Blue"}}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        auto new_vrf_updated_reference_count = gVrfOrch->getVrfRefCount("Vrf-Blue");
+        ASSERT_EQ(new_vrf_reference_count + 1, new_vrf_updated_reference_count);
+        m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Loopback2"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
+
+        // create an interface
+        entries.clear();
+        entries.push_back({"Loopback3", "SET", {}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);
+
+        // Add IP address to the interface
+        entries.clear();
+        entries.push_back({"Loopback3:3.3.3.3/32", "SET", {{"scope", "global"},{"family", "IPv4"}}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // change vrf and check it doesn't affect the interface due to existing IP
+        entries.clear();
+        entries.push_back({"Loopback3", "SET", { {"vrf_name", "Vrf-Blue"}}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
     }
 }
