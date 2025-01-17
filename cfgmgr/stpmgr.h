@@ -196,9 +196,9 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
 }__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
 typedef struct VLAN_MST_ATTR {
+    PORT_ATTR   ports[0];         // Flexible array for Port attributes
     uint16_t    vlan_id;           // VLAN ID
     uint8_t     port_count;        // Number of ports in this VLAN
-    PORT_ATTR   ports[0];         // Flexible array for Port attributes
 }__attribute__ ((packed))VLAN_MST_ATTR;
 
 typedef struct STP_MST_INST_CONFIG_MSG{
