@@ -2022,6 +2022,10 @@ bool PortsOrch::setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set PFC mode %d to port id 0x%" PRIx64 " (rc:%d)", pfc_asym, port.m_port_id, status);
+        if (status == SAI_STATUS_NOT_SUPPORTED)
+        {
+            return true;
+        }
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
