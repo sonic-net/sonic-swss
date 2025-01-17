@@ -66,11 +66,11 @@ void StpMgr::doTask(Consumer &consumer)
         doLagMemUpdateTask(consumer);
     else if (table == STATE_VLAN_MEMBER_TABLE_NAME)
         doVlanMemUpdateTask(consumer);
-    else if (table == CFG_STP_MST_GLOBAL_TABLE_NAME)
+    else if (table == "STP_MST")
         doStpMstGlobalTask(consumer);
-    else if (table == CFG_STP_MST_INST_TABLE_NAME)
+    else if (table == "STP_MST_INST")
         doStpMstInstTask();
-    else if (table == CFG_STP_MST_PORT_TABLE_NAME)
+    else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
     else if (table == CFG_STP_PORT_TABLE_NAME)
         doStpPortTask(consumer);
