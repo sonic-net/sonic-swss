@@ -1105,7 +1105,9 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->priority = priority;
             msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
 
-            VLAN_MST_ATTR *vlan_attr = msg->vlan_list;
+            VLAN_MST_ATTR *vlan_attr = nullptr;
+            memcpy(&vlan_attr, &(msg->vlan_list), sizeof(vlan_attr));
+
             for (size_t i = 0; i < vlan_ids.size(); i++)
             {
                 vlan_attr->vlan_id = vlan_ids[i];
@@ -1120,6 +1122,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
                 vlan_attr = (VLAN_MST_ATTR *)((char *)vlan_attr + sizeof(VLAN_MST_ATTR) + port_count * sizeof(PORT_ATTR));
             }
+
         }
         else if (op == DEL_COMMAND)
         {
