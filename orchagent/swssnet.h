@@ -64,6 +64,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
     switch(sip.family)
     {
         case AF_INET:
+            memset((void*)&dst, 0, sizeof(dst));
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
             dst.addr.ip4 = sip.ip_addr.ipv4_addr;
             dst.mask.ip4 = 0xFFFFFFFF;
