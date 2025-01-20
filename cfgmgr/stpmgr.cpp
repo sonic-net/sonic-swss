@@ -1086,11 +1086,10 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
             len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_MST_ATTR));
 
+            vector<PORT_ATTR> port_list;
             for (auto vlan_id : vlan_ids)
             {
-                vector<PORT_ATTR> port_list;
                 uint32_t port_count = (uint32_t)getAllVlanMem("Vlan" + to_string(vlan_id), port_list);
-
                 len += static_cast<uint32_t>(port_count * sizeof(PORT_ATTR));
             }
 
