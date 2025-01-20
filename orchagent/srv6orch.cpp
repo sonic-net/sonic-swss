@@ -148,35 +148,33 @@ void Srv6Orch::addMySidCfgCacheEntry(const string& my_sid_key, const vector<Fiel
 {
     auto key_list = tokenize(my_sid_key, '|');
     auto locator = key_list[0];
-    auto my_sid_addr = key_list[1];
+    auto my_sid_prefix = key_list[1];
 
-    string dscp_mode_cfg = "uniform";
-    sai_tunnel_dscp_mode_t dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
-    for (const auto& fv : fvs)
+    auto cfg = fvsGetValue(fvs, "decap_dscp_mode", false);
+    if (!cfg)
     {
-        if (fvField(fv) == "decap_dscp_mode")
-        {
-            dscp_mode_cfg = fvValue(fv);
-            if (!mySidDscpModeToSai(dscp_mode_cfg, dscp_mode))
-            {
-                SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid_addr.c_str(), dscp_mode_cfg.c_str());
-                return;
-            }
-            break;
-        }
+        SWSS_LOG_ERROR("MySID entry %s doesn't have mandatory decap_dscp_mode configuration", my_sid_prefix.c_str());
+        return;
     }
 
-    my_sid_dscp_cfg_cache_.insert({my_sid_addr, {locator, dscp_mode}});
-    SWSS_LOG_INFO("Saving MySID entry %s %s DSCP mode %s", locator.c_str(), my_sid_addr.c_str(), dscp_mode_cfg.c_str());
+    sai_tunnel_dscp_mode_t dscp_mode;
+    if (!mySidDscpModeToSai(*cfg, dscp_mode))
+    {
+        SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid_prefix.c_str(), cfg->c_str());
+        return;
+    }
+
+    my_sid_dscp_cfg_cache_.insert({my_sid_prefix, {locator, dscp_mode}});
+    SWSS_LOG_INFO("Saving MySID entry %s %s DSCP mode %s", locator.c_str(), my_sid_prefix.c_str(), cfg->c_str());
 }
 
 void Srv6Orch::removeMySidCfgCacheEntry(const string& my_sid_key)
 {
     auto key_list = tokenize(my_sid_key, '|');
     auto locator = key_list[0];
-    auto my_sid_addr = key_list[1];
+    auto my_sid_prefix = key_list[1];
 
-    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_addr);
+    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
     for (auto it = cfg_cache.first; it != cfg_cache.second; ++it)
     {
         if (it->second.first == locator)
@@ -202,15 +200,17 @@ void Srv6Orch::mySidCfgCacheRefresh()
 
 bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode)
 {
-    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_addr);
+    auto my_sid_prefix = my_sid_addr + "/" + to_string(locator_cfg.block_len + locator_cfg.node_len);
+
+    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
     if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
     {
         mySidCfgCacheRefresh();
 
-        cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_addr);
+        cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
         if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
         {
-            SWSS_LOG_ERROR("SRv6 MySID entry %s is not available in the CONFIG_DB", my_sid_addr.c_str());
+            SWSS_LOG_INFO("SRv6 MySID entry %s is not available in the CONFIG_DB", my_sid_prefix.c_str());
             return false;
         }
     }
@@ -223,7 +223,7 @@ bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocat
         const Srv6MySidDscpCfgCacheVal& cache_val = cache_start->second;
         dscp_mode = cache_val.second;
 
-        SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s in the cache", my_sid_addr.c_str(), cache_val.first.c_str());
+        SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s in the cache", my_sid_prefix.c_str(), cache_val.first.c_str());
         return true;
     }
 
@@ -236,7 +236,7 @@ bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocat
     auto found = reverseLookupLocator(locator_candidates, locator_cfg, locator);
     if (!found)
     {
-        SWSS_LOG_ERROR("Cannot find a locator in the CONFIG DB for MySID Entry %s", my_sid_addr.c_str());
+        SWSS_LOG_ERROR("Cannot find a locator in the CONFIG DB for MySID Entry %s", my_sid_prefix.c_str());
         return false;
     }
 
@@ -245,7 +245,7 @@ bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocat
         const Srv6MySidDscpCfgCacheVal& cache_val = it->second;
         if (cache_val.first == locator)
         {
-            SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s after locator reverse lookup", my_sid_addr.c_str(), locator.c_str());
+            SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s after locator reverse lookup", my_sid_prefix.c_str(), locator.c_str());
             dscp_mode = cache_val.second;
             return true;
         }
@@ -1024,9 +1024,17 @@ bool Srv6Orch::mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t e
     return false;
 }
 
-bool Srv6Orch::mySidTunnelRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior)
+bool Srv6Orch::mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode)
 {
-    return end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46;
+    if (end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN &&
+        end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46)
+    {
+        return false;
+    }
+
+    auto locator_cfg = getMySidEntryLocatorCfg(sai_entry);
+
+    return getMySidEntryDscpMode(my_sid_addr, locator_cfg, dscp_mode);
 }
 
 bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string adj, const string end_action)
@@ -1148,21 +1156,11 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         nh_update = true;
     }
 
-    if (mySidTunnelRequired(end_behavior))
+    sai_tunnel_dscp_mode_t dscp_mode;
+    if (mySidTunnelRequired(my_sid_string, my_sid_entry, end_behavior, dscp_mode))
     {
-        sai_tunnel_dscp_mode_t dcsp_mode;
-        auto locator_cfg = getMySidEntryLocatorCfg(my_sid_entry);
-        auto ok = getMySidEntryDscpMode(my_sid_string, locator_cfg, dcsp_mode);
-        if (!ok)
-        {
-            SWSS_LOG_ERROR("Failed to get dscp mode for MySID %s", my_sid_string.c_str());
-            return false;
-        }
-
-        srv6_my_sid_table_[key_string].dscp_mode = dcsp_mode;
-
         sai_object_id_t tunnel_oid;
-        ok = createMySidIpInIpTunnel(dcsp_mode, tunnel_oid);
+        auto ok = createMySidIpInIpTunnel(dscp_mode, tunnel_oid);
         if (!ok)
         {
             return false;
@@ -1172,15 +1170,18 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         ok = createMySidIpInIpTunnelTermEntry(tunnel_oid, my_sid_entry.sid, term_entry_oid);
         if (!ok)
         {
-            removeMySidIpInIpTunnel(dcsp_mode);
+            removeMySidIpInIpTunnel(dscp_mode);
             return false;
         }
 
         srv6_my_sid_table_[key_string].tunnel_term_entry = term_entry_oid;
+        srv6_my_sid_table_[key_string].dscp_mode = dscp_mode;
 
         attr.id = SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID;
         attr.value.oid = tunnel_oid;
         attributes.push_back(attr);
+
+        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD;
     }
 
     attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR;
@@ -1283,9 +1284,10 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
           m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
     }
 
-    if (mySidTunnelRequired(endBehavior))
+    auto tunnel_term_entry = srv6_my_sid_table_[my_sid_string].tunnel_term_entry;
+    if (tunnel_term_entry != SAI_NULL_OBJECT_ID)
     {
-        auto ok = removeMySidIpInIpTunnelTermEntry(srv6_my_sid_table_[my_sid_string].tunnel_term_entry);
+        auto ok = removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
         if (!ok)
         {
             return false;

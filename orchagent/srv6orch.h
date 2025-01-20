@@ -44,8 +44,8 @@ struct MySidEntry
     sai_my_sid_entry_endpoint_behavior_t endBehavior;
     string            endVrfString; // Used for END.T, END.DT4, END.DT6 and END.DT46,
     string            endAdjString; // Used for END.X, END.DX4, END.DX6
-    sai_tunnel_dscp_mode_t dscp_mode; // Used for UDT46
-    sai_object_id_t   tunnel_term_entry; // Used for UDT46
+    sai_tunnel_dscp_mode_t dscp_mode;    // Used for decapsulation configuration
+    sai_object_id_t   tunnel_term_entry; // Used for decapsulation configuration
 };
 
 struct MySidIpInIpTunnel
@@ -129,7 +129,7 @@ class Srv6Orch : public Orch, public Observer
         bool mySidExists(const string mysid_string);
         bool mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
-        bool mySidTunnelRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
+        bool mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode);
         void srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert);
         size_t srv6TunnelNexthopSize(const string srv6_source);
         bool initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_t dscp_mode);

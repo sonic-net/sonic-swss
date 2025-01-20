@@ -1259,9 +1259,6 @@ class TestSrv6MySidFpmsyncd(object):
         # enable VRF strict mode
         dvs.runcmd("sysctl -w net.vrf.strict_mode=1")
 
-        # create an empty entry in confg db. The UDT46 entry processing will query config db for optional dscp_mode configuration
-        self.cdb.create_entry("SRV6_MY_SIDS", "loc1|fc00:0:2:ff05::", {"NULL": "NULL"})
-
         # configure srv6 usid locator
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
 
@@ -1294,8 +1291,6 @@ class TestSrv6MySidFpmsyncd(object):
         # verify that the mysid has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries))
 
-        self.cdb.delete_entry("SRV6_MY_SIDS", "loc1|fc00:0:2:ff05::")
-
         # unconfigure srv6 locator
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
 
@@ -1310,15 +1305,15 @@ class TestSrv6MySidFpmsyncd(object):
 
     def add_mysid_cfgdb(self, locator, prefix, addr, dscp_mode):
         self.cdb.create_entry("SRV6_MY_LOCATORS", locator, {"prefix": prefix, "block_len": "32", "node_len": "16", "func_len": "16", "arg_len": "0"})
-        self.cdb.create_entry("SRV6_MY_SIDS", f'{locator}|{addr}', {"decap_dscp_mode": dscp_mode})
+        self.cdb.create_entry("SRV6_MY_SIDS", f'{locator}|{addr}/48', {"decap_dscp_mode": dscp_mode})
 
     def remove_mysid_cfgdb(self, locator, addr):
-        self.cdb.delete_entry("SRV6_MY_SIDS", f"{locator}|{addr}")
+        self.cdb.delete_entry("SRV6_MY_SIDS", f"{locator}|{addr}/48")
         self.cdb.delete_entry("SRV6_MY_LOCATORS", locator)
 
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.14'),
                         reason="This test requires Linux kernel 5.14 or higher")
-    def test_Srv6MySidUDT46TunnelDscpMode(self, dvs, testlog):
+    def test_Srv6MySidUNTunnelDscpMode(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
         if 'dplane_fpm_sonic' not in output:
@@ -1339,7 +1334,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         # Create MySID entry with dscp_mode uniform
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
-        dvs.runcmd("ip -6 route add fc00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("ip -6 route add fc00:0:2:ff05::/128 encap seg6local action End vrftable {} dev sr0".format(self.vrf_table_id))
 
         self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 1)
@@ -1351,7 +1346,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         # Create MySID entry with dscp_mode pipe
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fd00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
-        dvs.runcmd("ip -6 route add fd00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("ip -6 route add fd00:0:2:ff05::/128 encap seg6local action End vrftable {} dev sr0".format(self.vrf_table_id))
 
         self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fd00:0:2:ff05::")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 2)
@@ -1366,6 +1361,8 @@ class TestSrv6MySidFpmsyncd(object):
         self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_pipe)
         self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL")
         self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL")
+        self.verify_attribute_value(my_sid_table, my_sid_uniform, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
+        self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
 
         # Validate tunnel term configuration
         self.verify_attribute_value(tunnel_term_table, mysid_uniform_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", tunnel_uniform)
@@ -1375,7 +1372,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         # Add another MySID entry with dscp_mode pipe
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fe00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
-        dvs.runcmd("ip -6 route add fe00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("ip -6 route add fe00:0:2:ff05::/128 encap seg6local action End vrftable {} dev sr0".format(self.vrf_table_id))
 
         self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fe00:0:2:ff05::")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 3)
@@ -1387,9 +1384,9 @@ class TestSrv6MySidFpmsyncd(object):
         self.verify_attribute_value(my_sid_table, my_sid_pipe2, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_pipe)
 
         # Remove MySID entries
-        dvs.runcmd("ip -6 route del fc00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
-        dvs.runcmd("ip -6 route del fd00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
-        dvs.runcmd("ip -6 route del fe00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("ip -6 route del fc00:0:2:ff05::/128 encap seg6local action End vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("ip -6 route del fd00:0:2:ff05::/128 encap seg6local action End vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("ip -6 route del fe00:0:2:ff05::/128 encap seg6local action End vrftable {} dev sr0".format(self.vrf_table_id))
 
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fd00:0:2:ff05::")
