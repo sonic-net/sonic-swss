@@ -70,6 +70,7 @@ class TestVxlanOrchP2MP(object):
 
         vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
         vxlan_obj.create_evpn_remote_vni(dvs, 'Vlan100', '7.7.7.7', '1000')
+        vxlan_obj.check_vxlan_tunnel_state_table(dvs, '6.6.6.6', '7.7.7.7')
 
         print("Testing VLAN 100 extension")
         vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '7.7.7.7')
@@ -82,6 +83,9 @@ class TestVxlanOrchP2MP(object):
 
         print("Testing VLAN 102 extension")
         vxlan_obj.check_vlan_extension_p2mp(dvs, '102', '6.6.6.6', '7.7.7.7')
+
+        # Make sure no new state entries were created
+        vxlan_obj.check_vxlan_tunnel_state_table(dvs, '6.6.6.6', '7.7.7.7')
 
         print("Testing another remote endpoint to 8.8.8.8")
         vxlan_obj.create_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8', '1000')
@@ -125,6 +129,8 @@ class TestVxlanOrchP2MP(object):
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)
+        vxlan_obj.check_vxlan_tunnel_state_table_delete(dvs, '7.7.7.7')
+        vxlan_obj.check_vxlan_tunnel_state_table_delete(dvs, '8.8.8.8')
         vxlan_obj.remove_vlan(dvs, "100")
         vxlan_obj.remove_vlan(dvs, "101")
         vxlan_obj.remove_vlan(dvs, "102")
