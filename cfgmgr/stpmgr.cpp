@@ -992,6 +992,7 @@ int StpMgr::getAllVlanMem(const string &vlanKey, vector<PORT_ATTR>&port_list)
 }
 
 
+
 int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
 {
     VLAN_ATTR vlan;
