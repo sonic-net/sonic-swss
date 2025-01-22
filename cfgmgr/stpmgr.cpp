@@ -1114,7 +1114,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
                 uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_ids[i]), port_list);
                 vlan_attr->port_count = port_count;
 
-                if(vlan_attr->count)
+                if(vlan_attr->port_count)
                 {
                 int i = 0;
                 PORT_ATTR *attr = msg->vlan_list->ports;
