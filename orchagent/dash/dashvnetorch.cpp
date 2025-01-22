@@ -407,7 +407,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     pa_refcount_table_[pa_ref_key] = 1;
     SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
                     underlay_ip_str.c_str());
-    return true;
+    return false;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)

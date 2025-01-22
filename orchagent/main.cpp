@@ -324,7 +324,7 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDbNative("orchagent");
+    swss::Logger::linkToDbNative("orchagent", "INFO");
 
     SWSS_LOG_ENTER();
 
