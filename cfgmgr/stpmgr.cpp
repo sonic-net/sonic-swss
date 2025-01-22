@@ -1107,7 +1107,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->priority = priority;
             msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
 
-            VLAN_MST_ATTR *vlan_attr = msg->vlan_list;;
+            VLAN_MST_ATTR *vlan_attr = (VLAN_MST_ATTR *)&msg->vlan_list;;
             for (size_t i = 0; i < vlan_ids.size(); i++){
                 vlan_attr->vlan_id = vlan_ids[i];
                 vector<PORT_ATTR> port_list;
