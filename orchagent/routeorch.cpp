@@ -2436,10 +2436,10 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
         /*
          * Clean up the VRF routing table if
          * 1. there is no routing entry in the VRF routing table and
-         * 2. there is no pending creating rouing entry in gRouteBulker
-         * The ideal way of the 2nd condition is to check pending creating entries of a certain VRF, which we can not do.
-         * However, we can not check whether there is a pending creating entry of a certain VRF in the gRouteBulker
-         * So, we use a strict condition here.
+         * 2. there is no pending bulk creation routing entry in gRouteBulker
+         * The ideal way of the 2nd condition is to check pending bulk creation entries of a certain VRF.
+         * However, we can not do that unless going over all entries in gRouteBulker.
+         * So, we use above strict conditions here
          */
         if (it_route_table->second.size() == 0 && gRouteBulker.creating_entries_count() == 0)
         {
