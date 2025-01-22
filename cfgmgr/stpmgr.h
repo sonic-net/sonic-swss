@@ -208,7 +208,7 @@ typedef struct STP_MST_INST_CONFIG_MSG{
     int             priority;
     uint16_t        vlan_count;
     VLAN_MST_ATTR   vlan_list[0];
-}__attribute__ ((packed))STP_MST_INST_CONFIG_MSG;
+}STP_MST_INST_CONFIG_MSG;
 
 typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint8_t     opcode;         // enable/disable
