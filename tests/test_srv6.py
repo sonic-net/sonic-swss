@@ -313,7 +313,7 @@ class TestSrv6Mysid(object):
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
                 assert fv[1] == next_hop_ipv4_id
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDX4"
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
 
@@ -331,7 +331,7 @@ class TestSrv6Mysid(object):
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
                 assert fv[1] == next_hop_ipv6_id
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDX6"
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
 
@@ -1181,7 +1181,7 @@ class TestSrv6MySidFpmsyncd(object):
         assert status == True
         for fv in fvs:
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT4"
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_VRF":
                 assert fv[1] == self.vrf_id
 
@@ -1228,7 +1228,7 @@ class TestSrv6MySidFpmsyncd(object):
         assert status == True
         for fv in fvs:
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT6"
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_VRF":
                 assert fv[1] == self.vrf_id
 
@@ -1278,7 +1278,7 @@ class TestSrv6MySidFpmsyncd(object):
         assert status == True
         for fv in fvs:
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
-                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46"
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46"
             if fv[0] == "SAI_MY_SID_ENTRY_ATTR_VRF":
                 assert fv[1] == self.vrf_id
 
