@@ -1763,8 +1763,16 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
 
 void PortsOrch::setHostTxReady(Port port, const std::string &status)
 {
-    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
-    m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
+    vector<FieldValueTuple> tuples;
+    bool exist;
+
+    /* If the port is revmoed, don't need to update StateDB*/
+    exist = m_portStateTable.get(port.m_alias, tuples);
+    if (exist)
+    {
+        SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
+    }
 }
 
 bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
@@ -6500,7 +6508,8 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
 
     /* Use untagged VLAN as pvid of the member port */
-    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
+    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
+        port.m_type != Port::TUNNEL)
     {
         if(!setPortPvid(port, vlan.m_vlan_info.vlan_id))
         {
@@ -6835,7 +6844,8 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
     /* Restore to default pvid if this port joined this VLAN in untagged mode previously */
-    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
+    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
+        port.m_type != Port::TUNNEL)
     {
         if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
         {
