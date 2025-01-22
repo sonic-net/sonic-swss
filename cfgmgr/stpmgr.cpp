@@ -1059,7 +1059,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        string instance = key.substr(8); // Remove "STP_MST|" prefix
+        string instance = key.substr(13); // Remove "MST_INSTANCE|" prefix
         uint16_t instance_id = static_cast<uint16_t>(stoi(instance.c_str()));
 
         uint16_t priority = 32768; // Default bridge priority
@@ -1107,22 +1107,20 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->priority = priority;
             msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
 
-            VLAN_MST_ATTR *vlan_attr = nullptr;
+            VLAN_MST_ATTR *vlan_attr = (VLAN_MST_ATTR *)&msg->vlan_list;;
             memcpy(&vlan_attr, &(msg->vlan_list), sizeof(vlan_attr));
 
-            for (size_t i = 0; i < vlan_ids.size(); i++)
-            {
+            for (size_t i = 0; i < vlan_ids.size(); i++){
                 vlan_attr->vlan_id = vlan_ids[i];
                 vector<PORT_ATTR> port_list;
                 uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_ids[i]), port_list);
                 vlan_attr->port_count = port_count;
 
-                for (size_t j = 0; j < port_count; j++)
-                {
+                for (size_t j = 0; j < port_count; j++){
                     vlan_attr->ports[j] = port_list[j];
                 }
 
-                vlan_attr = (VLAN_MST_ATTR *)((char *)vlan_attr + sizeof(VLAN_MST_ATTR) + port_count * sizeof(PORT_ATTR));
+                vlan_attr++;
             }
 
         }
@@ -1518,3 +1516,30 @@ bool StpMgr::isInstanceMapped(uint16_t instance) {
     }
     return false; // Instance not found
 }
+
+
+
+/*
+            msg->opcode = STP_SET_COMMAND;
+            msg->mst_id = instance_id;
+            msg->priority = priority;
+            msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
+
+            // Handling VLAN attributes dynamically
+            VLAN_MST_ATTR *vlan_attr = (VLAN_MST_ATTR *)&msg->vlan_list;
+
+            for (size_t i = 0; i < vlan_ids.size(); i++) {
+                vlan_attr->vlan_id = vlan_ids[i];
+                vector<PORT_ATTR> port_list;
+                uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_ids[i]), port_list);
+                vlan_attr->port_count = port_count;
+
+                // Copying ports dynamically into the vlan_attr
+                for (size_t j = 0; j < port_count; j++) {
+                    vlan_attr->ports[j] = port_list[j];
+                }
+
+                // Move to next VLAN_MST_ATTR, accounting for the dynamic port count
+                vlan_attr = (VLAN_MST_ATTR *)((char *)vlan_attr + sizeof(VLAN_MST_ATTR) + port_count * sizeof(PORT_ATTR));
+
+*/
