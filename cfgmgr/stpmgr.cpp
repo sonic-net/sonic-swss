@@ -1107,17 +1107,25 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->priority = priority;
             msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
 
-            VLAN_MST_ATTR *vlan_attr = (VLAN_MST_ATTR *)&msg->vlan_list;;
-            memcpy(&vlan_attr, &(msg->vlan_list), sizeof(vlan_attr));
-
+            VLAN_MST_ATTR *vlan_attr = msg->vlan_list;;
             for (size_t i = 0; i < vlan_ids.size(); i++){
                 vlan_attr->vlan_id = vlan_ids[i];
                 vector<PORT_ATTR> port_list;
                 uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_ids[i]), port_list);
                 vlan_attr->port_count = port_count;
 
-                for (size_t j = 0; j < port_count; j++){
-                    vlan_attr->ports[j] = port_list[j];
+                if(vlan_attr->count)
+                {
+                int i = 0;
+                PORT_ATTR *attr = msg->vlan_list->ports;
+                for (auto p = port_list.begin(); p != port_list.end(); p++)
+                {
+                    attr[i].mode    = p->mode;
+                    attr[i].enabled = p->enabled;
+                    strncpy(attr[i].intf_name, p->intf_name, IFNAMSIZ);
+                    SWSS_LOG_DEBUG("MemIntf: %s", p->intf_name);
+                    i++;
+                }
                 }
 
                 vlan_attr++;
