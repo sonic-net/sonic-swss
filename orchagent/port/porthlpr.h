@@ -19,7 +19,7 @@ public:
     bool fecIsOverrideRequired(const std::string &str) const;
 
     std::string getAutonegStr(const PortConfig &port) const;
-    std::string PortHelper::getUnreliableLosStr(const PortConfig &port) const;
+    std::string getUnreliableLosStr(const PortConfig &port) const;
     std::string getPortInterfaceTypeStr(const PortConfig &port) const;
     std::string getAdvInterfaceTypesStr(const PortConfig &port) const;
     std::string getFecStr(const PortConfig &port) const;
