@@ -62,6 +62,9 @@ extern bool gIsNatSupported;
 #define SWSS_RECORD_ENABLE (0x1 << 1)
 #define RESPONSE_PUBLISHER_RECORD_ENABLE (0x1 << 2)
 
+/* orchagent heart beat message interval */
+#define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
+
 string gMySwitchType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
@@ -73,7 +76,7 @@ uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -95,6 +98,7 @@ void usage()
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
     cout << "    -t Override create switch timeout, in sec" << endl;
     cout << "    -v vrf: VRF name (default empty)" << endl;
+    cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -349,8 +353,9 @@ int main(int argc, char **argv)
     bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
+    long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:")) != -1)
     {
         switch (opt)
         {
@@ -448,6 +453,22 @@ int main(int argc, char **argv)
             if (optarg)
             {
                 vrf = optarg;
+            }
+            break;
+        case 'I':
+            if (optarg)
+            {
+                auto interval = atoi(optarg);
+                if (interval >= 0)
+                {
+                    heartBeatInterval = interval;
+                    SWSS_LOG_NOTICE("Setting heartbeat interval as %ld", heartBeatInterval);
+                }
+                else
+                {
+                    heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
+                    SWSS_LOG_ERROR("Invalid input for heartbeat interval: %d. use default interval: %ld", interval, heartBeatInterval);
+                }
             }
             break;
         default: /* '?' */
@@ -815,7 +836,7 @@ int main(int argc, char **argv)
         syncd_apply_view();
     }
 
-    orchDaemon->start();
+    orchDaemon->start(heartBeatInterval);
 
     return 0;
 }
