@@ -140,11 +140,19 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     }
 
     sai_direction_lookup_entry_t direction_lookup_entry;
+    vector<sai_attribute_t> direction_lookup_attrs;
     direction_lookup_entry.switch_id = gSwitchId;
     direction_lookup_entry.vni = entry.vm_vni();
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION;
     appliance_attr.value.u32 = SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION;
-    status = sai_dash_direction_lookup_api->create_direction_lookup_entry(&direction_lookup_entry, attr_count, &appliance_attr);
+    direction_lookup_attrs.push_back(appliance_attr);
+
+    appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE;
+    appliance_attr.value.u32 = SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC;
+    direction_lookup_attrs.push_back(appliance_attr);
+
+    status = sai_dash_direction_lookup_api->create_direction_lookup_entry(&direction_lookup_entry,
+                (uint32_t)direction_lookup_attrs.size(), direction_lookup_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create direction lookup entry for %s", appliance_id.c_str());

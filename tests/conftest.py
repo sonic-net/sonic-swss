@@ -737,6 +737,21 @@ class DockerVirtualSwitch:
         self.runcmd(['sh', '-c', 'pkill -9 zebra'])
         time.sleep(5)
 
+    def stop_teamsyncd(self):
+        self.runcmd(['sh', '-c', 'pkill -9 teamsyncd'])
+
+        time.sleep(5)
+
+    def start_teamsyncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl start teamsyncd'])
+
+        time.sleep(5)
+
+    def restart_teammgrd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl restart teammgrd'])
+
+        time.sleep(5)
+
     # deps: warm_reboot
     def start_fpmsyncd(self):
         self.runcmd(['sh', '-c', 'supervisorctl start fpmsyncd'])
