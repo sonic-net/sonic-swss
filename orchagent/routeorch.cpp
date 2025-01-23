@@ -543,6 +543,14 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
             continue;
         }
 
+        // Route NHOP Group is already swapped by default route nh memeber . do not delete actual nexthop again.
+   
+        if (nhopgroup->second.is_default_route_nh_swap)
+        {
+           continue;
+        }
+ 
+
         nexthop_id = nhopgroup->second.nhopgroup_members[nexthop].next_hop_id;
         status = sai_next_hop_group_api->remove_next_hop_group_member(nexthop_id);
 
