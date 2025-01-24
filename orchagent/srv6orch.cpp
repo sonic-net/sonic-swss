@@ -125,18 +125,18 @@ bool Srv6Orch::getLocatorCfgFromDb(const string& locator, MySidLocatorCfg& cfg)
 
 bool Srv6Orch::reverseLookupLocator(const vector<string>& candidates, const MySidLocatorCfg& locator_cfg, string& locator)
 {
-    for (const auto& canididate: candidates)
+    for (const auto& candidate: candidates)
     {
         MySidLocatorCfg cfg;
-        auto ok = getLocatorCfgFromDb(canididate, cfg);
+        auto ok = getLocatorCfgFromDb(candidate, cfg);
         if (!ok) {
             continue;
         }
 
         if (locator_cfg == cfg)
         {
-            SWSS_LOG_DEBUG("Found a locator %s matching the config", canididate.c_str());
-            locator = canididate;
+            SWSS_LOG_DEBUG("Found a locator %s matching the config", candidate.c_str());
+            locator = candidate;
             return true;
         }
     }
@@ -200,7 +200,7 @@ void Srv6Orch::mySidCfgCacheRefresh()
 
 bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode)
 {
-    auto my_sid_prefix = my_sid_addr + "/" + to_string(locator_cfg.block_len + locator_cfg.node_len);
+    auto my_sid_prefix = my_sid_addr + "/" + to_string(locator_cfg.block_len + locator_cfg.node_len + locator_cfg.func_len);
 
     auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
     if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
