@@ -2039,6 +2039,26 @@ class TestNextHopGroup(TestNextHopGroupBase):
             assert rt_nhopsids == default_nhopsids
             assert rt_nhgmids != default_nhgmids
 
+            # bring links up one-by-one
+            # Bring link up in random order to verify sequence id is as per order
+            for i, val in enumerate([2,1,0]):
+                self.flap_intf(i, 'down')
+                time.sleep(1)
+
+                keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+                assert len(keys) == 12
+
+            # bring links up one-by-one
+            # Bring link up in random order to verify sequence id is as per order
+            for i, val in enumerate([2,1,0]):
+                self.flap_intf(i, 'up')
+                time.sleep(1)
+
+                keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+                assert len(keys) == 12
+
             # Remove route 2.2.2.0/24
             self.rt_ps._del(rtprefix)
             time.sleep(1)
