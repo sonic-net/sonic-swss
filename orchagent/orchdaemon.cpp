@@ -220,11 +220,17 @@ bool OrchDaemon::init()
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
 
-    vector<string> srv6_tables = {
-        APP_SRV6_SID_LIST_TABLE_NAME,
-        APP_SRV6_MY_SID_TABLE_NAME
+    TableConnector srv6_sid_list_table(m_applDb, APP_SRV6_SID_LIST_TABLE_NAME);
+    TableConnector srv6_my_sid_table(m_applDb, APP_SRV6_MY_SID_TABLE_NAME);
+    TableConnector srv6_my_sid_cfg_table(m_configDb, CFG_SRV6_MY_SID_TABLE_NAME);
+
+    vector<TableConnector> srv6_tables = {
+        srv6_sid_list_table,
+        srv6_my_sid_table,
+        srv6_my_sid_cfg_table
     };
-    gSrv6Orch = new Srv6Orch(m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
+
+    gSrv6Orch = new Srv6Orch(m_configDb, m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
 
     const int routeorch_pri = 5;
