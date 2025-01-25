@@ -89,7 +89,9 @@ class TestSrv6Mysid(object):
         return get_created_entry(self.adb.db_connection, table, existed_entries)
 
     def remove_l3_intf(self, interface):
+        initial_interface_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
         self.cdb.delete_entry("INTERFACE", interface)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", len(initial_interface_entries) - 1)
 
     def get_nexthop_id(self, ip_address):
         next_hop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
@@ -687,7 +689,9 @@ class TestSrv6MySidFpmsyncd(object):
         return get_created_entry(self.adb.db_connection, table, existed_entries)
 
     def remove_l3_intf(self, interface):
+        initial_interface_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
         self.cdb.delete_entry("INTERFACE", interface)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", len(initial_interface_entries) - 1)
 
     def get_nexthop_id(self, ip_address):
         next_hop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
@@ -808,9 +812,8 @@ class TestSrv6MySidFpmsyncd(object):
         self.remove_ip_address("Ethernet104", "192.0.2.2/30")
 
         # remove interface
-        initial_interface_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
         self.remove_l3_intf("Ethernet104")
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", len(initial_interface_entries) - 1)
+
 
     def test_AddRemoveSrv6MySidEnd(self, dvs, testlog):
 
@@ -821,7 +824,7 @@ class TestSrv6MySidFpmsyncd(object):
         self.setup_srv6(dvs)
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end behavior
         dvs.runcmd("ip -6 route add fc00:0:1:64::/128 encap seg6local action End dev sr0")
@@ -857,6 +860,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+
     def test_AddRemoveSrv6MySidEndX(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -866,7 +870,7 @@ class TestSrv6MySidFpmsyncd(object):
         self.setup_srv6(dvs)
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.x behavior
         dvs.runcmd("ip -6 route add fc00:0:1:65::/128 encap seg6local action End.X nh6 2001::1 dev sr0")
@@ -906,6 +910,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.11'),
                         reason="This test requires Linux kernel 5.11 or higher")
     def test_AddRemoveSrv6MySidEndDT4(self, dvs, testlog):
@@ -920,7 +925,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("sysctl -w net.vrf.strict_mode=1")
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.dt4 behavior
         dvs.runcmd("ip -6 route add fc00:0:1:6b::/128 encap seg6local action End.DT4 vrftable {} dev sr0".format(self.vrf_table_id))
@@ -956,6 +961,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+
     def test_AddRemoveSrv6MySidEndDT6(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -965,7 +971,7 @@ class TestSrv6MySidFpmsyncd(object):
         self.setup_srv6(dvs)
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.dt6 behavior
         dvs.runcmd("ip -6 route add fc00:0:1:6b::/128 encap seg6local action End.DT6 vrftable {} dev sr0".format(self.vrf_table_id))
@@ -1003,6 +1009,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.14'),
                         reason="This test requires Linux kernel 5.14 or higher")
     def test_AddRemoveSrv6MySidEndDT46(self, dvs, testlog):
@@ -1017,7 +1024,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("sysctl -w net.vrf.strict_mode=1")
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.dt46 behavior
         dvs.runcmd("ip -6 route add fc00:0:1:6b::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
@@ -1052,6 +1059,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
 
         self.teardown_srv6(dvs)
+
 
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('6.1'),
                         reason="This test requires Linux kernel 6.1 or higher")
@@ -1099,6 +1107,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
 
         self.teardown_srv6(dvs)
+
 
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('6.6'),
                         reason="This test requires Linux kernel 6.6 or higher")
@@ -1148,6 +1157,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
 
         self.teardown_srv6(dvs)
+
 
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.11'),
                         reason="This test requires Linux kernel 5.11 or higher")
@@ -1199,6 +1209,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+
     def test_AddRemoveSrv6MySidUDT6(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1245,6 +1256,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
 
         self.teardown_srv6(dvs)
+
 
     @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.14'),
                         reason="This test requires Linux kernel 5.14 or higher")
