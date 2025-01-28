@@ -821,7 +821,7 @@ class TestSrv6MySidFpmsyncd(object):
         self.setup_srv6(dvs)
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end behavior
         dvs.runcmd("ip -6 route add fc00:0:1:64::/128 encap seg6local action End dev sr0")
@@ -866,7 +866,7 @@ class TestSrv6MySidFpmsyncd(object):
         self.setup_srv6(dvs)
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.x behavior
         dvs.runcmd("ip -6 route add fc00:0:1:65::/128 encap seg6local action End.X nh6 2001::1 dev sr0")
@@ -920,7 +920,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("sysctl -w net.vrf.strict_mode=1")
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.dt4 behavior
         dvs.runcmd("ip -6 route add fc00:0:1:6b::/128 encap seg6local action End.DT4 vrftable {} dev sr0".format(self.vrf_table_id))
@@ -965,7 +965,7 @@ class TestSrv6MySidFpmsyncd(object):
         self.setup_srv6(dvs)
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.dt6 behavior
         dvs.runcmd("ip -6 route add fc00:0:1:6b::/128 encap seg6local action End.DT6 vrftable {} dev sr0".format(self.vrf_table_id))
@@ -1017,7 +1017,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("sysctl -w net.vrf.strict_mode=1")
 
         # configure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/64 block-len 32 node-len 16 func-bits 16\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16\"")
 
         # create srv6 mysid end.dt46 behavior
         dvs.runcmd("ip -6 route add fc00:0:1:6b::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
