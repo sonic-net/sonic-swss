@@ -22,9 +22,6 @@ using namespace swss;
 #define BFD_SRCPORTMAX 65536
 #define NUM_BFD_SRCPORT_RETRIES 3
 
-//TODO: remove once this definition is committed in swss-common schema
-#define STATE_BFD_SOFTWARE_SESSION_TABLE_NAME       "BFD_SOFTWARE_SESSION_TABLE"
-
 extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
 extern sai_object_id_t      gVirtualRouterId;

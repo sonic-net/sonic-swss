@@ -1,8 +1,6 @@
 from swsscommon import swsscommon
 
-#Replace with swsscommon.SOFTWARE_BFD_SESSION_STATE_TABLE once those changes are in master
-#SOFT_BFD__STATE_TABLE = swsscommon.STATE_BFD_SOFTWARE_SESSION_TABLE_NAME
-SOFT_BFD_STATE_TABLE = "BFD_SOFTWARE_SESSION_TABLE"
+SOFT_BFD_STATE_TABLE = swsscommon.STATE_BFD_SOFTWARE_SESSION_TABLE_NAME
 
 class TestSoftBfd(object):
     def setup_db(self, dvs):
