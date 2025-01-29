@@ -381,7 +381,7 @@ TEST_F(FpmSyncdResponseTest, TestIPv6NextHopAdd)
     Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
 
     vector<FieldValueTuple> fieldValues;
-    string key = "ID" + to_string(test_id);
+    string key = to_string(test_id);
     nexthop_group_table.get(key, fieldValues);
 
     // onNextHopMsg only updates m_nh_groups unless the nhg is marked as installed
@@ -452,8 +452,8 @@ TEST_F(FpmSyncdResponseTest, TestSkipSpecialInterfaces)
 
 TEST_F(FpmSyncdResponseTest, TestNextHopGroupKeyString)
 {
-    EXPECT_EQ(m_mockRouteSync.getNextHopGroupKeyAsString(1), "ID1");
-    EXPECT_EQ(m_mockRouteSync.getNextHopGroupKeyAsString(1234), "ID1234");
+    EXPECT_EQ(m_mockRouteSync.getNextHopGroupKeyAsString(1), "1");
+    EXPECT_EQ(m_mockRouteSync.getNextHopGroupKeyAsString(1234), "1234");
 }
 
 TEST_F(FpmSyncdResponseTest, TestGetNextHopGroupFields)
@@ -530,7 +530,7 @@ TEST_F(FpmSyncdResponseTest, TestUpdateNextHopGroupDb)
         m_mockRouteSync.updateNextHopGroupDb(nhg);
 
         vector<FieldValueTuple> fieldValues;
-        nexthop_group_table.get("ID1", fieldValues);
+        nexthop_group_table.get("1", fieldValues);
 
         EXPECT_EQ(fieldValues.size(), 2);
         EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
@@ -559,7 +559,7 @@ TEST_F(FpmSyncdResponseTest, TestUpdateNextHopGroupDb)
         ASSERT_NE(it, m_mockRouteSync.m_nh_groups.end());
         EXPECT_TRUE(it->second.installed);
         vector<FieldValueTuple> fieldValues;
-        nexthop_group_table.get("ID3", fieldValues);
+        nexthop_group_table.get("3", fieldValues);
         EXPECT_EQ(fieldValues.size(), 3);
         EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
         EXPECT_EQ(fvValue(fieldValues[0]), "192.168.1.1,192.168.1.2");
@@ -575,7 +575,7 @@ TEST_F(FpmSyncdResponseTest, TestUpdateNextHopGroupDb)
         m_mockRouteSync.updateNextHopGroupDb(nhg);
 
         vector<FieldValueTuple> fieldValues;
-        nexthop_group_table.get("ID4", fieldValues);
+        nexthop_group_table.get("4", fieldValues);
 
         EXPECT_EQ(fieldValues.size(), 2);
         EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
@@ -590,7 +590,7 @@ TEST_F(FpmSyncdResponseTest, TestUpdateNextHopGroupDb)
         m_mockRouteSync.updateNextHopGroupDb(nhg);
 
         vector<FieldValueTuple> fieldValues;
-        nexthop_group_table.get("ID5", fieldValues);
+        nexthop_group_table.get("5", fieldValues);
 
         EXPECT_EQ(fieldValues.size(), 2);
         EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
@@ -740,7 +740,7 @@ TEST_F(FpmSyncdResponseTest, TestNextHopGroupAdd)
 
     Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
     vector<FieldValueTuple> fieldValues;
-    string key = "ID" + to_string(group_id);
+    string key = to_string(group_id);
     nexthop_group_table.get(key, fieldValues);
 
     ASSERT_EQ(fieldValues.size(), 3) << "Wrong number of fields in DB";
@@ -886,7 +886,7 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
 
         for (const auto& fv : fvs) {
             if (fvField(fv) == "nexthop_group") {
-                EXPECT_EQ(fvValue(fv), "ID2");
+                EXPECT_EQ(fvValue(fv), "2");
             } else if (fvField(fv) == "protocol") {
                 EXPECT_EQ(fvValue(fv), "static");
             }
@@ -894,7 +894,7 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
 
         vector<FieldValueTuple> group_fvs;
         Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
-        EXPECT_TRUE(nexthop_group_table.get("ID2", group_fvs));
+        EXPECT_TRUE(nexthop_group_table.get("2", group_fvs));
 
         // clean up
         free(nlh1);

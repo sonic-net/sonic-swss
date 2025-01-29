@@ -1672,7 +1672,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         const auto itg = m_nh_groups.find(nhg_id);
         if(itg == m_nh_groups.end())
         {
-            SWSS_LOG_DEBUG("NextHop group id %d not found. Dropping the route %s", nhg_id, destipprefix);
+            SWSS_LOG_ERROR("NextHop group id %d not found. Dropping the route %s", nhg_id, destipprefix);
             return;
         }
         NextHopGroup& nhg = itg->second;
@@ -1866,10 +1866,11 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
             SWSS_LOG_INFO("New nexthop group message!");
             struct nexthop_grp *nha_grp = (struct nexthop_grp *)RTA_DATA(tb[NHA_GROUP]);
             grp_count = (int)(RTA_PAYLOAD(tb[NHA_GROUP]) / sizeof(*nha_grp));
-
-            if(grp_count > MAX_MULTIPATH_NUM)
+            if (grp_count > MAX_MULTIPATH_NUM)
+            {
+                SWSS_LOG_ERROR("Nexthop group count (%d) exceeds the maximum allowed (%d). Clamping to maximum.", grp_count, MAX_MULTIPATH_NUM);
                 grp_count = MAX_MULTIPATH_NUM;
-
+            }
             for (int i = 0; i < grp_count; i++) {
                     grp[i].id = nha_grp[i].id;
                     /*
@@ -1917,19 +1918,20 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
                 }
             }
         }
-        if(grp_count)
+        if (grp_count > 0)
         {
-            vector<pair<uint32_t,uint8_t>> group;
-            for(int i = 0; i < grp_count; i++)
+            vector<pair<uint32_t, uint8_t>> group(grp_count);
+            for (int i = 0; i < grp_count; i++)
             {
-                group.push_back(std::make_pair(grp[i].id, grp[i].weight));
+                group[i] = std::make_pair(grp[i].id, grp[i].weight);
             }
+
             auto it = m_nh_groups.find(id);
-            if(it != m_nh_groups.end())
+            if (it != m_nh_groups.end())
             {
                 NextHopGroup &nhg = it->second;
                 nhg.group = group;
-                if(nhg.installed)
+                if (nhg.installed)
                 {
                     updateNextHopGroupDb(nhg);
                 }
@@ -2630,7 +2632,7 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
  */
 const string RouteSync::getNextHopGroupKeyAsString(uint32_t id) const
 {
-    return string("ID") + to_string(id);
+    return to_string(id);
 }
 
 /*
