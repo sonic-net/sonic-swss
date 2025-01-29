@@ -152,51 +152,66 @@ bool FgNhgOrch::bake()
 void FgNhgOrch::calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry)
 {
     SWSS_LOG_ENTER();
-    uint32_t num_banks = 0;
-    vector<uint32_t> memb_per_bank;
-    for (auto nh : fgNhgEntry->next_hops)
-    {
-        while (nh.second.bank + 1 > num_banks)
-        {
-            num_banks++;
-            memb_per_bank.push_back(0);
-        }
-        memb_per_bank[nh.second.bank] = memb_per_bank[nh.second.bank] + 1;
-    }
 
-    uint32_t buckets_per_nexthop = fgNhgEntry->real_bucket_size/((uint32_t)fgNhgEntry->next_hops.size());
-    uint32_t extra_buckets = fgNhgEntry->real_bucket_size - (buckets_per_nexthop*((uint32_t)fgNhgEntry->next_hops.size()));
-    uint32_t split_extra_buckets_among_bank = extra_buckets/num_banks;
-    extra_buckets = extra_buckets - (split_extra_buckets_among_bank*num_banks);
+    vector<uint32_t> memb_per_bank;
+    uint32_t buckets_per_nexthop;
+    uint32_t extra_buckets;
+    uint32_t split_extra_buckets_among_bank;
+    uint32_t num_banks = 0;
+    if (fgNhgEntry->nhg_mode == FGNexthopMode::DYNAMIC_FGNHG)
+    {
+        // For dynamic mode there is no bank configuration, so a single bank is used
+        num_banks = 1;
+        memb_per_bank.push_back(fgNhgEntry->max_next_hops); // all nexthops are in bank 0
+        buckets_per_nexthop = fgNhgEntry->real_bucket_size / fgNhgEntry->max_next_hops;
+        extra_buckets = fgNhgEntry->real_bucket_size - (buckets_per_nexthop * fgNhgEntry->max_next_hops);
+    }
+    else
+    {
+        for (auto nh : fgNhgEntry->next_hops)
+        {
+            while (nh.second.bank + 1 > num_banks)
+            {
+                num_banks++;
+                memb_per_bank.push_back(0);
+            }
+            memb_per_bank[nh.second.bank] = memb_per_bank[nh.second.bank] + 1;
+        }
+
+        buckets_per_nexthop = fgNhgEntry->real_bucket_size / ((uint32_t)fgNhgEntry->next_hops.size());
+        extra_buckets = fgNhgEntry->real_bucket_size - (buckets_per_nexthop * ((uint32_t)fgNhgEntry->next_hops.size()));
+    }
+    split_extra_buckets_among_bank = extra_buckets / num_banks;
+    extra_buckets = extra_buckets - (split_extra_buckets_among_bank * num_banks);
 
     uint32_t prev_idx = 0;
 
     for (uint32_t i = 0; i < memb_per_bank.size(); i++)
     {
-        BankIndexRange bir;
-        bir.start_index = prev_idx;
-        bir.end_index = bir.start_index + (buckets_per_nexthop * memb_per_bank[i]) + split_extra_buckets_among_bank - 1;
+        HashIndexRange hIdxRange;
+        hIdxRange.start_index = prev_idx;
+        hIdxRange.end_index = hIdxRange.start_index + (buckets_per_nexthop * memb_per_bank[i]) + split_extra_buckets_among_bank - 1;
         if (extra_buckets > 0)
         {
-            bir.end_index = bir.end_index + 1;
+            hIdxRange.end_index = hIdxRange.end_index + 1;
             extra_buckets--;
         }
         if (i == fgNhgEntry->hash_bucket_indices.size())
         {
-            fgNhgEntry->hash_bucket_indices.push_back(bir);
+            fgNhgEntry->hash_bucket_indices.push_back(hIdxRange);
         }
         else
         {
-            fgNhgEntry->hash_bucket_indices[i] = bir;
+            fgNhgEntry->hash_bucket_indices[i] = hIdxRange;
         }
-        prev_idx = bir.end_index + 1;
+        prev_idx = hIdxRange.end_index + 1;
         SWSS_LOG_INFO("Calculate_bank_hash_bucket_start_indices: bank %d, si %d, ei %d",
                        i, fgNhgEntry->hash_bucket_indices[i].start_index, fgNhgEntry->hash_bucket_indices[i].end_index);
     }
 }
 
 
-void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, NextHopKey nextHop)
+void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t bucket_index, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
 
@@ -204,29 +219,45 @@ void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, N
     // Write to StateDb
     std::vector<FieldValueTuple> fvs;
 
-    // check if profile already exists - if yes - skip creation
+    // get the existing buckets from warm restart state table
     m_stateWarmRestartRouteTable.get(key, fvs);
-
-    //bucket rewrite
-    if (fvs.size() > index)
+    auto stateTblBucketMapSearch = m_stateTblPrefixMap.find(key);
+    if (stateTblBucketMapSearch == m_stateTblPrefixMap.end())
     {
-        FieldValueTuple fv(std::to_string(index), nextHop.to_string());
-        fvs[index] = fv;
+        m_stateTblPrefixMap[key] = StateTblBucketMap();
+    }
+    auto &stateTblBucketMap = m_stateTblPrefixMap[key];
+
+    // search for the bucket_index to retrieve warm restart state table index
+    auto tbl_idx_search = stateTblBucketMap.find(bucket_index);
+    if (tbl_idx_search != stateTblBucketMap.end())
+    {
+        // replace this
+        FieldValueTuple fv(std::to_string(bucket_index), nextHop.to_string());
+        // make sure this tbl index is present
+        if (fvs.size() <= tbl_idx_search->second)
+        {
+            SWSS_LOG_ERROR("State table map ip prefix %s inconsistent tbl size %zu found idx %zu",
+                    key.c_str(), fvs.size(), tbl_idx_search->second);
+            return;
+        }
+        fvs[tbl_idx_search->second] = fv;
         SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
-                        ipPrefix.to_string().c_str(), nextHop.to_string().c_str(), index);
-        m_stateWarmRestartRouteTable.set(key, fvs);
+                        key.c_str(), nextHop.to_string().c_str(), bucket_index);
     }
     else
     {
-        fvs.push_back(FieldValueTuple(std::to_string(index), nextHop.to_string()));
+        // add this
+        fvs.push_back(FieldValueTuple(std::to_string(bucket_index), nextHop.to_string()));
         SWSS_LOG_INFO("Add new next hop entry %s with index %d for ip prefix %s",
-                nextHop.to_string().c_str(), index, ipPrefix.to_string().c_str());
-        m_stateWarmRestartRouteTable.set(key, fvs);
+                nextHop.to_string().c_str(), bucket_index, key.c_str());
+        stateTblBucketMap[bucket_index] = fvs.size() - 1;
     }
 
+    m_stateWarmRestartRouteTable.set(key, fvs);
 }
 
-bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
+bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, HashBucketIdx bucket_idx, sai_object_id_t nh_oid,
         const IpPrefix &ipPrefix, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
@@ -235,12 +266,12 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
     nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
     nhgm_attr.value.oid = nh_oid;
     sai_status_t status = sai_next_hop_group_api->set_next_hop_group_member_attribute(
-                                                              syncd_fg_route_entry->nhopgroup_members[index],
+                                                              syncd_fg_route_entry->nhopgroup_members[bucket_idx],
                                                               &nhgm_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set next hop oid %" PRIx64 " member %" PRIx64 ": %d",
-            syncd_fg_route_entry->nhopgroup_members[index], nh_oid, status);
+            syncd_fg_route_entry->nhopgroup_members[bucket_idx], nh_oid, status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_NEXT_HOP_GROUP, status);
         if (handle_status != task_success)
         {
@@ -248,7 +279,7 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
         }
     }
 
-    setStateDbRouteEntry(ipPrefix, index, nextHop);
+    setStateDbRouteEntry(ipPrefix, bucket_idx, nextHop);
     return true;
 }
 
@@ -320,13 +351,13 @@ bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_rout
 
     sai_status_t status;
 
-    for (auto nhgm : syncd_fg_route_entry->nhopgroup_members)
+    for (auto &nhgm : syncd_fg_route_entry->nhopgroup_members)
     {
-        status = sai_next_hop_group_api->remove_next_hop_group_member(nhgm);
+        status = sai_next_hop_group_api->remove_next_hop_group_member(nhgm.second);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
-                nhgm, status);
+                nhgm.second, status);
             task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
             if (handle_status != task_success)
             {
@@ -404,7 +435,6 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
                 fgNhgEntry = prefix_entry->second;
             }
             std::map<NextHopKey,sai_object_id_t> nhopgroup_members_set;
-
             std::vector<BankMemberChanges> bank_member_changes(
                 fgNhgEntry->hash_bucket_indices.size(), BankMemberChanges());
 
@@ -418,11 +448,19 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
             {
                 /* Only happens the 1st time when hash_bucket_indices are not inited
                  */
-                for (auto it : fgNhgEntry->next_hops)
+                if (fgNhgEntry->nhg_mode == FGNexthopMode::DYNAMIC_FGNHG)
                 {
-                    while (bank_member_changes.size() <= it.second.bank)
+                    // create a single bank in case of dynamic_fgnhg
+                    bank_member_changes.push_back(BankMemberChanges());
+                }
+                else
+                {
+                    for (auto it : fgNhgEntry->next_hops)
                     {
-                        bank_member_changes.push_back(BankMemberChanges());
+                        while (bank_member_changes.size() <= it.second.bank)
+                        {
+                            bank_member_changes.push_back(BankMemberChanges());
+                        }
                     }
                 }
             }
@@ -453,6 +491,7 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
             {
                 for (auto active_nh : syncd_fg_route_entry->active_nexthops)
                 {
+                    // include the existing active nhs into the configured bank
                     bank_member_changes[fgNhgEntry->next_hops[active_nh.ip_address].bank].
                         active_nhs.push_back(active_nh);
                 }
@@ -566,19 +605,21 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
  * Thereby achieving consistent and layered hashing.
  */
 bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-        uint32_t bank, uint32_t syncd_bank, std::vector<BankMemberChanges> bank_member_changes, 
+        uint32_t syncd_bank, BankMemberChanges bank_member_change,
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
 
-    BankMemberChanges bank_member_change = bank_member_changes[bank];
     uint32_t add_idx = 0, del_idx = 0;
-    FGNextHopGroupMap *bank_fgnhg_map = &(syncd_fg_route_entry->syncd_fgnhg_map[syncd_bank]);
+    FGNextHopGroupMap *fgnhg_bucket_map = &(syncd_fg_route_entry->syncd_fgnhg_map[syncd_bank]);
 
+    // Replace hash bucket indices of deleted NHs with added NHs
     while(del_idx < bank_member_change.nhs_to_del.size() &&
             add_idx < bank_member_change.nhs_to_add.size())
     {
-        HashBuckets *hash_buckets = &(bank_fgnhg_map->at(bank_member_change.nhs_to_del[del_idx]));
+        // get the hash bucket indices for the deleted NHs
+        HashBuckets *hash_buckets = &(fgnhg_bucket_map->at(bank_member_change.nhs_to_del[del_idx]));
+        // fill the hash bucket indices with the added NHs
         for (uint32_t i = 0; i < hash_buckets->size(); i++)
         {
             if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(i), 
@@ -589,9 +630,9 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
             }
         }
 
-        (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]] =*hash_buckets;
+        (*fgnhg_bucket_map)[bank_member_change.nhs_to_add[add_idx]] =*hash_buckets;
 
-        bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
+        fgnhg_bucket_map->erase(bank_member_change.nhs_to_del[del_idx]);
         bank_member_change.active_nhs.push_back(bank_member_change.nhs_to_add[add_idx]);
         syncd_fg_route_entry->active_nexthops.erase(bank_member_change.nhs_to_del[del_idx]);
         syncd_fg_route_entry->active_nexthops.insert(bank_member_change.nhs_to_add[add_idx]);
@@ -610,22 +651,72 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
             fgNhgEntry->hash_bucket_indices[syncd_bank].start_index;
         uint32_t exp_bucket_size = num_buckets_in_bank / (uint32_t)bank_member_change.active_nhs.size();
         uint32_t num_nhs_with_one_more = (num_buckets_in_bank % (uint32_t)bank_member_change.active_nhs.size());
+        bool ends_with_balance = num_nhs_with_one_more ? false : true;
+        auto active_nh_list = bank_member_change.active_nhs;
+        size_t act_nh_exp_size = exp_bucket_size;
 
+        if (!ends_with_balance)
+        {
+            act_nh_exp_size++;
+        }
 
+        // arrange the active nhs in increasing order of size of their hash bucket map
+        // so that we add buckets to the nhs which have lower bucket size first
+        auto compare_active_buckets = [&](NextHopKey e1, NextHopKey e2) {
+            return fgnhg_bucket_map->at(e1).size() < fgnhg_bucket_map->at(e2).size();
+        };
+        std::sort(active_nh_list.begin(), active_nh_list.end(), compare_active_buckets);
+
+        auto it = active_nh_list.begin();
         while(del_idx < bank_member_change.nhs_to_del.size())
         {
-            HashBuckets *hash_buckets = &(bank_fgnhg_map->at(bank_member_change.nhs_to_del[del_idx]));
-            for (uint32_t i = 0; i < hash_buckets->size(); i++)
+            HashBuckets *hash_buckets = &(fgnhg_bucket_map->at(bank_member_change.nhs_to_del[del_idx]));
+            for (uint32_t bkt_idx = 0; bkt_idx < hash_buckets->size(); bkt_idx++)
             {
-                NextHopKey round_robin_nh = bank_member_change.active_nhs[i %
-                    bank_member_change.active_nhs.size()];
+                if (it == active_nh_list.end())
+                {
+                    it = active_nh_list.begin();
+                    if (it == active_nh_list.end())
+                    {
+                        // this can neven happen
+                        SWSS_LOG_ERROR("%s Unexpected no more active NHs before adding the %zu buckets, del(%d), exp(%zu)",
+                                ipPrefix.to_string().c_str(),
+                                hash_buckets->size(), del_idx, act_nh_exp_size);
+                        return false;
+                    }
+                }
 
-                if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(i), 
-                        nhopgroup_members_set[round_robin_nh], ipPrefix, round_robin_nh))
+                // remove the active nhs that have reached their expected bucket size
+                while (fgnhg_bucket_map->at(*it).size() == act_nh_exp_size)
+                {
+                    SWSS_LOG_INFO("%s Already reached expected bucket size %zu, don't add more buckets, del(%d)",
+                            (*it).to_string().c_str(), act_nh_exp_size, del_idx);
+                    it = active_nh_list.erase(it);
+
+                    // if last element is erased reset the pos to begining
+                    if (it ==  active_nh_list.end())
+                    {
+                        it = active_nh_list.begin();
+                    }
+                    // if list is empty
+                    if (it == active_nh_list.end())
+                    {
+                        // this can neven happen
+                        SWSS_LOG_ERROR("%s All active NHs at expected size %zu, before adding the %zu buckets , del(%d)",
+                                ipPrefix.to_string().c_str(), act_nh_exp_size,
+                                hash_buckets->size(), del_idx);
+                        return false;
+                    }
+                }
+
+                // replace the nh in the deleted nh's bucket with active nh
+                if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(bkt_idx),
+                        nhopgroup_members_set[*it], ipPrefix, *it))
+
                 {
                     return false;
                 }
-                bank_fgnhg_map->at(round_robin_nh).push_back(hash_buckets->at(i));
+                fgnhg_bucket_map->at(*it).push_back(hash_buckets->at(bkt_idx));
 
                 /* Logic below ensure that # hash buckets assigned to a nh is equalized,
                  * we could have used simple round robin to reassign hash buckets to 
@@ -634,43 +725,42 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                  * distribution non-ideal, thereby nhs can attract unequal traffic */
                 if (num_nhs_with_one_more == 0)
                 {
-                    if (bank_fgnhg_map->at(round_robin_nh).size() == exp_bucket_size)
+                    if (fgnhg_bucket_map->at(*it).size() == exp_bucket_size)
                     {
-                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets", 
-                                (bank_member_change.active_nhs[i % bank_member_change.active_nhs.size()]).to_string().c_str(), 
-                                exp_bucket_size);
-                        bank_member_change.active_nhs.erase(bank_member_change.active_nhs.begin() + 
-                            (i % bank_member_change.active_nhs.size()));
+                        SWSS_LOG_INFO("%s reached %d, don't add more buckets del(%d)",
+                                (*it).to_string().c_str(), exp_bucket_size, del_idx);
+                        it = active_nh_list.erase(it);
+                        continue;
                     }
-                    else if (bank_fgnhg_map->at(round_robin_nh).size() > exp_bucket_size)
+                    else if (fgnhg_bucket_map->at((*it)).size() > exp_bucket_size)
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
-                                round_robin_nh.to_string().c_str(), bank_fgnhg_map->at(round_robin_nh).size(),
-                                exp_bucket_size);
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d, del(%d)",
+                                (*it).to_string().c_str(), fgnhg_bucket_map->at((*it)).size(),
+                                exp_bucket_size, del_idx);
                     }
                 }
                 else
                 {
-                    if (bank_fgnhg_map->at(round_robin_nh).size() == exp_bucket_size +1)
+                    if (fgnhg_bucket_map->at((*it)).size() == exp_bucket_size +1)
                     {
-
-                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets num_nhs_with_one_more %d", 
-                                (bank_member_change.active_nhs[i %bank_member_change.active_nhs.size()]).to_string().c_str(), 
-                                exp_bucket_size +1, num_nhs_with_one_more -1);
-                        bank_member_change.active_nhs.erase(bank_member_change.active_nhs.begin() + 
-                            (i % bank_member_change.active_nhs.size()));
+                        SWSS_LOG_INFO("%s reached %d, don't add more buckets num_nhs_with_one_more %d, del(%d)",
+                                (*it).to_string().c_str(),
+                                exp_bucket_size +1, num_nhs_with_one_more -1, del_idx);
+                        it = active_nh_list.erase(it);
                         num_nhs_with_one_more--;
+                        continue;
                     }
-                    else if (bank_fgnhg_map->at(round_robin_nh).size() > exp_bucket_size +1)
+                    else if (fgnhg_bucket_map->at((*it)).size() > exp_bucket_size +1)
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
-                                round_robin_nh.to_string().c_str(), bank_fgnhg_map->at(round_robin_nh).size(),
-                                exp_bucket_size + 1);
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d, del(%d)",
+                                (*it).to_string().c_str(), fgnhg_bucket_map->at((*it)).size(),
+                                exp_bucket_size + 1, del_idx);
                     }
                 }
+                it++;
             }
 
-            bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
+            fgnhg_bucket_map->erase(bank_member_change.nhs_to_del[del_idx]);
             syncd_fg_route_entry->active_nexthops.erase(bank_member_change.nhs_to_del[del_idx]);
             del_idx++;
         }
@@ -686,12 +776,21 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
         uint32_t num_nhs_with_one_more = (num_buckets_in_bank % total_nhs);
         uint32_t num_nhs_with_eq_to_exp = total_nhs - num_nhs_with_one_more;
         uint32_t add_nh_exp_bucket_size = exp_bucket_size;
+        uint32_t exp_size_before_bkt_rem = exp_bucket_size;
+
+        auto active_nh_list = bank_member_change.active_nhs;
+        auto compare_active_buckets = [&](NextHopKey e1, NextHopKey e2) {
+            return fgnhg_bucket_map->at(e1).size() > fgnhg_bucket_map->at(e2).size();
+        };
+        // arrange the active nhs in decreasing order of size of their hash bucket map
+        // so that we replace buckets of the active nhs which have higher bucket size first
+        std::sort(active_nh_list.begin(), active_nh_list.end(), compare_active_buckets);
 
         while(add_idx < bank_member_change.nhs_to_add.size())
         {
-            (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]] = 
-                std::vector<uint32_t>();
-            auto it = bank_member_change.active_nhs.begin();
+            (*fgnhg_bucket_map)[bank_member_change.nhs_to_add[add_idx]] = 
+                HashBuckets();
+            auto it = active_nh_list.begin();
             if (num_nhs_with_eq_to_exp > 0)
             {
                 num_nhs_with_eq_to_exp--;
@@ -702,13 +801,15 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                 num_nhs_with_one_more--;
             }
 
-            while(bank_fgnhg_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
+            // add buckets to this nh until HashBuckets size has reached the expected size 
+            while(fgnhg_bucket_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
             {
-                if (it == bank_member_change.active_nhs.end())
+                if (it == active_nh_list.end())
                 {
-                    it = bank_member_change.active_nhs.begin();
+                    it = active_nh_list.begin();
                 }
-                vector<uint32_t> *map_entry = &(bank_fgnhg_map->at(*it));
+                // get the active nh's hashbuckets
+                HashBuckets *map_entry = &(fgnhg_bucket_map->at(*it));
                 if ((*map_entry).size() <= 1)
                 {
                     /* Case where the number of hash buckets for the nh is <= 1 */
@@ -718,8 +819,15 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                 }
                 else
                 {
-                    uint32_t last_elem = map_entry->at((*map_entry).size() - 1);
+                    if ((*map_entry).size() == exp_size_before_bkt_rem)
+                    {
+                        SWSS_LOG_INFO("%s Buckets size already at %d, don't remove more",
+                                it->to_string().c_str(), exp_size_before_bkt_rem);
+                        it = active_nh_list.erase(it);
+                    }
 
+                    // start replacing the active nh's buckets from the end
+                    HashBucketIdx last_elem = map_entry->at((*map_entry).size() - 1);
                     if (!writeHashBucketChange(syncd_fg_route_entry, last_elem, 
                         nhopgroup_members_set[bank_member_change.nhs_to_add[add_idx]],
                         ipPrefix, bank_member_change.nhs_to_add[add_idx]))
@@ -727,7 +835,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                         return false;
                     }
 
-                    (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
+                    (*fgnhg_bucket_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
                     (*map_entry).erase((*map_entry).end() - 1);
                 }
                 /* Logic below ensure that # hash buckets assigned to a nh is equalized,
@@ -740,7 +848,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     if (map_entry->size() == exp_bucket_size)
                     {
                         SWSS_LOG_INFO("%s reached %d, don't remove more buckets", it->to_string().c_str(), exp_bucket_size);
-                        it = bank_member_change.active_nhs.erase(it);
+                        it = active_nh_list.erase(it);
                     }
                     else if (map_entry->size() < exp_bucket_size)
                     {
@@ -759,7 +867,8 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     {
                         SWSS_LOG_INFO("%s reached %d, don't remove more buckets num_nhs_with_one_more %d", 
                                 it->to_string().c_str(), exp_bucket_size + 1, num_nhs_with_one_more -1);
-                        it = bank_member_change.active_nhs.erase(it);
+                        // remove the current active nh from the round-robin list
+                        it = active_nh_list.erase(it);
                         num_nhs_with_one_more--;
                     }
                     else if (map_entry->size() < exp_bucket_size)
@@ -857,6 +966,12 @@ bool FgNhgOrch::setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *sy
 
             // remove state_db entry
             m_stateWarmRestartRouteTable.del(ipPrefix.to_string());
+            auto found = m_stateTblPrefixMap.find(ipPrefix.to_string());
+            if (found != m_stateTblPrefixMap.end())
+            {
+                m_stateTblPrefixMap[ipPrefix.to_string()].clear();
+                m_stateTblPrefixMap.erase(ipPrefix.to_string());
+            }
             // Clear data structures
             syncd_fg_route_entry->syncd_fgnhg_map.clear();
             syncd_fg_route_entry->active_nexthops.clear();
@@ -889,6 +1004,7 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
     if (bank_member_changes[bank].nhs_to_add.size() > 0)
     {
         /* Previously inactive bank now transitions to active */
+        SWSS_LOG_INFO("Previously inactive bank now transitions to active bank %u", bank);
         syncd_fg_route_entry->syncd_fgnhg_map[bank].clear();
         for (uint32_t i = fgNhgEntry->hash_bucket_indices[bank].start_index;
                 i <= fgNhgEntry->hash_bucket_indices[bank].end_index; i++)
@@ -913,6 +1029,7 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
     else if (bank_member_changes[bank].nhs_to_del.size() > 0)
     {
         /* Previously active bank now transitions to inactive */
+        SWSS_LOG_INFO("Previously active bank now transitions to inactive bank %u", bank);
         if (!setInactiveBankToNextAvailableActiveBank(syncd_fg_route_entry, fgNhgEntry,
                     bank, bank_member_changes, nhopgroup_members_set, ipPrefix))
         {
@@ -932,6 +1049,7 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
     {
         /* Previously inactive bank remains inactive */
         uint32_t active_bank = syncd_fg_route_entry->inactive_to_active_map[bank];
+        SWSS_LOG_INFO("Previously inactive bank remains inactive bank %u active bank %u", bank, active_bank);
         if (bank_member_changes[active_bank].active_nhs.size() == 0)
         {
             if (!setInactiveBankToNextAvailableActiveBank(syncd_fg_route_entry, fgNhgEntry,
@@ -944,7 +1062,7 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
         else
         {
             if (!setActiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
-                active_bank, bank, bank_member_changes, nhopgroup_members_set, ipPrefix))
+                bank, bank_member_changes[active_bank], nhopgroup_members_set, ipPrefix))
             {
                 SWSS_LOG_INFO("Failed setActiveBankHashBucketChanges");
                 return false;
@@ -968,19 +1086,21 @@ bool FgNhgOrch::computeAndSetHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                 (bank_member_changes[bank_idx].nhs_to_add.size() != 0 &&
                  bank_member_changes[bank_idx].nhs_to_del.size() != 0))
         {
+            SWSS_LOG_INFO("active nhs in bank %u", bank_idx);
             /* Active bank is is determined by there being active nhs on the bank OR
              * an edge case where all active_nhs went down(nhs_to_del > 0) BUT
              * simultaneously, nhs were added(nhs_to_add > 0). 
              * Route this to fn which deals with active banks
              */
-            if (!setActiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
-                        bank_idx, bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
+            if (!setActiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry,
+                        bank_idx, bank_member_changes[bank_idx], nhopgroup_members_set, ipPrefix))
             {
                 return false;
             }
         }
         else
         {
+            SWSS_LOG_INFO("No active nhs in bank %u", bank_idx);
             if (!setInactiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
                         bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
             {
@@ -999,120 +1119,160 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
 {
     SWSS_LOG_ENTER();
 
-    sai_status_t status;
-    bool isWarmReboot = false;
-    auto nexthopsMap = m_recoveryMap.find(ipPrefix.to_string());
-    for (uint32_t i = 0; i < fgNhgEntry->hash_bucket_indices.size(); i++) 
+    auto num_banks = fgNhgEntry->hash_bucket_indices.size();
+    std::vector<uint32_t> active_banks;
+    std::vector<uint32_t> inactive_banks;
+
+    for (uint32_t i = 0; i < num_banks; i++)
     {
-        uint32_t bank = i;
-        syncd_fg_route_entry.inactive_to_active_map[bank] = bank;
+        if (bank_member_changes[i].nhs_to_add.size() != 0)
+        {
+            active_banks.push_back(i);
+            SWSS_LOG_INFO("active bank %d num nhs %zu", i, bank_member_changes[i].nhs_to_add.size());
+        }
+        else
+        {
+            inactive_banks.push_back(i);
+            SWSS_LOG_INFO("inactive bank %d", i);
+        }
+
+        // add a new fgnh group map if this is a new bank
         if (i + 1 > syncd_fg_route_entry.syncd_fgnhg_map.size())
         {
             syncd_fg_route_entry.syncd_fgnhg_map.push_back(FGNextHopGroupMap());
         }
+    }
 
-        if (bank_member_changes[i].nhs_to_add.size() == 0)
-        {
-            /* Case where bank is empty */
-            for (uint32_t active_bank = 0; active_bank < bank_member_changes.size(); active_bank++)
-            {
-                if (bank_member_changes[active_bank].nhs_to_add.size() != 0)
-                {
-                    bank = active_bank;
-                    syncd_fg_route_entry.inactive_to_active_map[i] = active_bank;
-                    break;
-                }
-            }
-            SWSS_LOG_NOTICE("Bank# %d of FG next-hops is down for prefix %s", 
-                    i, ipPrefix.to_string().c_str());
-        } 
 
-        if (bank_member_changes[bank].nhs_to_add.size() == 0)
+    /* Case where all banks are empty, we let retry logic(upon rv false) take care of this scenario */
+    if (active_banks.size() == 0)
+    {
+        SWSS_LOG_INFO("Found no next-hops to add, skipping");
+        return false;
+    }
+    // spray the nhs of active banks into active bank's buckets
+    for (auto active_bank : active_banks)
+    {
+        syncd_fg_route_entry.inactive_to_active_map[active_bank] = active_bank;
+        if (!sprayBankNhgMembers(syncd_fg_route_entry, ipPrefix,
+                fgNhgEntry->hash_bucket_indices[active_bank], fgNhgEntry,
+                active_bank, bank_member_changes[active_bank],
+                nhopgroup_members_set))
         {
-            /* Case where all banks are empty, we let retry logic(upon rv false) take care of this scenario */
-            SWSS_LOG_INFO("Found no next-hops to add, skipping");
             return false;
         }
-
-        // recover state before warm reboot
-        if (nexthopsMap != m_recoveryMap.end())
-        {
-            isWarmReboot = true;
-        }
-
-        SWSS_LOG_INFO("Warm reboot is set to %d", isWarmReboot);
-
-        for (uint32_t j = fgNhgEntry->hash_bucket_indices[i].start_index;
-                j <= fgNhgEntry->hash_bucket_indices[i].end_index; j++)
-        {
-            NextHopKey bank_nh_memb;
-            if (isWarmReboot)
-            {
-                bank_nh_memb = nexthopsMap->second[j];
-                SWSS_LOG_INFO("Recovering nexthop %s with bucket %d", bank_nh_memb.ip_address.to_string().c_str(), j);
-                // case nhps in bank are all down
-                if (fgNhgEntry->next_hops[bank_nh_memb.ip_address].bank != i)
-                {
-                    syncd_fg_route_entry.inactive_to_active_map[i] = fgNhgEntry->next_hops[bank_nh_memb.ip_address].bank;
-                }
-            }
-            else
-            {
-                bank_nh_memb = bank_member_changes[bank].nhs_to_add[j %
-                    bank_member_changes[bank].nhs_to_add.size()];
-            }
-
-            // Create a next hop group member
-            sai_attribute_t nhgm_attr;
-            vector<sai_attribute_t> nhgm_attrs;
-            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
-            nhgm_attr.value.oid = syncd_fg_route_entry.next_hop_group_id;
-            nhgm_attrs.push_back(nhgm_attr);
-
-            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
-            nhgm_attr.value.oid = nhopgroup_members_set[bank_nh_memb];
-            nhgm_attrs.push_back(nhgm_attr);
-
-            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_INDEX;
-            nhgm_attr.value.s32 = j;
-            nhgm_attrs.push_back(nhgm_attr);
-
-            sai_object_id_t next_hop_group_member_id;
-            status = sai_next_hop_group_api->create_next_hop_group_member(
-                                                              &next_hop_group_member_id,
-                                                              gSwitchId,
-                                                              (uint32_t)nhgm_attrs.size(),
-                                                              nhgm_attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d",
-                   syncd_fg_route_entry.next_hop_group_id, next_hop_group_member_id, status);
-                
-                if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry))
-                {
-                    SWSS_LOG_ERROR("Failed to clean-up after next-hop member creation failure");
-                }
-                
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-
-            setStateDbRouteEntry(ipPrefix, j, bank_nh_memb);
-            syncd_fg_route_entry.syncd_fgnhg_map[i][bank_nh_memb].push_back(j);
-            syncd_fg_route_entry.active_nexthops.insert(bank_nh_memb);
-            syncd_fg_route_entry.nhopgroup_members.push_back(next_hop_group_member_id);
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-        }
     }
 
-    if (isWarmReboot)
+    // spray the nhs of active banks into inactive bank's buckets
+    for (uint32_t i = 0; i < inactive_banks.size(); i++)
     {
+        auto active_bank = active_banks[i % active_banks.size()];
+        syncd_fg_route_entry.inactive_to_active_map[inactive_banks[i]] =
+            active_bank;
+        if(!sprayBankNhgMembers(syncd_fg_route_entry, ipPrefix,
+                fgNhgEntry->hash_bucket_indices[inactive_banks[i]], fgNhgEntry,
+                inactive_banks[i], bank_member_changes[active_bank],
+                nhopgroup_members_set))
+        {
+            return false;
+        }
+        SWSS_LOG_NOTICE("Bank# %d of FG next-hops is down for prefix %s", 
+                inactive_banks[i], ipPrefix.to_string().c_str());
+    }
+
+    auto nexthopsMap = m_recoveryMap.find(ipPrefix.to_string());
+    if (nexthopsMap != m_recoveryMap.end()) {
         m_recoveryMap.erase(nexthopsMap);
     }
+
     syncd_fg_route_entry.points_to_rif = false;
+
+    return true;
+}
+
+bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const IpPrefix &ipPrefix,
+        HashIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
+        uint32_t bank, BankMemberChanges &bank_member_change,
+        std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set)
+{
+    sai_status_t status;
+    bool isWarmReboot = false;
+    auto nexthopsMap = m_recoveryMap.find(ipPrefix.to_string());
+
+    SWSS_LOG_ENTER();
+
+    // recover state before warm reboot
+    if (nexthopsMap != m_recoveryMap.end())
+    {
+        isWarmReboot = true;
+    }
+
+    SWSS_LOG_INFO("Warm reboot is set to %d, bank %d", isWarmReboot, bank);
+
+    // fill the hash idx range with the nhs
+    for (uint32_t bucket_idx = hash_idx_range.start_index;
+            bucket_idx <= hash_idx_range.end_index; bucket_idx++)
+    {
+        NextHopKey nh_memb_key;
+        if (isWarmReboot)
+        {
+            nh_memb_key = nexthopsMap->second[bucket_idx];
+            SWSS_LOG_INFO("Recovering nexthop %s with bucket_idx %d", nh_memb_key.ip_address.to_string().c_str(), bucket_idx);
+            // case nhps in bank are all down
+            if (fgNhgEntry->next_hops[nh_memb_key.ip_address].bank != bank)
+            {
+                syncd_fg_route_entry.inactive_to_active_map[bank] = fgNhgEntry->next_hops[nh_memb_key.ip_address].bank;
+            }
+        }
+        else
+        {
+            nh_memb_key = bank_member_change.nhs_to_add[bucket_idx %
+                bank_member_change.nhs_to_add.size()];
+        }
+
+        // Create a next hop group member
+        sai_attribute_t nhgm_attr;
+        vector<sai_attribute_t> nhgm_attrs;
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+        nhgm_attr.value.oid = syncd_fg_route_entry.next_hop_group_id;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+        nhgm_attr.value.oid = nhopgroup_members_set[nh_memb_key];
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_INDEX;
+        nhgm_attr.value.s32 = bucket_idx;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        sai_object_id_t next_hop_group_member_id;
+        status = sai_next_hop_group_api->create_next_hop_group_member(
+                                                          &next_hop_group_member_id,
+                                                          gSwitchId,
+                                                          (uint32_t)nhgm_attrs.size(),
+                                                          nhgm_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d",
+               syncd_fg_route_entry.next_hop_group_id, next_hop_group_member_id, status);
+            if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry))
+            {
+                SWSS_LOG_ERROR("Failed to clean-up after next-hop member creation failure");
+            }
+
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        setStateDbRouteEntry(ipPrefix, bucket_idx, nh_memb_key);
+        syncd_fg_route_entry.syncd_fgnhg_map[bank][nh_memb_key].push_back(bucket_idx);
+        syncd_fg_route_entry.active_nexthops.insert(nh_memb_key);
+        syncd_fg_route_entry.nhopgroup_members[bucket_idx] = next_hop_group_member_id;
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+    }
 
     return true;
 }
@@ -1122,8 +1282,11 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
 {
     SWSS_LOG_ENTER();
  
+    bool static_fgnhg = false;
     if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
     {
+        SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " NOT fine grained ECMP",
+                        ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id, gVirtualRouterId);
         return false;
     }
 
@@ -1148,6 +1311,7 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
             if (!fgNhgEntry)
             {
                 fgNhgEntry = member_entry->second;
+                static_fgnhg = true;
             }
             else
             {
@@ -1162,7 +1326,21 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
                 }
             }
         }
+        if (static_fgnhg)
+        {
+            SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " IS fine grained static ECMP",
+                            ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id, gVirtualRouterId);
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " Static FGNHG ECMP NOT found",
+                            ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id, gVirtualRouterId);
+            return false;
+        }
     }
+    SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " IS fine grained ECMP",
+                    ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id, gVirtualRouterId);
     return true;
 }
 
@@ -1227,6 +1405,15 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         return true;
     }
 
+    if (!fgNhgEntry)
+    {
+        SWSS_LOG_INFO("fgNhgOrch got a route addition %s:%s with %s",
+                ipPrefix.to_string().c_str(), nextHops.to_string().c_str(),
+                (prefix_entry == m_fgNhgPrefixes.end()) ? " no prefix and FG ECMP nexthop entries" :
+                "no FG ECMP entry for the prefix");
+        return true;
+    }
+
     if (m_syncdFGRouteTables.find(vrf_id) == m_syncdFGRouteTables.end())
     {
         m_syncdFGRouteTables.emplace(vrf_id, FGRouteTable());
@@ -1244,11 +1431,73 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     {
         /* Only happens the 1st time when hash_bucket_indices are not initialized
          */
-        for (auto it : fgNhgEntry->next_hops)
+        if (fgNhgEntry->nhg_mode == DYNAMIC_FGNHG) //NEW
         {
-            while (bank_member_changes.size() <= it.second.bank)
+            //bank_member_changes.resize(fgNhgEntry->max_next_hops, BankMemberChanges());
+            bank_member_changes.resize(1, BankMemberChanges()); // dynamic fgnhg supports single bank
+        }
+        else
+        {
+            for (auto it : fgNhgEntry->next_hops)
             {
-                bank_member_changes.push_back(BankMemberChanges());
+                while (bank_member_changes.size() <= it.second.bank)
+                {
+                    bank_member_changes.push_back(BankMemberChanges());
+                }
+            }
+        }
+    }
+
+    // if nhg_mode==DYNAMIC, then initialize fgNhgEntry->next_hops with the list of IP addresses in nextHops
+    if (fgNhgEntry->nhg_mode == DYNAMIC_FGNHG)
+    {
+        for (NextHopKey nhk : next_hop_set)
+        {
+            if (fgNhgEntry->next_hops.find(nhk.ip_address) == fgNhgEntry->next_hops.end())
+            {
+                if(fgNhgEntry->next_hops.size() >= fgNhgEntry->max_next_hops)
+                {
+                    SWSS_LOG_WARN("Next-hop %s exceeds max_next_hops %d for prefix %s, skipping",
+                            nhk.to_string().c_str(), fgNhgEntry->max_next_hops, ipPrefix.to_string().c_str());
+                    continue;
+                }
+                FGNextHopInfo fg_nh_info = {0, "", LINK_DOWN}; // Dynamic fgnhg uses single bank 0
+                // find link for the next hop
+                if (m_neighOrch->hasNextHop(nhk))
+                {
+                    Port p;
+                    if (gPortsOrch->getPort(nhk.alias, p))
+                    {
+                        // track Physical links
+                        if (p.m_type == Port::PHY)
+                        {
+                            fg_nh_info.link = p.m_alias;
+                            if (p.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+                            {
+                                fg_nh_info.link_oper_state = LINK_UP;
+                            }
+                            auto link_info = fgNhgEntry->links.find(p.m_alias);
+                            if (link_info != fgNhgEntry->links.end())
+                            {
+                                // add nhk.ip_address to the list of next-hops for the link
+                                fgNhgEntry->links[p.m_alias].push_back(nhk.ip_address);
+                            }
+                            else {
+                                // create a new list with nhk.ip_address
+                                fgNhgEntry->links[p.m_alias] = {nhk.ip_address};
+                            }
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_WARN("Next-hop %s alias %s prefix %s Link not found",
+                                nhk.ip_address.to_string().c_str(), nhk.alias.c_str(),
+                                ipPrefix.to_string().c_str());
+                    }
+                }
+                fgNhgEntry->next_hops[nhk.ip_address] = fg_nh_info;
+                SWSS_LOG_INFO("Next-hop %s alias %s added to Fine Grained next-hop group member list for prefix %s",
+                        nhk.ip_address.to_string().c_str(), nhk.alias.c_str(), ipPrefix.to_string().c_str());
             }
         }
     }
@@ -1449,6 +1698,12 @@ bool FgNhgOrch::removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 
         // remove state_db entry
         m_stateWarmRestartRouteTable.del(ipPrefix.to_string());
+        auto found = m_stateTblPrefixMap.find(ipPrefix.to_string());
+        if (found != m_stateTblPrefixMap.end())
+        {
+            m_stateTblPrefixMap[ipPrefix.to_string()].clear();
+            m_stateTblPrefixMap.erase(ipPrefix.to_string());
+        }
     }
 
     it_route_table->second.erase(it_route);
@@ -1524,6 +1779,8 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
     string fg_nhg_name = key; 
     auto fgNhg_entry = m_FgNhgs.find(fg_nhg_name);
     FGMatchMode match_mode = ROUTE_BASED;
+    FGNexthopMode nhg_mode = STATIC_FGNHG;
+    uint32_t max_next_hops = 0;
 
     if (op == SET_COMMAND)
     {
@@ -1546,7 +1803,35 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
                     SWSS_LOG_WARN("Received unsupported match_mode %s, defaulted to route-based",
                                     fvValue(i).c_str());
                 }
+            } 
+            else if (fvField(i) == "nhg_mode")
+            {
+                if (fvValue(i) == "dynamic-nhg")
+                {
+                    nhg_mode = DYNAMIC_FGNHG;
+                }
+                else if (fvValue(i) != "static-nhg")
+                {
+                    SWSS_LOG_WARN("Received unsupported match_mode %s, defaulted to static-nhg",
+                                    fvValue(i).c_str());
+                }
+            } 
+            else if (fvField(i) == "max_next_hops")
+            {
+                max_next_hops = stoi(fvValue(i));
             }
+        }
+
+        // Nexthop-based match_mode is not supported for dynamic_fgnhg
+        if (nhg_mode == DYNAMIC_FGNHG && match_mode == NEXTHOP_BASED) 
+        {
+            SWSS_LOG_ERROR("Received dynamic_fgnhg with nexthop-based match_mode, not a supported combination");
+        }
+
+        // Generate an error if num_next_hops is not set for dynamic_fgnhg
+        if (nhg_mode == DYNAMIC_FGNHG && max_next_hops == 0)
+        {
+            SWSS_LOG_ERROR("Received dynamic_fgnhg with max_next_hops 0, not a supported combination");
         }
 
         if (bucket_size == 0)
@@ -1565,8 +1850,10 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             fgNhgEntry.configured_bucket_size = bucket_size;
             fgNhgEntry.fg_nhg_name = fg_nhg_name;
             fgNhgEntry.match_mode = match_mode;
-            SWSS_LOG_NOTICE("Added new FG_NHG entry with bucket_size %d, match_mode: %'" PRIu8, 
-                    bucket_size, match_mode);
+            fgNhgEntry.nhg_mode = nhg_mode;
+            fgNhgEntry.max_next_hops = max_next_hops;
+            SWSS_LOG_NOTICE("Added new FG_NHG entry %s with bucket_size %d, match_mode: %'" PRIu8,
+                    fg_nhg_name.c_str(), bucket_size, match_mode);
             isFineGrainedConfigured = true;
             m_FgNhgs[fg_nhg_name] = fgNhgEntry;
         }
@@ -1589,9 +1876,22 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             }
             else
             {
-                SWSS_LOG_INFO("Child Prefix/Member entries are still associated with this FG_NHG %s", 
+                /* in case of dynamic mode, members are not deleted by config, so delete them here */
+                if (fgNhg_entry->second.prefixes.size() == 0 &&
+                        fgNhg_entry->second.nhg_mode == DYNAMIC_FGNHG &&
+                        fgNhg_entry->second.next_hops.size() != 0)
+                {
+                    fgNhg_entry->second.next_hops.clear();
+                    m_FgNhgs.erase(fgNhg_entry);
+                    SWSS_LOG_INFO("Clearing dynamic NH Member entries associated with this FG_NHG %s",
+                         fg_nhg_name.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Child Prefix/Member entries are still associated with this FG_NHG %s", 
                         fg_nhg_name.c_str());
-                return false;
+                    return false;
+                }
             }
             if (m_FgNhgs.size() == 0)
             {
@@ -1640,6 +1940,19 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             return false;
         }
 
+        // In the dynamic_nhg mode, only 1 FG_NHG_PREFIX is allowed for each FG_NHG. If ip_prefix 
+        // doesn't match with the existing prefixes in the fgNhgEntry, then return false.
+        if (fgNhg_entry->second.nhg_mode == DYNAMIC_FGNHG)
+        {
+            if (fgNhg_entry->second.prefixes.size() != 0)
+            {
+                SWSS_LOG_NOTICE("FG_NHG %s already has a prefix %s, ignoring addition of new prefix %s", 
+                                 fg_nhg_name.c_str(), fgNhg_entry->second.prefixes[0].to_string().c_str(),
+                                 ip_prefix.to_string().c_str());
+                return true;
+            }
+        }
+
         if (fgNhg_entry->second.match_mode == NEXTHOP_BASED)
         {
             SWSS_LOG_NOTICE("FG_NHG %s is configured as nexthop_based: FG_NHG_PREFIX is a no-op",
@@ -1681,7 +1994,8 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             }
             else
             {
-                SWSS_LOG_INFO("Route exists in routeorch, and APP_DB route was deleted, waiting for routeorch delete to complete");
+                SWSS_LOG_INFO("Route(%s) ADD exists in routeorch, and APP_DB route was deleted, waiting for routeorch delete to complete",
+                        ip_prefix.to_string().c_str());
                 return false;
             }
         }
@@ -1710,7 +2024,9 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
         {
             if (nhg.getSize() == 0)
             {
-                SWSS_LOG_INFO("Route does not exist in fgnhgorch, proceed with deletion of local structures");
+                SWSS_LOG_INFO("Route(%s) does not exist in fgnhgorch, proceed with deletion of local structures",
+                        ip_prefix.to_string().c_str());
+
                 for (uint32_t i = 0; i < fgNhg_entry->prefixes.size(); i++)
                 {
                     if(fgNhg_entry->prefixes[i] == ip_prefix)
@@ -1724,7 +2040,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             }
             else
             {
-                SWSS_LOG_INFO("Route exists in fgNhgOrch, deleting from APP_DB");
+                SWSS_LOG_INFO("Route(%s) exists in fgNhgOrch, deleting from APP_DB", ip_prefix.to_string().c_str());
                 m_fgPrefixDelCache[ip_prefix] = nhg;
                 m_routeTable.del(ip_prefix.to_string());
                 return false;
@@ -1735,7 +2051,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             if (nhg.getSize() == 0)
             {
                 /* Case where fgnhgorch route entry was present and the route delete was completed */
-                SWSS_LOG_INFO("Route removed in fgNhgOrch, now do an APP_DB addition");
+                SWSS_LOG_INFO("Route(%s) removed in fgNhgOrch, now do an APP_DB addition", ip_prefix.to_string().c_str());
                 for (uint32_t i = 0; i < fgNhg_entry->prefixes.size(); i++)
                 {
                     if (fgNhg_entry->prefixes[i] == ip_prefix)
@@ -1747,11 +2063,13 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
                 m_fgNhgPrefixes.erase(ip_prefix); 
 
                 m_routeTable.set(ip_prefix.to_string(), generateRouteTableFromNhgKey(delCache->second));
+                m_fgPrefixDelCache.erase(delCache);
                 SWSS_LOG_INFO("Perform APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
             }
             else
             {
-                SWSS_LOG_INFO("Route exists in fgNhgOrch, and APP_DB route was deleted, waiting for fgNhgOrch delete to complete");
+                SWSS_LOG_INFO("Route(%s) DEL exists in fgNhgOrch size(%zu), and APP_DB route was deleted, waiting for fgNhgOrch delete to complete!!",
+                        ip_prefix.to_string().c_str(), nhg.getSize());
                 return false;
             }
         }
@@ -1803,6 +2121,12 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
             SWSS_LOG_INFO("FG_NHG entry not received yet, continue");
             return false;
         }
+        // Flag error if FGNHG was created with nhg_mode as dynamic_fgnhg
+        else if (fgNhg_entry->second.nhg_mode == DYNAMIC_FGNHG)
+        {
+            SWSS_LOG_ERROR("Received FG_NHG member for dynamic_fgnhg, not a supported operation");
+            return true;
+        }    
         else
         {
             /* skip addition if next-hop already exists */
