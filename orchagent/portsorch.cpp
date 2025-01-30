@@ -1763,8 +1763,16 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
 
 void PortsOrch::setHostTxReady(Port port, const std::string &status)
 {
-    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
-    m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
+    vector<FieldValueTuple> tuples;
+    bool exist;
+
+    /* If the port is revmoed, don't need to update StateDB*/
+    exist = m_portStateTable.get(port.m_alias, tuples);
+    if (exist)
+    {
+        SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
+    }
 }
 
 bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
