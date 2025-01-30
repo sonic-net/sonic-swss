@@ -1188,7 +1188,7 @@ void FdbOrch::flushFdbByInstancePort(sai_uint16_t instanceId, sai_object_id_t po
         flushAttr[0].value.oid = vlanOid; // VLAN OID
 
         // Set the port ID for the flush
-        flushAttr[1].id = SAI_FDB_FLUSH_ATTR_PORT_ID;
+        flushAttr[1].id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
         flushAttr[1].value.oid = portOid; // Port OID
 
         // Set the entry type to dynamic
