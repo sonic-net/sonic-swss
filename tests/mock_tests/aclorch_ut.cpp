@@ -153,7 +153,7 @@ namespace aclorch_test
         swss::DBConnector *config_db;
 
         MockAclOrch(swss::DBConnector *config_db, swss::DBConnector *state_db, SwitchOrch *switchOrch,
-                    PortsOrch *portsOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
+                    PortsOrch *portsOrch, PolicerOrch* policerOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
             config_db(config_db)
         {
             TableConnector confDbAclTable(config_db, CFG_ACL_TABLE_TABLE_NAME);
@@ -161,8 +161,8 @@ namespace aclorch_test
 
             vector<TableConnector> acl_table_connectors = { confDbAclTable, confDbAclRuleTable };
 
-            m_aclOrch = new AclOrch(acl_table_connectors, state_db, switchOrch, portsOrch, mirrorOrch,
-                                    neighOrch, routeOrch);
+            m_aclOrch = new AclOrch(acl_table_connectors, state_db, switchOrch, portsOrch,
+                                    policerOrch, mirrorOrch, neighOrch, routeOrch);
         }
 
         ~MockAclOrch()
@@ -2024,8 +2024,8 @@ namespace aclorch_test
         const string aclTableMatch = "SRC_IP";
         policer_action_attr = "POLICER_ACTION"
 
-        auto aclOrch = MockAclOrch(config_db, state_db, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch);
         auto policerOrch = MockPolicerOrch(config_db);
+        auto aclOrch = MockAclOrch(config_db, state_db, gSwitchOrch, gPortsOrch, policerOrch.m_policerOrch, gMirrorOrch, gNeighOrch, gRouteOrch);
 
         // Create ACL Table Type
         aclOrch.doAclTableTypeTask({
