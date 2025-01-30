@@ -31,23 +31,23 @@ private:
     unique_ptr<Table> m_stpTable;
     std::map<sai_uint16_t, sai_object_id_t> m_stpInstToOid;//Mapping from STP instance id to corresponding object id
     sai_object_id_t m_defaultStpId;
-    
+
     void doStpTask(Consumer &consumer);
     void doStpPortStateTask(Consumer &consumer);
     void doStpFastageTask(Consumer &consumer);
-    void doStpVlanIntfFlushTask(Consumer &consumer);
-    
+    void doStpMstPortInstFlushtask(Consumer &consumer);
+
     sai_object_id_t addStpInstance(sai_uint16_t stp_instance);
     bool removeStpInstance(sai_uint16_t stp_instance);
     bool addVlanToStpInstance(string vlan, sai_uint16_t stp_instance);
     sai_object_id_t getStpInstanceOid(sai_uint16_t stp_instance);
-    
+
     sai_object_id_t addStpPort(Port &port, sai_uint16_t stp_instance);
     bool removeStpPort(Port &port, sai_uint16_t stp_instance);
     sai_stp_port_state_t getStpSaiState(sai_uint8_t stp_state);
     bool updateStpPortState(Port &port, sai_uint16_t stp_instance, sai_uint8_t stp_state);
+    vector<sai_object_id_t> getVlanOidsForInstance(sai_uint16_t stp_instance);
 
     void doTask(Consumer& consumer);
 };
 #endif /* SWSS_STPORCH_H */
-

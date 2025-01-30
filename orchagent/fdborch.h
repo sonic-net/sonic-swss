@@ -132,6 +132,8 @@ private:
     void clearFdbEntry(const FdbEntry&);
     void handleSyncdFlushNotif(const sai_object_id_t&, const sai_object_id_t&, const MacAddress&,
                                const sai_fdb_entry_type_t&);
+    void flushFdbByInstancePort(sai_uint16_t instanceId, sai_object_id_t portOid, const vector<sai_object_id_t> &vlanOids);
+
 };
 
 #endif /* SWSS_FDBORCH_H */
