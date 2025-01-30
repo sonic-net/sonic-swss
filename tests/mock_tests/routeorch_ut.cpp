@@ -431,6 +431,119 @@ namespace routeorch_test
         ASSERT_EQ(current_remove_count + 1, remove_route_count);
         ASSERT_EQ(current_set_count, set_route_count);
     }
+    
+    TEST_F(RouteOrchTest, RouteOrchTestDelSetSameVrf)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Create Vrf1
+        entries.push_back({"Vrf1", "SET", { {"v4", "true"} }});
+        auto vrf_consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrf_consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        entries.clear();
+
+        // Add route to Vrf1
+        entries.push_back({"Vrf1:1.1.1.0/24", "SET", { {"ifname", "Ethernet0"},
+                                                       {"nexthop", "10.0.0.3"},
+                                                       {"mpls_nh", "push16/80"}}});
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_create_count = create_route_count;
+        auto current_remove_count = remove_route_count;
+        auto current_set_count = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(current_create_count + 1, create_route_count);
+        ASSERT_EQ(current_remove_count, remove_route_count);
+        ASSERT_EQ(current_set_count, set_route_count);
+        entries.clear();
+
+        //Del route form vrf1
+        entries.push_back({"Vrf1:1.1.1.0/24", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+        current_create_count = create_route_count;
+        current_remove_count = remove_route_count;
+        current_set_count = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_EQ(current_remove_count + 1, remove_route_count);
+        ASSERT_EQ(current_set_count, set_route_count);
+        entries.clear();
+
+        // Deleting VRF
+        entries.push_back({"Vrf1", "DEL", { {"v4", "true"} }});
+        vrf_consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestDelSetDiffVrf)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Create Vrf1 and Vrf2
+        entries.push_back({"Vrf1", "SET", { {"v4", "true"} }});
+        entries.push_back({"Vrf2", "SET", { {"v4", "true"} }});
+        auto vrf_consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrf_consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        entries.clear();
+
+        // Add route to Vrf1
+        entries.push_back({"Vrf1:1.1.1.0/24", "SET", { {"ifname", "Ethernet0"},
+                                                       {"nexthop", "10.0.0.3"},
+                                                       {"mpls_nh", "push16/80"}}});
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_create_count = create_route_count;
+        auto current_remove_count = remove_route_count;
+        auto current_set_count = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(current_create_count + 1, create_route_count);
+        ASSERT_EQ(current_remove_count, remove_route_count);
+        ASSERT_EQ(current_set_count, set_route_count);
+        entries.clear();
+
+        //Del route form vrf1 and add to Vrf2
+        entries.push_back({"Vrf1:1.1.1.0/24", "DEL", { {} }});
+        entries.push_back({"Vrf2:1.1.1.0/24", "SET", { {"ifname", "Ethernet0"},
+                                                       {"nexthop", "10.0.0.3"},
+                                                       {"mpls_nh", "push16/80"}}}); 
+        consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+        current_create_count = create_route_count;
+        current_remove_count = remove_route_count;
+        current_set_count = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(current_create_count + 1, create_route_count);
+        ASSERT_EQ(current_remove_count + 1, remove_route_count);
+        ASSERT_EQ(current_set_count, set_route_count);
+        entries.clear();
+
+        //Del route form vrf2
+        entries.push_back({"Vrf2:1.1.1.0/24", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+        current_create_count = create_route_count;
+        current_remove_count = remove_route_count;
+        current_set_count = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_EQ(current_remove_count + 1, remove_route_count);
+        ASSERT_EQ(current_set_count, set_route_count);
+        entries.clear();
+
+        // Deleting VRF
+        entries.push_back({"Vrf1", "DEL", { {"v4", "true"} }});
+        entries.push_back({"Vrf2", "DEL", { {"v4", "true"} }});
+        vrf_consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+    }
 
     TEST_F(RouteOrchTest, RouteOrchTestDelSetDefaultRoute)
     {
