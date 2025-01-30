@@ -7128,7 +7128,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
 
     m_portList[lag.m_alias] = lag;
 
-    if (lag.m_bridge_port_id > 0)
+    if ((lag.m_bridge_port_id > 0) || !lag.m_child_ports.empty())
     {
         if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
         {
@@ -7176,7 +7176,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     lag.m_members.erase(port.m_alias);
     m_portList[lag.m_alias] = lag;
 
-    if (lag.m_bridge_port_id > 0)
+    if ((lag.m_bridge_port_id > 0) || !lag.m_child_ports.empty())
     {
         if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
         {
