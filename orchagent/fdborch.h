@@ -105,6 +105,8 @@ public:
                          sai_object_id_t vlan_oid);
     void flushFdbByVlan(const string &);
     void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
+    void flushFdbByInstancePort(sai_uint16_t instanceId, sai_object_id_t portOid, const vector<sai_object_id_t> &vlanOids);
+
 
 private:
     PortsOrch *m_portsOrch;
@@ -132,7 +134,6 @@ private:
     void clearFdbEntry(const FdbEntry&);
     void handleSyncdFlushNotif(const sai_object_id_t&, const sai_object_id_t&, const MacAddress&,
                                const sai_fdb_entry_type_t&);
-    void flushFdbByInstancePort(sai_uint16_t instanceId, sai_object_id_t portOid, const vector<sai_object_id_t> &vlanOids);
 
 };
 
