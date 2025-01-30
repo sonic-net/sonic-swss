@@ -495,9 +495,9 @@ vector<sai_object_id_t> StpOrch::getVlanOidsForInstance(sai_uint16_t stp_instanc
     SWSS_LOG_ENTER();
 
     vector<sai_object_id_t> vlanOids;
-
+    unordered_set <string> vlans = gPortsOrch->getAllVlans();
     // Iterate over all VLANs stored in PortsOrch
-    for (const auto &vlanName : gPortsOrch->m_vlanPorts)
+    for (const auto &vlanName : vlans)
     {
         Port vlan;
         if (!gPortsOrch->getPort(vlanName, vlan))
