@@ -517,7 +517,7 @@ vector<sai_object_id_t> StpOrch::getVlanOidsForInstance(sai_uint16_t stp_instanc
     return vlanOids;
 }
 
-void StpOrch::doFlushingTask(Consumer &consumer)
+void StpOrch::doStpMstPortInstFlushtask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
