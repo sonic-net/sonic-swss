@@ -591,7 +591,7 @@ public:
 
     // FIXME: Add getters for them? I'd better to add a common directory of orch objects and use it everywhere
     MirrorOrch *m_mirrorOrch;
-    PolicerOrch *m_PolicerOrch;
+    PolicerOrch *m_policerOrch;
     NeighOrch *m_neighOrch;
     RouteOrch *m_routeOrch;
     DTelOrch *m_dTelOrch;
