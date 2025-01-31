@@ -124,6 +124,44 @@ namespace switchorch_test
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
         }
 
+        void checkAsicSdkHealthEvent(const sai_timespec_t &timestamp, const string &expected_key="")
+        {
+            initSwitchOrch();
+
+            sai_switch_health_data_t data;
+            memset(&data, 0, sizeof(data));
+            data.data_type = SAI_HEALTH_DATA_TYPE_GENERAL;
+            vector<uint8_t> data_from_sai({100, 101, 115, 99, 114, 105, 112, 116, 105, 245, 111, 110, 245, 10, 123, 125, 100, 100});
+            sai_u8_list_t description;
+            description.list = data_from_sai.data();
+            description.count = (uint32_t)(data_from_sai.size() - 2);
+            on_switch_asic_sdk_health_event(gSwitchId,
+                                            SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_FATAL,
+                                            timestamp,
+                                            SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
+                                            data,
+                                            description);
+
+            string key;
+            if (expected_key.empty())
+            {
+                vector<string> keys;
+                gSwitchOrch->m_asicSdkHealthEventTable->getKeys(keys);
+                key = keys[0];
+            }
+            else
+            {
+                key = expected_key;
+            }
+            string value;
+            gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "category", value);
+            ASSERT_EQ(value, "firmware");
+            gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "severity", value);
+            ASSERT_EQ(value, "fatal");
+            gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "description", value);
+            ASSERT_EQ(value, "description\n{}");
+        }
+
         void TearDown() override
         {
             ::testing_db::reset();
@@ -289,30 +327,13 @@ namespace switchorch_test
 
     TEST_F(SwitchOrchTest, SwitchOrchTestHandleEvent)
     {
-        initSwitchOrch();
-
         sai_timespec_t timestamp = {.tv_sec = 1701160447, .tv_nsec = 538710245};
-        sai_switch_health_data_t data;
-        memset(&data, 0, sizeof(data));
-        data.data_type = SAI_HEALTH_DATA_TYPE_GENERAL;
-        vector<uint8_t> data_from_sai({100, 101, 115, 99, 114, 105, 112, 116, 105, 245, 111, 110, 245, 10, 123, 125, 100, 100});
-        sai_u8_list_t description;
-        description.list = data_from_sai.data();
-        description.count = (uint32_t)(data_from_sai.size() - 2);
-        on_switch_asic_sdk_health_event(gSwitchId,
-                                        SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_FATAL,
-                                        timestamp,
-                                        SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
-                                        data,
-                                        description);
+        checkAsicSdkHealthEvent(timestamp, "2023-11-28 08:34:07");
+    }
 
-        string key = "2023-11-28 08:34:07";
-        string value;
-        gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "category", value);
-        ASSERT_EQ(value, "firmware");
-        gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "severity", value);
-        ASSERT_EQ(value, "fatal");
-        gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "description", value);
-        ASSERT_EQ(value, "description\n{}");
+    TEST_F(SwitchOrchTest, SwitchOrchTestHandleEventInvalidTimeStamp)
+    {
+        sai_timespec_t timestamp = {.tv_sec = 172479515853275099, .tv_nsec = 538710245};
+        checkAsicSdkHealthEvent(timestamp);
     }
 }
