@@ -1071,6 +1071,13 @@ class DockerVirtualSwitch:
         time.sleep(1)
 
     # deps: fdb_update, fdb
+    def create_vlan_with_mac(self, vlan, mac):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        fvs = swsscommon.FieldValuePairs([("vlanid", vlan), ("mac", mac)])
+        tbl.set("Vlan" + vlan, fvs)
+        time.sleep(1)
+
+    # deps: fdb_update, fdb
     def remove_vlan(self, vlan):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         tbl._del("Vlan" + vlan)

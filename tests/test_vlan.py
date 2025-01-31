@@ -612,6 +612,7 @@ class TestVlan(object):
         vlan_id = "1000"
         vlan_member = "Ethernet4"
         vlan_interface = f"Vlan{vlan_id}"
+        vlan_mac = "00:aa:bb:cc:dd:ee"
 
         assert dvs.get_interface_oper_status("Bridge") == "UP"
         assert dvs.get_interface_oper_status("dummy") != "DOWN"
@@ -622,7 +623,7 @@ class TestVlan(object):
         dummy_mac = dvs.get_interface_mac("dummy")
         assert mac_to_link_local_ipv6(dummy_mac) == dvs.get_interface_link_local_ipv6("dummy")
 
-        self.dvs_vlan.create_vlan(vlan_id)
+        self.dvs_vlan.create_vlan_with_mac(vlan_id, vlan_mac)
         time.sleep(1)
         assert dvs.get_interface_oper_status(vlan_interface) == "UP"
         # The MAC address of the Bridge is expected to have changed, so we need to check again.
