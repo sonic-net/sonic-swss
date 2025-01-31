@@ -473,6 +473,7 @@ int main(int argc, char **argv)
                     SWSS_LOG_ERROR("Invalid input for heartbeat interval: %d. use default interval: %ld", interval, heartBeatInterval);
                 }
             }
+            break;
         case 'R':
             gRingMode = true;
             break;
