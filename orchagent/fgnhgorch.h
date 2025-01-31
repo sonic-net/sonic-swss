@@ -15,9 +15,10 @@
 #include <map>
 
 typedef uint32_t Bank;
+typedef uint32_t HashBucketIdx;
 typedef std::set<NextHopKey> ActiveNextHops;
-typedef std::vector<sai_object_id_t> FGNextHopGroupMembers;
-typedef std::vector<uint32_t> HashBuckets;
+typedef std::map<HashBucketIdx, sai_object_id_t> FGNextHopGroupMembers;
+typedef std::vector<HashBucketIdx> HashBuckets;
 typedef std::map<NextHopKey, HashBuckets> FGNextHopGroupMap;
 typedef std::vector<FGNextHopGroupMap> BankFGNextHopGroupMap;
 typedef std::map<Bank,Bank> InactiveBankMapsToBank;
@@ -56,25 +57,34 @@ typedef std::unordered_map<string, std::vector<IpAddress>> Links;
 enum FGMatchMode
 {
     ROUTE_BASED,
-    NEXTHOP_BASED
+    NEXTHOP_BASED,
+    DYNAMIC_ROUTE_BASED
 };
+enum FGNexthopMode
+{
+    STATIC_FGNHG,
+    DYNAMIC_FGNHG
+};
+
 /* Store the indices occupied by a bank */
 typedef struct
 {
     uint32_t start_index;
     uint32_t end_index;
-} BankIndexRange;
+} HashIndexRange;
 
 typedef struct FgNhgEntry
 {
     string fg_nhg_name;                               // Name of FG NHG group configured by user
     uint32_t configured_bucket_size;                  // Bucket size configured by user
     uint32_t real_bucket_size;                        // Real bucket size as queried from SAI
+    uint32_t max_next_hops;                           // For nh_mode==dynamic. Maximum number of next hops in the FG NHG
     NextHops next_hops;                               // The IP to Bank mapping configured by user
     Links links;                                      // Link to IP map for oper changes
     std::vector<IpPrefix> prefixes;                   // Prefix which desires FG behavior
-    std::vector<BankIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
+    std::vector<HashIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
     FGMatchMode match_mode;                           // Stores a match_mode from FGMatchModes
+    FGNexthopMode nhg_mode;                            // Stores nexthop mode from FGNexthopMode
 } FgNhgEntry;
 
 /* Map from IP prefix to user configured FG NHG entries */
@@ -94,6 +104,9 @@ typedef struct
 
 typedef std::vector<string> NextHopIndexMap;
 typedef map<string, NextHopIndexMap> WarmBootRecoveryMap;
+typedef size_t state_tbl_idx;
+typedef map<HashBucketIdx, state_tbl_idx> StateTblBucketMap;
+typedef map<string, StateTblBucketMap> StateTblPrefixMap;
 
 class FgNhgOrch : public Orch, public Observer
 {
@@ -131,15 +144,22 @@ private:
     // warm reboot support for recovery
     // < ip_prefix, < HashBuckets, nh_ip>>
     WarmBootRecoveryMap m_recoveryMap;
+    // < ip_prefix, < StateTblBucketMap>>
+    StateTblPrefixMap   m_stateTblPrefixMap;
 
     bool setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     std::vector<BankMemberChanges> &bank_member_changes, 
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
+    bool sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const IpPrefix &ipPrefix,
+                    HashIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
+                    uint32_t bank, BankMemberChanges &bank_member_change,
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+
     bool computeAndSetHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry,
                     FgNhgEntry *fgNhgEntry, std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    uint32_t bank, uint32_t syncd_bank, std::vector<BankMemberChanges> bank_member_changes,
+                    uint32_t syncd_bank, BankMemberChanges bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     uint32_t bank,std::vector<BankMemberChanges> &bank_member_changes,
@@ -148,7 +168,7 @@ private:
                     uint32_t bank, std::vector<BankMemberChanges> bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     void calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry);
-    void setStateDbRouteEntry(const IpPrefix&, uint32_t index, NextHopKey nextHop);
+    void setStateDbRouteEntry(const IpPrefix&, uint32_t bucket_index, NextHopKey nextHop);
     bool writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
                     const IpPrefix &ipPrefix, NextHopKey nextHop);
     bool modifyRoutesNextHopId(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, sai_object_id_t next_hop_id);
