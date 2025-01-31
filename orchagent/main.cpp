@@ -53,7 +53,6 @@ extern size_t gMaxBulkSize;
 extern int gBatchSize;
 
 bool gRingMode = false;
-
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
@@ -473,6 +472,7 @@ int main(int argc, char **argv)
                     SWSS_LOG_ERROR("Invalid input for heartbeat interval: %d. use default interval: %ld", interval, heartBeatInterval);
                 }
             }
+            break;
         case 'R':
             gRingMode = true;
             break;

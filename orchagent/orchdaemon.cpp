@@ -928,7 +928,6 @@ void OrchDaemon::start(long heartBeatInterval)
 
             if (gRingBuffer)
             {
-
                 if (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle())
                 {
                     gRingBuffer->notify();
@@ -958,9 +957,10 @@ void OrchDaemon::start(long heartBeatInterval)
          * execute all the remaining tasks that need to be retried. */
 
         if (!gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->IsIdle()))
+        {
             for (Orch *o : m_orchList)
                 o->doTask();
-
+        }
         /*
          * Asked to check warm restart readiness.
          * Not doing this under Select::TIMEOUT condition because of
@@ -971,7 +971,6 @@ void OrchDaemon::start(long heartBeatInterval)
             bool ret = warmRestartCheck();
             if (ret)
             {
-                
                 // Orchagent is ready to perform warm restart, stop processing any new db data.
                 // but should finish data that already in the ring
                 if (gRingBuffer)

@@ -115,7 +115,6 @@ private:
 
     std::vector<Orch *> m_orchList;
     Select *m_select;
-
     std::chrono::time_point<std::chrono::high_resolution_clock> m_lastHeartBeat;
 
     void flush();
@@ -123,7 +122,6 @@ private:
     void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval);
 
     void freezeAndHeartBeat(unsigned int duration, long interval);
-
 };
 
 class FabricOrchDaemon : public OrchDaemon

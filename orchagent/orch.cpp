@@ -375,7 +375,8 @@ void Executor::pushRingBuffer(AnyTask&& task)
 
 void Consumer::drain()
 {
-    m_orch->doTask(*this);
+    if (!m_toSync.empty())
+        ((Orch *)m_orch)->doTask((Consumer&)*this);
 }
 
 size_t Orch::addExistingData(const string& tableName)
