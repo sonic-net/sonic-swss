@@ -52,6 +52,7 @@
 #include "dash/dashorch.h"
 #include "dash/dashrouteorch.h"
 #include "dash/dashvnetorch.h"
+#include "dash/dashmeterorch.h"
 #include <sairedis.h>
 
 using namespace swss;
