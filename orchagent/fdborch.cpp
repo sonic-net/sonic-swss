@@ -1033,7 +1033,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             {
                 return;
             }
-            flushFDBEntries(port.m_bridge_port_id, vlanPort.m_vlan_info.vlan_oid); 
+            flushFDBEntries(port.m_bridge_port_id, vlanPort.m_vlan_info.vlan_oid);
             SWSS_LOG_NOTICE("Clear fdb by port(%s)+vlan(%s)", alias.c_str(), vlan.c_str());
             return;
         }
@@ -1116,7 +1116,7 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
         attr.value.oid = vlan_oid;
         attrs.push_back(attr);
     }
-    
+
     /* do not flush static mac */
     attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
     attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
@@ -1160,7 +1160,7 @@ void FdbOrch::flushFdbByVlan(const string &alias)
     vlan_attr[1].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
     vlan_attr[1].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
     status = sai_fdb_api->flush_fdb_entries(gSwitchId, 2, vlan_attr);
-  
+
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
@@ -1172,6 +1172,43 @@ void FdbOrch::flushFdbByVlan(const string &alias)
     }
 
     return;
+}
+
+void FdbOrch::flushFdbByInstancePort(sai_uint16_t instanceId, sai_object_id_t portOid, const vector<sai_object_id_t> &vlanOids)
+{
+    sai_status_t status;
+
+    // Loop through each VLAN OID and flush FDB entries
+    for (const auto &vlanOid : vlanOids)
+    {
+        sai_attribute_t flushAttr[3];
+
+        // Set the bridge VLAN ID (BV_ID) for the instance
+        flushAttr[0].id = SAI_FDB_FLUSH_ATTR_BV_ID;
+        flushAttr[0].value.oid = vlanOid; // VLAN OID
+
+        // Set the port ID for the flush
+        flushAttr[1].id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
+        flushAttr[1].value.oid = portOid; // Port OID
+
+        // Set the entry type to dynamic
+        flushAttr[2].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+        flushAttr[2].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+
+        // Call the SAI API to flush FDB entries
+        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 3, flushAttr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Flush FDB failed for instance %u, port OID 0x%" PRIx64 ", VLAN OID 0x%" PRIx64 ", return code %x",
+                          instanceId, portOid, vlanOid, status);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Flush FDB by instance %u, port OID 0x%" PRIx64 ", VLAN OID 0x%" PRIx64 " succeeded",
+                         instanceId, portOid, vlanOid);
+        }
+    }
 }
 
 void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
@@ -1548,7 +1585,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         //MAC is added/updated as dynamic to allow aging.
         SWSS_LOG_INFO("MAC-Update Modify to dynamic FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
                 entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
-                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(), 
+                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(),
                 oldOrigin, fdbData.origin);
 
         storeFdbData.origin = FDB_ORIGIN_LEARN;
