@@ -23,9 +23,6 @@ using namespace swss;
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
 
-/* orchagent heart beat message interval */
-#define HEART_BEAT_INTERVAL_MSECS 10 * 1000
-
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
@@ -222,7 +219,8 @@ bool OrchDaemon::init()
 
     vector<string> srv6_tables = {
         APP_SRV6_SID_LIST_TABLE_NAME,
-        APP_SRV6_MY_SID_TABLE_NAME
+        APP_SRV6_MY_SID_TABLE_NAME,
+        APP_PIC_CONTEXT_TABLE_NAME
     };
     gSrv6Orch = new Srv6Orch(m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
@@ -827,7 +825,7 @@ void OrchDaemon::logRotate() {
 }
 
 
-void OrchDaemon::start()
+void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
 
@@ -848,7 +846,7 @@ void OrchDaemon::start()
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         auto tend = std::chrono::high_resolution_clock::now();
-        heartBeat(tend);
+        heartBeat(tend, heartBeatInterval);
 
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
 
@@ -925,7 +923,7 @@ void OrchDaemon::start()
                     flush();
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
-                    freezeAndHeartBeat(UINT_MAX);
+                    freezeAndHeartBeat(UINT_MAX, heartBeatInterval);
                 }
             }
         }
@@ -1089,11 +1087,17 @@ void OrchDaemon::addOrchList(Orch *o)
     m_orchList.push_back(o);
 }
 
-void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent)
+void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval)
 {
+    if (interval == 0)
+    {
+        // disable heart beat feature when interval is 0
+        return;
+    }
+
     // output heart beat message to SYSLOG
     auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - m_lastHeartBeat);
-    if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
+    if (diff.count() >= interval)
     {
         m_lastHeartBeat = tcurrent;
         // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
@@ -1101,13 +1105,13 @@ void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_
     }
 }
 
-void OrchDaemon::freezeAndHeartBeat(unsigned int duration)
+void OrchDaemon::freezeAndHeartBeat(unsigned int duration, long interval)
 {
     while (duration > 0)
     {
         // Send heartbeat message to prevent Orchagent stuck alert.
         auto tend = std::chrono::high_resolution_clock::now();
-        heartBeat(tend);
+        heartBeat(tend, interval);
 
         duration--;
         sleep(1);
