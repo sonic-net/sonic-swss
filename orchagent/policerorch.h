@@ -8,11 +8,9 @@
 #include "orch.h"
 #include "portsorch.h"
 
-
 using namespace std;
 
 #define POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP "POLICER_STAT_COUNTER"
-
 typedef map<string, sai_object_id_t> PolicerTable;
 typedef map<string, int> PolicerRefCountTable;
 

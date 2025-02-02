@@ -1,4 +1,3 @@
-// #include "sai.h"
 #include "policerorch.h"
 #include "sai_serialize.h"
 #include "flow_counter_handler.h"
@@ -9,13 +8,6 @@ extern "C" {
 #include "sai.h"
 }
 
-
-// #include "logger.h"
-// #include <limits.h>
-// #include <unordered_map>
-// #include <algorithm>
-// #include "schema.h"
-// #include "timer.h"
 
 using namespace std;
 using namespace swss;
