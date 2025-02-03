@@ -1109,6 +1109,28 @@ class DockerVirtualSwitch:
         tbl.set(interface, fvs)
         time.sleep(1)
 
+    def get_interface_oper_status(self, interface):
+        _, output = self.runcmd(f"ip --brief address show {interface}")
+        state = output.split()[1]
+        return state
+
+    def get_interface_link_local_ipv6(self, interface, subnet=False):
+        """
+        If subnet is True, the returned address will include the subnet length (e.g., fe80::aa:bbff:fecc:ddee/64)
+        """
+        _, output = self.runcmd(f"ip --brief address show {interface}")
+        ipv6 = output.split()[2]
+        if not subnet:
+            slash = ipv6.find('/')
+            if slash > 0:
+                ipv6 = ipv6[0:slash]
+        return ipv6
+
+    def get_interface_mac(self, interface):
+        _, output = self.runcmd(f"ip --brief link show {interface}")
+        mac = output.split()[2]
+        return mac
+
     # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan, sub port intf
     def add_ip_address(self, interface, ip, vrf_name=None):
         if interface.startswith("PortChannel"):
