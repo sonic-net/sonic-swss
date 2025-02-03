@@ -1,6 +1,9 @@
 from swsscommon import swsscommon
 
-SOFT_BFD_STATE_TABLE = swsscommon.STATE_BFD_SOFTWARE_SESSION_TABLE_NAME
+#Replace with swsscommon.SOFTWARE_BFD_SESSION_STATE_TABLE once available in azure pipeline
+#SOFT_BFD_STATE_TABLE = swsscommon.STATE_BFD_SOFTWARE_SESSION_TABLE_NAME
+SOFT_BFD_STATE_TABLE = "BFD_SOFTWARE_SESSION_TABLE"
+
 
 class TestSoftBfd(object):
     def setup_db(self, dvs):
