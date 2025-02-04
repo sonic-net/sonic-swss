@@ -11,6 +11,7 @@
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "stporch.h"
 
 using namespace std;
 using namespace swss;
@@ -21,9 +22,6 @@ using namespace swss;
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
-
-/* orchagent heart beat message interval */
-#define HEART_BEAT_INTERVAL_MSECS 10 * 1000
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -64,6 +62,7 @@ FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
+StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 
 bool gIsNatSupported = false;
@@ -167,6 +166,14 @@ bool OrchDaemon::init()
     gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_configDb, route_pattern_tables);
     gDirectory.set(gFlowCounterRouteOrch);
 
+    vector<string> stp_tables = {
+        APP_STP_VLAN_INSTANCE_TABLE_NAME,
+        APP_STP_PORT_STATE_TABLE_NAME,
+        APP_STP_FASTAGEING_FLUSH_TABLE_NAME
+    };
+    gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
+    gDirectory.set(gStpOrch);
+
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
             APP_VNET_RT_TUNNEL_TABLE_NAME
@@ -212,7 +219,8 @@ bool OrchDaemon::init()
 
     vector<string> srv6_tables = {
         APP_SRV6_SID_LIST_TABLE_NAME,
-        APP_SRV6_MY_SID_TABLE_NAME
+        APP_SRV6_MY_SID_TABLE_NAME,
+        APP_PIC_CONTEXT_TABLE_NAME
     };
     gSrv6Orch = new Srv6Orch(m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
@@ -420,7 +428,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -592,7 +600,7 @@ bool OrchDaemon::init()
                     PFC_WD_POLL_MSECS));
     }
     else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
-	     || (platform == MRVL_PLATFORM_SUBSTRING)
+	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
@@ -625,7 +633,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        if ((platform == MRVL_PLATFORM_SUBSTRING) ||
+        if ((platform == MRVL_PRST_PLATFORM_SUBSTRING) ||
 	    (platform == MRVL_TL_PLATFORM_SUBSTRING) ||
 	    (platform == NPS_PLATFORM_SUBSTRING))
         {
@@ -817,7 +825,7 @@ void OrchDaemon::logRotate() {
 }
 
 
-void OrchDaemon::start()
+void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
 
@@ -838,7 +846,7 @@ void OrchDaemon::start()
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         auto tend = std::chrono::high_resolution_clock::now();
-        heartBeat(tend);
+        heartBeat(tend, heartBeatInterval);
 
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
 
@@ -915,7 +923,7 @@ void OrchDaemon::start()
                     flush();
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
-                    freezeAndHeartBeat(UINT_MAX);
+                    freezeAndHeartBeat(UINT_MAX, heartBeatInterval);
                 }
             }
         }
@@ -1079,11 +1087,17 @@ void OrchDaemon::addOrchList(Orch *o)
     m_orchList.push_back(o);
 }
 
-void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent)
+void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval)
 {
+    if (interval == 0)
+    {
+        // disable heart beat feature when interval is 0
+        return;
+    }
+
     // output heart beat message to SYSLOG
     auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - m_lastHeartBeat);
-    if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
+    if (diff.count() >= interval)
     {
         m_lastHeartBeat = tcurrent;
         // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
@@ -1091,13 +1105,13 @@ void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_
     }
 }
 
-void OrchDaemon::freezeAndHeartBeat(unsigned int duration)
+void OrchDaemon::freezeAndHeartBeat(unsigned int duration, long interval)
 {
     while (duration > 0)
     {
         // Send heartbeat message to prevent Orchagent stuck alert.
         auto tend = std::chrono::high_resolution_clock::now();
-        heartBeat(tend);
+        heartBeat(tend, interval);
 
         duration--;
         sleep(1);
