@@ -361,7 +361,7 @@ bool Srv6Orch::createMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode, sai_obj
     tunnel_info.refcount++;
     tunnel_oid = tunnel_info.tunnel_oid;
 
-    SWSS_LOG_INFO("Increased refcount for MySID IPinIP tunnel to %lu", tunnel_info.refcount);
+    SWSS_LOG_INFO("Increased refcount for MySID IPinIP tunnel to %" PRIu64, tunnel_info.refcount);
 
     return true;
 }
@@ -376,7 +376,7 @@ bool Srv6Orch::removeMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode)
     MySidIpInIpTunnel& tunnel_info = (dscp_mode == SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL) ? uniform_tunnel : pipe_tunnel;
     tunnel_info.refcount--;
 
-    SWSS_LOG_INFO("Decreased refcount for MySID IPinIP tunnel to %lu", tunnel_info.refcount);
+    SWSS_LOG_INFO("Decreased refcount for MySID IPinIP tunnel to %" PRIu64, tunnel_info.refcount);
 
     if (tunnel_info.refcount == 0)
     {
