@@ -46,11 +46,11 @@ const map<string, sai_my_sid_entry_endpoint_behavior_t> end_behavior_map =
     {"end.b6.encaps.red",  SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS_RED},
     {"end.b6.insert",      SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT},
     {"end.b6.insert.red",  SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT_RED},
-    {"udx6",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6},
-    {"udx4",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4},
-    {"udt6",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6},
-    {"udt4",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4},
-    {"udt46",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46},
+    {"udx6",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDX6},
+    {"udx4",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDX4},
+    {"udt6",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT6},
+    {"udt4",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT4},
+    {"udt46",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46},
     {"un",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN},
     {"ua",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UA}
 };
@@ -1154,7 +1154,10 @@ bool Srv6Orch::mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_b
     if (end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T ||
         end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4 ||
         end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6 ||
-        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46)
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT4 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT6 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46)
     {
       return true;
     }
@@ -1166,6 +1169,8 @@ bool Srv6Orch::mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t e
     if (end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X ||
         end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4 ||
         end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDX4 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDX6 ||
         end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS ||
         end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS_RED ||
         end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT ||
