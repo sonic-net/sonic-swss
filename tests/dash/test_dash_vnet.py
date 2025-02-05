@@ -32,6 +32,19 @@ NUM_PORTS = 2
 
 class TestDash(TestFlexCountersBase):
     def test_appliance(self, dash_db: DashDB):
+        # verify vnet creation before appliance is rejected
+        vnet = "Vnet151"
+        vni = "75651"
+        guid = "559c6ce8-26ab-5651-b946-ccc6e8f930b2"
+        pb = Vnet()
+        pb.vni = int(vni)
+        pb.guid.value = bytes.fromhex(uuid.UUID(guid).hex)
+        dash_db.create_vnet(vnet, {"pb": pb.SerializeToString()})
+        keys = dash_db.get_keys(ASIC_VNET_TABLE)
+        time.sleep(2)
+        assert len(keys) == 0, "VNET wrongly pushed to SAI before DASH Appliance"
+        dash_db.remove_vnet(vnet)
+
         self.appliance_id = "100"
         self.sip = "10.0.0.1"
         self.vm_vni = "4321"
@@ -39,7 +52,12 @@ class TestDash(TestFlexCountersBase):
         pb = Appliance()
         pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
         pb.vm_vni = int(self.vm_vni)
+        pb.local_region_id = int(self.local_region_id)
         dash_db.create_appliance(self.appliance_id, {"pb": pb.SerializeToString()})
+
+        dash_appl_keys = dash_db.wait_for_asic_db_keys(ASIC_DASH_APPLIANCE_TABLE)
+        dash_appl_attrs = dash_db.get_asic_db_entry(ASIC_DASH_APPLIANCE_TABLE, dash_appl_keys[0])
+        assert_sai_attribute_exists("SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID", dash_appl_attrs, self.local_region_id)
 
         direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
         dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
@@ -49,6 +67,19 @@ class TestDash(TestFlexCountersBase):
         vip_keys = dash_db.wait_for_asic_db_keys(ASIC_VIP_TABLE)
         vip_attrs = dash_db.get_asic_db_entry(ASIC_VIP_TABLE, vip_keys[0])
         assert_sai_attribute_exists("SAI_VIP_ENTRY_ATTR_ACTION", vip_attrs, "SAI_VIP_ENTRY_ACTION_ACCEPT")
+
+        # verify duplicate appliance is not passed to SAI
+        dupl_appliance_id = "200"
+        pb = Appliance()
+        pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address("11.0.0.1")))
+        pb.vm_vni = int(1111)
+        pb.local_region_id = int(self.local_region_id)
+        dash_db.create_appliance(dupl_appliance_id, {"pb": pb.SerializeToString()})
+        time.sleep(2)
+        keys = dash_db.get_keys(ASIC_DASH_APPLIANCE_TABLE)
+        assert len(keys) == 1, "duplicate DASH Appliance entry wrongly pushed to SAI"
+        dash_db.remove_appliance(dupl_appliance_id)
+
 
     def test_vnet(self, dash_db: DashDB):
         self.vnet = "Vnet1"
