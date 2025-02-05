@@ -1,8 +1,24 @@
 import distro
 import pytest
+import ipaddress
+import time
 
 from distutils.version import StrictVersion
 from dvslib.dvs_common import PollingConfig, wait_for_result
+
+
+def mac_to_link_local_ipv6(mac):
+    mac_bytes = mac.split(':')
+    mac_bytes = mac_bytes[:3] + ["ff", "fe"] + mac_bytes[3:]
+    second_digit = int(mac_bytes[0][1], 16)
+    second_digit ^= 0x2  # Reverse the second bit from right
+    mac_bytes[0] = mac_bytes[0][0] + format(second_digit, "x")
+    ipv6 = ["fe80:"]
+    for i in range(0, 7, 2):
+        ipv6 += [":", mac_bytes[i], mac_bytes[i + 1]]
+    ipv6 = "".join(ipv6)
+    return str(ipaddress.IPv6Address(ipv6))  # Conversion to IPv6Address is done to compress ipv6.
+
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -233,7 +249,7 @@ class TestVlan(object):
 
         self.dvs_vlan.create_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(1)
-
+        
         self.dvs_vlan.create_vlan_member(vlan, lag_interface, "tagged")
         self.dvs_vlan.get_and_verify_vlan_member_ids(1)
 
@@ -248,6 +264,58 @@ class TestVlan(object):
 
         self.dvs_lag.remove_port_channel(lag_id)
         self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
+
+    def test_AddPortChannelToVlanRaceCondition(self, dvs):
+
+        vlan = "2"
+        lag_member = "Ethernet0"
+        lag_id = "0001"
+        lag_interface = "PortChannel{}".format(lag_id)
+
+        self.dvs_lag.create_port_channel(lag_id)
+        lag_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
+
+        self.dvs_lag.create_port_channel_member(lag_id, lag_member)
+
+        # Verify the LAG has been initialized properly
+        lag_member_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
+        fvs = self.dvs_vlan.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", lag_member_entries[0])
+        assert len(fvs) == 4
+        assert fvs.get("SAI_LAG_MEMBER_ATTR_LAG_ID") == lag_entries[0]
+        assert self.dvs_vlan.asic_db.port_to_id_map[fvs.get("SAI_LAG_MEMBER_ATTR_PORT_ID")] == lag_member
+
+        self.dvs_vlan.create_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(1)
+        # Kill teamsyncd
+        dvs.stop_teamsyncd()
+
+        # Delete netdevice
+        dvs.runcmd("ip link del PortChannel" + lag_id)
+
+        self.dvs_vlan.create_vlan_member(vlan, lag_interface, "tagged")
+
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+        #Start teamsyncd
+        dvs.start_teamsyncd()
+
+        #Start teammgrd
+        dvs.restart_teammgrd()
+        
+        self.dvs_vlan.get_and_verify_vlan_member_ids(1)
+
+        self.dvs_vlan.remove_vlan_member(vlan, lag_interface)
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
+        self.dvs_lag.remove_port_channel_member(lag_id, lag_member)
+        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 0)
+
+        self.dvs_lag.remove_port_channel(lag_id)
+        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
+
+
 
     def test_AddVlanMemberWithNonExistVlan(self, dvs):
 
@@ -533,6 +601,50 @@ class TestVlan(object):
         self.dvs_vlan.get_and_verify_vlan_member_ids(0)
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
+
+    def test_MacMatchesLinkLocalIPv6(self, dvs):
+        """
+        Checks whether the MAC addresses assigned to the Bridge, dummy, Vlan1000 and Ethernet4
+        interfaces match their corresponding interface's link-local IPv6 address.
+        """
+        dvs.setup_db()
+
+        vlan_id = "1000"
+        vlan_member = "Ethernet4"
+        vlan_interface = f"Vlan{vlan_id}"
+        vlan_mac = "00:aa:bb:cc:dd:ee"
+
+        assert dvs.get_interface_oper_status("Bridge") == "UP"
+        assert dvs.get_interface_oper_status("dummy") != "DOWN"
+
+        bridge_mac = dvs.get_interface_mac("Bridge")
+        assert mac_to_link_local_ipv6(bridge_mac) == dvs.get_interface_link_local_ipv6("Bridge")
+
+        dummy_mac = dvs.get_interface_mac("dummy")
+        assert mac_to_link_local_ipv6(dummy_mac) == dvs.get_interface_link_local_ipv6("dummy")
+
+        self.dvs_vlan.create_vlan_with_mac(vlan_id, vlan_mac)
+        time.sleep(1)
+        assert dvs.get_interface_oper_status(vlan_interface) == "UP"
+        # The MAC address of the Bridge is expected to have changed, so we need to check again.
+        bridge_mac = dvs.get_interface_mac("Bridge")
+        assert mac_to_link_local_ipv6(bridge_mac) == dvs.get_interface_link_local_ipv6("Bridge")
+        vlan_mac = dvs.get_interface_mac(vlan_interface)
+        assert mac_to_link_local_ipv6(vlan_mac) == dvs.get_interface_link_local_ipv6(vlan_interface)
+
+        self.dvs_vlan.create_vlan_member(vlan_interface, vlan_member)
+        time.sleep(1)
+        dvs.set_interface_status(vlan_member, "up")
+        assert dvs.get_interface_oper_status(vlan_member) != "DOWN"
+        member_mac = dvs.get_interface_mac(vlan_member)
+        assert mac_to_link_local_ipv6(member_mac) == dvs.get_interface_link_local_ipv6(vlan_member)
+
+        # Tear down
+        dvs.set_interface_status(vlan_member, "down")
+        self.dvs_vlan.remove_vlan_member(vlan_interface, vlan_member)
+        self.dvs_vlan.remove_vlan(vlan_interface)
+        time.sleep(1)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
