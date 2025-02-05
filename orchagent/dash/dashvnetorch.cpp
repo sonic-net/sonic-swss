@@ -56,6 +56,12 @@ bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
         SWSS_LOG_WARN("Vnet already exists for %s", vnet_name.c_str());
         return true;
     }
+    DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    if (!dash_orch->hasApplianceEntry())
+    {
+        SWSS_LOG_INFO("Retry as no appliance table entry found");
+        return false;
+    }
 
     uint32_t attr_count = 1;
     auto& object_ids = ctxt.object_ids;
