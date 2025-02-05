@@ -1334,8 +1334,6 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd(sid_cmd)
         dvs.runcmd(loc_cmd)
 
-    @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.14'),
-                        reason="This test requires Linux kernel 5.14 or higher")
     def test_Srv6MySidUNTunnelDscpMode(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1430,8 +1428,6 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
-    @pytest.mark.skipif(LooseVersion(platform.release()) < LooseVersion('5.14'),
-                        reason="This test requires Linux kernel 5.14 or higher")
     def test_Srv6MySidUNTunnelDscpModeAmbiguity(self, dvs, testlog):
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
         if 'dplane_fpm_sonic' not in output:
