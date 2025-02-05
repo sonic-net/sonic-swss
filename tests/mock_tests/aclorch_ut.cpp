@@ -15,6 +15,7 @@ extern Srv6Orch  *gSrv6Orch;
 
 extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
+extern PolicerOrch *gPolicerOrch;
 extern VRFOrch *gVrfOrch;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -242,7 +243,11 @@ namespace aclorch_test
         MockPolicerOrch(swss::DBConnector *config_db) :
             config_db(config_db)
         {
-            m_policerOrch = new PolicerOrch(config_db);
+            vector<TableConnector> policer_tables = {
+                TableConnector(config_db, CFG_POLICER_TABLE_NAME),
+                TableConnector(config_db, CFG_PORT_STORM_CONTROL_TABLE_NAME)
+            };
+            m_policerOrch = new PolicerOrch(policer_tables, gPortsOrch);
         }
 
         ~MockPolicerOrch()
@@ -557,7 +562,7 @@ namespace aclorch_test
 
         shared_ptr<MockAclOrch> createAclOrch()
         {
-            return make_shared<MockAclOrch>(m_config_db.get(), m_state_db.get(), gSwitchOrch, gPortsOrch, gMirrorOrch,
+            return make_shared<MockAclOrch>(m_config_db.get(), m_state_db.get(), gSwitchOrch, gPortsOrch, gPolicerOrch, gMirrorOrch,
                                             gNeighOrch, gRouteOrch);
         }
 
@@ -2022,10 +2027,10 @@ namespace aclorch_test
         const map<string, string> policerAttributes = {{"CIR", "1000"}, {"CBS", "200"}};
         const string aclTableActions = "PACKET_ACTION,POLICER_ACTION";
         const string aclTableMatch = "SRC_IP";
-        policer_action_attr = "POLICER_ACTION"
+        const string policer_action_attr = "POLICER_ACTION";
 
-        auto policerOrch = MockPolicerOrch(config_db);
-        auto aclOrch = MockAclOrch(config_db, state_db, gSwitchOrch, gPortsOrch, policerOrch.m_policerOrch, gMirrorOrch, gNeighOrch, gRouteOrch);
+        auto policerOrch = MockPolicerOrch(m_config_db.get());
+        auto aclOrch = MockAclOrch(m_config_db.get(), m_state_db.get(), gSwitchOrch, gPortsOrch, policerOrch.m_policerOrch, gMirrorOrch, gNeighOrch, gRouteOrch);
 
         // Create ACL Table Type
         aclOrch.doAclTableTypeTask({
@@ -2042,7 +2047,7 @@ namespace aclorch_test
         ASSERT_TRUE(policerOrch.policerExists(policerName));
 
         // Add ACL Rule with Policer Action
-        auto rule = make_shared<AclRulePolicer>(aclOrch, aclRuleName, aclTableName);
+        auto rule = make_shared<AclRulePolicer>(aclOrch.m_aclOrch, policerOrch.m_policerOrch, aclRuleName, aclTableName);
         ASSERT_TRUE(rule->validateAddAction(policer_action_attr, policerName));
         ASSERT_TRUE(aclOrch.m_aclOrch->addAclRule(rule, aclTableName));
 
