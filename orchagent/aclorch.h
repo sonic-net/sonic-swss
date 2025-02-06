@@ -15,6 +15,7 @@
 #include "mirrororch.h"
 #include "dtelorch.h"
 #include "observer.h"
+#include "vxlanorch.h"
 #include "flex_counter_manager.h"
 
 #include "acltable.h"
@@ -286,6 +287,22 @@ class AclTable;
 class AclRule
 {
 public:
+    struct TunnelNH
+    {
+        TunnelNH() = default;
+        ~TunnelNH() = default;
+
+        void load(const std::string& target);
+        void parse(const std::string& target);
+        void clear();
+
+        std::string tunnel_name;
+        swss::IpAddress endpoint_ip;
+        swss::MacAddress mac;
+        uint32_t vni = 0;
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+    };
+
     AclRule(AclOrch *pAclOrch, string rule, string table, bool createCounter = true);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
@@ -359,6 +376,7 @@ protected:
     map <sai_acl_entry_attr_t, SaiAttrWrapper> m_matches;
     string m_redirect_target_next_hop;
     string m_redirect_target_next_hop_group;
+    AclRule::TunnelNH m_redirect_target_tun_nh;
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
