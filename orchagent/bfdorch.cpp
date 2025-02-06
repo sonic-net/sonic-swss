@@ -95,6 +95,7 @@ BfdOrch::~BfdOrch(void)
 }
 
 std::string BfdOrch::createStateDBKey(const std::string &input) {
+    // Replace ':' with '|' to convert key to StateDB format.
     std::string result = input;
     size_t pos = result.find(':'); // Find the first colon
     if (pos != std::string::npos) {
