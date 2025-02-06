@@ -335,36 +335,44 @@ void Consumer::execute()
     auto entries = std::make_shared<std::deque<KeyOpFieldsValuesTuple>>();
     getConsumerTable()->pops(*entries);
 
-    pushRingBuffer([=](){
-        addToSync(entries);
-    });
-
-    pushRingBuffer([=](){
-        drain();
-    });
+    processAnyTask(
+        // bundle tasks into a lambda function which takes no argument and returns void
+        // this lambda captures variables by value from the surrounding scope
+        [=](){
+            addToSync(entries);
+            drain();
+        }
+    );
 }
 
-void Executor::pushRingBuffer(AnyTask&& task)
+void Executor::processAnyTask(AnyTask&& task)
 {
+    // if either gRingBuffer isn't initialized or the ring thread isn't created
     if (!gRingBuffer || !gRingBuffer->thread_created) 
     {
-        // execute the task right now in this thread if gRingBuffer is not initialized
-        // or the ring thread is not created, or this executor is not served by gRingBuffer
+        // execute the input task immediately
         task();
     }
-    else if (!gRingBuffer->serves(getName())) // not served by ring thread
+
+    // Ring Buffer Logic
+
+    // if this executor isn't served by ring buffer
+    else if (!gRingBuffer->serves(getName()))
     {
+        // this executor should execute the input task in the main thread
+        // but to avoid thread issue, it should wait when the ring buffer is actively working
         while (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()) {
             gRingBuffer->notify();
             std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
         }
-        // if ring thread is enabled, make sure to execute task after the ring finishes its work
+        // execute task()
         task();
     }
     else
     {
-        // if this executor is served by gRingBuffer, push the task to gRingBuffer
-        // and notify the ring thread to flush gRingBuffer
+        // if this executor is served by ring buffer, 
+        // push the task to gRingBuffer
+        // this task would be executed in the ring thread, not here
         while (!gRingBuffer->push(task)) {
             gRingBuffer->notify();
             SWSS_LOG_WARN("ring is full...push again");

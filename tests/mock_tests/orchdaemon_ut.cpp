@@ -141,18 +141,18 @@ namespace orchdaemon_test
         EXPECT_FALSE(gRingBuffer->serves("OTHER_TABLE"));
 
         int x = 0;
-        route_consumer->pushRingBuffer([&](){x=3;});
-        // verify `pushRingBuffer` is equivalent to executing the task immediately
+        route_consumer->processAnyTask([&](){x=3;});
+        // verify `processAnyTask` is equivalent to executing the task immediately
         EXPECT_TRUE(gRingBuffer->IsEmpty() && gRingBuffer->IsIdle() && !gRingBuffer->thread_created && x==3);
 
         gRingBuffer->thread_created = true; // set the flag to assume the ring thread is created (actually not)
 
-        // verify `pushRingBuffer` is equivalent to executing the task immediately when ring is empty and idle
-        other_consumer->pushRingBuffer([&](){x=4;});
+        // verify `processAnyTask` is equivalent to executing the task immediately when ring is empty and idle
+        other_consumer->processAnyTask([&](){x=4;});
         EXPECT_TRUE(gRingBuffer->IsEmpty() && gRingBuffer->IsIdle() && x==4);
 
-        route_consumer->pushRingBuffer([&](){x=5;});
-        // verify `pushRingBuffer` would not execute the task if thread_created is true
+        route_consumer->processAnyTask([&](){x=5;});
+        // verify `processAnyTask` would not execute the task if thread_created is true
         // it only pushes the task to the ring buffer, without executing it
         EXPECT_TRUE(!gRingBuffer->IsEmpty() && x==4);
 

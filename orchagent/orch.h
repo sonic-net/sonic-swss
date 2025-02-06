@@ -93,7 +93,7 @@ typedef std::pair<std::string, int> table_name_with_pri_t;
 
 class Orch;
 
-using AnyTask = std::function<void()>;
+using AnyTask = std::function<void()>; // represents a function with no argument and returns void
 
 class RingBuffer;
 
@@ -135,7 +135,7 @@ public:
 
     Orch *getOrch() const { return m_orch; }
     static std::shared_ptr<RingBuffer> gRingBuffer;
-    void pushRingBuffer(AnyTask&& func);
+    void processAnyTask(AnyTask&& func);
 
 protected:
     swss::Selectable *m_selectable;
