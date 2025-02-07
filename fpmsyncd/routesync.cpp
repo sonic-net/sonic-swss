@@ -1822,7 +1822,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
 /*
  * Handle Nexthop msg
- * @arg nlmsghdr      Netlink message
+ * @arg nlmsghdr      Netlink messaged
  */
 void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
 {
@@ -1833,7 +1833,6 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
     string ifname;
     struct nhmsg *nhm = NULL;
     struct rtattr *tb[NHA_MAX + 1] = {};
-    struct nexthop_grp grp[MAX_MULTIPATH_NUM];
     struct in_addr ipv4 = {0};
     struct in6_addr ipv6 = {0};
     char gateway[INET6_ADDRSTRLEN] = {0};
@@ -1861,69 +1860,23 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
 
     if (nlmsg_type == RTM_NEWNEXTHOP)
     {
-        if(tb[NHA_GROUP])
+        if (tb[NHA_GROUP])
         {
             SWSS_LOG_INFO("New nexthop group message!");
+
             struct nexthop_grp *nha_grp = (struct nexthop_grp *)RTA_DATA(tb[NHA_GROUP]);
             grp_count = (int)(RTA_PAYLOAD(tb[NHA_GROUP]) / sizeof(*nha_grp));
+
             if (grp_count > MAX_MULTIPATH_NUM)
             {
                 SWSS_LOG_ERROR("Nexthop group count (%d) exceeds the maximum allowed (%d). Clamping to maximum.", grp_count, MAX_MULTIPATH_NUM);
                 grp_count = MAX_MULTIPATH_NUM;
             }
-            for (int i = 0; i < grp_count; i++) {
-                    grp[i].id = nha_grp[i].id;
-                    /*
-                        The minimum weight value is 1, but kernel store it as zero (https://git.kernel.org/pub/scm/network/iproute2/iproute2.git/tree/ip/iproute.c?h=v5.19.0#n1028).
-                        Adding one to weight to write the right value to the database.
-                    */
-                    grp[i].weight = nha_grp[i].weight + 1;
-            }
-        }
-        else
-        {
-            if (tb[NHA_GATEWAY])
-            {
-                if (addr_family == AF_INET)
-                {
-                    memcpy(&ipv4, (void *)RTA_DATA(tb[NHA_GATEWAY]), 4);
-                    inet_ntop(AF_INET, &ipv4, gateway, INET_ADDRSTRLEN);
-                }
-                else if (addr_family == AF_INET6)
-                {
-                    memcpy(&ipv6, (void *)RTA_DATA(tb[NHA_GATEWAY]), 16);
-                    inet_ntop(AF_INET6, &ipv6, gateway, INET6_ADDRSTRLEN);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR(
-                        "Unexpected nexthop address family");
-                    return;
-                }
-            }
 
-            if(tb[NHA_OIF])
-            {
-                ifindex = *((int32_t *)RTA_DATA(tb[NHA_OIF]));
-                char if_name[IFNAMSIZ] = {0};
-                if (!getIfName(ifindex, if_name, IFNAMSIZ))
-                {
-                    strcpy(if_name, ifname_unknown);
-                }
-                ifname = string(if_name);
-                if (ifname == "eth0" || ifname == "docker0")
-                {
-                    SWSS_LOG_DEBUG("Skip routes to inteface: %s id[%d]", ifname.c_str(), id);
-                    return;
-                }
-            }
-        }
-        if (grp_count > 0)
-        {
             vector<pair<uint32_t, uint8_t>> group(grp_count);
             for (int i = 0; i < grp_count; i++)
             {
-                group[i] = std::make_pair(grp[i].id, grp[i].weight);
+                group[i] = std::make_pair(nha_grp[i].id, nha_grp[i].weight + 1);
             }
 
             auto it = m_nh_groups.find(id);
@@ -1943,6 +1896,41 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
         }
         else
         {
+            if (tb[NHA_GATEWAY])
+            {
+                if (addr_family == AF_INET)
+                {
+                    memcpy(&ipv4, (void *)RTA_DATA(tb[NHA_GATEWAY]), 4);
+                    inet_ntop(AF_INET, &ipv4, gateway, INET_ADDRSTRLEN);
+                }
+                else if (addr_family == AF_INET6)
+                {
+                    memcpy(&ipv6, (void *)RTA_DATA(tb[NHA_GATEWAY]), 16);
+                    inet_ntop(AF_INET6, &ipv6, gateway, INET6_ADDRSTRLEN);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unexpected nexthop address family");
+                    return;
+                }
+            }
+
+            if (tb[NHA_OIF])
+            {
+                ifindex = *((int32_t *)RTA_DATA(tb[NHA_OIF]));
+                char if_name[IFNAMSIZ] = {0};
+                if (!getIfName(ifindex, if_name, IFNAMSIZ))
+                {
+                    strcpy(if_name, ifname_unknown);
+                }
+                ifname = string(if_name);
+                if (ifname == "eth0" || ifname == "docker0")
+                {
+                    SWSS_LOG_DEBUG("Skip routes to interface: %s id[%d]", ifname.c_str(), id);
+                    return;
+                }
+            }
+
             SWSS_LOG_DEBUG("Received: id[%d], if[%d/%s] address[%s]", id, ifindex, ifname.c_str(), gateway);
             m_nh_groups.insert({id, NextHopGroup(id, string(gateway), ifname)});
         }
