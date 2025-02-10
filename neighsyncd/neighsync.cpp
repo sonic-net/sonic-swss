@@ -14,11 +14,7 @@
 #include "neighsync.h"
 #include "warm_restart.h"
 #include <algorithm>
-
-#ifndef NTF_EXT_LEARNED
-/* from include/uapi/linux/neighbour.h */
-#  define NTF_EXT_LEARNED (1 << 4)
-#endif
+#include <linux/neighbour.h>
 
 using namespace std;
 using namespace swss;
