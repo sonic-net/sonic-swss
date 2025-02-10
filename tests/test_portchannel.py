@@ -454,7 +454,7 @@ class TestPortchannel(object):
 
         # verify a PORT_TABLE entry containing the PortChannel is NOT created
         # in APPDB (sonic-buildimage Issue #21688)
-        tbl = swsscommon.Table(app_db, "PORTCHANNEL_MEMBER")
+        tbl = swsscommon.Table(app_db, "PORT_TABLE")
         status, _ = tbl.get("PortChannel111")
         assert status is False
 
