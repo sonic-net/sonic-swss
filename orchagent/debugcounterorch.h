@@ -17,6 +17,8 @@ extern "C" {
 }
 
 #define DEBUG_COUNTER_FLEX_COUNTER_GROUP "DEBUG_COUNTER"
+#define DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP "DEBUG_MONITOR_COUNTER"
+#define DEBUG_DROP_MONITOR_FLEX_COUNTER_POLLING_INTERVAL_MS "60000"
 
 using DebugCounterMap = std::unordered_map<std::string, std::unique_ptr<DebugCounter>>;
 
@@ -57,7 +59,8 @@ private:
     void uninstallDebugFlexCounters(
             const std::string& counter_type,
             const std::string& counter_stat,
-            sai_object_id_t port_id = SAI_NULL_OBJECT_ID);
+            sai_object_id_t port_id = SAI_NULL_OBJECT_ID,
+            const std::string& counter_name = "");
 
     // Debug Counter Initialization Helper Functions
     std::string getDebugCounterType(
@@ -74,6 +77,7 @@ private:
             std::string *counter_name,
             std::string *drop_reason) const;
     bool isDropReasonValid(const std::string& drop_reason) const;
+    std::string counterIdsToStr(const std::unordered_set<std::string>& ids) const;
 
     // Data Members
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
@@ -90,6 +94,11 @@ private:
     FlexCounterStatManager flex_counter_manager;
 
     DebugCounterMap debug_counters;
+
+    // portDebugStatIds will store the debug counter stats that have been
+    // configured
+    bool debug_monitor_enabled = false;
+    std::unordered_set<std::string> portDebugMonitorStatIds;
 
     // free_drop_counters are drop counters that have been created by a user
     // that do not have any drop reasons associated with them yet. Because
