@@ -78,12 +78,10 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
         m_stateBfdSessionTable.del(alias);
     }
     // Clean up state database software BFD entries
-    if (gMySwitchType == "dpu") {
-        m_stateSoftBfdSessionTable->getKeys(keys);
-        for (auto alias : keys)
-        {
-            m_stateSoftBfdSessionTable->del(alias);
-        }
+    m_stateSoftBfdSessionTable->getKeys(keys);
+    for (auto alias : keys)
+    {
+        m_stateSoftBfdSessionTable->del(alias);
     }
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
