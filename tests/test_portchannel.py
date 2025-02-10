@@ -531,7 +531,6 @@ class TestPortchannel(object):
         lagmtbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 2
-        #print(lagms)
 
         # expecting both members are enabled
         for lagm in lagms:
@@ -644,14 +643,12 @@ class TestPortchannel(object):
 
 
         #notify Ethernet0 oper up, expecting collection/dsitribution enabled
-        #print("update port state")
         self.update_port_state(dvs, dvs.asicdb.portnamemap["Ethernet0"], "up")
         time.sleep(1)
 
         for lagm in lagms:
             (status, fvs) = lagmtbl.get(lagm)
             fvs = dict(fvs)
-            #print(fvs)
             assert status
 
             assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
