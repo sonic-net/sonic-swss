@@ -8268,7 +8268,10 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         return;
     }
 
-    updateDbPortOperStatus(port, status);
+    if (port.m_type == Port::PHY || port.m_type == Port::TUNNEL)
+    {
+        updateDbPortOperStatus(port, status);
+    }
 
     if (port.m_type == Port::PHY)
     {
