@@ -393,13 +393,6 @@ class TestSubPortIntf(object):
         assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
         return oids[0]
 
-    def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None):
-
-      def get_default_vrf_oid(self):
-        oids = self.get_oids(ASIC_VIRTUAL_ROUTER_TABLE)
-        assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
-        return oids[0]
-
     def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None, prefix_present=True):
         if vrf_oid is None:
             vrf_oid = self.default_vrf_oid
@@ -1219,7 +1212,8 @@ class TestSubPortIntf(object):
 
         # Restore parent port mtu
         dvs.set_mtu(parent_port, DEFAULT_MTU)
-        dvs.set_dhcp_rate_limit(parent_port,"300")
+
+        #dvs.set_dhcp_rate_limit(parent_port,"300")
         # Verify that sub port router interface entry in ASIC_DB has the default mtu
         fv_dict = {
             "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
