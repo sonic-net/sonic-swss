@@ -67,7 +67,6 @@ int main(int argc, char **argv)
     RedisPipeline pipeline(&db);
 
     DBConnector stateDb("STATE_DB", 0);
-    Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     SubscriberStateTable bfdstateTableSubscriber(&stateDb, STATE_BFD_SESSION_TABLE_NAME);
 
@@ -75,7 +74,7 @@ int main(int argc, char **argv)
     {
         try
         {
-            BfdLink bfd(&db, port, dflag);
+            BfdLink bfd(&db, &stateDb, port, dflag);
             Select s;
            
             /*
@@ -115,7 +114,7 @@ int main(int argc, char **argv)
                         //Does not support DEL_COMMAND for state update 
                         if (op != SET_COMMAND) 
                         {
-                            SWSS_LOG_WARN("bfdsyncd support SET_OP only, get key %s, op %s", key.c_str(), op.c_str());
+                            SWSS_LOG_INFO("bfdsyncd support SET_OP only, get key %s, op %s for state_db, ignored", key.c_str(), op.c_str());
                             continue;
                         }
 

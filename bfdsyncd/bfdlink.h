@@ -65,7 +65,7 @@ namespace swss {
 
 class BfdLink : public Selectable {
 public:
-    BfdLink(DBConnector *db, unsigned short port = BFD_DATA_PLANE_DEFAULT_PORT, int debug = 0);
+    BfdLink(DBConnector *db, DBConnector *stateDb, unsigned short port = BFD_DATA_PLANE_DEFAULT_PORT, int debug = 0);
     virtual ~BfdLink();
 
     /* Wait for connection (blocking) */
@@ -82,10 +82,12 @@ public:
     {
     };
     bool handleBfdStateUpdate(std::string key, const std::vector<swss::FieldValueTuple> &fvs);
+    void bfdStateUpdate(std::string key);
 
 private:
     /* bfd table */
-    ProducerStateTable  m_bfdTable;
+    ProducerStateTable m_bfdTable;
+    Table m_bfdStateTable;
 
     unsigned int m_bufSize;
     char *m_messageBuffer;

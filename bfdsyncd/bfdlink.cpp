@@ -71,14 +71,15 @@ static const char *bfd_dplane_messagetype2str(enum bfddp_message_type bmt)
 	}
 }
 
-BfdLink::BfdLink(DBConnector *db, unsigned short port, int debug) :
+BfdLink::BfdLink(DBConnector *db, DBConnector *stateDb, unsigned short port, int debug) :
     m_debug(debug),
     m_bufSize(BFD_MAX_MSG_LEN * 10),
     m_messageBuffer(NULL),
     m_pos(0),
     m_connected(false),
     m_server_up(false),
-    m_bfdTable(db, APP_BFD_SESSION_TABLE_NAME)
+    m_bfdTable(db, APP_BFD_SESSION_TABLE_NAME),
+    m_bfdStateTable(stateDb, STATE_BFD_SESSION_TABLE_NAME)
 {
     struct sockaddr_in addr;
     int true_val = 1;
@@ -265,6 +266,7 @@ void BfdLink::handleBfdDpMessage(size_t start)
     string  bfdkey_map = "";
     bool add = true;
     bool multihop = true;
+    bool is_linklocal = false;
     char dst_addr[INET6_ADDRSTRLEN];
     char src_addr[INET6_ADDRSTRLEN];
     char ifname[IFNAME_LEN];
@@ -350,8 +352,14 @@ void BfdLink::handleBfdDpMessage(size_t start)
     }
     else
     {
+        struct in_addr v4;
         sprintf(src_addr, "%s", inet_ntoa(*(struct in_addr *)&bmp->data.session.src));
         sprintf(dst_addr, "%s", inet_ntoa(*(struct in_addr *)&bmp->data.session.dst));
+        /* check link local ip address 169.254.0.0/16 0xa9fe0000 */
+        if ((inet_pton(AF_INET, dst_addr, &v4) == 1) && ((v4.s_addr & 0x0000ffff) == 0x0000fea9)) {
+            is_linklocal = true;
+            SWSS_LOG_INFO("dst_addr %s is a link local ip address", dst_addr);
+        }
     }
 
     bfdkey = string("default:default:")+string(dst_addr);
@@ -368,17 +376,19 @@ void BfdLink::handleBfdDpMessage(size_t start)
 
     /* mac address is not needed for deletion, neighbor entry might be deleted already */
     if ((ifindex != 0) && (bm.header.type == DP_ADD_SESSION)) {
+        /* get src mac address */
+        src_mac = get_intf_mac(ifname);
+
         if (flags & SESSION_IPV6)
         {
             /* update ndp table */
-            cmd = string("ping6 -c 3 ") + string(dst_addr) + string("%") + string(ifname);
+            cmd = string("ping6 -c 3 ") + string(dst_addr) + string(" -I ") + string(ifname);
+            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
             exec(cmd.c_str());
-
-            /* get src mac address */
-            src_mac = get_intf_mac(ifname);
 
             /* get dst mac address */
             cmd = string("ip -6 neighbor get ") + string(dst_addr) + string(" dev ") + string(ifname) + string(" | grep -o -E ..:..:..:..:..:..");
+            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
             dst_str = exec(cmd.c_str());
             if (dst_str.length() < 17) {
                 SWSS_LOG_ERROR("mac address length is not correct: dst_mac %s ", dst_str.c_str());
@@ -388,8 +398,25 @@ void BfdLink::handleBfdDpMessage(size_t start)
         }
         else
         {
-            SWSS_LOG_ERROR("IPv4 with interface name is not supported yet!");
-            return;
+            /* update arp table */
+            if (is_linklocal) {
+                SWSS_LOG_ERROR("IPv4 link-local is not supported!");
+                return;
+            } else {
+                cmd = string("ping -c 3 ") + string(dst_addr) + string(" -I ") + string(ifname);
+            }
+            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
+            exec(cmd.c_str());
+
+            /* get dst mac address */
+            cmd = string("arp ") + string(dst_addr) + string(" | grep -o -E ..:..:..:..:..:..");
+            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
+            dst_str = exec(cmd.c_str());
+            if (dst_str.length() < 17) {
+                SWSS_LOG_ERROR("mac address length is not correct: ip_address %s, dst_mac %s", dst_addr, dst_str.c_str());
+                return;
+            }
+            dst_mac = dst_str.substr(0,17);
         }
         SWSS_LOG_INFO("dst_mac %s ,  src_mac %s", dst_mac.c_str(), src_mac.c_str());
     }
@@ -419,13 +446,14 @@ void BfdLink::handleBfdDpMessage(size_t start)
                 m_bfdTable.del(bfdkey);
                 m_key2bfd.erase(bfdkey_map);
                 /* the symptom observed that redis eliminates consecutive del and add transaction sometime, get wrong result. need to wait to make sure deletion done */
-                usleep(10000);
+                usleep(100000);
             }
             else
             {
                 SWSS_LOG_WARN("bfd session key %s is already created, ignore duplicated creation.", bfdkey_map.c_str());
-                /* bfdd does not change lid for same destination, update lid here to be safe */
+                /* in the case of duplicated creation, update lid here and update bfd state from redis state db to bfdd */
                 it->second.data.session.lid = bm.data.session.lid;
+                bfdStateUpdate(bfdkey_map);
                 return;
             }
         }
@@ -476,6 +504,13 @@ void BfdLink::handleBfdDpMessage(size_t start)
     if (bm.header.type == DP_ADD_SESSION) 
     {
         m_key2bfd[bfdkey_map] = bm;
+
+        /* in the case of bgp container restart, 
+         * bgp creates bfd session again but bfdorch does not create bfd session again, 
+         * update bfd state from redis state db to bfdd here
+         */
+        bfdStateUpdate(bfdkey_map);
+
         m_bfdTable.set(bfdkey, fvVector);
         SWSS_LOG_INFO("add key %s  to appl DB", bfdkey.c_str());
     }
@@ -540,6 +575,21 @@ void BfdLink::bfdDebugMessage(struct bfddp_message *bm)
         SWSS_LOG_INFO("dst %s", inet_ntoa(*(struct in_addr *)&bm->data.session.dst));
     }
 
+}
+
+void BfdLink::bfdStateUpdate(std::string key)
+{
+    std::vector<swss::FieldValueTuple> fvs;
+    m_bfdStateTable.get(key, fvs);
+    for (auto fv: fvs)
+    {
+        if (fvField(fv) == "state")
+        {
+            SWSS_LOG_INFO("key %s found in state db, update state %s to bfdd", key.c_str(), string(fvValue(fv)).c_str());
+            handleBfdStateUpdate(key, fvs);
+            break;
+        }
+    }
 }
 
 bool BfdLink::handleBfdStateUpdate(std::string k, const std::vector<swss::FieldValueTuple> &fvs)

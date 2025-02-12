@@ -201,6 +201,12 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
 
+            if (bfd_session_lookup.find(id) == bfd_session_lookup.end())
+            {
+                SWSS_LOG_NOTICE("BFD session missing at state change id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
+                continue;
+            }
+
             if (state != bfd_session_lookup[id].state)
             {
                 auto key = bfd_session_lookup[id].peer;
@@ -523,7 +529,8 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         attrs.emplace_back(attr);
 
         attr.id = SAI_BFD_SESSION_ATTR_SRC_MAC_ADDRESS;
-        if (src_mac_provided) {
+        if (src_mac_provided)
+        {
             memcpy(attr.value.mac, src_mac.getMac(), sizeof(sai_mac_t));
         }
         else
