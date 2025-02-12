@@ -67,7 +67,6 @@ private:
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
     Table m_deviceMetadataConfigTable;
-    std::unordered_set<std::string> m_groupsWithBulkChunkSize;
 };
 
 #endif
