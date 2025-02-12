@@ -25,10 +25,16 @@ class TestPortchannel(object):
         # create port channel
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         ps = swsscommon.ProducerStateTable(db, "LAG_TABLE")
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "1500")])
 
         ps.set("PortChannel0001", fvs)
 
+        # set port-channel oper status
+        tbl_app = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "1500"),("oper_status", "up")])
+        tbl_app.set("PortChannel0001", fvs)
+        
         # create port channel member
         ps = swsscommon.ProducerStateTable(db, "LAG_MEMBER_TABLE")
         fvs = swsscommon.FieldValuePairs([("status", "enabled")])
@@ -144,6 +150,8 @@ class TestPortchannel(object):
         for portchannel in portchannelNamesAuto:
             tbl.set(portchannel[0], fvs)
 
+        time.sleep(1)
+
         fvs_no_lacp_key = swsscommon.FieldValuePairs(
             [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up")])
         tbl.set(portchannelNames[0][0], fvs_no_lacp_key)
@@ -155,6 +163,7 @@ class TestPortchannel(object):
         fvs_set_number_lacp_key = swsscommon.FieldValuePairs(
             [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up"), ("lacp_key", "564")])
         tbl.set(portchannelNames[2][0], fvs_set_number_lacp_key)
+
         time.sleep(1)
 
         # Add members to PortChannels
@@ -414,7 +423,7 @@ class TestPortchannel(object):
 
         # remove port channel
         tbl = swsscommon.Table(cdb, "PORTCHANNEL")
-        tbl._del("PortChannel0002")
+        tbl._del("PortChannel002")
         time.sleep(1)
 
     def test_portchannel_member_netdev_oper_status(self, dvs, testlog):

@@ -5552,18 +5552,16 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             /* Sync an enabled member */
             if (status == "enabled")
             {
-                if (lag.m_oper_status != SAI_PORT_OPER_STATUS_UP)
-                {
-                    SWSS_LOG_NOTICE("%s oper status is not up, skip collection/distribution enabling for %s",
-                                    lag_alias.c_str(), port.m_alias.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-                /* enable collection first, distribution-only mode
+                bool isLagUp = lag.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+                SWSS_LOG_NOTICE("%s oper status is %s, %s collection/distribution for %s",
+                    lag_alias.c_str(), isLagUp?"up":"down", isLagUp?"enable":"disable", port.m_alias.c_str());
+
+                /* check LAG oper status before enable collection/distribution
+                 * enable/disable collection first, distribution-only mode
                  * is not supported on Mellanox platform
                  */
-                if (setCollectionOnLagMember(port, true) &&
-                    setDistributionOnLagMember(port, true))
+                if (setCollectionOnLagMember(port, isLagUp) &&
+                    setDistributionOnLagMember(port, isLagUp))
                 {
                     it = consumer.m_toSync.erase(it);
                 }
