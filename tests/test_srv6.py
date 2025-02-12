@@ -1600,15 +1600,15 @@ class TestSrv6Vpn(object):
         routetbl._del(routeip)
 
     def create_nhg(self, nhg_index, nexthops, segsrc_list, ifname_list):
-        table = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
+        table = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
         existed_entries = get_exist_entries(self.adb.db_connection, table)
 
         fvs=swsscommon.FieldValuePairs([('seg_src', ",".join(segsrc_list)), ('nexthop', ",".join(nexthops)), ('ifname', ",".join(ifname_list))])
         nhgtbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEXTHOP_GROUP_TABLE")
         nhgtbl.set(nhg_index,fvs)
 
-        self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
-        return get_created_entry(self.adb.db_connection, table, existed_entries)
+        self.adb.wait_for_n_keys(table, len(existed_entries) + len(nexthops))
+        return get_created_entries(self.adb.db_connection, table, existed_entries, len(nexthops))
     
     def remove_nhg(self, nhg_index):
         nhgtbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEXTHOP_GROUP_TABLE")
