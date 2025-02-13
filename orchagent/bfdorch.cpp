@@ -585,6 +585,11 @@ bool BfdOrch::remove_bfd_session(const string& key)
     bfd_session_map.erase(key);
     bfd_session_lookup.erase(bfd_session_id);
 
+    BfdUpdate update;
+    update.peer = key;
+    update.state = SAI_BFD_SESSION_STATE_UP;
+    notify(SUBJECT_TYPE_BFD_SESSION_DELETION, static_cast<void *>(&update));
+
     return true;
 }
 
