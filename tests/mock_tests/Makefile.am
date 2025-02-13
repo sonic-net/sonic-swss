@@ -26,6 +26,7 @@ LDADD_GTEST = -L/usr/src/gtest
 tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(DASH_ORCH_DIR) -I$(top_srcdir)/warmrestart
 
 tests_SOURCES = aclorch_ut.cpp \
+                aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \

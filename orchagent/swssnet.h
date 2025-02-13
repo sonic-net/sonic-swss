@@ -21,6 +21,7 @@ inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const IpAddress& src
     switch(sip.family)
     {
         case AF_INET:
+            memset((void*)&dst.addr, 0, sizeof(dst.addr));
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
             dst.addr.ip4 = sip.ip_addr.ipv4_addr;
             break;
@@ -41,6 +42,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
     switch(ia.family)
     {
         case AF_INET:
+            memset((void*)&dst, 0, sizeof(dst));
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
             dst.addr.ip4 = ia.ip_addr.ipv4_addr;
             dst.mask.ip4 = ma.ip_addr.ipv4_addr;
@@ -62,6 +64,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
     switch(sip.family)
     {
         case AF_INET:
+            memset((void*)&dst, 0, sizeof(dst));
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
             dst.addr.ip4 = sip.ip_addr.ipv4_addr;
             dst.mask.ip4 = 0xFFFFFFFF;

@@ -11,6 +11,7 @@ To mock a particular SAI API:
 3. In the SetUp method of the test class, call INIT_SAI_API_MOCK for each SAI API you want to mock.
 4. In the SetUp method of the test class, call MockSaiApis.
 5. In the TearDown method of the test class, call RestoreSaiApis.
+6. After RestoreSaiApis, call DEINIT_SAI_API_MOCK
 */
 
 using ::testing::Return;
@@ -241,6 +242,14 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
 #define INIT_SAI_API_MOCK(sai_object_type)                          \
     apply_mock_fns.insert(&apply_sai_##sai_object_type##_api_mock); \
     remove_mock_fns.insert(&remove_sai_##sai_object_type##_api_mock);
+
+/*
+    Call this after RestoreSaiApis to clear the mock_fns
+    Required when same SAI_API is being mocked in multiple files eg: acl API in multiple tests
+*/
+#define DEINIT_SAI_API_MOCK(sai_object_type)                          \
+    apply_mock_fns.erase(&apply_sai_##sai_object_type##_api_mock); \
+    remove_mock_fns.erase(&remove_sai_##sai_object_type##_api_mock);
 
 void MockSaiApis();
 void RestoreSaiApis();
