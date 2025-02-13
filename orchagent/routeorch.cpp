@@ -1543,14 +1543,17 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
-    status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (next_hop_group_id != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
-        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
-        if (handle_status != task_success)
+        status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
 
