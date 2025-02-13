@@ -615,19 +615,19 @@ void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>& tupEnt
             }
             else if (fvField(i) == "portfast" && l2ProtoEnabled == L2_PVSTP)
             {
-                msg->pvst_fields.portfast = (fvValue(i) == "true") ? 1 : 0;
+                msg->portfast = (fvValue(i) == "true") ? 1 : 0;
             }
             else if (fvField(i) == "uplink_fast" && l2ProtoEnabled ==L2_PVSTP)
             {
-                msg->pvst_fields.uplink_fast = (fvValue(i) == "true") ? 1 : 0;
+                msg->uplink_fast = (fvValue(i) == "true") ? 1 : 0;
             }
             else if (fvField(i) == "edge_port" && l2ProtoEnabled ==L2_MSTP)
             {
-                msg->mstp_fields.edge_port = (fvValue(i) == "true") ? 1 : 0;
+                msg->edge_port = (fvValue(i) == "true") ? 1 : 0;
             }
             else if (fvField(i) == "link_type" && l2ProtoEnabled == L2_MSTP)
             {
-                msg->mstp_fields.link_type = static_cast<LinkType>(stoi(fvValue(i).c_str()));
+                msg->link_type = static_cast<LinkType>(stoi(fvValue(i).c_str()));
             }
         }
     }

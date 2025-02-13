@@ -164,7 +164,7 @@ typedef struct STP_PORT_CONFIG_MSG {
     int         priority;
     int         count;
     VLAN_ATTR   vlan_list[0];
-} __attribute__ ((packed)) STP_PORT_CONFIG_MSG;
+} STP_PORT_CONFIG_MSG;;
 
 
 typedef struct STP_VLAN_MEM_CONFIG_MSG {
