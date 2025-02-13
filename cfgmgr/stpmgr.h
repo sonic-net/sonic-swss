@@ -65,10 +65,10 @@ typedef enum STP_MSG_TYPE {
     STP_PORT_CONFIG,
     STP_VLAN_MEM_CONFIG,
     STP_STPCTL_MSG,
-    STP_MAX_MSG,
     STP_MST_GLOBAL_CONFIG,
     STP_MST_INST_CONFIG,
-    STP_MST_INST_PORT_CONFIG
+    STP_MST_INST_PORT_CONFIG,
+    STP_MAX_MSG,
 }STP_MSG_TYPE;
 
 typedef enum STP_CTL_TYPE {
@@ -156,21 +156,14 @@ typedef struct STP_PORT_CONFIG_MSG {
     uint8_t     root_guard;
     uint8_t     bpdu_guard;
     uint8_t     bpdu_guard_do_disable;
+    uint8_t     portfast;           // PVST only
+    uint8_t     uplink_fast;        // PVST only
+    uint8_t     edge_port;          // MSTP only
+    LinkType    link_type;          // MSTP only
     int         path_cost;
     int         priority;
     int         count;
     VLAN_ATTR   vlan_list[0];
-    // Union for protocol-specific fields (PVST vs MSTP)
-    union {
-        struct {
-            uint8_t portfast;    // PVST only
-            uint8_t uplink_fast; // PVST only
-        } pvst_fields;
-        struct {
-            uint8_t edge_port;   // MSTP only
-            LinkType link_type;  // MSTP only
-        } mstp_fields;
-    };
 } __attribute__ ((packed)) STP_PORT_CONFIG_MSG;
 
 
@@ -195,20 +188,20 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     max_hop;
 }__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
-typedef struct VLAN_MST_ATTR {
+/*typedef struct VLAN_MST_ATTR {
     uint16_t    vlan_id;           // VLAN ID
     uint8_t     port_count;        // Number of ports in this VLAN
     PORT_ATTR   ports[0];         // Flexible array for Port attributes
 
-}VLAN_MST_ATTR;
+}VLAN_MST_ATTR;*/
 
-typedef struct STP_MST_INST_CONFIG_MSG{
-    uint8_t         opcode; // enable/disable
-    uint16_t        mst_id;
-    int             priority;
-    uint16_t        vlan_count;
-    VLAN_MST_ATTR   vlan_list[0];
-}STP_MST_INST_CONFIG_MSG;
+typedef struct STP_MST_INST_CONFIG_MSG {
+    uint8_t         opcode;     // enable/disable
+    uint16_t        mst_id;     // MST instance ID
+    int             priority;   // Bridge priority
+    uint16_t        vlan_count; // Number of VLANs in this instance
+    VLAN_LIST       vlan_list[0]; // Flexible array for VLAN IDs
+} STP_MST_INST_CONFIG_MSG;
 
 typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint8_t     opcode;         // enable/disable
@@ -244,9 +237,9 @@ private:
     Table m_stateVlanMemberTable;
     Table m_stateLagTable;
     Table m_stateStpTable;
-    Table m_cfgStpMstGlobalTable;
-    Table m_cfgStpMstInstTable;
-    Table m_cfgStpMstInstPortTable;
+    Table m_cfgMstGlobalTable;
+    Table m_cfgMstInstTable;
+    Table m_cfgMstInstPortTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
@@ -260,9 +253,7 @@ private:
     bool stpVlanTask;
     bool stpVlanPortTask;
     bool stpPortTask;
-    bool stpMstGlobalTask;
     bool stpMstInstTask;
-    bool stpMstInstPortTask;
 
     void doTask(Consumer &consumer);
     void doStpGlobalTask(Consumer &consumer);

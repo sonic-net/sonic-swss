@@ -32,14 +32,14 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    m_cfgStpMstGlobalTable(confDb, "STP_MST"),
-    m_cfgStpMstInstTable(confDb, "STP_MST_INST"),
-    m_cfgStpMstInstPortTable(confDb, "STP_MST_PORT")
+    m_cfgMstGlobalTable(confDb, "STP_MST"),
+    m_cfgMstInstTable(confDb, "STP_MST_INST"),
+    m_cfgMstInstPortTable(confDb, "STP_MST_PORT")
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
 
-    stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = stpMstGlobalTask = stpMstInstTask = stpMstInstPortTask = false;
+    stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = stpMstInstTask = false;
 
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
@@ -368,9 +368,6 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
 
     if (stpGlobalTask == false )
         return;
-
-    if (stpMstGlobalTask == false)
-        stpMstGlobalTask = true;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -1042,7 +1039,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || stpMstGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
+    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
         return;
 
     if (stpMstInstTask == false)
@@ -1082,18 +1079,11 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
                     vlan_list_str = fvValue(i);
                     vlan_ids = parseVlanList(vlan_list_str);
                 }
-                updateVlanInstanceMap(instance_id, vlan_ids,true);
+                updateVlanInstanceMap(instance_id, vlan_ids, true);
             }
 
             uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
-            len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_MST_ATTR));
-
-            vector<PORT_ATTR> port_list;
-            for (auto vlan_id : vlan_ids)
-            {
-                uint32_t port_count = (uint32_t)getAllVlanMem("Vlan" + to_string(vlan_id), port_list);
-                len += static_cast<uint32_t>(port_count * sizeof(PORT_ATTR));
-            }
+            len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
 
             msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
@@ -1107,30 +1097,11 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->priority = priority;
             msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
 
-            VLAN_MST_ATTR *vlan_attr = (VLAN_MST_ATTR *)&msg->vlan_list;;
-            for (size_t i = 0; i < vlan_ids.size(); i++){
-                vlan_attr->vlan_id = vlan_ids[i];
-                vector<PORT_ATTR> port_list;
-                uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_ids[i]), port_list);
-                vlan_attr->port_count = port_count;
-
-                if(vlan_attr->port_count)
-                {
-                int i = 0;
-                PORT_ATTR *attr = msg->vlan_list->ports;
-                for (auto p = port_list.begin(); p != port_list.end(); p++)
-                {
-                    attr[i].mode    = p->mode;
-                    attr[i].enabled = p->enabled;
-                    strncpy(attr[i].intf_name, p->intf_name, IFNAMSIZ);
-                    SWSS_LOG_DEBUG("MemIntf: %s", p->intf_name);
-                    i++;
-                }
-                }
-
-                vlan_attr++;
+            VLAN_LIST *vlan_attr = (VLAN_LIST *)&msg->vlan_list;
+            for (size_t i = 0; i < vlan_ids.size(); i++)
+            {
+                vlan_attr[i].vlan_id = vlan_ids[i];
             }
-
         }
         else if (op == DEL_COMMAND)
         {
@@ -1144,8 +1115,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
 
             msg->opcode = STP_DEL_COMMAND;
             msg->mst_id = instance_id;
-            updateVlanInstanceMap(instance_id, vlan_ids,false);
-
+            updateVlanInstanceMap(instance_id, vlan_ids, false);
         }
 
         sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
@@ -1200,11 +1170,8 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false || stpMstGlobalTask == false)
+    if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false)
         return;
-
-    if (stpMstInstPortTask == false)
-        stpMstInstPortTask = true;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
