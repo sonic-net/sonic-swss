@@ -558,7 +558,7 @@ void NeighOrch::updateNextHop(const BfdUpdate& update)
 {
     SWSS_LOG_ENTER();
     bool rc = true;
-	Port p;
+    Port p;
 
     auto key = update.peer;
     sai_bfd_session_state_t state = update.state;
