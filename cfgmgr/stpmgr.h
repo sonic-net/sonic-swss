@@ -188,13 +188,6 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     max_hop;
 }__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
-/*typedef struct VLAN_MST_ATTR {
-    uint16_t    vlan_id;           // VLAN ID
-    uint8_t     port_count;        // Number of ports in this VLAN
-    PORT_ATTR   ports[0];         // Flexible array for Port attributes
-
-}VLAN_MST_ATTR;*/
-
 typedef struct STP_MST_INST_CONFIG_MSG {
     uint8_t         opcode;     // enable/disable
     uint16_t        mst_id;     // MST instance ID
