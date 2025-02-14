@@ -68,7 +68,7 @@ typedef enum STP_MSG_TYPE {
     STP_MST_GLOBAL_CONFIG,
     STP_MST_INST_CONFIG,
     STP_MST_INST_PORT_CONFIG,
-    STP_MAX_MSG,
+    STP_MAX_MSG
 }STP_MSG_TYPE;
 
 typedef enum STP_CTL_TYPE {
@@ -164,7 +164,7 @@ typedef struct STP_PORT_CONFIG_MSG {
     int         priority;
     int         count;
     VLAN_ATTR   vlan_list[0];
-} STP_PORT_CONFIG_MSG;;
+}__attribute__((packed)) STP_PORT_CONFIG_MSG;;
 
 
 typedef struct STP_VLAN_MEM_CONFIG_MSG {
@@ -201,7 +201,7 @@ typedef struct STP_MST_INST_CONFIG_MSG {
     int             priority;   // Bridge priority
     uint16_t        vlan_count; // Number of VLANs in this instance
     VLAN_LIST       vlan_list[0]; // Flexible array for VLAN IDs
-} STP_MST_INST_CONFIG_MSG;
+}__attribute__((packed)) STP_MST_INST_CONFIG_MSG;
 
 typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint8_t     opcode;         // enable/disable

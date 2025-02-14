@@ -1096,8 +1096,10 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->mst_id = instance_id;
             msg->priority = priority;
             msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
-
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
             VLAN_LIST *vlan_attr = (VLAN_LIST *)&msg->vlan_list;
+            #pragma GCC diagnostic pop
             for (size_t i = 0; i < vlan_ids.size(); i++)
             {
                 vlan_attr[i].vlan_id = vlan_ids[i];
