@@ -623,7 +623,6 @@ bool AclTableRangeMatch::validateAclRuleMatch(const AclRule& rule) const
     return true;
 }
 
-
 void AclRule::TunnelNH::load(const std::string& target)
 {
     parse(target);

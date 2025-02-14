@@ -49,6 +49,9 @@ void DashEniFwdOrch::update(SubjectType type, void *cntx)
 
 void DashEniFwdOrch::handleNeighUpdate(const NeighborUpdate& update)
 {
+    /*
+        Refresh ENI's that are hosted on the DPU with the corresponding Neighboo
+    */
     SWSS_LOG_ENTER();
     auto ipaddr = update.entry.ip_address;
     auto dpu_id_itr = neigh_dpu_map_.find(ipaddr);

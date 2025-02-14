@@ -13,10 +13,6 @@
 #include <exception>
 #include <functional>
 
-// TODO: Update in sonic-swss-common schema.h
-#define CFG_DPU_TABLE              "DPU_TABLE"
-#define APP_DASH_ENI_FORWARD_TABLE "DASH_ENI_FORWARD_TABLE"
-
 // TODO: remove after the schema is finalized and added to swss-common
 #define CFG_VIP_TABLE_TMP          "VIP_TABLE"
 

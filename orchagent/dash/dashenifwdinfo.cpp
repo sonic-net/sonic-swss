@@ -155,6 +155,11 @@ update_type_t EniAclRule::processUpdate(EniInfo& eni)
 
 void EniAclRule::fire(EniInfo& eni)
 {
+    /*
+        Process an ENI update and handle the ACL rule accordingly
+        1) See if the update is valid and infer if the nexthop is local or remote
+        2) Create a NextHop object and if resolved, proceed with installing the ACL Rule
+    */
     SWSS_LOG_ENTER();
 
     auto update_type = processUpdate(eni);
