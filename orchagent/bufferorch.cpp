@@ -9,6 +9,8 @@
 #include <sstream>
 #include <iostream>
 
+#include "buffer/bufferschema.h"
+
 using namespace std;
 
 extern sai_port_api_t *sai_port_api;
@@ -708,6 +710,26 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
                 attr.value.u64 = (uint64_t)stoul(value);
+                attribs.push_back(attr);
+            }
+            else if (field == BUFFER_PROFILE_PACKET_DISCARD_ACTION)
+            {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION;
+
+                if (value == BUFFER_PROFILE_PACKET_DISCARD_ACTION_DROP)
+                {
+                    attr.value.s32 = SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP;
+                }
+                else if (value == BUFFER_PROFILE_PACKET_DISCARD_ACTION_TRIM)
+                {
+                    attr.value.s32 = SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP_AND_TRIM;
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+                    return task_process_status::task_failed;
+                }
+
                 attribs.push_back(attr);
             }
             else
