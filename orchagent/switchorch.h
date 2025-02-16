@@ -5,6 +5,8 @@
 #include "timer.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
+#include "switch/trimming/capabilities.h"
+#include "switch/trimming/helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
@@ -74,6 +76,7 @@ private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doCfgSwitchHashTableTask(Consumer &consumer);
+    void doCfgSwitchTrimmingTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
@@ -89,6 +92,13 @@ private:
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
     void setSwitchIcmpOffloadCapability();
+
+    // Switch trimming
+    bool setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimming(const SwitchTrimming &trim);
 
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
@@ -154,7 +164,9 @@ private:
 
     // Switch OA capabilities
     SwitchCapabilities swCap;
+    SwitchTrimmingCapabilities trimCap;
 
     // Switch OA helper
     SwitchHelper swHlpr;
+    SwitchTrimmingHelper trimHlpr;
 };
