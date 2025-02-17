@@ -188,7 +188,7 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     max_hop;
 }__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
-typedef struct STP_MST_INST_CONFIG_MSG {
+/*typedef struct STP_MST_INST_CONFIG_MSG {
     uint8_t         opcode;     // enable/disable
     uint16_t        mst_id;     // MST instance ID
     int             priority;   // Bridge priority
@@ -202,7 +202,7 @@ typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint16_t    mst_id;         // MST instance ID
     int         path_cost;      // Path cost
     int         priority;       // Port priority
-} __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;
+} __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;*/
 
 namespace swss {
 

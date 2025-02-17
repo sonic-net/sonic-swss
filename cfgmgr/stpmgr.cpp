@@ -33,8 +33,8 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
     m_cfgMstGlobalTable(confDb, "STP_MST"),
-    m_cfgMstInstTable(confDb, "STP_MST_INST"),
-    m_cfgMstInstPortTable(confDb, "STP_MST_PORT")
+    // m_cfgMstInstTable(confDb, "STP_MST_INST"),
+    // m_cfgMstInstPortTable(confDb, "STP_MST_PORT")
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -68,12 +68,12 @@ void StpMgr::doTask(Consumer &consumer)
         doVlanMemUpdateTask(consumer);
     else if (table == "STP_MST")
         doStpMstGlobalTask(consumer);
-    else if (table == "STP_MST_INST")
-        doStpMstInstTask(consumer);
-    else if (table == "STP_MST_PORT")
-        doStpMstInstPortTask(consumer);
-    else if (table == CFG_STP_PORT_TABLE_NAME)
-        doStpPortTask(consumer);
+    // else if (table == "STP_MST_INST")
+    //     doStpMstInstTask(consumer);
+    // else if (table == "STP_MST_PORT")
+    //     doStpMstInstPortTask(consumer);
+    // else if (table == CFG_STP_PORT_TABLE_NAME)
+    //     doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -543,7 +543,7 @@ void StpMgr::doStpVlanPortTask(Consumer &consumer)
     }
 }
 
-void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>& tupEntry, const string intfName)
+void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntry, const string intfName)
 {
     STP_PORT_CONFIG_MSG *msg;
     uint32_t len = 0;
@@ -575,7 +575,7 @@ void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>& tupEnt
         for (auto p = vlan_list.begin(); p != vlan_list.end(); p++)
         {
             attr[i].inst_id = p->inst_id;
-            attr[i].mode = p->mode;
+            attr[i].mode    = p->mode;
             SWSS_LOG_DEBUG("Inst:%d Mode:%d", p->inst_id, p->mode);
             i++;
         }
@@ -1035,199 +1035,199 @@ int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
     return (int)vlan_list.size();
 }
 
-void StpMgr::doStpMstInstTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
+// void StpMgr::doStpMstInstTask(Consumer &consumer)
+// {
+//     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
-        return;
+//     if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
+//         return;
 
-    if (stpMstInstTask == false)
-        stpMstInstTask = true;
+//     if (stpMstInstTask == false)
+//         stpMstInstTask = true;
 
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        STP_MST_INST_CONFIG_MSG *msg = NULL;
-        uint32_t len = 0;
+//     auto it = consumer.m_toSync.begin();
+//     while (it != consumer.m_toSync.end())
+//     {
+//         STP_MST_INST_CONFIG_MSG *msg = NULL;
+//         uint32_t len = 0;
 
-        KeyOpFieldsValuesTuple t = it->second;
+//         KeyOpFieldsValuesTuple t = it->second;
 
-        string key = kfvKey(t);
-        string op = kfvOp(t);
+//         string key = kfvKey(t);
+//         string op = kfvOp(t);
 
-        string instance = key.substr(13); // Remove "MST_INSTANCE|" prefix
-        uint16_t instance_id = static_cast<uint16_t>(stoi(instance.c_str()));
+//         string instance = key.substr(13); // Remove "MST_INSTANCE|" prefix
+//         uint16_t instance_id = static_cast<uint16_t>(stoi(instance.c_str()));
 
-        uint16_t priority = 32768; // Default bridge priority
-        string vlan_list_str;
-        vector<uint16_t> vlan_ids;
+//         uint16_t priority = 32768; // Default bridge priority
+//         string vlan_list_str;
+//         vector<uint16_t> vlan_ids;
 
-        SWSS_LOG_INFO("STP_MST instance key %s op %s", key.c_str(), op.c_str());
-        if (op == SET_COMMAND)
-        {
-            for (auto i : kfvFieldsValues(t))
-            {
-                SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
+//         SWSS_LOG_INFO("STP_MST instance key %s op %s", key.c_str(), op.c_str());
+//         if (op == SET_COMMAND)
+//         {
+//             for (auto i : kfvFieldsValues(t))
+//             {
+//                 SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
 
-                if (fvField(i) == "bridge_priority")
-                {
-                    priority = static_cast<uint16_t>(stoi((fvValue(i).c_str())));
-                }
-                else if (fvField(i) == "vlan_list")
-                {
-                    vlan_list_str = fvValue(i);
-                    vlan_ids = parseVlanList(vlan_list_str);
-                }
-                updateVlanInstanceMap(instance_id, vlan_ids, true);
-            }
+//                 if (fvField(i) == "bridge_priority")
+//                 {
+//                     priority = static_cast<uint16_t>(stoi((fvValue(i).c_str())));
+//                 }
+//                 else if (fvField(i) == "vlan_list")
+//                 {
+//                     vlan_list_str = fvValue(i);
+//                     vlan_ids = parseVlanList(vlan_list_str);
+//                 }
+//                 updateVlanInstanceMap(instance_id, vlan_ids, true);
+//             }
 
-            uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
-            len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
+//             uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
+//             len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
 
-            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
-            if (!msg)
-            {
-                SWSS_LOG_ERROR("Memory allocation failed for STP_MST_INST_CONFIG_MSG");
-                return;
-            }
+//             msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
+//             if (!msg)
+//             {
+//                 SWSS_LOG_ERROR("Memory allocation failed for STP_MST_INST_CONFIG_MSG");
+//                 return;
+//             }
 
-            msg->opcode = STP_SET_COMMAND;
-            msg->mst_id = instance_id;
-            msg->priority = priority;
-            msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
-            #pragma GCC diagnostic push
-            #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
-            VLAN_LIST *vlan_attr = (VLAN_LIST *)&msg->vlan_list;
-            #pragma GCC diagnostic pop
-            for (size_t i = 0; i < vlan_ids.size(); i++)
-            {
-                vlan_attr[i].vlan_id = vlan_ids[i];
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            len = sizeof(STP_MST_INST_CONFIG_MSG);
-            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
-            if (!msg)
-            {
-                SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
-                return;
-            }
+//             msg->opcode = STP_SET_COMMAND;
+//             msg->mst_id = instance_id;
+//             msg->priority = priority;
+//             msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
+//             #pragma GCC diagnostic push
+//             #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+//             VLAN_LIST *vlan_attr = (VLAN_LIST *)&msg->vlan_list;
+//             #pragma GCC diagnostic pop
+//             for (size_t i = 0; i < vlan_ids.size(); i++)
+//             {
+//                 vlan_attr[i].vlan_id = vlan_ids[i];
+//             }
+//         }
+//         else if (op == DEL_COMMAND)
+//         {
+//             len = sizeof(STP_MST_INST_CONFIG_MSG);
+//             msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
+//             if (!msg)
+//             {
+//                 SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
+//                 return;
+//             }
 
-            msg->opcode = STP_DEL_COMMAND;
-            msg->mst_id = instance_id;
-            updateVlanInstanceMap(instance_id, vlan_ids, false);
-        }
+//             msg->opcode = STP_DEL_COMMAND;
+//             msg->mst_id = instance_id;
+//             updateVlanInstanceMap(instance_id, vlan_ids, false);
+//         }
 
-        sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
-        if (msg)
-            free(msg);
+//         sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
+//         if (msg)
+//             free(msg);
 
-        it = consumer.m_toSync.erase(it);
-    }
-}
+//         it = consumer.m_toSync.erase(it);
+//     }
+// }
 
-void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
-                                       vector<FieldValueTuple>& tupEntry)
-{
-    STP_MST_INST_PORT_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
+// void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
+//                                        vector<FieldValueTuple>& tupEntry)
+// {
+//     STP_MST_INST_PORT_CONFIG_MSG msg;
+//     memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
 
-    // Populate the message fields
-    msg.mst_id = mst_id;
-    strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ - 1);
+//     // Populate the message fields
+//     msg.mst_id = mst_id;
+//     strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ - 1);
 
-    // Set opcode and process the fields from the tuple
-    if (op == SET_COMMAND)
-    {
-        msg.opcode = STP_SET_COMMAND;
-        msg.priority = -1;
+//     // Set opcode and process the fields from the tuple
+//     if (op == SET_COMMAND)
+//     {
+//         msg.opcode = STP_SET_COMMAND;
+//         msg.priority = -1;
 
-        for (auto i : tupEntry)
-        {
-            SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
+//         for (auto i : tupEntry)
+//         {
+//             SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
 
-            if (fvField(i) == "path_cost")
-            {
-                msg.path_cost = stoi(fvValue(i).c_str());
-            }
-            else if (fvField(i) == "priority")
-            {
-                msg.priority = stoi(fvValue(i).c_str());
-            }
-        }
-    }
-    else if (op == DEL_COMMAND)
-    {
-        msg.opcode = STP_DEL_COMMAND;
-    }
+//             if (fvField(i) == "path_cost")
+//             {
+//                 msg.path_cost = stoi(fvValue(i).c_str());
+//             }
+//             else if (fvField(i) == "priority")
+//             {
+//                 msg.priority = stoi(fvValue(i).c_str());
+//             }
+//         }
+//     }
+//     else if (op == DEL_COMMAND)
+//     {
+//         msg.opcode = STP_DEL_COMMAND;
+//     }
 
-    // Send the message to the daemon
-    sendMsgStpd(STP_MST_INST_PORT_CONFIG, sizeof(msg), (void *)&msg);
-}
+//     // Send the message to the daemon
+//     sendMsgStpd(STP_MST_INST_PORT_CONFIG, sizeof(msg), (void *)&msg);
+// }
 
 
-void StpMgr::doStpMstInstPortTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
+// void StpMgr::doStpMstInstPortTask(Consumer &consumer)
+// {
+//     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false)
-        return;
+//     if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false)
+//         return;
 
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        STP_MST_INST_PORT_CONFIG_MSG msg;
-        memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
+//     auto it = consumer.m_toSync.begin();
+//     while (it != consumer.m_toSync.end())
+//     {
+//         STP_MST_INST_PORT_CONFIG_MSG msg;
+//         memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
 
-        KeyOpFieldsValuesTuple t = it->second;
+//         KeyOpFieldsValuesTuple t = it->second;
 
-        string key = kfvKey(t);
-        string op = kfvOp(t);
+//         string key = kfvKey(t);
+//         string op = kfvOp(t);
 
-        string mstKey = key.substr(9);//Remove INSTANCE keyword
-        size_t found = mstKey.find(CONFIGDB_KEY_SEPARATOR);
+//         string mstKey = key.substr(9);//Remove INSTANCE keyword
+//         size_t found = mstKey.find(CONFIGDB_KEY_SEPARATOR);
 
-        uint16_t mst_id;
-        string intfName;
-        if (found != string::npos)
-        {
-            mst_id = static_cast<uint16_t>(stoi(mstKey.substr(0, found)));
-            intfName = mstKey.substr(found + 1);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Invalid key format %s", kfvKey(t).c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
+//         uint16_t mst_id;
+//         string intfName;
+//         if (found != string::npos)
+//         {
+//             mst_id = static_cast<uint16_t>(stoi(mstKey.substr(0, found)));
+//             intfName = mstKey.substr(found + 1);
+//         }
+//         else
+//         {
+//             SWSS_LOG_ERROR("Invalid key format %s", kfvKey(t).c_str());
+//             it = consumer.m_toSync.erase(it);
+//             continue;
+//         }
 
-        SWSS_LOG_INFO("STP MST intf key:%s op:%s", key.c_str(), op.c_str());
+//         SWSS_LOG_INFO("STP MST intf key:%s op:%s", key.c_str(), op.c_str());
 
-        if (op == SET_COMMAND)
-        {
-            if ((l2ProtoEnabled == L2_NONE))
-            {
-                // Wait till STP/MST instance is configured
-                it++;
-                continue;
-            }
-        }
-        else
-        {
-            if (l2ProtoEnabled == L2_NONE || !(isInstanceMapped(mst_id)))
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-        }
+//         if (op == SET_COMMAND)
+//         {
+//             if ((l2ProtoEnabled == L2_NONE))
+//             {
+//                 // Wait till STP/MST instance is configured
+//                 it++;
+//                 continue;
+//             }
+//         }
+//         else
+//         {
+//             if (l2ProtoEnabled == L2_NONE || !(isInstanceMapped(mst_id)))
+//             {
+//                 it = consumer.m_toSync.erase(it);
+//                 continue;
+//             }
+//         }
 
-        processStpMstInstPortAttr(op, mst_id, intfName, kfvFieldsValues(t));
+//         processStpMstInstPortAttr(op, mst_id, intfName, kfvFieldsValues(t));
 
-        it = consumer.m_toSync.erase(it);
-    }
-}
+//         it = consumer.m_toSync.erase(it);
+//     }
+// }
 
 // Send Message to STPd
 int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
@@ -1428,71 +1428,71 @@ uint16_t StpMgr::getStpMaxInstances(void)
     return max_stp_instances;
 }
 // Function to parse the VLAN list and handle ranges
-std::vector<uint16_t> StpMgr::parseVlanList(const std::string &vlanStr) {
-    std::vector<uint16_t> vlanList;
-    std::stringstream ss(vlanStr);
-    std::string segment;
+// std::vector<uint16_t> StpMgr::parseVlanList(const std::string &vlanStr) {
+//     std::vector<uint16_t> vlanList;
+//     std::stringstream ss(vlanStr);
+//     std::string segment;
 
-    // Split the string by commas
-    while (std::getline(ss, segment, ',')) {
-        size_t dashPos = segment.find('-');
-        if (dashPos != std::string::npos) {
-            // If a dash is found, it's a range like "22-25"
-            int start = std::stoi(segment.substr(0, dashPos));
-            int end = std::stoi(segment.substr(dashPos + 1));
+//     // Split the string by commas
+//     while (std::getline(ss, segment, ',')) {
+//         size_t dashPos = segment.find('-');
+//         if (dashPos != std::string::npos) {
+//             // If a dash is found, it's a range like "22-25"
+//             int start = std::stoi(segment.substr(0, dashPos));
+//             int end = std::stoi(segment.substr(dashPos + 1));
 
-            // Add all VLANs in the range to the list
-            for (int i = start; i <= end; ++i) {
-                vlanList.push_back(static_cast<uint16_t>(i));
-            }
-        } else {
-            // Single VLAN, add it to the list
-            vlanList.push_back(static_cast<uint16_t>(std::stoi(segment)));
-        }
-    }
-    return vlanList;
-}
+//             // Add all VLANs in the range to the list
+//             for (int i = start; i <= end; ++i) {
+//                 vlanList.push_back(static_cast<uint16_t>(i));
+//             }
+//         } else {
+//             // Single VLAN, add it to the list
+//             vlanList.push_back(static_cast<uint16_t>(std::stoi(segment)));
+//         }
+//     }
+//     return vlanList;
+// }
 
-void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& newVlanList, bool operation) {
-    if (!operation) {
-        // Delete instance: Reset all VLANs mapped to this instance
-        for (int vlan = 0; vlan < MAX_VLANS; ++vlan) {
-            if (m_vlanInstMap[vlan] == instance) {
-                m_vlanInstMap[vlan] = 0; // Reset to default instance
-            }
-        }
-    } else {
-        // Add/Update instance: Handle additions and deletions
-        // Use an unordered_set for efficient lookup of new VLAN list
-        std::unordered_set<int> newVlanSet(newVlanList.begin(), newVlanList.end());
+// void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& newVlanList, bool operation) {
+//     if (!operation) {
+//         // Delete instance: Reset all VLANs mapped to this instance
+//         for (int vlan = 0; vlan < MAX_VLANS; ++vlan) {
+//             if (m_vlanInstMap[vlan] == instance) {
+//                 m_vlanInstMap[vlan] = 0; // Reset to default instance
+//             }
+//         }
+//     } else {
+//         // Add/Update instance: Handle additions and deletions
+//         // Use an unordered_set for efficient lookup of new VLAN list
+//         std::unordered_set<int> newVlanSet(newVlanList.begin(), newVlanList.end());
 
-        // Iterate over the current mapping to handle deletions
-        for (int vlan = 0; vlan < MAX_VLANS; ++vlan) {
-            if (m_vlanInstMap[vlan] == instance) {
-                // If a VLAN is mapped to this instance but not in the new list, reset it to 0
-                if (newVlanSet.find(vlan) == newVlanSet.end()) {
-                    m_vlanInstMap[vlan] = 0;
-                }
-            }
-        }
+//         // Iterate over the current mapping to handle deletions
+//         for (int vlan = 0; vlan < MAX_VLANS; ++vlan) {
+//             if (m_vlanInstMap[vlan] == instance) {
+//                 // If a VLAN is mapped to this instance but not in the new list, reset it to 0
+//                 if (newVlanSet.find(vlan) == newVlanSet.end()) {
+//                     m_vlanInstMap[vlan] = 0;
+//                 }
+//             }
+//         }
 
-        // Handle additions
-        for (int vlan : newVlanList) {
-            if (vlan >= 0 && vlan < MAX_VLANS) {
-                m_vlanInstMap[vlan] = instance;
-            }
-        }
-    }
-}
+//         // Handle additions
+//         for (int vlan : newVlanList) {
+//             if (vlan >= 0 && vlan < MAX_VLANS) {
+//                 m_vlanInstMap[vlan] = instance;
+//             }
+//         }
+//     }
+// }
 
-bool StpMgr::isInstanceMapped(uint16_t instance) {
-    for (int i = 0; i < 4095; ++i) {
-        if (m_vlanInstMap[i] == static_cast<int>(instance)) {
-            return true; // Instance found
-        }
-    }
-    return false; // Instance not found
-}
+// bool StpMgr::isInstanceMapped(uint16_t instance) {
+//     for (int i = 0; i < 4095; ++i) {
+//         if (m_vlanInstMap[i] == static_cast<int>(instance)) {
+//             return true; // Instance found
+//         }
+//     }
+//     return false; // Instance not found
+// }
 
 
 
