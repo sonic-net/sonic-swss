@@ -1486,14 +1486,14 @@ void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& ne
     }
 }
 
-// bool StpMgr::isInstanceMapped(uint16_t instance) {
-//     for (int i = 0; i < 4095; ++i) {
-//         if (m_vlanInstMap[i] == static_cast<int>(instance)) {
-//             return true; // Instance found
-//         }
-//     }
-//     return false; // Instance not found
-// }
+bool StpMgr::isInstanceMapped(uint16_t instance) {
+    for (int i = 0; i < 4095; ++i) {
+        if (m_vlanInstMap[i] == static_cast<int>(instance)) {
+            return true; // Instance found
+        }
+    }
+    return false; // Instance not found
+}
 
 
 
