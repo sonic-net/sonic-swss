@@ -248,7 +248,7 @@ class Srv6Orch : public Orch, public Observer
         Srv6PrefixAggIdSet srv6_prefix_agg_id_set_;
         Srv6TunnelMapEntryTable srv6_tunnel_map_entry_table_;
         Srv6PicContextTable srv6_pic_context_table_;
-        MySidIpInIpTunnels my_sid_ipinip_tunnels_;
+        MySidIpInIpTunnels my_sid_ipinip_tunnels_{};
         Srv6MySidDscpCfg my_sid_dscp_cfg_cache_;
 
         VRFOrch *m_vrfOrch;
