@@ -231,8 +231,8 @@ private:
     Table m_stateLagTable;
     Table m_stateStpTable;
     Table m_cfgMstGlobalTable;
-    Table m_cfgMstInstTable;
-    Table m_cfgMstInstPortTable;
+    // Table m_cfgMstInstTable;
+    // Table m_cfgMstInstPortTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
