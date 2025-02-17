@@ -1427,7 +1427,7 @@ uint16_t StpMgr::getStpMaxInstances(void)
 
     return max_stp_instances;
 }
-Function to parse the VLAN list and handle ranges
+//Function to parse the VLAN list and handle ranges
 std::vector<uint16_t> StpMgr::parseVlanList(const std::string &vlanStr) {
     std::vector<uint16_t> vlanList;
     std::stringstream ss(vlanStr);
