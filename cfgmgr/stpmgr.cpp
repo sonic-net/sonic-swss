@@ -70,8 +70,8 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstGlobalTask(consumer);
     else if (table == "STP_MST_INST")
         doStpMstInstTask(consumer);
-    // else if (table == "STP_MST_PORT")
-    //     doStpMstInstPortTask(consumer);
+    else if (table == "STP_MST_PORT")
+        doStpMstInstPortTask(consumer);
     // else if (table == CFG_STP_PORT_TABLE_NAME)
     //     doStpPortTask(consumer);
     else
@@ -1128,106 +1128,106 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
     }
 }
 
-// void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
-//                                        vector<FieldValueTuple>& tupEntry)
-// {
-//     STP_MST_INST_PORT_CONFIG_MSG msg;
-//     memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
+void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const string intfName,
+                                       vector<FieldValueTuple>& tupEntry)
+{
+    STP_MST_INST_PORT_CONFIG_MSG msg;
+    memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
 
-//     // Populate the message fields
-//     msg.mst_id = mst_id;
-//     strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ - 1);
+    // Populate the message fields
+    msg.mst_id = mst_id;
+    strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ - 1);
 
-//     // Set opcode and process the fields from the tuple
-//     if (op == SET_COMMAND)
-//     {
-//         msg.opcode = STP_SET_COMMAND;
-//         msg.priority = -1;
+    // Set opcode and process the fields from the tuple
+    if (op == SET_COMMAND)
+    {
+        msg.opcode = STP_SET_COMMAND;
+        msg.priority = -1;
 
-//         for (auto i : tupEntry)
-//         {
-//             SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
+        for (auto i : tupEntry)
+        {
+            SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
 
-//             if (fvField(i) == "path_cost")
-//             {
-//                 msg.path_cost = stoi(fvValue(i).c_str());
-//             }
-//             else if (fvField(i) == "priority")
-//             {
-//                 msg.priority = stoi(fvValue(i).c_str());
-//             }
-//         }
-//     }
-//     else if (op == DEL_COMMAND)
-//     {
-//         msg.opcode = STP_DEL_COMMAND;
-//     }
+            if (fvField(i) == "path_cost")
+            {
+                msg.path_cost = stoi(fvValue(i).c_str());
+            }
+            else if (fvField(i) == "priority")
+            {
+                msg.priority = stoi(fvValue(i).c_str());
+            }
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        msg.opcode = STP_DEL_COMMAND;
+    }
 
-//     // Send the message to the daemon
-//     sendMsgStpd(STP_MST_INST_PORT_CONFIG, sizeof(msg), (void *)&msg);
-// }
+    // Send the message to the daemon
+    sendMsgStpd(STP_MST_INST_PORT_CONFIG, sizeof(msg), (void *)&msg);
+}
 
 
-// void StpMgr::doStpMstInstPortTask(Consumer &consumer)
-// {
-//     SWSS_LOG_ENTER();
+void StpMgr::doStpMstInstPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
 
-//     if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false)
-//         return;
+    if (stpGlobalTask == false || stpMstInstTask == false || stpPortTask == false)
+        return;
 
-//     auto it = consumer.m_toSync.begin();
-//     while (it != consumer.m_toSync.end())
-//     {
-//         STP_MST_INST_PORT_CONFIG_MSG msg;
-//         memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        STP_MST_INST_PORT_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
 
-//         KeyOpFieldsValuesTuple t = it->second;
+        KeyOpFieldsValuesTuple t = it->second;
 
-//         string key = kfvKey(t);
-//         string op = kfvOp(t);
+        string key = kfvKey(t);
+        string op = kfvOp(t);
 
-//         string mstKey = key.substr(9);//Remove INSTANCE keyword
-//         size_t found = mstKey.find(CONFIGDB_KEY_SEPARATOR);
+        string mstKey = key.substr(9);//Remove INSTANCE keyword
+        size_t found = mstKey.find(CONFIGDB_KEY_SEPARATOR);
 
-//         uint16_t mst_id;
-//         string intfName;
-//         if (found != string::npos)
-//         {
-//             mst_id = static_cast<uint16_t>(stoi(mstKey.substr(0, found)));
-//             intfName = mstKey.substr(found + 1);
-//         }
-//         else
-//         {
-//             SWSS_LOG_ERROR("Invalid key format %s", kfvKey(t).c_str());
-//             it = consumer.m_toSync.erase(it);
-//             continue;
-//         }
+        uint16_t mst_id;
+        string intfName;
+        if (found != string::npos)
+        {
+            mst_id = static_cast<uint16_t>(stoi(mstKey.substr(0, found)));
+            intfName = mstKey.substr(found + 1);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid key format %s", kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
-//         SWSS_LOG_INFO("STP MST intf key:%s op:%s", key.c_str(), op.c_str());
+        SWSS_LOG_INFO("STP MST intf key:%s op:%s", key.c_str(), op.c_str());
 
-//         if (op == SET_COMMAND)
-//         {
-//             if ((l2ProtoEnabled == L2_NONE))
-//             {
-//                 // Wait till STP/MST instance is configured
-//                 it++;
-//                 continue;
-//             }
-//         }
-//         else
-//         {
-//             if (l2ProtoEnabled == L2_NONE || !(isInstanceMapped(mst_id)))
-//             {
-//                 it = consumer.m_toSync.erase(it);
-//                 continue;
-//             }
-//         }
+        if (op == SET_COMMAND)
+        {
+            if ((l2ProtoEnabled == L2_NONE))
+            {
+                // Wait till STP/MST instance is configured
+                it++;
+                continue;
+            }
+        }
+        else
+        {
+            if (l2ProtoEnabled == L2_NONE || !(isInstanceMapped(mst_id)))
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
 
-//         processStpMstInstPortAttr(op, mst_id, intfName, kfvFieldsValues(t));
+        processStpMstInstPortAttr(op, mst_id, intfName, kfvFieldsValues(t));
 
-//         it = consumer.m_toSync.erase(it);
-//     }
-// }
+        it = consumer.m_toSync.erase(it);
+    }
+}
 
 // Send Message to STPd
 int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)

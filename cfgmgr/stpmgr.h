@@ -196,13 +196,13 @@ typedef struct STP_MST_INST_CONFIG_MSG {
     VLAN_LIST       vlan_list[0]; // Flexible array for VLAN IDs
 }__attribute__((packed)) STP_MST_INST_CONFIG_MSG;
 
-/*typedef struct STP_MST_INST_PORT_CONFIG_MSG {
+typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint8_t     opcode;         // enable/disable
     char        intf_name[IFNAMSIZ];  // Interface name
     uint16_t    mst_id;         // MST instance ID
     int         path_cost;      // Path cost
     int         priority;       // Port priority
-} __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;*/
+} __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;
 
 namespace swss {
 
@@ -232,7 +232,7 @@ private:
     Table m_stateStpTable;
     Table m_cfgMstGlobalTable;
     Table m_cfgMstInstTable;
-    // Table m_cfgMstInstPortTable;
+    Table m_cfgMstInstPortTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
 	int stpd_fd;
