@@ -33,8 +33,8 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
     m_cfgMstGlobalTable(confDb, "STP_MST"),
-    m_cfgMstInstTable(confDb, "STP_MST_INST")
-    // m_cfgMstInstPortTable(confDb, "STP_MST_PORT")
+    m_cfgMstInstTable(confDb, "STP_MST_INST"),
+    m_cfgMstInstPortTable(confDb, "STP_MST_PORT")
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
@@ -72,8 +72,8 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
-    // else if (table == CFG_STP_PORT_TABLE_NAME)
-    //     doStpPortTask(consumer);
+    else if (table == CFG_STP_PORT_TABLE_NAME)
+         doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }

@@ -58,7 +58,7 @@ int main(int argc, char **argv)
             conf_lag_member_table,
             state_vlan_member_table,
             conf_mst_gloabl_table,
-            conf_mst_inst_table,
+            conf_mst_inst_table
             conf_mst_inst_port_table
         };
 
