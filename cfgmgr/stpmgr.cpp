@@ -32,7 +32,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_stateStpTable(statDb, STATE_STP_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
-    m_cfgMstGlobalTable(confDb, "STP_MST"),
+    m_cfgMstGlobalTable(confDb, "STP_MST")
     // m_cfgMstInstTable(confDb, "STP_MST_INST"),
     // m_cfgMstInstPortTable(confDb, "STP_MST_PORT")
 {
