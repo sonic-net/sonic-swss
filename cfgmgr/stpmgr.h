@@ -188,7 +188,7 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     max_hop;
 }__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
-/*typedef struct STP_MST_INST_CONFIG_MSG {
+typedef struct STP_MST_INST_CONFIG_MSG {
     uint8_t         opcode;     // enable/disable
     uint16_t        mst_id;     // MST instance ID
     int             priority;   // Bridge priority
@@ -196,7 +196,7 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     VLAN_LIST       vlan_list[0]; // Flexible array for VLAN IDs
 }__attribute__((packed)) STP_MST_INST_CONFIG_MSG;
 
-typedef struct STP_MST_INST_PORT_CONFIG_MSG {
+/*typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint8_t     opcode;         // enable/disable
     char        intf_name[IFNAMSIZ];  // Interface name
     uint16_t    mst_id;         // MST instance ID
@@ -231,7 +231,7 @@ private:
     Table m_stateLagTable;
     Table m_stateStpTable;
     Table m_cfgMstGlobalTable;
-    // Table m_cfgMstInstTable;
+    Table m_cfgMstInstTable;
     // Table m_cfgMstInstPortTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
