@@ -356,6 +356,12 @@ namespace flexcounter_test
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+
+            vector<TableConnector> policer_tables = {
+                TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
+                TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
+            };
+            gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
         }
 
         virtual void TearDown() override
@@ -382,6 +388,8 @@ namespace flexcounter_test
             gQosOrch = nullptr;
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
+            delete gPolicerOrch;
+            gPolicerOrch = nullptr;
 
             // clear orchs saved in directory
             gDirectory.m_values.clear();
@@ -474,6 +482,13 @@ namespace flexcounter_test
                                               {POLL_INTERVAL_FIELD, "1000"},
                                               {RIF_PLUGIN_FIELD, ""},
                                           }));
+        ASSERT_TRUE(checkFlexCounterGroup(POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                        {
+                                            {POLL_INTERVAL_FIELD, "10000"},
+                                            {STATS_MODE_FIELD, STATS_MODE_READ},
+                                            {FLEX_COUNTER_STATUS_FIELD, "disable"}
+                                        }
+                                    ));    
 
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table sendToIngressPortTable = Table(m_app_db.get(), APP_SEND_TO_INGRESS_PORT_TABLE_NAME);
@@ -572,6 +587,7 @@ namespace flexcounter_test
         flexCounterCfg.set("PORT", values);
         flexCounterCfg.set("BUFFER_POOL_WATERMARK", values);
         flexCounterCfg.set("PFCWD", values);
+        flexCounterCfg.set("POLICER", values);
 
         auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
         flexCounterOrch->addExistingData(&flexCounterCfg);
@@ -630,6 +646,12 @@ namespace flexcounter_test
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                           }));
+        ASSERT_TRUE(checkFlexCounterGroup(POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                            {
+                                                {POLL_INTERVAL_FIELD, "10000"},
+                                                {STATS_MODE_FIELD, STATS_MODE_READ},
+                                                {FLEX_COUNTER_STATUS_FIELD, "enable"}
+                                            }));
 
         sai_object_id_t pool_oid;
         pool_oid = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME])["ingress_lossless_pool"].m_saiObjectId;
@@ -906,6 +928,14 @@ namespace flexcounter_test
         static_cast<Orch *>(gBufferOrch)->doTask();
         ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pool_oid));
 
+        string policer_name = "policer_1";
+        auto consumer_policer = dynamic_cast<Consumer *>(gPolicerOrch->getExecutor(CFG_POLICER_TABLE_NAME));
+        consumer_policer->addToSync({{policer_name, "SET", {{"meter_type", "packets"}, {"mode", "sr_tcm"}, {"cir", "600"}, {"cbs", "600"}}}});
+        static_cast<Orch *>(gPolicerOrch)->doTask();
+        sai_object_id_t policer_oid;
+        gPolicerOrch->getPolicerOid(policer_name, policer_oid);
+        ASSERT_TRUE(checkFlexCounter(POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP, policer_oid));
+
         // Warm/fast-boot case - no FC processing done before APPLY_VIEW
         std::vector<std::string> ts;
 
@@ -913,6 +943,7 @@ namespace flexcounter_test
         gDirectory.get<FlexCounterOrch*>()->dumpPendingTasks(ts);
 
         ASSERT_TRUE(ts.empty());
+
     }
 
     INSTANTIATE_TEST_CASE_P(

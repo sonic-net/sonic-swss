@@ -27,6 +27,7 @@ extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+extern PolicerOrch *gPolicerOrch;
 extern sai_object_id_t gSwitchId;
 
 #define FLEX_COUNTER_DELAY_SEC 60
@@ -44,6 +45,7 @@ extern sai_object_id_t gSwitchId;
 #define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
 #define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
 #define ENI_KEY                     "ENI"
+#define POLICER_KEY                 "POLICER"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -66,7 +68,8 @@ unordered_map<string, string> flexCounterGroupMap =
     {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
     {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
     {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
-    {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {POLICER_KEY, POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -228,6 +231,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (dash_orch && (key == ENI_KEY))
                     {
                         dash_orch->handleFCStatusUpdate((value == "enable"));
+                    }
+                    if (gPolicerOrch && (key== POLICER_KEY) && (value == "enable"))
+                    {
+                        gPolicerOrch->generatePolicerCounterMap();
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {

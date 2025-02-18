@@ -1,8 +1,13 @@
-#include "sai.h"
 #include "policerorch.h"
-
+#include "sai_serialize.h"
+#include "flow_counter_handler.h"
+#include "aclorch.h"
 #include "converter.h"
 #include <inttypes.h>
+extern "C" {
+#include "sai.h"
+}
+
 
 using namespace std;
 using namespace swss;
@@ -31,6 +36,8 @@ static const string storm_broadcast            = "broadcast";
 static const string storm_unknown_unicast      = "unknown-unicast";
 static const string storm_unknown_mcast        = "unknown-multicast";
 
+extern bool gTraditionalFlexCounter;
+
 static const map<string, sai_meter_type_t> meter_type_map = {
     {"PACKETS", SAI_METER_TYPE_PACKETS},
     {"BYTES", SAI_METER_TYPE_BYTES}
@@ -56,6 +63,19 @@ static const map<string, sai_packet_action_t> packet_action_map = {
     {"LOG", SAI_PACKET_ACTION_LOG},
     {"DENY", SAI_PACKET_ACTION_DENY},
     {"TRANSIT", SAI_PACKET_ACTION_TRANSIT}
+};
+
+const vector<sai_policer_stat_t> policer_stat_ids = {
+
+    SAI_POLICER_STAT_PACKETS,
+    SAI_POLICER_STAT_ATTR_BYTES,
+    SAI_POLICER_STAT_GREEN_PACKETS,
+    SAI_POLICER_STAT_GREEN_BYTES,
+    SAI_POLICER_STAT_YELLOW_PACKETS,
+    SAI_POLICER_STAT_YELLOW_BYTES,
+    SAI_POLICER_STAT_RED_PACKETS,
+    SAI_POLICER_STAT_RED_BYTES
+
 };
 
 bool PolicerOrch::policerExists(const string &name)
@@ -113,10 +133,23 @@ bool PolicerOrch::decreaseRefCount(const string &name)
     return true;
 }
 
-PolicerOrch::PolicerOrch(vector<TableConnector> &tableNames, PortsOrch *portOrch) : Orch(tableNames), m_portsOrch(portOrch)
+
+PolicerOrch::PolicerOrch( vector<TableConnector> &tableNames, PortsOrch *portOrch) :
+    Orch(tableNames), 
+    m_portsOrch(portOrch),
+    m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
+    m_asic_db(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
+    m_counter_table(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_POLICER_NAME_MAP))),
+    m_vidToRidTable(std::unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"))),
+    m_policer_counter_manager(POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,10000,false)
 {
     SWSS_LOG_ENTER();
+    auto intervT = timespec { .tv_sec = 1 , .tv_nsec = 0 };
+    m_FlexCounterUpdTimer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_FlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
 }
+
 
 task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsValuesTuple tuple)
 {
@@ -238,6 +271,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             SWSS_LOG_DEBUG("Created storm-control policer %s", storm_policer_name.c_str());
             m_syncdPolicers[storm_policer_name] = policer_id;
             m_policerRefCounts[storm_policer_name] = 0;
+            
         }
         // Update an existing policer
         else
@@ -370,6 +404,134 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
     }
     return task_process_status::task_success;
 }
+
+string PolicerOrch::getPolicerFlexCounterTableKey(string key)
+{
+    return string(POLICER_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
+void PolicerOrch::removePCFromFlexCounter(sai_object_id_t id, const string &name)
+{
+    SWSS_LOG_ENTER();
+
+    std::string counter_oid_str;
+    counter_oid_str = sai_serialize_object_id(id);
+
+    auto update_iter = m_pendingPcAddToFlexCntr.find(id);
+    if (update_iter == m_pendingPcAddToFlexCntr.end())
+    {
+        m_policer_counter_manager.clearCounterIdList(id);
+    }
+    else
+    {
+        m_pendingPcAddToFlexCntr.erase(update_iter);
+    }
+
+    /* remove it from COUNTERS_DB maps */
+    m_counter_table->hdel("", name);
+    m_vidToRidTable->hdel("", counter_oid_str);
+
+    SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
+}
+
+sai_status_t PolicerOrch::querySupportedPolicerStats(std::unordered_set<sai_policer_stat_t> &supported_stats)
+{
+    sai_stat_capability_list_t        stats_capability;
+    vector<sai_stat_capability_t>       capabilities(8);
+    stats_capability.count = 8;
+    stats_capability.list = capabilities.data();
+   
+    sai_status_t status = sai_query_stats_capability(gSwitchId,
+                                                SAI_OBJECT_TYPE_POLICER,
+                                                &stats_capability);
+
+    if(status == SAI_STATUS_SUCCESS)
+    {
+        for (uint32_t i = 0; i < stats_capability.count; i++)
+        {
+            supported_stats.insert(static_cast<sai_policer_stat_t>(stats_capability.list[i].stat_enum));
+        }
+    }
+
+    return status;
+}
+
+
+void PolicerOrch::doTask(SelectableTimer &timer)
+{
+    string value;
+    for (auto it = m_pendingPcAddToFlexCntr.begin(); it != m_pendingPcAddToFlexCntr.end(); )
+    {
+        const auto id = sai_serialize_object_id(it->first);
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
+        {
+            vector<FieldValueTuple> policerNameVector;
+
+            policerNameVector.emplace_back(it->second.c_str(), id);
+            m_counter_table->set("", policerNameVector);
+            m_counter_db->hset(COUNTERS_POLICER_NAME_MAP, it->second.c_str(), id.c_str());
+
+            auto pcounter_stats = generatePCounterStats();
+            m_policer_counter_manager.setCounterIdList(it->first, CounterType::POLICER, pcounter_stats, gSwitchId);
+            SWSS_LOG_DEBUG("inserted %s to flex counter", it->second.c_str());
+            it = m_pendingPcAddToFlexCntr.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+
+std::unordered_set<std::string> PolicerOrch::generatePCounterStats()
+{
+    std::unordered_set<std::string> counter_stats;
+    std::unordered_set<sai_policer_stat_t> supported_stats;
+    sai_status_t status = querySupportedPolicerStats(supported_stats);
+
+    if (status == SAI_STATUS_NOT_IMPLEMENTED)
+    {
+        for (auto& it: policer_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_policer_stat(it));
+        }
+        return counter_stats;
+    }
+
+    for (const auto& stat : policer_stat_ids)
+    {
+        if (std::find(supported_stats.begin(), supported_stats.end(), stat) != supported_stats.end())
+        {
+            counter_stats.emplace(sai_serialize_policer_stat(stat));
+        }
+        else
+        {
+            SWSS_LOG_WARN("Unsupported policer stat: %d", stat);
+        }
+    }
+
+    return counter_stats;
+}
+
+
+void PolicerOrch::generatePolicerCounterMap()
+{
+    if (m_isPolicerCounterMapGenerated)
+    {
+        return;
+    }
+
+    m_FlexCounterUpdTimer->start();
+
+    m_isPolicerCounterMapGenerated = true;
+}
+
+void PolicerOrch::addPolicerToFlexCounter(sai_object_id_t oid, const string &name)
+{
+    m_pendingPcAddToFlexCntr[oid] = name;
+}
+
 
 void PolicerOrch::doTask(Consumer &consumer)
 {
@@ -511,6 +673,8 @@ void PolicerOrch::doTask(Consumer &consumer)
                 SWSS_LOG_NOTICE("Created policer %s", key.c_str());
                 m_syncdPolicers[key] = policer_id;
                 m_policerRefCounts[key] = 0;
+
+                addPolicerToFlexCounter(policer_id, key.c_str());
             }
             // Update an existing policer
             else
@@ -566,6 +730,8 @@ void PolicerOrch::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
+
+            removePCFromFlexCounter(m_syncdPolicers[key], key);
 
             sai_status_t status = sai_policer_api->remove_policer(
                     m_syncdPolicers.at(key));

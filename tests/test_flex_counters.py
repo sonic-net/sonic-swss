@@ -78,6 +78,11 @@ counter_group_meta = {
         'name_map': 'COUNTERS_ROUTE_NAME_MAP',
         'pre_test': 'pre_route_flow_counter_test',
         'post_test':  'post_route_flow_counter_test',
+    },
+    'policer_counter': {
+        'key': 'POLICER',
+        'group_name': 'POLICER_STAT_COUNTER',
+        'name_map': 'COUNTERS_POLICER_NAME_MAP'
     }
 }
 
@@ -740,3 +745,46 @@ class TestFlexCounters(TestFlexCountersBase):
                 index = '8' if 'queue' in counterpoll_type else '7'
                 self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', index, False)
                 self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
+
+
+    def test_create_remove_policer_counter(self, dvs):
+        """Test creation and removal of policer counters
+        
+        Args:
+            dvs (object): virtual switch object
+            
+        Test steps:
+            1. Enable policer flex counters
+            2. Configure new policer
+            3. Verify counter is automatically created
+            4. Remove the policer
+            5. Verify counter is automatically removed
+        """
+        self.setup_dbs(dvs)
+        self.config_db.create_entry('POLICER', 'policer1', {
+            'meter_type': 'bytes',
+            'mode': 'sr_tcm',
+            'cir': '600000',
+            'cbs': '600000',
+            'red_packet_action': 'drop'
+        })
+        meta_data = counter_group_meta['policer_counter']
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+
+        for _ in range(NUMBER_OF_RETRIES):
+            counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'policer1')
+            if counter_oid:
+                break
+            time.sleep(1)
+
+        assert counter_oid is not None, "Policer counter was not created"
+        self.wait_for_id_list(meta_data['group_name'], 'policer1', counter_oid)
+
+        self.config_db.delete_entry('POLICER', 'policer1')
+
+        for _ in range(NUMBER_OF_RETRIES):
+            counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'policer1')
+            if not counter_oid:
+                break
+            time.sleep(1)
+        assert counter_oid is None, "Policer counter was not removed"
