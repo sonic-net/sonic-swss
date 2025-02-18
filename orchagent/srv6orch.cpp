@@ -1,17 +1,25 @@
 #include <iostream>
 #include <sstream>
 #include <inttypes.h>
+#include <iterator>
 
 #include "routeorch.h"
 #include "logger.h"
 #include "srv6orch.h"
 #include "sai_serialize.h"
 #include "crmorch.h"
+#include "subscriberstatetable.h"
+#include "redisutility.h"
 
 using namespace std;
 using namespace swss;
 
 #define ADJ_DELIMITER ','
+#define OVERLAY_RIF_DEFAULT_MTU 9100
+#define LOCATOR_DEFAULT_BLOCK_LEN "32"
+#define LOCATOR_DEFAULT_NODE_LEN "16"
+#define LOCATOR_DEFAULT_FUNC_LEN "16"
+#define LOCATOR_DEFAULT_ARG_LEN "0"
 
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t  gVirtualRouterId;
@@ -19,6 +27,7 @@ extern sai_object_id_t  gUnderlayIfId;
 extern sai_srv6_api_t* sai_srv6_api;
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
+extern sai_router_interface_api_t* sai_router_intfs_api;
 
 extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
@@ -62,6 +71,376 @@ const map<string, sai_srv6_sidlist_type_t> sidlist_type_map =
     {"encaps",             SAI_SRV6_SIDLIST_TYPE_ENCAPS},
     {"encaps.red",         SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED}
 };
+
+static bool mySidDscpModeToSai(const string& mode, sai_tunnel_dscp_mode_t& sai_mode)
+{
+    if (mode == "uniform")
+    {
+        sai_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
+        return true;
+    }
+
+    if (mode == "pipe")
+    {
+        sai_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+        return true;
+    }
+
+    return false;
+}
+
+MySidLocatorCfg Srv6Orch::getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_entry) const
+{
+    return {
+        sai_entry.locator_block_len,
+        sai_entry.locator_node_len,
+        sai_entry.function_len,
+        sai_entry.args_len,
+    };
+}
+
+bool Srv6Orch::getLocatorCfgFromDb(const string& locator, MySidLocatorCfg& cfg)
+{
+    vector<FieldValueTuple> fvs;
+    auto exists = m_locatorCfgTable.get(locator, fvs);
+    if (!exists)
+    {
+        SWSS_LOG_ERROR("Failed to get the SRv6 locator %s - not present in the CONFIG_DB", locator.c_str());
+        return false;
+    }
+
+    auto blen = fvsGetValue(fvs, "block_len", true);
+    auto nlen = fvsGetValue(fvs, "node_len", true);
+    auto flen = fvsGetValue(fvs, "func_len", true);
+    auto alen = fvsGetValue(fvs, "arg_len", true);
+
+    cfg = {
+        (uint8_t)stoi(blen.get_value_or(LOCATOR_DEFAULT_BLOCK_LEN)),
+        (uint8_t)stoi(nlen.get_value_or(LOCATOR_DEFAULT_NODE_LEN)),
+        (uint8_t)stoi(flen.get_value_or(LOCATOR_DEFAULT_FUNC_LEN)),
+        (uint8_t)stoi(alen.get_value_or(LOCATOR_DEFAULT_ARG_LEN))
+    };
+
+    return true;
+}
+
+bool Srv6Orch::reverseLookupLocator(const vector<string>& candidates, const MySidLocatorCfg& locator_cfg, string& locator)
+{
+    for (const auto& candidate: candidates)
+    {
+        MySidLocatorCfg cfg;
+        auto ok = getLocatorCfgFromDb(candidate, cfg);
+        if (!ok) {
+            continue;
+        }
+
+        if (locator_cfg == cfg)
+        {
+            SWSS_LOG_DEBUG("Found a locator %s matching the config", candidate.c_str());
+            locator = candidate;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void Srv6Orch::addMySidCfgCacheEntry(const string& my_sid_key, const vector<FieldValueTuple>& fvs)
+{
+    auto key_list = tokenize(my_sid_key, '|');
+    auto locator = key_list[0];
+    auto my_sid_prefix = key_list[1];
+
+    auto cfg = fvsGetValue(fvs, "decap_dscp_mode", false);
+    if (!cfg)
+    {
+        SWSS_LOG_ERROR("MySID entry %s doesn't have mandatory decap_dscp_mode configuration", my_sid_prefix.c_str());
+        return;
+    }
+
+    sai_tunnel_dscp_mode_t dscp_mode;
+    if (!mySidDscpModeToSai(*cfg, dscp_mode))
+    {
+        SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid_prefix.c_str(), cfg->c_str());
+        return;
+    }
+
+    my_sid_dscp_cfg_cache_.insert({my_sid_prefix, {locator, dscp_mode}});
+    SWSS_LOG_INFO("Saving MySID entry %s %s DSCP mode %s", locator.c_str(), my_sid_prefix.c_str(), cfg->c_str());
+}
+
+void Srv6Orch::removeMySidCfgCacheEntry(const string& my_sid_key)
+{
+    auto key_list = tokenize(my_sid_key, '|');
+    auto locator = key_list[0];
+    auto my_sid_prefix = key_list[1];
+
+    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
+    for (auto it = cfg_cache.first; it != cfg_cache.second; ++it)
+    {
+        if (it->second.first == locator)
+        {
+            my_sid_dscp_cfg_cache_.erase(it);
+            break;
+        }
+    }
+}
+
+void Srv6Orch::mySidCfgCacheRefresh()
+{
+    SWSS_LOG_INFO("Refreshing SRv6 MySID configuration cache");
+
+    vector<KeyOpFieldsValuesTuple> entries;
+    m_mysidCfgTable.getContent(entries);
+
+    for (const auto& entry : entries)
+    {
+        addMySidCfgCacheEntry(kfvKey(entry), kfvFieldsValues(entry));
+    }
+}
+
+bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode)
+{
+    auto my_sid_prefix = my_sid_addr + "/" + to_string(locator_cfg.block_len + locator_cfg.node_len + locator_cfg.func_len);
+
+    auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
+    if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
+    {
+        mySidCfgCacheRefresh();
+
+        cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
+        if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
+        {
+            SWSS_LOG_INFO("SRv6 MySID entry %s is not available in the CONFIG_DB", my_sid_prefix.c_str());
+            return false;
+        }
+    }
+
+    auto cache_start = cfg_cache.first;
+    auto cache_end = cfg_cache.second;
+
+    if (distance(cache_start, cache_end) == 1)
+    {
+        const Srv6MySidDscpCfgCacheVal& cache_val = cache_start->second;
+        dscp_mode = cache_val.second;
+
+        SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s in the cache", my_sid_prefix.c_str(), cache_val.first.c_str());
+        return true;
+    }
+
+    // There are multiple mysid entries with the same address but different locators
+    vector<string> locator_candidates;
+    transform(cache_start, cache_end, back_inserter(locator_candidates),
+               [](const auto& v) { return v.second.first; });
+
+    string locator;
+    auto found = reverseLookupLocator(locator_candidates, locator_cfg, locator);
+    if (!found)
+    {
+        SWSS_LOG_ERROR("Cannot find a locator in the CONFIG DB for MySID Entry %s", my_sid_prefix.c_str());
+        return false;
+    }
+
+    for (auto it = cache_start; it != cache_end; ++it)
+    {
+        const Srv6MySidDscpCfgCacheVal& cache_val = it->second;
+        if (cache_val.first == locator)
+        {
+            SWSS_LOG_INFO("Found decap DSCP mode for MySID addr %s locator %s after locator reverse lookup", my_sid_prefix.c_str(), locator.c_str());
+            dscp_mode = cache_val.second;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool Srv6Orch::initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_t dscp_mode)
+{
+    SWSS_LOG_ENTER();
+
+    vector<sai_attribute_t> overlay_intf_attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    attr.value.oid = gVirtualRouterId;
+    overlay_intf_attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+    overlay_intf_attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = OVERLAY_RIF_DEFAULT_MTU;
+    overlay_intf_attrs.push_back(attr);
+
+    auto status = sai_router_intfs_api->create_router_interface(&tunnel.overlay_rif_oid, gSwitchId, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create overlay router interface for MySID IPinIP tunnel: %d", status);
+        return false;
+    }
+
+    vector<sai_attribute_t> tunnel_attrs;
+
+    attr.id = SAI_TUNNEL_ATTR_TYPE;
+    attr.value.s32 = SAI_TUNNEL_TYPE_IPINIP;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
+    attr.value.oid = tunnel.overlay_rif_oid;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+    attr.value.oid = gUnderlayIfId;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
+    attr.value.s32 = SAI_TUNNEL_PEER_MODE_P2MP;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
+    attr.value.s32 = dscp_mode;
+    tunnel_attrs.push_back(attr);
+
+    status = sai_tunnel_api->create_tunnel(&tunnel.tunnel_oid, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create MySID IPinIP tunnel: %d", status);
+        return false;
+    }
+
+    SWSS_LOG_INFO("Created MySID IPinIP tunnel");
+
+    return true;
+}
+
+bool Srv6Orch::deinitIpInIpTunnel(MySidIpInIpTunnel& tunnel)
+{
+    SWSS_LOG_ENTER();
+
+    auto status = sai_tunnel_api->remove_tunnel(tunnel.tunnel_oid);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove MySID IPinIP tunnel: %d", status);
+        return false;
+    }
+
+    tunnel.tunnel_oid = SAI_NULL_OBJECT_ID;
+
+    status = sai_router_intfs_api->remove_router_interface(tunnel.overlay_rif_oid);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove MySID IPinIP tunnel RIF: %d", status);
+        return false;
+    }
+
+    tunnel.overlay_rif_oid = SAI_NULL_OBJECT_ID;
+
+    SWSS_LOG_INFO("Removed MySID IPinIP tunnel");
+
+    return true;
+}
+
+bool Srv6Orch::createMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode, sai_object_id_t& tunnel_oid)
+{
+    SWSS_LOG_ENTER();
+
+    MySidIpInIpTunnel& uniform_tunnel = my_sid_ipinip_tunnels_.dscp_uniform_tunnel;
+    MySidIpInIpTunnel& pipe_tunnel = my_sid_ipinip_tunnels_.dscp_pipe_tunnel;
+
+    MySidIpInIpTunnel& tunnel_info = (dscp_mode == SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL) ? uniform_tunnel : pipe_tunnel;
+    if (tunnel_info.refcount == 0)
+    {
+        auto ok = initIpInIpTunnel(tunnel_info, dscp_mode);
+        if (!ok) {
+            return false;
+        }
+    }
+
+    tunnel_info.refcount++;
+    tunnel_oid = tunnel_info.tunnel_oid;
+
+    SWSS_LOG_INFO("Increased refcount for MySID IPinIP tunnel to %" PRIu64, tunnel_info.refcount);
+
+    return true;
+}
+
+bool Srv6Orch::removeMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode)
+{
+    SWSS_LOG_ENTER();
+
+    MySidIpInIpTunnel& uniform_tunnel = my_sid_ipinip_tunnels_.dscp_uniform_tunnel;
+    MySidIpInIpTunnel& pipe_tunnel = my_sid_ipinip_tunnels_.dscp_pipe_tunnel;
+
+    MySidIpInIpTunnel& tunnel_info = (dscp_mode == SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL) ? uniform_tunnel : pipe_tunnel;
+    tunnel_info.refcount--;
+
+    SWSS_LOG_INFO("Decreased refcount for MySID IPinIP tunnel to %" PRIu64, tunnel_info.refcount);
+
+    if (tunnel_info.refcount == 0)
+    {
+        return deinitIpInIpTunnel(tunnel_info);
+    }
+
+    return true;
+}
+
+bool Srv6Orch::createMySidIpInIpTunnelTermEntry(sai_object_id_t tunnel_oid, const sai_ip6_t& sid_ip, sai_object_id_t& term_entry_oid)
+{
+    SWSS_LOG_ENTER();
+
+    vector<sai_attribute_t> tunnel_table_entry_attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
+    attr.value.oid = gVirtualRouterId;
+    tunnel_table_entry_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE;
+    attr.value.u32 = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP;
+    tunnel_table_entry_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE;
+    attr.value.s32 = SAI_TUNNEL_TYPE_IPINIP;
+    tunnel_table_entry_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
+    attr.value.oid = tunnel_oid;
+    tunnel_table_entry_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP;
+    attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+    memcpy(attr.value.ipaddr.addr.ip6, sid_ip, sizeof(attr.value.ipaddr.addr.ip6));
+    tunnel_table_entry_attrs.push_back(attr);
+
+    auto status = sai_tunnel_api->create_tunnel_term_table_entry(&term_entry_oid, gSwitchId, (uint32_t)tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create tunnel termination entry for MySID - %d", status);
+        return false;
+    }
+
+    SWSS_LOG_INFO("Created tunnel termination entry for MySID entry");
+
+    return true;
+}
+
+bool Srv6Orch::removeMySidIpInIpTunnelTermEntry(sai_object_id_t term_entry_oid)
+{
+    SWSS_LOG_ENTER();
+
+    auto status = sai_tunnel_api->remove_tunnel_term_table_entry(term_entry_oid);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove tunnel termination entry for MySID entry - %d", status);
+        return false;
+    }
+
+    SWSS_LOG_INFO("Removed tunnel termination entry for MySID entry");
+
+    return true;
+}
 
 void Srv6Orch::srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert)
 {
@@ -803,6 +1182,19 @@ bool Srv6Orch::mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t e
     return false;
 }
 
+bool Srv6Orch::mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode)
+{
+    if (end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN &&
+        end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46)
+    {
+        return false;
+    }
+
+    auto locator_cfg = getMySidEntryLocatorCfg(sai_entry);
+
+    return getMySidEntryDscpMode(my_sid_addr, locator_cfg, dscp_mode);
+}
+
 bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string adj, const string end_action)
 {
     SWSS_LOG_ENTER();
@@ -810,7 +1202,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     sai_attribute_t attr;
     string key_string = my_sid_string;
     sai_my_sid_entry_endpoint_behavior_t end_behavior;
-    sai_my_sid_entry_endpoint_behavior_flavor_t end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
+    sai_my_sid_entry_endpoint_behavior_flavor_t end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE;
 
     bool entry_exists = false;
     if (mySidExists(key_string))
@@ -921,13 +1313,45 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         attributes.push_back(nh_attr);
         nh_update = true;
     }
+
+    sai_tunnel_dscp_mode_t dscp_mode;
+    if (mySidTunnelRequired(my_sid_string, my_sid_entry, end_behavior, dscp_mode))
+    {
+        sai_object_id_t tunnel_oid;
+        auto ok = createMySidIpInIpTunnel(dscp_mode, tunnel_oid);
+        if (!ok)
+        {
+            return false;
+        }
+
+        sai_object_id_t term_entry_oid;
+        ok = createMySidIpInIpTunnelTermEntry(tunnel_oid, my_sid_entry.sid, term_entry_oid);
+        if (!ok)
+        {
+            removeMySidIpInIpTunnel(dscp_mode);
+            return false;
+        }
+
+        srv6_my_sid_table_[key_string].tunnel_term_entry = term_entry_oid;
+        srv6_my_sid_table_[key_string].dscp_mode = dscp_mode;
+
+        attr.id = SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID;
+        attr.value.oid = tunnel_oid;
+        attributes.push_back(attr);
+
+        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD;
+    }
+
     attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR;
     attr.value.s32 = end_behavior;
     attributes.push_back(attr);
 
-    attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR;
-    attr.value.s32 = end_flavor;
-    attributes.push_back(attr);
+    if (end_flavor != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE)
+    {
+        attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR;
+        attr.value.s32 = end_flavor;
+        attributes.push_back(attr);
+    }
 
     sai_status_t status = SAI_STATUS_SUCCESS;
     if (!entry_exists)
@@ -1001,13 +1425,15 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     }
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
 
+
+    auto endBehavior = srv6_my_sid_table_[my_sid_string].endBehavior;
     /* Decrease VRF refcount */
-    if (mySidVrfRequired(srv6_my_sid_table_[my_sid_string].endBehavior))
+    if (mySidVrfRequired(endBehavior))
     {
         m_vrfOrch->decreaseVrfRefCount(srv6_my_sid_table_[my_sid_string].endVrfString);
     }
     /* Decrease NextHop refcount */
-    if (mySidNextHopRequired(srv6_my_sid_table_[my_sid_string].endBehavior))
+    if (mySidNextHopRequired(endBehavior))
     {
         NextHopKey nexthop = NextHopKey(srv6_my_sid_table_[my_sid_string].endAdjString);
         m_neighOrch->decreaseNextHopRefCount(nexthop, 1);
@@ -1015,6 +1441,23 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
         SWSS_LOG_INFO("Decreasing refcount to %d for Nexthop %s",
           m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
     }
+
+    auto tunnel_term_entry = srv6_my_sid_table_[my_sid_string].tunnel_term_entry;
+    if (tunnel_term_entry != SAI_NULL_OBJECT_ID)
+    {
+        auto ok = removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
+        if (!ok)
+        {
+            return false;
+        }
+
+        ok = removeMySidIpInIpTunnel(srv6_my_sid_table_[my_sid_string].dscp_mode);
+        if (!ok)
+        {
+            return false;
+        }
+    }
+
     srv6_my_sid_table_.erase(my_sid_string);
     return true;
 }
@@ -1550,6 +1993,28 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
     }
 }
 
+void Srv6Orch::doTaskCfgMySidTable(const KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+
+    auto op = kfvOp(tuple);
+    auto key = kfvKey(tuple);
+    auto& fvs = kfvFieldsValues(tuple);
+
+    if (op == SET_COMMAND)
+    {
+        addMySidCfgCacheEntry(key, fvs);
+    }
+    else if (op == DEL_COMMAND)
+    {
+        removeMySidCfgCacheEntry(key);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unexpected command");
+    }
+}
+
 task_process_status Srv6Orch::doTaskPicContextTable(const KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
@@ -1656,6 +2121,10 @@ void Srv6Orch::doTask(Consumer &consumer)
                 ++it;
                 continue;
             }
+        }
+        else if (table_name == CFG_SRV6_MY_SID_TABLE_NAME)
+        {
+            doTaskCfgMySidTable(t);
         }
         else
         {
