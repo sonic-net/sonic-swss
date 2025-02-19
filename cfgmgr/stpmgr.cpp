@@ -862,7 +862,7 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
             }
         }
 
-        SWSS_LOG_DEBUG("LagMap");
+        SWSS_LOG_DEBUG("LagMap");vmKeys
         for (auto itr = m_lagMap.begin(); itr != m_lagMap.end(); ++itr) {
             SWSS_LOG_DEBUG("PO: %s Cnt:%d", itr->first.c_str(), itr->second);
         }
@@ -1427,6 +1427,19 @@ uint16_t StpMgr::getStpMaxInstances(void)
 
     return max_stp_instances;
 }
+
+std::vector<std::string> StpMgr::getVlanAliasesForInstance(uint16_t instance) {
+    std::vector<std::string> vlanAliases;
+
+    for (uint16_t vlanId = 0; vlanId < MAX_VLANS; ++vlanId) {
+        if (m_vlanInstMap[vlanId] == instance) {
+            vlanAliases.push_back("VLAN" + std::to_string(vlanId));
+        }
+    }
+
+    return vlanAliases;
+}
+
 //Function to parse the VLAN list and handle ranges
 std::vector<uint16_t> StpMgr::parseVlanList(const std::string &vlanStr) {
     std::vector<uint16_t> vlanList;
@@ -1487,37 +1500,10 @@ void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& ne
 }
 
 bool StpMgr::isInstanceMapped(uint16_t instance) {
-    for (int i = 0; i < 4095; ++i) {
+    for (int i = 0; i < MAX_VLANS; ++i) {
         if (m_vlanInstMap[i] == static_cast<int>(instance)) {
             return true; // Instance found
         }
     }
     return false; // Instance not found
 }
-
-
-
-/*
-            msg->opcode = STP_SET_COMMAND;
-            msg->mst_id = instance_id;
-            msg->priority = priority;
-            msg->vlan_count = static_cast<uint16_t>(vlan_ids.size());
-
-            // Handling VLAN attributes dynamically
-            VLAN_MST_ATTR *vlan_attr = (VLAN_MST_ATTR *)&msg->vlan_list;
-
-            for (size_t i = 0; i < vlan_ids.size(); i++) {
-                vlan_attr->vlan_id = vlan_ids[i];
-                vector<PORT_ATTR> port_list;
-                uint8_t port_count = (uint8_t)getAllVlanMem("Vlan" + to_string(vlan_ids[i]), port_list);
-                vlan_attr->port_count = port_count;
-
-                // Copying ports dynamically into the vlan_attr
-                for (size_t j = 0; j < port_count; j++) {
-                    vlan_attr->ports[j] = port_list[j];
-                }
-
-                // Move to next VLAN_MST_ATTR, accounting for the dynamic port count
-                vlan_attr = (VLAN_MST_ATTR *)((char *)vlan_attr + sizeof(VLAN_MST_ATTR) + port_count * sizeof(PORT_ATTR));
-
-*/

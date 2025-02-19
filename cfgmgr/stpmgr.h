@@ -277,8 +277,17 @@ private:
     std::vector<uint16_t> parseVlanList(const std::string &vlanStr);
     void updateVlanInstanceMap(int instance, const std::vector<uint16_t>&newVlanList, bool operation);
     bool isInstanceMapped(uint16_t instance);
+    std::vector<std::string> getVlanAliasesForInstance(uint16_t instance);
 
 };
 
 }
 #endif
+
+
+/*
+
+   
+
+
+*/
