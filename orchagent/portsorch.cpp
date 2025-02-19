@@ -1198,6 +1198,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
             p.m_autoneg = cit.autoneg.value;
             // If port is successfully created then autoneg was set and is supported
             p.m_cap_an = 1;
+            p.m_an_cfg = true;
         }
 
         if (cit.fec.is_set)
@@ -1215,6 +1216,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
 
             p.m_fec_mode = cit.fec.value;
             p.m_override_fec = cit.fec.override_fec;
+            p.m_fec_cfg = true;
         }
 
         if (cit.tpid.is_set)
@@ -1360,8 +1362,16 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
             return false;
         }
 
+        Port& p = addedPorts.at(i);
+        PortConfig pCfg = portList.at(i);
+
+        if (pCfg.autoneg.is_set)
+        {
+            updatePortStatePoll(p, PORT_STATE_POLL_AN, pCfg.autoneg.value);
+        }
+
         m_portListLaneMap[portList.at(i).lanes.value] = oidList.at(i);
-        addedPorts.at(i).m_port_id = oidList.at(i);
+        p.m_port_id = oidList.at(i);
         m_portCount++;
     }
 
@@ -4440,7 +4450,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (pCfg.autoneg.is_set)
                 {
-                    if (p.m_autoneg != pCfg.autoneg.value)
+                    if (!p.m_an_cfg || p.m_autoneg != pCfg.autoneg.value)
                     {
                         if (p.m_cap_an < 0)
                         {
@@ -4488,11 +4498,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             }
                             continue;
                         }
-                    }
 
-                    // First time config or when AN changes
-                    if (!p.m_an_cfg || p.m_autoneg != pCfg.autoneg.value)
-                    {
                         p.m_autoneg = pCfg.autoneg.value;
                         p.m_an_cfg = true;
                         m_portList[p.m_alias] = p;
@@ -4938,7 +4944,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (pCfg.fec.is_set)
                 {
                     /* reset fec mode upon mode change */
-                    if (p.m_fec_mode != pCfg.fec.value || p.m_override_fec != pCfg.fec.override_fec)
+                    if (!p.m_fec_cfg || p.m_fec_mode != pCfg.fec.value || p.m_override_fec != pCfg.fec.override_fec)
                     {
                         if (!pCfg.fec.override_fec && !fec_override_sup)
                         {
@@ -4998,13 +5004,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), m_portHlpr.getFecStr(pCfg).c_str()
                         );
                     }
-
-                    // Sync geabox FEC on first time config
-                    if (!p.m_fec_cfg)
+                    else
                     {
                         setGearboxPortsAttr(p, SAI_PORT_ATTR_FEC_MODE, &pCfg.fec.value, pCfg.fec.override_fec);
-                        p.m_fec_cfg = true;
-                        m_portList[p.m_alias] = p;
                     }
                 }
 
