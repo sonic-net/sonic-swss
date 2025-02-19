@@ -7854,7 +7854,7 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
         if (flexCounterOrch->getWredQueueCountersState())
         {
             /* add wred queue counters */
-            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
         }
     }
 
@@ -7918,7 +7918,7 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, b
         if (flexCounterOrch->getWredQueueCountersState())
         {
             /* Remove wred queue counters */
-            wred_queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
+            wred_queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex], queueType);
         }
     }
 
@@ -8336,7 +8336,7 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
             {
                 continue;
             }
-            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
         }
     }
 }
@@ -8347,7 +8347,7 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
 *  Description: Sets the Stats list to be polled by the flexcounter 
 **/
 
-void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq)
+void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq, sai_queue_type_t queueType)
 {
     std::unordered_set<string> counter_stats;
     std::vector<sai_object_id_t> queue_ids;
@@ -8365,7 +8365,7 @@ void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, s
         queue_ids = port.m_queue_ids;
     }
 
-    wred_queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
+    wred_queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats, queueType);
 }
 
 void PortsOrch::flushCounters()
@@ -8376,6 +8376,8 @@ void PortsOrch::flushCounters()
     queue_watermark_manager.flush();
     pg_watermark_manager.flush();
     pg_drop_stat_manager.flush();
+    wred_port_stat_manager.flush();
+    wred_queue_stat_manager.flush();
 }
 
 uint32_t PortsOrch::getNumberOfPortSupportedPgCounters(string port)

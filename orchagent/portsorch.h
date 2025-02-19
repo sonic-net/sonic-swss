@@ -291,8 +291,8 @@ private:
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
     FlexCounterTaggedCachedManager<void> pg_watermark_manager;
     FlexCounterTaggedCachedManager<void> pg_drop_stat_manager;
-    FlexCounterManager wred_port_stat_manager;
-    FlexCounterManager wred_queue_stat_manager;
+    FlexCounterTaggedCachedManager<void> wred_port_stat_manager;
+    FlexCounterTaggedCachedManager<sai_queue_type_t> wred_queue_stat_manager;
 
     FlexCounterManager gb_port_stat_manager;
     shared_ptr<DBConnector> m_gb_counter_db;
@@ -463,7 +463,7 @@ private:
 
     bool m_isWredQueueCounterMapGenerated = false;
     void addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
-    void addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq);
+    void addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq, sai_queue_type_t queueType);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState);
