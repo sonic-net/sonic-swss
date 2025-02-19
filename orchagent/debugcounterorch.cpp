@@ -7,6 +7,8 @@
 #include <memory>
 #include "observer.h"
 
+#define DEBUG_DROP_MONITOR_POLL_TIMEOUT_SEC   (60)
+
 using std::string;
 using std::unordered_map;
 using std::unordered_set;
@@ -30,6 +32,8 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_
         m_stateDb(new DBConnector("STATE_DB", 0)),
         m_debugCapabilitiesTable(new Table(m_stateDb.get(), STATE_DEBUG_COUNTER_CAPABILITIES_NAME)),
         m_countersDb(new DBConnector("COUNTERS_DB", 0)),
+        m_counterTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+        m_counterPortNameMap(new Table(m_countersDb.get(), COUNTERS_PORT_NAME_MAP)),
         m_counterNameToPortStatMap(new Table(m_countersDb.get(), COUNTERS_DEBUG_NAME_PORT_STAT_MAP)),
         m_counterNameToSwitchStatMap(new Table(m_countersDb.get(), COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP))
 {
@@ -37,6 +41,98 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_
     publishDropCounterCapabilities();
 
     gPortsOrch->attach(this);
+
+    // Setup timer for monitoring persistent drops in drop counters
+    auto interv = timespec { .tv_sec = DEBUG_DROP_MONITOR_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+    m_dropCountMonitorTimer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(m_dropCountMonitorTimer, this, "DEBUG_DROP_MONITOR_POLL");
+    Orch::addExecutor(executor);
+}
+
+void DebugCounterOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    // Get the configured debug drop counters
+    for (const auto& debug_counter: debug_counters)
+    {
+        DebugCounter *counter = debug_counter.second.get();
+        string counter_stat = counter->getDebugCounterSAIStat();
+        string counter_type = counter->getCounterType();
+
+        // We only monitor port level debug counters
+        if (counter_type != PORT_INGRESS_DROPS && counter_type != PORT_EGRESS_DROPS)
+            continue;
+
+        // Iterate over all port counters
+        std::vector<FieldValueTuple> ports;
+        m_counterPortNameMap->get("", ports);
+        for (const auto& port: ports)
+        {
+            // Get the drop value associated with the debug counter
+            string port_counter_oid = port.second;
+            string stat_drop_count = "";
+            m_counterTable->hget(port_counter_oid, counter_stat, stat_drop_count);
+
+            // Get the delta between drop counts since last poll
+            if (m_prevDropCountMap[counter_stat].find(port_counter_oid) == m_prevDropCountMap[counter_stat].end())
+            {
+                m_prevDropCountMap[counter_stat][port_counter_oid] = 0;
+            }
+            uint64_t curr_drop_count = std::stoi(stat_drop_count);
+            uint64_t prev_drop_count = m_prevDropCountMap[counter_stat][port_counter_oid];
+            uint64_t delta_drop_count = curr_drop_count - prev_drop_count;
+
+            // Sanity check to verify drop counter content
+            if (curr_drop_count < prev_drop_count){
+               SWSS_LOG_ERROR("%s cannot decrease over time. Anamoly detected in debug counter %s", counter_stat.c_str(), port_counter_oid.c_str());
+               return;
+            }
+
+            // Get current timestamp
+            const auto current_timestamp = std::chrono::system_clock::now();
+
+            // Check if drop count is greater than drop count threshold
+            if (delta_drop_count > m_drop_count_threshold)
+            {
+                m_violationsMap[counter_stat][port_counter_oid].push(current_timestamp);
+            }
+
+            // Update prev_drop_count map
+            m_prevDropCountMap[counter_stat][port_counter_oid] = curr_drop_count;
+
+            // Remove violations outside time window
+            auto violations = m_violationsMap[counter_stat][port_counter_oid];
+            while (!violations.empty())
+            {
+                auto violation_timestamp = violations.front();
+                auto time_delta = std::chrono::duration_cast<std::chrono::seconds>(current_timestamp - violation_timestamp).count();
+
+                // Remove the violations that are out of the time window
+                if (time_delta > m_window)
+                {
+                    violations.pop();
+                }
+                // If violation is within the window all subsequent violations are within the window
+                else
+                {
+                    break;
+                }
+            }
+
+            // Update the violations map
+            m_violationsMap[counter_stat][port_counter_oid] = violations;
+
+            // Generate syslog for persistent drops
+            if (m_violationsMap[counter_stat][port_counter_oid].size() > m_incident_count_threshold){
+                // Generate syslog entry
+                SWSS_LOG_ERROR("%s: Persistent packet drops detected on %s", debug_counter.first.c_str(), port.first.c_str());
+
+                // Clear all the current violations for this counter
+                m_violationsMap[counter_stat][port_counter_oid] = std::queue<Timestamp>();
+            }
+        }
+    }
 }
 
 DebugCounterOrch::~DebugCounterOrch(void)
@@ -89,6 +185,7 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
         }
     }
 }
+
 
 // doTask processes updates from the consumer and modifies the state of the
 // following components:
@@ -185,6 +282,25 @@ void DebugCounterOrch::doTask(Consumer& consumer)
                 catch (const std::runtime_error& e)
                 {
                     SWSS_LOG_ERROR("Failed to remove drop reason '%s' from counter '%s'", drop_reason.c_str(), counter_name.c_str());
+                    task_status = task_process_status::task_failed;
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            }
+        }
+        else if (table_name == CFG_DEBUG_DROP_MONITOR_TABLE_NAME)
+        {
+            if (op == SET_COMMAND)
+            {
+                try
+                {
+                    if (key == "CONFIG")
+                        task_status = updateDropMonitorConfig(values);
+                }
+                catch (const std::runtime_error& e)
+                {
                     task_status = task_process_status::task_failed;
                 }
             }
@@ -309,6 +425,23 @@ task_process_status DebugCounterOrch::installDebugCounter(const string& counter_
     addFreeCounter(counter_name, counter_type);
     reconcileFreeDropCounters(counter_name);
 
+    // Add port counters to drop counter monitor
+    if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
+    {
+        auto counter = debug_counters[counter_name].get();
+        string counter_stat = counter->getDebugCounterSAIStat();
+        bool counter_in_violations_map = (m_violationsMap.find(counter_stat) != m_violationsMap.end());
+        bool counter_in_prev_drop_count_map = (m_prevDropCountMap.find(counter_stat) != m_prevDropCountMap.end());
+        if (!counter_in_violations_map)
+            m_violationsMap[counter_stat] = {};
+        else
+            SWSS_LOG_WARN("%s already exists in drop counter violations map, and cannot be added", counter_stat.c_str());
+        if (!counter_in_prev_drop_count_map)
+            m_prevDropCountMap[counter_stat] = {};
+        else
+            SWSS_LOG_WARN("%s already exists in drop counter m_prevDropCountMap, and cannot be added", counter_stat.c_str());
+    }
+
     SWSS_LOG_NOTICE("Successfully created drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
@@ -335,6 +468,22 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
     DebugCounter *counter = it->second.get();
     string counter_type = counter->getCounterType();
     string counter_stat = counter->getDebugCounterSAIStat();
+
+    // Delete port counters from drop counter monitor
+    if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
+    {
+        bool counter_in_violations_map = (m_violationsMap.find(counter_stat) != m_violationsMap.end());
+        bool counter_in_prev_drop_count_map = (m_prevDropCountMap.find(counter_stat) != m_prevDropCountMap.end());
+        if (counter_in_violations_map)
+            m_violationsMap.erase(m_violationsMap.find(counter_stat));
+        else
+            SWSS_LOG_WARN("%s does not exist in drop counter violations map, and cannot be deleted", counter_stat.c_str());
+
+        if (counter_in_prev_drop_count_map)
+            m_prevDropCountMap.erase(m_prevDropCountMap.find(counter_stat));
+        else
+            SWSS_LOG_WARN("%s does not exist in drop counter m_prevDropCountMap, and cannot be deleted", counter_stat.c_str());
+    }
 
     uninstallDebugFlexCounters(counter_type, counter_stat);
 
@@ -422,6 +571,85 @@ task_process_status DebugCounterOrch::removeDropReason(const string& counter_nam
     return task_success;
 }
 
+// This function is used to configure the drop counter monitor parameters from DEBUG_DROP_MONITOR table
+// in CONFIG_DB.
+task_process_status DebugCounterOrch::updateDropMonitorConfig(const std::vector<FieldValueTuple>& configs)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto& config : configs)
+    {
+        string config_name = config.first;
+        string config_value = config.second;
+
+        // Update the appropriate config
+        try
+        {
+            if (config_name == "window")
+            {
+                int value = stoi(config_value);
+                if (value <= 0)
+                {
+                    SWSS_LOG_ERROR("The window size should be positive. Window size supplied: %s", config_value.c_str());
+                    return task_process_status::task_failed;
+                }
+                m_window = uint32_t(value);
+            }
+            else if (config_name == "drop_count_threshold")
+            {
+                int value = stoi(config_value);
+                if (value < 0)
+                {
+                   SWSS_LOG_ERROR("The drop count threshold should be non-negative. Drop count threshold supplied: %s", config_value.c_str());
+                   return task_process_status::task_failed;
+                }
+                m_drop_count_threshold = uint32_t(value);
+            }
+            else if (config_name == "incident_count_threshold")
+            {
+                int value = stoi(config_value);
+                if (value < 0)
+                {
+                    SWSS_LOG_ERROR("The incident count threshold should be non-negative. Incident count threshold supplied: %s", config_value.c_str());
+                    return task_process_status::task_failed;
+                }
+                m_incident_count_threshold = uint32_t(value);
+            }
+            else if (config_name == "status")
+            {
+                // Status is responsible for controlling the dropCountMonitor timer
+                if (config_value == "enabled")
+                {
+                    m_dropCountMonitorTimer->start();
+                    SWSS_LOG_INFO("The drop counter monitor feature has been enabled");
+                }
+                else if (config_value == "disabled")
+                {
+                    m_dropCountMonitorTimer->stop();
+                    SWSS_LOG_INFO("The drop counter monitor feature has been disabled");
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("The status of drop counter monitor was not recognized: %s. Accepted values are enabled/disabled.", config_value.c_str());
+                    return task_process_status::task_failed;
+                }
+            }
+            else
+            {
+               SWSS_LOG_ERROR("Invalid debug drop counter configuration applied: config_name: %s, config_value: %s", config_name.c_str(), config_value.c_str());
+               return task_process_status::task_failed;
+            }
+        }
+        catch(const std::runtime_error& e)
+        {
+             SWSS_LOG_ERROR("Encountered an error when updating DEBUG_DROP_MONITOR. config_name: %s, config_value: %s", config_name.c_str(), config_value.c_str());
+             return task_process_status::task_failed;
+        }
+    }
+
+    SWSS_LOG_NOTICE("Successfully updated debug drop counter configuration");
+    return task_process_status::task_success;
+}
 // Free Table Management Functions START HERE ------------------------------------------------------
 
 // Note that entries will remain in the table until at least one drop reason is added to the counter.
