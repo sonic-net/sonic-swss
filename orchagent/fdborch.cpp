@@ -1204,13 +1204,13 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     SWSS_LOG_ENTER();
     if (update.operStatus == SAI_PORT_OPER_STATUS_DOWN)
     {
+        swss::Port p = update.port;
         if (gMlagOrch->isMlagInterface(p.m_alias))
         {
             SWSS_LOG_INFO("Ignoring fdb flush on MCLAG port:%s", p.m_alias);
             return;
         }
 
-        swss::Port p = update.port;
         if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
         {
             flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
