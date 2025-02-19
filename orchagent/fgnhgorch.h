@@ -58,12 +58,7 @@ enum FGMatchMode
 {
     ROUTE_BASED,
     NEXTHOP_BASED,
-    DYNAMIC_ROUTE_BASED
-};
-enum FGNexthopMode
-{
-    STATIC_FGNHG,
-    DYNAMIC_FGNHG
+    PREFIX_BASED
 };
 
 /* Store the indices occupied by a bank */
@@ -78,19 +73,18 @@ typedef struct FgNhgEntry
     string fg_nhg_name;                               // Name of FG NHG group configured by user
     uint32_t configured_bucket_size;                  // Bucket size configured by user
     uint32_t real_bucket_size;                        // Real bucket size as queried from SAI
-    uint32_t max_next_hops;                           // For nh_mode==dynamic. Maximum number of next hops in the FG NHG
+    uint32_t max_next_hops;                           // For match_mode==prefix-based. Maximum number of next hops in the FG NHG
     NextHops next_hops;                               // The IP to Bank mapping configured by user
     Links links;                                      // Link to IP map for oper changes
     std::vector<IpPrefix> prefixes;                   // Prefix which desires FG behavior
     std::vector<HashIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
     FGMatchMode match_mode;                           // Stores a match_mode from FGMatchModes
-    FGNexthopMode nhg_mode;                            // Stores nexthop mode from FGNexthopMode
 } FgNhgEntry;
 
 /* Map from IP prefix to user configured FG NHG entries */
-typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes; 
+typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes;
 /* Map from IP address to user configured FG NHG entries */
-typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers; 
+typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers;
 /* Main structure to hold user configuration */
 typedef std::map<FgNhg, FgNhgEntry> FgNhgs;
 
@@ -148,7 +142,7 @@ private:
     StateTblPrefixMap   m_stateTblPrefixMap;
 
     bool setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    std::vector<BankMemberChanges> &bank_member_changes, 
+                    std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const IpPrefix &ipPrefix,
                     HashIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,

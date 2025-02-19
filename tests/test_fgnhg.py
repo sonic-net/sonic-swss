@@ -670,7 +670,8 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
 
-def fine_grained_ecmp_dynamic_nhg_test(dvs):
+
+def fine_grained_ecmp_match_mode_prefix_test(dvs):
     app_db = dvs.get_app_db()
     asic_db = dvs.get_asic_db()
     config_db = dvs.get_config_db()
@@ -681,8 +682,7 @@ def fine_grained_ecmp_dynamic_nhg_test(dvs):
     fg_nhg_prefix = "2.2.2.0/24"
     bucket_size = 60
     ip_to_if_map = {}
-    match_mode = 'route-based'
-    nhg_mode = 'dynamic-nhg'
+    match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
     logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
@@ -690,7 +690,7 @@ def fine_grained_ecmp_dynamic_nhg_test(dvs):
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
 
-    fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode, "nhg_mode": nhg_mode, 
+    fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
            "max_next_hops": str(NUM_NHs)}
     create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
 
@@ -746,7 +746,7 @@ def fine_grained_ecmp_dynamic_nhg_test(dvs):
     nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
 
     nh_oid_map = get_nh_oid_map(asic_db)
- 
+
     ### Test scenarios with 3 members
     print("Test scenarios with 3 members")
     nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
@@ -814,8 +814,8 @@ def fine_grained_ecmp_dynamic_nhg_test(dvs):
     memb_dict = validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                     memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
-    # Bring down 3 next-hops 
-    print("Bring down 3 next-hops") 
+    # Bring down 3 next-hops
+    print("Bring down 3 next-hops")
     nh_memb_exp_count = {"10.0.0.1":20,"10.0.0.5":20,"10.0.0.11":20}
     num_exp_changes = 30
     memb_dict = program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
@@ -824,7 +824,7 @@ def fine_grained_ecmp_dynamic_nhg_test(dvs):
     # Bring down 1 member and bring up 1 member at the same time
     print("Bring down 1 member and bring up 1 member at the same time")
     nh_memb_exp_count = {"10.0.0.1":20,"10.0.0.3":20,"10.0.0.11":20}
-    num_exp_changes = 20    
+    num_exp_changes = 20
     memb_dict = program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
                         memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
@@ -880,7 +880,7 @@ def fine_grained_ecmp_dynamic_nhg_test(dvs):
 
     # add back fgnhg group and prefix: The regular route should transition to fine grained ECMP
     print("add fgnhg group and prefix: The regular route should transition to fine grained ECMP")
-    fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode, "nhg_mode": nhg_mode, 
+    fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
            "max_next_hops": str(NUM_NHs)}
     create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
     fvs = {"FG_NHG": fg_nhg_name}
@@ -920,7 +920,7 @@ def fine_grained_ecmp_dynamic_nhg_test(dvs):
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
 
-def fine_grained_ecmp_dynamic_nhg_multi_route_test(dvs):
+def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     app_db = dvs.get_app_db()
     asic_db = dvs.get_asic_db()
     config_db = dvs.get_config_db()
@@ -935,8 +935,7 @@ def fine_grained_ecmp_dynamic_nhg_multi_route_test(dvs):
     bucket0_size = 60
     bucket1_size = 24
     ip_to_if_map = {}
-    match_mode = 'route-based'
-    nhg_mode = 'dynamic-nhg'
+    match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
     logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
@@ -945,7 +944,7 @@ def fine_grained_ecmp_dynamic_nhg_multi_route_test(dvs):
     config_db.update_entry("LOGGER", "orchagent", logfvs)
 
     ### Create first fine grained next hop group and prefix
-    fvs = {"bucket_size": str(bucket0_size), "match_mode": match_mode, "nhg_mode": nhg_mode, 
+    fvs = {"bucket_size": str(bucket0_size), "match_mode": match_mode,
            "max_next_hops": str(NUM0_NHs)}
     create_entry(config_db, FG_NHG, fg_nhg_name0, fvs)
 
@@ -1015,7 +1014,7 @@ def fine_grained_ecmp_dynamic_nhg_multi_route_test(dvs):
     nh_oid_map = get_nh_oid_map(asic_db)
 
     ### Create 2nd next hop group and prefix
-    fvs = {"bucket_size": str(bucket1_size), "match_mode": match_mode, "nhg_mode": nhg_mode, 
+    fvs = {"bucket_size": str(bucket1_size), "match_mode": match_mode,
            "max_next_hops": str(NUM1_NHs)}
     create_entry(config_db, FG_NHG, fg_nhg_name1, fvs)
 
@@ -1066,7 +1065,7 @@ def fine_grained_ecmp_dynamic_nhg_multi_route_test(dvs):
     # Test warm reboot
     run_warm_reboot(dvs)
     asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket0_size+bucket1_size)
- 
+
     nh_oid_map = get_nh_oid_map(asic_db)
 
     nhgid0 = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix0, bucket0_size)
@@ -1107,7 +1106,7 @@ def fine_grained_ecmp_dynamic_nhg_multi_route_test(dvs):
     memb_dict1 = program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
                         memb_dict1, num_exp_changes, fg_nhg_prefix1, nh_memb_exp_count, nh_oid_map, nhgid1, bucket1_size)
 
-    # Bring down 3 next-hops 
+    # Bring down 3 next-hops
     nhgid0 = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix0, bucket0_size)
     nh_memb_exp_count = {"10.0.0.9":60}
     num_exp_changes = 40
@@ -1175,17 +1174,17 @@ class TestFineGrainedNextHopGroup(object):
         '''
         fine_grained_ecmp_base_test(dvs, 'nexthop-based')
 
-    def test_fgnhg_nhg_mode_dynamic(self, dvs, testlog): 
+    def test_fgnhg_matchmode_prefix(self, dvs, testlog):
         '''
-        Test for nhg_mode dynamic_fgnhg(dvs)
+        Test for match_mode prefix-based
         '''
-        fine_grained_ecmp_dynamic_nhg_test(dvs)
-        
-    def test_fgnhg_nhg_mode_dynamic_multi_route(self, dvs, testlog): 
+        fine_grained_ecmp_match_mode_prefix_test(dvs)
+
+    def test_fgnhg_matchmode_prefix_multi_route(self, dvs, testlog):
         '''
-        Test for nhg_mode dynamic_fgnhg(dvs) with multiple routes
+        Test for match_mode prefix-based with multiple routes
         '''
-        fine_grained_ecmp_dynamic_nhg_multi_route_test(dvs);
+        fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs);
 
     def test_fgnhg_more_nhs_nondiv_bucket_size(self, dvs, testlog):
         '''
@@ -1253,7 +1252,7 @@ class TestFineGrainedNextHopGroup(object):
         # Remove 1 nh from bank 0 and remove 2 nhs from bank 1
         nh_memb_exp_count = {"10.0.0.3":16,"10.0.0.5":16,"10.0.0.7":16,"10.0.0.9":16,
                 "10.0.0.11":22,"10.0.0.13":21,"10.0.0.19":21}
-        num_exp_changes = 128-13-13-12-13-13-13-13 
+        num_exp_changes = 128-13-13-12-13-13-13-13
         memb_dict = program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
                     memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
@@ -1298,7 +1297,7 @@ class TestFineGrainedNextHopGroup(object):
     def test_fgnhg_matchmode_nexthop_multi_route(self, dvs, testlog):
         '''
         Test route/nh transitions to/from Fine Grained ECMP and Regular ECMP.
-        Create multiple prefixes pointing to the Fine Grained nhs and ensure 
+        Create multiple prefixes pointing to the Fine Grained nhs and ensure
         fine grained ECMP ASIC objects were created for this scenario as expected.
         '''
         app_db = dvs.get_app_db()
