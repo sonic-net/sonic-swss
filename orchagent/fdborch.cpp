@@ -1207,7 +1207,7 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
         swss::Port p = update.port;
         if (gMlagOrch->isMlagInterface(p.m_alias))
         {
-            SWSS_LOG_INFO("Ignoring fdb flush on MCLAG port:%s", p.m_alias);
+            SWSS_LOG_INFO("Ignoring fdb flush on MCLAG port:%s", p.m_alias.c_str());
             return;
         }
 
