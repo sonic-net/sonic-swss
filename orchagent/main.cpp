@@ -806,10 +806,15 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
+
+    /*
+     * Declare shared pointers for dpu specific databases
+     */
+    shared_ptr<DBConnector> dpu_app_db;
+    shared_ptr<DBConnector> dpu_app_state_db;
+
     if (gMySwitchType == "dpu")
     {
-        shared_ptr<DBConnector> dpu_app_db;
-        shared_ptr<DBConnector> dpu_app_state_db;
         dpu_app_db = make_shared<DBConnector>("DPU_APPL_DB", 0, true);
         dpu_app_state_db = make_shared<DBConnector>("DPU_APPL_STATE_DB", 0, true);
         orchDaemon = make_shared<DpuOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), dpu_app_db.get(), dpu_app_state_db.get(), zmq_server.get());
@@ -842,10 +847,13 @@ int main(int argc, char **argv)
     */
     if (!WarmStart::isWarmStart())
     {
+        SWSS_LOG_ERROR("DODLY: Calling syncd_apply_view()");
         syncd_apply_view();
     }
 
+    SWSS_LOG_ERROR("DODLY: Calling dpu orchdaemon start()");
     orchDaemon->start(heartBeatInterval);
 
+    SWSS_LOG_ERROR("DODLY: Done calling dpu orchdaemon start()");
     return 0;
 }

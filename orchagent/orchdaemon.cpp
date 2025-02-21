@@ -787,6 +787,7 @@ void OrchDaemon::logRotate() {
 void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_ERROR("DODLY: DpuOrchDaemon start...");
 
     Recorder::Instance().sairedis.setRotate(false);
 
@@ -797,6 +798,7 @@ void OrchDaemon::start(long heartBeatInterval)
 
     auto tstart = std::chrono::high_resolution_clock::now();
 
+    SWSS_LOG_ERROR("DODLY: Entering main while loop...");
     while (true)
     {
         Selectable *s;
@@ -1115,11 +1117,12 @@ DpuOrchDaemon::DpuOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConne
     m_zmqServer(zmqServer)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("DpuOrchDaemon starting...");
+    SWSS_LOG_ERROR("DpuOrchDaemon starting...");
 }
 
 bool DpuOrchDaemon::init()
 {
+    SWSS_LOG_ERROR("DODLY: DpuOrchDaemon init...");
     OrchDaemon::init();
     vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
@@ -1163,5 +1166,6 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_route_orch);
     addOrchList(dash_orch);
 
+    SWSS_LOG_ERROR("DODLY: DpuOrchDaemon init done...");
     return true;
 }
