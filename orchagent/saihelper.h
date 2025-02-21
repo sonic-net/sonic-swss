@@ -39,6 +39,11 @@ void setFlexCounterGroupStatsMode(const std::string &group,
                                   const std::string &stats_mode,
                                   bool is_gearbox=false);
 
+void setFlexCounterGroupBulkChunkSize(const std::string &group,
+                                      const std::string &bulk_size,
+                                      const std::string &bulk_chunk_size_per_prefix,
+                                      bool is_gearbox=false);
+
 void delFlexCounterGroup(const std::string &group,
                          bool is_gearbox=false);
 
@@ -49,3 +54,5 @@ void startFlexCounterPolling(sai_object_id_t switch_oid,
                              const std::string &stats_mode="");
 void stopFlexCounterPolling(sai_object_id_t switch_oid,
                             const std::string &key);
+
+std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t);

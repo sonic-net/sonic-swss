@@ -281,6 +281,14 @@ void ValuesStore::remove_keys_db(const std::vector<std::string> & keys)
         const auto & p = split_key(key);
         const auto & table_name = p.first;
         const auto & table_key = p.second;
+        // Do not delete te key from State Db for table LAB_TABLE. LAB_TABLE entry is created/deleted
+        // from teamsyncd on detecting netlink of teamd dev as up/down. For some reason 
+        // if we do not get state dump from teamdctl it might be transient issue. If it is 
+        // persistent issue then teamsyncd might be able to catch it and delete state db entry
+        // or we can keep entry in it's current state as best effort. Similar to try_add_lag which is best effort
+        // to connect to teamdctl and if it fails we do not delete State Db entry.
+        if (table_name == "LAG_TABLE")
+            continue;
         swss::Table table(m_db, table_name);
         table.del(table_key);
     }
@@ -366,13 +374,7 @@ void ValuesStore::update(const std::vector<StringPair> & dumps)
     {
         const auto & storage = from_json(dumps);
         const auto & old_keys = get_old_keys(storage);
-        // Do not delete te key from State Db. State DB LAB_TABLE entry is created/deleted
-        // from teamsyncd on detecting netlink of teamd dev as up/down. For some reason 
-        // if we do not get state dump from teamdctl it might be transient issue. If it is 
-        // persistent issue then teamsyncd might be able to catch it and delete state db entry
-        // or we can keep entry in it's current state as best effort. Similar to try_add_lag which is best effort
-        // to connect to teamdctl and if it fails we do not delete State Db entry.
-        //remove_keys_db(old_keys);
+        remove_keys_db(old_keys);
         remove_keys_storage(old_keys);
         const auto & keys_to_refresh = update_storage(storage);
         update_db(storage, keys_to_refresh);

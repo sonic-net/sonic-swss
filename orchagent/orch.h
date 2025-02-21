@@ -7,6 +7,7 @@
 #include <set>
 #include <memory>
 #include <utility>
+#include <condition_variable>
 
 extern "C" {
 #include <sai.h>
@@ -24,6 +25,7 @@ extern "C" {
 #include "macaddress.h"
 #include "response_publisher.h"
 #include "recorder.h"
+#include "schema.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -34,20 +36,23 @@ const char range_specifier     = '-';
 const char config_db_key_delimiter = '|';
 const char state_db_key_delimiter  = '|';
 
-#define INVM_PLATFORM_SUBSTRING "innovium"
+#define MRVL_TL_PLATFORM_SUBSTRING "marvell-teralynx"
+#define MRVL_PRST_PLATFORM_SUBSTRING "marvell-prestera"
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
 #define BRCM_DNX_PLATFORM_SUBSTRING "broadcom-dnx"
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
 #define VS_PLATFORM_SUBSTRING   "vs"
 #define NPS_PLATFORM_SUBSTRING  "nephos"
-#define MRVL_PLATFORM_SUBSTRING "marvell"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
 #define VLAN_SUB_INTERFACE_SEPARATOR "."
+
+#define RING_SIZE 30
+#define SLEEP_MSECONDS 500
 
 const int default_orch_pri = 0;
 
@@ -88,6 +93,10 @@ typedef std::pair<std::string, int> table_name_with_pri_t;
 
 class Orch;
 
+using AnyTask = std::function<void()>; // represents a function with no argument and returns void
+
+class RingBuffer;
+
 // Design assumption
 // 1. one Orch can have one or more Executor
 // 2. one Executor must belong to one and only one Orch
@@ -124,6 +133,10 @@ public:
         return m_name;
     }
 
+    Orch *getOrch() const { return m_orch; }
+    static std::shared_ptr<RingBuffer> gRingBuffer;
+    void processAnyTask(AnyTask&& func);
+
 protected:
     swss::Selectable *m_selectable;
     Orch *m_orch;
@@ -134,6 +147,8 @@ protected:
     // Get the underlying selectable
     swss::Selectable *getSelectable() const { return m_selectable; }
 };
+
+typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
 
 class ConsumerBase : public Executor {
 public:
@@ -163,9 +178,44 @@ public:
 
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries);
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
+};
+
+class RingBuffer
+{
+private:
+    std::vector<AnyTask> buffer;
+    int head = 0;
+    int tail = 0;
+    std::set<std::string> m_consumerSet;
+
+    std::condition_variable cv;
+    std::mutex mtx;
+    bool idle_status = true;
+
+public:
+    RingBuffer(int size=RING_SIZE);
+    bool thread_created = false;
+    std::atomic<bool> thread_exited{false};
+
+    // pause the ring thread if the buffer is empty
+    void pauseThread();
+    // wake up the ring thread in case it's locked but not empty
+    void notify();
+
+    bool IsFull() const;
+    bool IsEmpty() const;
+    bool IsIdle() const;
+
+    bool push(AnyTask entry);
+    bool pop(AnyTask& entry);
+
+    void addExecutor(Executor* executor);
+    bool serves(const std::string& tableName);
+    void setIdle(bool idle);
 };
 
 class Consumer : public ConsumerBase {
@@ -175,7 +225,7 @@ public:
     {
     }
 
-    swss::TableBase *getConsumerTable() const override
+    swss::ConsumerTableBase *getConsumerTable() const override
     {
         // ConsumerTableBase is a subclass of TableBase
         return static_cast<swss::ConsumerTableBase *>(getSelectable());
@@ -201,8 +251,6 @@ public:
     void drain() override;
 };
 
-typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
-
 typedef enum
 {
     success,
@@ -221,9 +269,13 @@ class Orch
 public:
     Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri);
     Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
+    Orch(swss::DBConnector *db1, swss::DBConnector *db2,
+        const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2);
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
+
+    static std::shared_ptr<RingBuffer> gRingBuffer;
 
     std::vector<swss::Selectable*> getSelectables();
 
