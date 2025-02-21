@@ -7,6 +7,7 @@
 #include "sai_serialize.h"
 #include "directory.h"
 #include "notifications.h"
+#include "schema.h"
 
 using namespace std;
 using namespace swss;
@@ -27,6 +28,7 @@ extern sai_object_id_t      gVirtualRouterId;
 extern PortsOrch*           gPortsOrch;
 extern sai_switch_api_t*    sai_switch_api;
 extern Directory<Orch*>     gDirectory;
+extern string               gMySwitchType;
 
 const map<string, sai_bfd_session_type_t> session_type_map =
 {
@@ -62,16 +64,25 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
 
-    // Clean up state database BFD entries
+    m_stateDbConnector = std::make_unique<swss::DBConnector>("STATE_DB", 0);
+    m_stateSoftBfdSessionTable = std::make_unique<swss::Table>(m_stateDbConnector.get(), STATE_BFD_SOFTWARE_SESSION_TABLE_NAME);
+
+    SWSS_LOG_NOTICE("Switch type is: %s", gMySwitchType.c_str());
+
     vector<string> keys;
 
+    // Clean up state database BFD entries
     m_stateBfdSessionTable.getKeys(keys);
-
     for (auto alias : keys)
     {
         m_stateBfdSessionTable.del(alias);
     }
-
+    // Clean up state database software BFD entries
+    m_stateSoftBfdSessionTable->getKeys(keys);
+    for (auto alias : keys)
+    {
+        m_stateSoftBfdSessionTable->del(alias);
+    }
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
 }
@@ -79,6 +90,22 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
 BfdOrch::~BfdOrch(void)
 {
     SWSS_LOG_ENTER();
+}
+
+std::string BfdOrch::createStateDBKey(const std::string &input) {
+    // Replace ':' with '|' to convert key to StateDB format.
+    std::string result = input;
+    size_t pos = result.find(':'); // Find the first colon
+    if (pos != std::string::npos) {
+        result[pos] = '|'; // Replace the first colon with '|'
+
+        // Find the second colon
+        pos = result.find(':', pos + 1);
+        if (pos != std::string::npos) {
+            result[pos] = '|'; // Replace the second colon with '|'
+        }
+    }
+    return result;
 }
 
 void BfdOrch::doTask(Consumer &consumer)
@@ -101,6 +128,13 @@ void BfdOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            if (gMySwitchType == "dpu") {
+                //program entry in software BFD table
+                m_stateSoftBfdSessionTable->set(createStateDBKey(key), data);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             bool tsa_shutdown_enabled = false;
             for (auto i : data)
             {
@@ -142,6 +176,13 @@ void BfdOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (gMySwitchType == "dpu") {
+                //delete entry from software BFD table
+                m_stateSoftBfdSessionTable->del(createStateDBKey(key));
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             if (bfd_session_cache.find(key) != bfd_session_cache.end() )
             {
                 bfd_session_cache.erase(key);
