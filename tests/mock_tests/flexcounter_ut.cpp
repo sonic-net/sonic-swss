@@ -111,6 +111,10 @@ namespace flexcounter_test
         }
         else
         {
+            if (flexCounterGroupParam->bulk_chunk_size.list != nullptr || flexCounterGroupParam->bulk_chunk_size_per_prefix.list != nullptr)
+            {
+                return SAI_STATUS_SUCCESS;
+            }
             mockFlexCounterGroupTable->del(key);
         }
 
@@ -216,7 +220,13 @@ namespace flexcounter_test
         sai_switch_api = pold_sai_switch_api;
     }
 
-    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool>>
+    enum class StartType
+    {
+        Cold,
+        Warm,
+    };
+
+    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, StartType>>
     {
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
@@ -226,6 +236,7 @@ namespace flexcounter_test
         shared_ptr<swss::DBConnector> m_asic_db;
         shared_ptr<swss::DBConnector> m_flex_counter_db;
         bool create_only_config_db_buffers;
+        StartType m_start_type;
 
         FlexCounterTest()
         {
@@ -252,6 +263,8 @@ namespace flexcounter_test
 
             gTraditionalFlexCounter = get<0>(GetParam());
             create_only_config_db_buffers = get<1>(GetParam());
+            m_start_type = get<2>(GetParam());
+
             if (gTraditionalFlexCounter)
             {
                 initFlexCounterTables();
@@ -296,7 +309,19 @@ namespace flexcounter_test
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
+
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = true;
+            }
+
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = false;
+            }
+
             gDirectory.set(flexCounterOrch);
 
             vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
@@ -538,8 +563,7 @@ namespace flexcounter_test
         ASSERT_TRUE(gPortsOrch->allPortsReady());
 
         // Enable and check counters
-        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_DELAY_STATUS_FIELD, "false"},
-                                                    {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
         flexCounterCfg.set("PG_WATERMARK", values);
         flexCounterCfg.set("QUEUE_WATERMARK", values);
         flexCounterCfg.set("QUEUE", values);
@@ -552,6 +576,13 @@ namespace flexcounter_test
         auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
         flexCounterOrch->addExistingData(&flexCounterCfg);
         static_cast<Orch *>(flexCounterOrch)->doTask();
+
+        if (m_start_type == StartType::Warm)
+        {
+            // Expire timer
+            flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
+            static_cast<Orch *>(flexCounterOrch)->doTask();
+        }
 
         ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
@@ -824,6 +855,47 @@ namespace flexcounter_test
             consumer->addToSync(entries);
             entries.clear();
             static_cast<Orch *>(gBufferOrch)->doTask();
+
+            if (!gTraditionalFlexCounter)
+            {
+                // Verify bulk chunk size fields which can be verified in any combination of parameters.
+                // We verify it here just for convenience.
+                consumer = dynamic_cast<Consumer *>(flexCounterOrch->getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"},
+                            {"BULK_CHUNK_SIZE", "64"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_TRUE(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT") != flexCounterOrch->m_groupsWithBulkChunkSize.end());
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_EQ(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT"), flexCounterOrch->m_groupsWithBulkChunkSize.end());
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"},
+                            {"BULK_CHUNK_SIZE_PER_PREFIX", "SAI_PORT_STAT_IF_OUT_QLEN:0;SAI_PORT_STAT_IF_IN_FEC:32"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_TRUE(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT") != flexCounterOrch->m_groupsWithBulkChunkSize.end());
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_EQ(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT"), flexCounterOrch->m_groupsWithBulkChunkSize.end());
+            }
         }
 
         // Remove buffer pools
@@ -833,16 +905,28 @@ namespace flexcounter_test
         entries.clear();
         static_cast<Orch *>(gBufferOrch)->doTask();
         ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pool_oid));
+
+        // Warm/fast-boot case - no FC processing done before APPLY_VIEW
+        std::vector<std::string> ts;
+
+        gDirectory.get<FlexCounterOrch*>()->bake();
+        gDirectory.get<FlexCounterOrch*>()->dumpPendingTasks(ts);
+
+        ASSERT_TRUE(ts.empty());
     }
 
     INSTANTIATE_TEST_CASE_P(
         FlexCounterTests,
         FlexCounterTest,
         ::testing::Values(
-            std::make_tuple(false, true),
-            std::make_tuple(false, false),
-            std::make_tuple(true, true),
-            std::make_tuple(true, false))
+            std::make_tuple(false, true, StartType::Cold),
+            std::make_tuple(false, false, StartType::Cold),
+            std::make_tuple(true, true, StartType::Cold),
+            std::make_tuple(true, false, StartType::Cold),
+            std::make_tuple(false, true, StartType::Warm),
+            std::make_tuple(false, false, StartType::Warm),
+            std::make_tuple(true, true, StartType::Warm),
+            std::make_tuple(true, false, StartType::Warm))
     );
 
     using namespace mock_orch_test;
