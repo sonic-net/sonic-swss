@@ -294,6 +294,8 @@ private:
     FlexCounterTaggedCachedManager<void> wred_port_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> wred_queue_stat_manager;
 
+    std::vector<std::reference_wrapper<FlexCounterCachedManager>> counter_managers;
+
     FlexCounterManager gb_port_stat_manager;
     shared_ptr<DBConnector> m_gb_counter_db;
     unique_ptr<Table> m_gbcounterTable;

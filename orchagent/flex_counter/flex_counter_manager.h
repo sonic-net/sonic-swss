@@ -210,6 +210,10 @@ class FlexCounterCachedManager : public FlexCounterManager
         {
         }
 
+        virtual void flush()
+        {
+        }
+
     protected:
         void flush(const std::string &group_name, struct CachedObjects &cached_objects)
         {

@@ -569,6 +569,16 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         wred_port_stat_manager(WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         wred_queue_stat_manager(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        counter_managers({
+                ref(port_stat_manager),
+                ref(port_buffer_drop_stat_manager),
+                ref(queue_stat_manager),
+                ref(queue_watermark_manager),
+                ref(pg_watermark_manager),
+                ref(pg_drop_stat_manager),
+                ref(wred_port_stat_manager),
+                ref(wred_queue_stat_manager)
+            }),
         m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
@@ -3331,6 +3341,12 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, sai_queue_type_t 
 
         m_queueInfo[queue_id].type = static_cast<sai_queue_type_t>(attr[0].value.s32);
         m_queueInfo[queue_id].index = attr[1].value.u8;
+
+        if (sai_queue_type_string_map.find(m_queueInfo[queue_id].type) == sai_queue_type_string_map.end())
+        {
+            SWSS_LOG_ERROR("Got unsupported queue type %d for %" PRIx64 " queue", attr[0].value.s32, queue_id);
+            throw runtime_error("Got unsupported queue type");
+        }
     }
     else
     {
@@ -8370,14 +8386,10 @@ void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, s
 
 void PortsOrch::flushCounters()
 {
-    port_stat_manager.flush();
-    port_buffer_drop_stat_manager.flush();
-    queue_stat_manager.flush();
-    queue_watermark_manager.flush();
-    pg_watermark_manager.flush();
-    pg_drop_stat_manager.flush();
-    wred_port_stat_manager.flush();
-    wred_queue_stat_manager.flush();
+    for (auto counter_manager : counter_managers)
+    {
+        counter_manager.get().flush();
+    }
 }
 
 uint32_t PortsOrch::getNumberOfPortSupportedPgCounters(string port)
