@@ -98,10 +98,9 @@ class TestTcDscp(object):
 
     def delete_tc_dscp_profile_on_all_ports(self):
         tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
-        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_TC_DSCP_MAP_FIELD, CFG_TC_TO_DSCP_MAP_KEY)])
         ports = swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys()
         for port in ports:
-            tbl._del(port, fvs)
+            tbl._del(port)
 
         time.sleep(1)
 
