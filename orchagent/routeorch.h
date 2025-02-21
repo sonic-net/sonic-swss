@@ -69,12 +69,14 @@ struct RouteNhg
      */
     std::string nhg_index;
 
+    std::string context_index;
+
     RouteNhg() = default;
-    RouteNhg(const NextHopGroupKey& key, const std::string& index) :
-        nhg_key(key), nhg_index(index) {}
+    RouteNhg(const NextHopGroupKey& key, const std::string& index, const std::string &context_index = "") :
+        nhg_key(key), nhg_index(index), context_index(context_index) {}
 
     bool operator==(const RouteNhg& rnhg)
-       { return ((nhg_key == rnhg.nhg_key) && (nhg_index == rnhg.nhg_index)); }
+       { return ((nhg_key == rnhg.nhg_key) && (nhg_index == rnhg.nhg_index) && (context_index == rnhg.context_index)); }
     bool operator!=(const RouteNhg& rnhg) { return !(*this == rnhg); }
 };
 
@@ -121,12 +123,18 @@ struct RouteBulkContext
     NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
     NextHopGroupKey                     nhg;
     std::string                         nhg_index;
+    std::string                         context_index;
     sai_object_id_t                     vrf_id;
     IpPrefix                            ip_prefix;
     bool                                excp_intfs_flag;
     // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
     bool                                using_temp_nhg;
     bool                                fallback_to_default_route;
+    std::vector<string>                 ipv;
+    std::vector<string>                 alsv;
+    std::vector<string>                 vni_labelv;
+    std::vector<string>                 rmacv;
+    bool                                vrf_group_flag;
 
     std::string                         key;       // Key in database table
     std::string                         protocol;  // Protocol string
@@ -147,8 +155,9 @@ struct RouteBulkContext
         object_statuses.clear();
         tmp_next_hop.clear();
         nhg.clear();
-        excp_intfs_flag = false;
+        ipv.clear();
         vrf_id = SAI_NULL_OBJECT_ID;
+        excp_intfs_flag = false;
         using_temp_nhg = false;
         key.clear();
         protocol.clear();
@@ -265,6 +274,7 @@ private:
 
     std::set<IpPrefix> m_SubnetDecapTermsCreated;
     ProducerStateTable m_appTunnelDecapTermProducer;
+    std::vector<NextHopGroupKey> m_bulkSrv6NhgReducedVec;
 
     NextHopObserverTable m_nextHopObservers;
 
@@ -273,7 +283,7 @@ private:
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoute(RouteBulkContext& ctx);
     bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoutePost(const RouteBulkContext& ctx);
@@ -290,8 +300,6 @@ private:
     void doLabelTask(Consumer& consumer);
 
     const NhgBase &getNhg(const std::string& nhg_index);
-    void incNhgRefCount(const std::string& nhg_index);
-    void decNhgRefCount(const std::string& nhg_index);
 
     void publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status = ReturnCode(SAI_STATUS_SUCCESS));
 
@@ -300,6 +308,8 @@ private:
     void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     bool addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set);
     void updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops);
+    void incNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
+    void decNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
 };
 
 #endif /* SWSS_ROUTEORCH_H */
