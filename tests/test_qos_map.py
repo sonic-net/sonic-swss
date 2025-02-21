@@ -69,9 +69,9 @@ class TestTcDscp(object):
         self.config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
     def create_tc_dscp_profile(self):
-        self.tc_dscp_tbl = swsscommon.Table(self.config_db, CFG_TC_TO_DSCP_MAP_TABLE_NAME)
+        tc_dscp_tbl = swsscommon.Table(self.config_db, CFG_TC_TO_DSCP_MAP_TABLE_NAME)
         fvs = swsscommon.FieldValuePairs(list(TC_TO_DSCP_MAP.items()))
-        self.tc_dscp_tbl.set(CFG_TC_TO_DSCP_MAP_KEY, fvs)
+        tc_dscp_tbl.set(CFG_TC_TO_DSCP_MAP_KEY, fvs)
         time.sleep(1)
 
     def find_tc_dscp_profile(self):
@@ -95,6 +95,15 @@ class TestTcDscp(object):
         assert found == True
 
         return (key, tc_dscp_map_raw)
+
+    def delete_tc_dscp_profile_on_all_ports(self):
+        tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_TC_DSCP_MAP_FIELD, CFG_TC_TO_DSCP_MAP_KEY)])
+        ports = swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys()
+        for port in ports:
+            tbl._del(port, fvs)
+
+        time.sleep(1)
 
     def apply_tc_dscp_profile_on_all_ports(self):
         tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
@@ -139,8 +148,7 @@ class TestTcDscp(object):
         port_cnt = len(swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys())
         assert port_cnt == cnt
 
-        self.tc_dscp_tbl._del(CFG_TC_TO_DSCP_MAP_KEY)
-
+        self.delete_tc_dscp_profile_on_all_ports()
 
 #Tests for TC-to-Dot1p qos map configuration
 class TestTcDot1p(object):
