@@ -427,6 +427,11 @@ class TestMirror(object):
         dvs.set_interface_status("PortChannel080", "up")
         dvs.set_interface_status("Ethernet32", "up")
 
+        # Make Port Channel oper up so route pointing to this gets installed
+        (exitcode, _) = dvs.runcmd("ip link set dev PortChannel080 carrier on")
+        assert exitcode == 0, "ip link set failed"
+
+
         # add ip address to port channel 080; create neighbor to port channel 080
         dvs.add_ip_address("PortChannel080", "200.0.0.0/31")
         dvs.add_neighbor("PortChannel080", "200.0.0.1", "12:10:08:06:04:02")
