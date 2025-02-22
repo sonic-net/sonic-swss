@@ -6,6 +6,7 @@
 #include "orch.h"
 
 #include <map>
+#include <unordered_set>
 #include <string>
 
 namespace swss {
@@ -59,6 +60,7 @@ private:
     port_cable_length_t m_cableLenLookup;
     port_admin_status_t m_portStatusLookup;
     port_speed_t m_speedLookup;
+    std::unordered_set<std::string> s_autonegEnabled;
     std::string getPgPoolMode();
     void readPgProfileLookupFile(std::string);
     task_process_status doCableTask(std::string port, std::string cable_length);
