@@ -2217,11 +2217,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                     {
                         SWSS_LOG_ERROR("Failed to set UPDATE_DSCP attribute on port %s, rv:%d",
                                        port_name.c_str(), status);
-                        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-                        if (handle_status != task_process_status::task_success)
-                        {
-                            return task_process_status::task_invalid_entry;
-                        }
+                        return task_process_status::task_invalid_entry;
                     }
                 }
             }
