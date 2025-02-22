@@ -23,15 +23,7 @@ struct VnetEntry
     dash::vnet::Vnet metadata;
 };
 
-struct VnetMapEntry
-{
-    sai_object_id_t dst_vnet_id;
-    swss::IpAddress dip;
-    dash::vnet_mapping::VnetMapping metadata;
-};
-
 typedef std::unordered_map<std::string, VnetEntry> DashVnetTable;
-typedef std::unordered_map<std::string, VnetMapEntry> DashVnetMapTable;
 typedef std::unordered_map<std::string, uint32_t> PaRefCountTable;
 
 struct DashVnetBulkContext
@@ -78,7 +70,6 @@ public:
 
 private:
     DashVnetTable vnet_table_;
-    DashVnetMapTable vnet_map_table_;
     PaRefCountTable pa_refcount_table_;
     ObjectBulker<sai_dash_vnet_api_t> vnet_bulker_;
     EntityBulker<sai_dash_outbound_ca_to_pa_api_t> outbound_ca_to_pa_bulker_;

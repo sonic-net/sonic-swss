@@ -414,23 +414,13 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
-    bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
-    if (!exists)
+    bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end());
+    if (!vnet_exists)
     {
-        
-        bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end());
-        if (!vnet_exists)
-        {
-            SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
-            return false;
-        }
-        return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
+        SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
+        return false;
     }
-    /*
-     * If the VNET map is already added, don't add it to the bulker and
-     * return true so it's removed from the consumer
-     */
-    return true;
+    return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
 }
 
 bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt)
@@ -518,9 +508,6 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
         return false;
     }
 
-    string vnet_name = ctxt.vnet_name;
-    VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.dip, ctxt.metadata };
-    vnet_map_table_[key] = entry;
     SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
 
     return true;
@@ -532,9 +519,9 @@ void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& c
 
     auto& object_statuses = ctxt.outbound_ca_to_pa_object_statuses;
     sai_outbound_ca_to_pa_entry_t outbound_ca_to_pa_entry;
-    outbound_ca_to_pa_entry.dst_vnet_id = vnet_map_table_[key].dst_vnet_id;
+    outbound_ca_to_pa_entry.dst_vnet_id = gVnetNameToId[ctxt.vnet_name];
     outbound_ca_to_pa_entry.switch_id = gSwitchId;
-    swss::copy(outbound_ca_to_pa_entry.dip, vnet_map_table_[key].dip);
+    swss::copy(outbound_ca_to_pa_entry.dip, ctxt.dip);
 
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.remove_entry(&object_statuses.back(), &outbound_ca_to_pa_entry);
@@ -545,7 +532,7 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
     SWSS_LOG_ENTER();
 
     auto& object_statuses = ctxt.pa_validation_object_statuses;
-    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
+    string underlay_ip = to_string(ctxt.metadata.underlay_ip());
     string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
     auto it = pa_refcount_table_.find(pa_ref_key);
     if (it == pa_refcount_table_.end())
@@ -569,9 +556,9 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
         else
         {
             sai_pa_validation_entry_t pa_validation_entry;
-            pa_validation_entry.vnet_id = vnet_map_table_[key].dst_vnet_id;
+            pa_validation_entry.vnet_id = gVnetNameToId[ctxt.vnet_name];
             pa_validation_entry.switch_id = gSwitchId;
-            to_sai(vnet_map_table_[key].metadata.underlay_ip(), pa_validation_entry.sip);
+            to_sai(ctxt.metadata.underlay_ip(), pa_validation_entry.sip);
 
             object_statuses.emplace_back();
             pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
@@ -585,13 +572,6 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
 bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
-
-    bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
-    if (!exists)
-    {
-        SWSS_LOG_INFO("Failed to find vnet mapping %s to remove", key.c_str());
-        return true;
-    }
 
     removePaValidation(key, ctxt);
     removeOutboundCaToPa(key, ctxt);
@@ -619,7 +599,7 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
             return false;
         }
 
-        SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
+        SWSS_LOG_ERROR("Failed to remove outbound CA to PA entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_CA_TO_PA, status);
         if (handle_status != task_success)
         {
@@ -627,7 +607,7 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
         }
     }
 
-    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
+    gCrmOrch->decCrmResUsedCounter(ctxt.dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
 
     SWSS_LOG_INFO("Outbound CA to PA map entry for %s removed", key.c_str());
 
@@ -638,8 +618,6 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
 {
     SWSS_LOG_ENTER();
 
-    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
-    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
     const auto& object_statuses = ctxt.pa_validation_object_statuses;
     if (object_statuses.empty())
     {
@@ -664,7 +642,7 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
         }
     }
 
-    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
+    gCrmOrch->decCrmResUsedCounter(ctxt.metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
 
     SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
 
@@ -680,7 +658,6 @@ bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext
     {
         return false;
     }
-    vnet_map_table_.erase(key);
     SWSS_LOG_INFO("Vnet map removed for %s", key.c_str());
 
     return true;
