@@ -2094,6 +2094,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                     if (rv == true)
                     {
                         sai_attribute_t update_dscp_attr;
+                        memset(&update_dscp_attr, 0, sizeof(update_dscp_attr));
                         update_dscp_attr.id = SAI_PORT_ATTR_UPDATE_DSCP;
                         update_dscp_attr.value.booldata = false;
                         sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &update_dscp_attr);
@@ -2218,6 +2219,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                 if (rv == true)
                 {
                     sai_attribute_t update_dscp_attr;
+                    memset(&update_dscp_attr, 0, sizeof(update_dscp_attr));
                     update_dscp_attr.id = SAI_PORT_ATTR_UPDATE_DSCP;
                     update_dscp_attr.value.booldata = true;
                     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &update_dscp_attr);
