@@ -591,7 +591,7 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
     #Add remote MAC to MCLAG_FDB_TABLE on PortChannel0005
     create_entry_pst(
         dvs.pdb,
-        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        "FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
         [
             ("port", "PortChannel0008"),
             ("type", "dynamic"),
@@ -629,11 +629,6 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
     time.sleep(2)
     # check that the FDB entry was deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
-
-    delete_entry_pst(
-        dvs.pdb,
-        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
-    )
 
     dvs.set_interface_status("Ethernet12", "up")
     time.sleep(2)
