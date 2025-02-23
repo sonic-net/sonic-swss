@@ -584,9 +584,6 @@ def test_mclagFdb_remote_to_local_mac_move_ntf(dvs, testlog):
 def test_mclagFdb_flush_on_link_down(dvs, testlog):
     dvs.setup_db()
 
-    # cleanup existing entries
-    dvs.delete_table_keys(dvs.cdb, "MCLAG_INTERFACE")
-
     # add MCLAG interface
     create_mclag_interface(dvs, "4095", "PortChannel0005")
     time.sleep(2)
