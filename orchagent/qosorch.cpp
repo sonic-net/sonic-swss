@@ -2202,7 +2202,11 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
             {
                 SWSS_LOG_ERROR("Failed to apply %s to port %s, rv:%d",
                                it->second.first.c_str(), port_name.c_str(), status);
-                return task_process_status::task_invalid_entry;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return task_process_status::task_invalid_entry;
+                }
             }
             if (attr.id == SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP) {
                 /* Query Port's UPDATE_DSCP Capability */
