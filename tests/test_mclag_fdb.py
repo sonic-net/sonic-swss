@@ -585,7 +585,7 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
     dvs.setup_db()
 
     # add MCLAG interface
-    create_mclag_interface(dvs, "4095", "PortChannel0005")
+    create_mclag_interface(dvs, "4095", "PortChannel0008")
     time.sleep(2)
 
     #Add remote MAC to MCLAG_FDB_TABLE on PortChannel0005
@@ -593,7 +593,7 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
         dvs.pdb,
         "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
         [
-            ("port", "PortChannel0005"),
+            ("port", "PortChannel0008"),
             ("type", "dynamic"),
         ]
     )
@@ -609,7 +609,7 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
     assert ok, str(extra)
 
     # bring down the MCLAG interface
-    dvs.set_interface_status("Ethernet4", "down")
+    dvs.set_interface_status("Ethernet12", "down")
     time.sleep(2)
 
     # check that the FDB entry was not deleted from ASIC DB
@@ -635,9 +635,9 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
         "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
     )
 
-    dvs.set_interface_status("Ethernet4", "up")
+    dvs.set_interface_status("Ethernet12", "up")
     time.sleep(2)
-    remove_mclag_interface("4095", "PortChannel0005")
+    remove_mclag_interface("4095", "PortChannel0008")
     time.sleep(2)
 
 # Test-14 Verify cleanup of the basic config.
