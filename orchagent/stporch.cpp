@@ -4,7 +4,7 @@
 #include "fdborch.h"
 #include "stporch.h"
 
-#include "../cfgmgr/stpmgr.h"
+#include "../../cfgmgr/stpmgr.h"
 
 extern sai_stp_api_t *sai_stp_api;
 extern sai_vlan_api_t *sai_vlan_api;
