@@ -2088,7 +2088,8 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                         return task_process_status::task_invalid_entry;
                     }
                 }
-                if (attr.id == SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP) {
+                if (attr.id == SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP)
+                {
                     /* Query Port's UPDATE_DSCP Capability */
                     bool rv = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_UPDATE_DSCP);
                     if (rv == true)
@@ -2213,7 +2214,8 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                     return task_process_status::task_invalid_entry;
                 }
             }
-            if (attr.id == SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP) {
+            if (attr.id == SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP)
+            {
                 /* Query Port's UPDATE_DSCP Capability */
                 bool rv = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_UPDATE_DSCP);
                 if (rv == true)
