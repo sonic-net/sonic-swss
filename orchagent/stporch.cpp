@@ -522,7 +522,7 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
             if (state.compare("true") == 0)
             {
                 // Get all VLANs associated with the port
-                vector<string> vlans = gStpMgr->getVlanAliasesForInstance(instance)
+                vector<string> vlans = gStpMgr->getVlanAliasesForInstance(instance);
                 // Flush FDB for each VLAN
                 for (auto vlan : vlans)
                 {
