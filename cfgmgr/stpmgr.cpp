@@ -862,7 +862,7 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
             }
         }
 
-        SWSS_LOG_DEBUG("LagMap");vmKeys
+        SWSS_LOG_DEBUG("LagMap");
         for (auto itr = m_lagMap.begin(); itr != m_lagMap.end(); ++itr) {
             SWSS_LOG_DEBUG("PO: %s Cnt:%d", itr->first.c_str(), itr->second);
         }
