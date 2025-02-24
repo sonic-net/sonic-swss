@@ -510,7 +510,7 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
             // Parse the key to extract instance and port
             size_t colon1 = key.find(':');
             size_t colon2 = key.find(':', colon1 + 1);
-            uint16_t instance = std::stoi(key.substr(colon1 + 1, colon2 - colon1 - 1));
+            uint16_t instance = static_cast<uint16_t>(std::stoi(key.substr(colon1 + 1, colon2 - colon1 - 1)));
             string port_name = key.substr(colon2 + 1);
 
             for (auto i : kfvFieldsValues(t))
