@@ -493,51 +493,51 @@ void StpOrch::doStpFastageTask(Consumer &consumer)
     }
 }
 
-void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
+// void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
+// {
+//     SWSS_LOG_ENTER();
 
-    for (auto it = consumer.m_toSync.begin(); it != consumer.m_toSync.end(); )
-    {
-        auto &t = it->second;
-        string op = kfvOp(t);
-        string key = kfvKey(t);
+//     for (auto it = consumer.m_toSync.begin(); it != consumer.m_toSync.end(); )
+//     {
+//         auto &t = it->second;
+//         string op = kfvOp(t);
+//         string key = kfvKey(t);
 
-        if (op == SET_COMMAND)
-        {
-            string state;
+//         if (op == SET_COMMAND)
+//         {
+//             string state;
 
-            // Parse the key to extract instance and port
-            size_t colon1 = key.find(':');
-            size_t colon2 = key.find(':', colon1 + 1);
-            uint16_t instance = std::stoi(key.substr(colon1 + 1, colon2 - colon1 - 1));
-            string port_name = key.substr(colon2 + 1);
+//             // Parse the key to extract instance and port
+//             size_t colon1 = key.find(':');
+//             size_t colon2 = key.find(':', colon1 + 1);
+//             uint16_t instance = std::stoi(key.substr(colon1 + 1, colon2 - colon1 - 1));
+//             string port_name = key.substr(colon2 + 1);
 
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "state")
-                    state = fvValue(i);
-            }
+//             for (auto i : kfvFieldsValues(t))
+//             {
+//                 if (fvField(i) == "state")
+//                     state = fvValue(i);
+//             }
 
-            if (state.compare("true") == 0)
-            {
-                // Get all VLANs associated with the port
-                vector<string> vlans = gStpMgr->getVlanAliasesForInstance(instance);
-                // Flush FDB for each VLAN
-                for (auto vlan : vlans)
-                {
-                    flushFdbByVlan(vlan);
-                }
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            // Handle delete command if necessary
-        }
+//             if (state.compare("true") == 0)
+//             {
+//                 // Get all VLANs associated with the port
+//                 vector<string> vlans = gStpMgr->getVlanAliasesForInstance(instance);
+//                 // Flush FDB for each VLAN
+//                 for (auto vlan : vlans)
+//                 {
+//                     flushFdbByVlan(vlan);
+//                 }
+//             }
+//         }
+//         else if (op == DEL_COMMAND)
+//         {
+//             // Handle delete command if necessary
+//         }
 
-        it = consumer.m_toSync.erase(it);
-    }
-}
+//         it = consumer.m_toSync.erase(it);
+//     }
+// }
 
 
 void StpOrch::doTask(Consumer &consumer)
@@ -562,10 +562,10 @@ void StpOrch::doTask(Consumer &consumer)
     {
         doStpFastageTask(consumer);
     }
-    else if (table_name == "STP_INST_PORT_FLUSH_TABLE")
-    {
-        doMstInstPortFlushTask(consumer);
-    }
+    // else if (table_name == "STP_INST_PORT_FLUSH_TABLE")
+    // {
+    //     doMstInstPortFlushTask(consumer);
+    // }
 }
 
             uint16_t instance = std::stoi(key.substr(colon1 + 1, colon2 - colon1 - 1));
