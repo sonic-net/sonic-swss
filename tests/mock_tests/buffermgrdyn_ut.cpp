@@ -137,6 +137,11 @@ namespace buffermgrdyn_test
                 {"size", "1024000"}
             };
 
+            testBufferProfile["ingress_lossy_profile"] = {
+                {"dynamic_th", "7"},
+                {"pool", "ingress_lossless_pool"},
+                {"size", "0"}
+            };
             testBufferProfile["ingress_lossless_profile"] = {
                 {"dynamic_th", "7"},
                 {"pool", "ingress_lossless_pool"},
@@ -522,8 +527,8 @@ namespace buffermgrdyn_test
 
         InitDefaultBufferProfile();
         appBufferProfileTable.getKeys(keys);
-        ASSERT_EQ(keys.size(), 3);
-        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 3);
+        ASSERT_EQ(keys.size(), 4);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 4);
         for (auto i : testBufferProfile)
         {
             CheckProfile(m_dynamicBuffer->m_bufferProfileLookup[i.first], testBufferProfile[i.first]);
@@ -647,7 +652,7 @@ namespace buffermgrdyn_test
         appBufferPoolTable.getKeys(keys);
         ASSERT_EQ(keys.size(), 3);
         ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 3);
-        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 3);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 4);
         for (auto i : testBufferProfile)
         {
             CheckProfile(m_dynamicBuffer->m_bufferProfileLookup[i.first], testBufferProfile[i.first]);
@@ -933,8 +938,8 @@ namespace buffermgrdyn_test
 
             InitDefaultBufferProfile();
             appBufferProfileTable.getKeys(keys);
-            ASSERT_EQ(keys.size(), 3);
-            ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 3);
+            ASSERT_EQ(keys.size(), 4);
+            ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 4);
             for (auto i : testBufferProfile)
             {
                 CheckProfile(m_dynamicBuffer->m_bufferProfileLookup[i.first], testBufferProfile[i.first]);
@@ -1267,8 +1272,8 @@ namespace buffermgrdyn_test
         ASSERT_EQ(keys.size(), 3);
         InitDefaultBufferProfile();
         appBufferProfileTable.getKeys(keys);
-        ASSERT_EQ(keys.size(), 3);
-        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 3);
+        ASSERT_EQ(keys.size(), 4);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 4);
 
         m_dynamicBuffer->m_bufferCompletelyInitialized = true;
         m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
@@ -1470,5 +1475,142 @@ namespace buffermgrdyn_test
                              });
         HandleTable(cableLengthTable);
         ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet12"].state, PORT_READY);
+    }
+
+    /*
+    Purpose: To verify the behavior of the buffer mgr dynamic when the cable length is set to "0m".
+    Here set to 0m indicates no lossless profile will be created, can still create lossy profile.
+    Steps:
+    1. Initialize the environment, including default lossless parameters and MMU size.
+    2. Start the Buffer Manager and initialize the port.
+    3. No new lossless profile is created when the cable length is "0m".
+    4. Existing lossless profiles are removed when the cable length is "0m".
+    5. No new lossless PG is created when the cable length is "0m".
+    6. When the cable length is updated to "5m", the correct lossless profiles and PGs are created.
+    7. When the cable length is updated back to "0m", the lossless profiles and PGs are removed.
+    8. Check if port MTU update, PG and profile still there.
+    9. When the cable length is "0m", lossy PGs remain, while lossless PGs are deleted.
+    */
+    TEST_F(BufferMgrDynTest, SkipProfileCreationForZeroCableLength)
+    {
+        vector<FieldValueTuple> fieldValues;
+        vector<string> keys;
+
+        // 1. Initialize the environment, including default lossless parameters and MMU size.
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        // 2. Start the Buffer Manager and initialize the port.
+        StartBufferManager();
+
+        InitPort();
+        ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, PORT_INITIALIZING);
+
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 0);
+        InitBufferPool();
+        ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 3);
+        appBufferPoolTable.getKeys(keys);
+        ASSERT_EQ(keys.size(), 3);
+
+        // Initialize buffer profiles
+        InitBufferPg("Ethernet0|3-4");
+        InitDefaultBufferProfile();
+        appBufferProfileTable.getKeys(keys);
+        ASSERT_EQ(keys.size(), 4);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 4);
+        InitCableLength("Ethernet0", "5m");
+        ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, PORT_READY);
+
+        auto expectedProfile = "pg_lossless_100000_5m_profile";
+        CheckPg("Ethernet0", "Ethernet0:3-4", expectedProfile);
+
+        // 3. No new lossless profile is created when the cable length is "0m".
+        cableLengthTable.set("AZURE",
+                            {
+                            {"Ethernet0", "0m"}
+                            });
+        HandleTable(cableLengthTable);
+        // Expect profile not created
+        auto zeroMProfile = "pg_lossless_100000_0m_profile";
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.find(zeroMProfile), m_dynamicBuffer->m_bufferProfileLookup.end());
+        ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.find("Ethernet0:3-4") == m_dynamicBuffer->m_portPgLookup.end());
+
+        // 4. Existing lossless profiles are removed when the cable length is "0m".
+        // Since the cable length is set to 0m, previous profile for 5m should not exist.
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.find("pg_lossless_100000_5m_profile") == m_dynamicBuffer->m_bufferProfileLookup.end());
+
+        // 5. No new lossless PG is created when the cable length is "0m".
+        // The expectation is that no new PGs should be created with a cable length of 0m.
+        InitBufferPg("Ethernet0|6");
+        ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.find("Ethernet0:6") == m_dynamicBuffer->m_portPgLookup.end());
+
+        // 6. When the cable length is updated to "5m", the correct lossless profiles and PGs are created.
+        cableLengthTable.set("AZURE",
+                            {
+                            {"Ethernet0", "5m"}
+                            });
+        HandleTable(cableLengthTable);
+        // Check if the profiles are created correctly
+        CheckPg("Ethernet0", "Ethernet0:3-4", "pg_lossless_100000_5m_profile");
+        CheckPg("Ethernet0", "Ethernet0:6", "pg_lossless_100000_5m_profile");
+
+        // 7. When the cable length is updated back to "0m", the lossless profiles and PGs are removed.
+        cableLengthTable.set("AZURE",
+                            {
+                            {"Ethernet0", "0m"}
+                            });
+        HandleTable(cableLengthTable);
+        // Check that the profiles for 0m do not exist, 5m profile could be still there, because it is shared by other ports
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.find("pg_lossless_100000_0m_profile") == m_dynamicBuffer->m_bufferProfileLookup.end());
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.find("pg_lossless_100000_5m_profile") == m_dynamicBuffer->m_bufferProfileLookup.end());
+        // Check that the PGs for Ethernet0:3-4 and Ethernet0:6 have been deleted
+        ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.find("Ethernet0:3-4") == m_dynamicBuffer->m_portPgLookup.end());
+        ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.find("Ethernet0:6") == m_dynamicBuffer->m_portPgLookup.end());
+
+        // 8. Check if port MTU update, PG and profile still there.
+        cableLengthTable.set("AZURE",
+                            {
+                            {"Ethernet0", "5m"}
+                            });
+        HandleTable(cableLengthTable);
+        string mtu = "4096";
+        m_dynamicBuffer->m_portInfoLookup["Ethernet0"].mtu = mtu; 
+        // Check if the profile is created correctly
+        CheckPg("Ethernet0", "Ethernet0:3-4", "pg_lossless_100000_5m_profile");
+        CheckPg("Ethernet0", "Ethernet0:6", "pg_lossless_100000_5m_profile");
+
+        // 7. Check if lossy PG can still be created
+        InitBufferPg("Ethernet0|0", "ingress_lossy_profile");
+        cableLengthTable.set("AZURE",
+                            {
+                            {"Ethernet0", "0m"}
+                            });
+        HandleTable(cableLengthTable);
+        bool found = false;
+        auto it = m_dynamicBuffer->m_portPgLookup.find("Ethernet0");
+        if (it != m_dynamicBuffer->m_portPgLookup.end()) {
+            found = (it->second.find("Ethernet0:0") != it->second.end());
+        }
+        ASSERT_TRUE(found);
+
+        // 9. When the cable length is "0m", lossy PGs remain, while lossless PGs are deleted.
+        cableLengthTable.set("AZURE",
+                            {
+                            {"Ethernet0", "0m"}
+                            });
+        HandleTable(cableLengthTable);
+        it = m_dynamicBuffer->m_portPgLookup.find("Ethernet0");
+        if (it != m_dynamicBuffer->m_portPgLookup.end()) {
+            found = (it->second.find("Ethernet0:0") != it->second.end());
+        }
+        ASSERT_TRUE(found);
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.find("pg_lossless_100000_0m_profile") == m_dynamicBuffer->m_bufferProfileLookup.end());
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.find("pg_lossless_100000_5m_profile") == m_dynamicBuffer->m_bufferProfileLookup.end());
+        // Check that the PGs for Ethernet0:3-4 and Ethernet0:6 have been deleted
+        ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.find("Ethernet0:3-4") == m_dynamicBuffer->m_portPgLookup.end());
+        ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.find("Ethernet0:6") == m_dynamicBuffer->m_portPgLookup.end());
     }
 }
