@@ -287,7 +287,20 @@ private:
 
 /*
 
-   
+   vector<string> StpOrch::getVlanAliasesForInstance(uint16_t instance)
+{
+    vector<string> vlan_aliases;
+
+    for (uint16_t vlan_id = 0; vlan_id < MAX_VLANS; ++vlan_id)
+    {
+        if (m_vlanInstMap[vlan_id] == instance)
+        {
+            vlan_aliases.push_back("VLAN" + std::to_string(vlan_id));
+        }
+    }
+
+    return vlan_aliases;
+}
 
 
 */
