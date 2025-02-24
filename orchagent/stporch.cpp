@@ -526,7 +526,7 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
                 // Flush FDB for each VLAN
                 for (auto vlan : vlans)
                 {
-                    flushFdbByVlan(vlan);
+                    gFdbOrch->flushFdbByVlan(vlan);
                 }
             }
         }
