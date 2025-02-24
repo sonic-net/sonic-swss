@@ -36,6 +36,7 @@ private:
     void doStpPortStateTask(Consumer &consumer);
     void doStpFastageTask(Consumer &consumer);
     void doStpVlanIntfFlushTask(Consumer &consumer);
+    void doMstInstPortFlushTask(Consumer &consumer);
     
     sai_object_id_t addStpInstance(sai_uint16_t stp_instance);
     bool removeStpInstance(sai_uint16_t stp_instance);
