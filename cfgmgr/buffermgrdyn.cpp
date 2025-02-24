@@ -2932,6 +2932,12 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
     port_info_t &portInfo = m_portInfoLookup[port];
 
+    if (portInfo.cable_length == "0m")
+    {
+        SWSS_LOG_NOTICE("Skipping profile creation for cable length '0m'");
+        return task_process_status::task_success;
+    }
+
     SWSS_LOG_DEBUG("Processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
     if (op == SET_COMMAND)
     {

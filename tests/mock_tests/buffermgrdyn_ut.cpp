@@ -1471,4 +1471,47 @@ namespace buffermgrdyn_test
         HandleTable(cableLengthTable);
         ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet12"].state, PORT_READY);
     }
+
+    TEST_F(BufferMgrDynTest, SkipProfileCreationForZeroCableLength)
+    {
+        vector<FieldValueTuple> fieldValues;
+        vector<string> keys;
+
+        // Prepare information that will be read at the beginning
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        StartBufferManager();
+
+        InitPort();
+        ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, PORT_INITIALIZING);
+
+        SetPortInitDone();
+        // Timer will be called
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 0);
+        InitBufferPool();
+        ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 3);
+        appBufferPoolTable.getKeys(keys);
+        ASSERT_EQ(keys.size(), 3);
+
+        // Initialize buffer profiles
+        InitDefaultBufferProfile();
+        appBufferProfileTable.getKeys(keys);
+        ASSERT_EQ(keys.size(), 3);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 3);
+
+        // Set cable length to "0m"
+        InitCableLength("Ethernet0", "0m");
+        ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, PORT_READY);
+
+        InitBufferPg("Ethernet0|3-4");
+
+        auto expectedProfile = "pg_lossless_100000_0m_profile";
+        auto &portPgMap = m_dynamicBuffer->m_bufferProfileLookup[expectedProfile].port_pgs;
+        // Expect not created
+        ASSERT_EQ(portPgMap.size(), 0);
+        ASSERT_TRUE(portPgMap.find("Ethernet0:3-4") == portPgMap.end());
+    }
 }
