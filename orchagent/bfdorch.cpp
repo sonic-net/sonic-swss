@@ -108,10 +108,35 @@ std::string BfdOrch::createStateDBKey(const std::string &input) {
     return result;
 }
 
+bool BfdOrch::software_bfd_enabled()
+{
+    SWSS_LOG_ENTER();
+    DBConnector config_db("CONFIG_DB", 0);
+    Table cfgFeatureTable(&config_db, CFG_FEATURE_TABLE_NAME);
+    vector<string> featKeys;
+    vector<FieldValueTuple> featFv;
+    cfgFeatureTable.getKeys(featKeys);
+    for (auto &k : featKeys)
+    {
+        cfgFeatureTable.get(k, featFv);
+        if(k == "software_bfd")
+            for (auto &fv : featFv)
+            {
+                if (fv.first == "state")
+                {
+                    SWSS_LOG_INFO("software_bfd state: %s", fv.second.c_str());
+                    return (fv.second == "enabled");
+                }
+            }
+    }
+    return false;
+}
+
 void BfdOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
     BgpGlobalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGlobalStateOrch*>();
+    bool use_software_bfd = software_bfd_enabled();
     bool tsa_enabled = false;
     if (bgp_global_state_orch)
     {
@@ -128,7 +153,7 @@ void BfdOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (gMySwitchType == "dpu") {
+            if (use_software_bfd) {
                 //program entry in software BFD table
                 m_stateSoftBfdSessionTable->set(createStateDBKey(key), data);
                 it = consumer.m_toSync.erase(it);
@@ -176,7 +201,7 @@ void BfdOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (gMySwitchType == "dpu") {
+            if (use_software_bfd) {
                 //delete entry from software BFD table
                 m_stateSoftBfdSessionTable->del(createStateDBKey(key));
                 it = consumer.m_toSync.erase(it);

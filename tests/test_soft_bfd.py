@@ -12,9 +12,9 @@ class TestSoftBfd(object):
         self.sdb = dvs.get_state_db()
         self.cdb = dvs.get_config_db()
 
-        self.cdb.db_connection.hset('DEVICE_METADATA|localhost', "switch_type", "dpu")
+        self.cdb.db_connection.hset('FEATURE|software_bfd', "state", "enabled")
 
-        #Restart swss to pick up new switch type
+        #Restart swss to pick up the new running config
         dvs.stop_swss()
         dvs.start_swss()
 
