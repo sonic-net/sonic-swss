@@ -4,15 +4,12 @@
 #include "fdborch.h"
 #include "stporch.h"
 
-#include "cfgmgr/stpmgr.h"
-
 extern sai_stp_api_t *sai_stp_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_switch_api_t *sai_switch_api;
 
 extern FdbOrch   *gFdbOrch;
 extern PortsOrch *gPortsOrch;
-extern StpMgr    *gStpMgr;
 
 
 extern sai_object_id_t gSwitchId;
@@ -145,6 +142,7 @@ bool StpOrch::addVlanToStpInstance(string vlan_alias, sai_uint16_t stp_instance)
 
     vlan.m_stp_id = stp_instance;
     gPortsOrch->setPort(vlan_alias, vlan);
+    m_vlanAliasToStpInstanceMap[vlan_alias] = stp_instance;
     SWSS_LOG_INFO("Add VLAN %s to STP instance:%hu m_stp_id:%d", vlan_alias.c_str(), stp_instance, vlan.m_stp_id);
     return true;
 }
@@ -176,6 +174,7 @@ bool StpOrch::removeVlanFromStpInstance(string vlan_alias, sai_uint16_t stp_inst
     removeStpInstance(vlan.m_stp_id);
     vlan.m_stp_id = -1;
     gPortsOrch->setPort(vlan_alias, vlan);
+    m_vlanAliasToStpInstanceMap.erase(vlan_alias);
     return true;
 }
 
@@ -522,10 +521,13 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
 
             if (state.compare("true") == 0)
             {
-                vector<string> vlans = gStpMgr->getVlanAliasesForInstance(instance);
-                for (auto vlan : vlans)
+                // Get all VLAN aliases for the given STP instance
+                for (const auto& [vlan_alias, vlan_instance] : m_vlanAliasToStpInstanceMap)
                 {
-                    stpVlanFdbFlush(vlan);
+                    if (vlan_instance == instance)
+                    {
+                        stpVlanFdbFlush(vlan_alias);
+                    }
                 }
             }
         }
