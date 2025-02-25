@@ -1,3 +1,5 @@
+AUTOMAKE_OPTIONS = subdir-objects
+
 INCLUDES = -I $(top_srcdir)/lib \
            -I $(top_srcdir) \
            -I $(top_srcdir)/warmrestart \
