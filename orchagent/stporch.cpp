@@ -522,8 +522,11 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
             if (state.compare("true") == 0)
             {
                 // Get all VLAN aliases for the given STP instance
-                for (const auto& [vlan_alias, vlan_instance] : m_vlanAliasToStpInstanceMap)
+                for (const auto& entry : m_vlanAliasToStpInstanceMap)
                 {
+                    const auto& vlan_alias = entry.first;
+                    const auto& vlan_instance = entry.second;
+
                     if (vlan_instance == instance)
                     {
                         stpVlanFdbFlush(vlan_alias);
