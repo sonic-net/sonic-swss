@@ -108,39 +108,16 @@ std::string BfdOrch::createStateDBKey(const std::string &input) {
     return result;
 }
 
-bool BfdOrch::software_bfd_enabled()
-{
-    SWSS_LOG_ENTER();
-    DBConnector config_db("CONFIG_DB", 0);
-    Table cfgFeatureTable(&config_db, CFG_FEATURE_TABLE_NAME);
-    vector<string> featKeys;
-    vector<FieldValueTuple> featFv;
-    cfgFeatureTable.getKeys(featKeys);
-    for (auto &k : featKeys)
-    {
-        cfgFeatureTable.get(k, featFv);
-        if(k == "software_bfd")
-            for (auto &fv : featFv)
-            {
-                if (fv.first == "state")
-                {
-                    SWSS_LOG_INFO("software_bfd state: %s", fv.second.c_str());
-                    return (fv.second == "enabled");
-                }
-            }
-    }
-    return false;
-}
-
 void BfdOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
     BgpGlobalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGlobalStateOrch*>();
-    bool use_software_bfd = software_bfd_enabled();
     bool tsa_enabled = false;
+    bool use_software_bfd = true;
     if (bgp_global_state_orch)
     {
         tsa_enabled = bgp_global_state_orch->getTsaState();
+        use_software_bfd = bgp_global_state_orch->getSoftwareBfd();
     }
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -729,6 +706,7 @@ BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
 {
     SWSS_LOG_ENTER();
     tsa_enabled = false;
+    software_bfd = (!offload_supported(false) || !offload_supported(true));
 }
 
 BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
@@ -741,6 +719,51 @@ bool BgpGlobalStateOrch::getTsaState()
     SWSS_LOG_ENTER();
     return tsa_enabled;
 }
+
+bool BgpGlobalStateOrch::getSoftwareBfd()
+{
+    SWSS_LOG_ENTER();
+    return software_bfd;
+}
+
+bool BgpGlobalStateOrch::offload_supported(bool get_ipv6)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+    sai_attr_capability_t capability;
+
+    attr.id = SAI_SWITCH_ATTR_SUPPORTED_IPV4_BFD_SESSION_OFFLOAD_TYPE;
+    if(get_ipv6)
+    {
+        attr.id = SAI_SWITCH_ATTR_SUPPORTED_IPV6_BFD_SESSION_OFFLOAD_TYPE;
+    }
+
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                            attr.id, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Unable to query BFD offload capability");
+        return false;
+    }
+    if (!capability.set_implemented)
+    {
+        SWSS_LOG_ERROR("BFD offload type not implemented");
+        return false;
+    }
+
+    uint32_t list[1] = { 1 };
+    attr.value.u32list.count = 1;
+    attr.value.u32list.list = list;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if(status == SAI_STATUS_SUCCESS && attr.value.u32list.count > 0)
+    {
+        SWSS_LOG_INFO("BFD offload type: %d", attr.value.u32list.list[0]);
+        return (attr.value.u32list.list[0] != SAI_BFD_SESSION_OFFLOAD_TYPE_NONE);
+    }
+    SWSS_LOG_ERROR("Could not get supported BFD offload type, rv: %d", status);
+    return false;
+}
+
 void BgpGlobalStateOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
