@@ -7,7 +7,7 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I port \
            -I pbh \
            -I nhg
-
+           -I $(top_srcdir)/cfgmgr
 SUBDIRS = p4orch/tests
 
 CFLAGS_SAI = -I /usr/include/sai
@@ -119,6 +119,7 @@ orchagent_SOURCES = \
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
+orchagent_SOURCES += $(top_srcdir)/cfgmgr/stpmgr.cpp
 orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/p4orch_util.cpp \
 		     p4orch/p4oidmapper.cpp \

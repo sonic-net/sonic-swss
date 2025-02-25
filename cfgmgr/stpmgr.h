@@ -217,8 +217,7 @@ public:
     int sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data);
     MacAddress macAddress;
     bool isPortInitDone(DBConnector *app_db);
-    uint16_t getStpMaxInstances(void);
-    std::vector<std::string> getVlanAliasesForInstance(uint16_t instance);    
+    uint16_t getStpMaxInstances(void);    
 
 private:
     Table m_cfgStpGlobalTable;
@@ -278,6 +277,7 @@ private:
     std::vector<uint16_t> parseVlanList(const std::string &vlanStr);
     void updateVlanInstanceMap(int instance, const std::vector<uint16_t>&newVlanList, bool operation);
     bool isInstanceMapped(uint16_t instance);
+    std::vector<std::string> getVlanAliasesForInstance(uint16_t instance);
     
     
 };

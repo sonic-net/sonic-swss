@@ -566,5 +566,3 @@ void StpOrch::doTask(Consumer &consumer)
         doMstInstPortFlushTask(consumer);
     }
 }
-
-            // uint16_t instance = std::stoi(key.substr(colon1 + 1, colon2 - colon1 - 1));
