@@ -249,6 +249,7 @@ task_process_status DashAclGroupMgr::remove(const string& group_id)
     remove(group);
 
     m_groups_table.erase(group_id);
+    detachTags(group_id, group.m_tags)
     SWSS_LOG_INFO("Removed ACL group %s", group_id.c_str());
 
     return task_success;
@@ -439,9 +440,9 @@ DashAclRuleInfo DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& ru
     for (const auto &tag : rule.m_src_tags)
     {
         const auto& prefixes = m_dash_acl_orch->getDashAclTagMgr().getPrefixes(tag);
-
         src_prefixes.insert(src_prefixes.end(),
             prefixes.begin(), prefixes.end());
+        group.m_tags.insert(tag);
     }
 
     for (const auto &tag : rule.m_dst_tags)
@@ -450,6 +451,7 @@ DashAclRuleInfo DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& ru
 
         dst_prefixes.insert(dst_prefixes.end(),
             prefixes.begin(), prefixes.end());
+        group.m_tags.insert(tag);
     }
 
     if (src_prefixes.empty())
@@ -536,8 +538,7 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
     auto rule_info = createRule(group, rule);
 
     group.m_dash_acl_rule_table.emplace(rule_id, rule_info);
-    attachTags(group_id, rule.m_src_tags);
-    attachTags(group_id, rule.m_dst_tags);
+    attachTags(group_id, group.m_tags);
 
     SWSS_LOG_INFO("Created ACL rule %s:%s", group_id.c_str(), rule_id.c_str());
 
@@ -602,9 +603,6 @@ task_process_status DashAclGroupMgr::removeRule(const string& group_id, const st
     auto& rule = group.m_dash_acl_rule_table[rule_id];
 
     removeRule(group, rule);
-
-    detachTags(group_id, rule.m_src_tags);
-    detachTags(group_id, rule.m_dst_tags);
 
     group.m_dash_acl_rule_table.erase(rule_id);
 

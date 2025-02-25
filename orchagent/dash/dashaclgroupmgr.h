@@ -70,6 +70,7 @@ struct DashAclGroup
     using RuleTable = std::unordered_map<std::string, DashAclRuleInfo>;
     using RuleKeys = std::unordered_set<std::string>;
     sai_object_id_t m_dash_acl_group_id = SAI_NULL_OBJECT_ID;
+    std::unordered_set<std::string> m_tags;
 
     std::string m_guid;
     sai_ip_addr_family_t m_ip_version;
