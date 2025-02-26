@@ -41,47 +41,45 @@ namespace stporch_test
         return SAI_STATUS_SUCCESS;
     }
 
-    using namespace ::testing;
-    using namespace swss;
-    using namespace mock_orch_test;
-
-    class MockSaiFdbApi {
-    public:
-        MOCK_METHOD(sai_status_t, flush_fdb_entries, (sai_object_id_t, uint32_t, const sai_attribute_t*), ());
-    };
-
     class StpOrchTest : public MockOrchTest {
     protected:
-    void ApplyInitialConfigs() {
-        Table port_table = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table vlan_table = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
-        Table vlan_member_table = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+        void ApplyInitialConfigs()
+        {
+            Table port_table = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+            Table vlan_table = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+            Table vlan_member_table = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
 
-        // Add ports and VLANs for initial setup
-        port_table.set("Ethernet0", ut_helper::defaultPortConfig("Ethernet0"));
-        port_table.set("Ethernet4", ut_helper::defaultPortConfig("Ethernet4"));
-        port_table.set("PortConfigDone", { { "count", "1" } });
+            auto ports = ut_helper::getInitialSaiPorts();
+            port_table.set(ETHERNET0, ports[ETHERNET0]);
+            port_table.set(ETHERNET4, ports[ETHERNET4]);
+            port_table.set(ETHERNET8, ports[ETHERNET8]);
+            port_table.set("PortConfigDone", { { "count", to_string(1) } });
+            port_table.set("PortInitDone", { {} });
 
-        vlan_table.set("Vlan1000", { { "admin_status", "up" }, { "mtu", "9100" } });
-        vlan_member_table.set("Vlan1000:Ethernet0", { { "tagging_mode", "untagged" } });
+            vlan_table.set(VLAN_1000, { { "admin_status", "up" },
+                                        { "mtu", "9100" },
+                                        { "mac", "00:aa:bb:cc:dd:ee" } });
+            vlan_member_table.set(
+                VLAN_1000 + vlan_member_table.getTableNameSeparator() + ETHERNET0,
+                { { "tagging_mode", "untagged" } });
 
-        gPortsOrch->addExistingData(&port_table);
-        gPortsOrch->addExistingData(&vlan_table);
-        gPortsOrch->addExistingData(&vlan_member_table);
-        static_cast<Orch *>(gPortsOrch)->doTask();
-    }
+            gPortsOrch->addExistingData(&port_table);
+            gPortsOrch->addExistingData(&vlan_table);
+            gPortsOrch->addExistingData(&vlan_member_table);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        }
         void PostSetUp() override {
             vector<string> tableNames = {
                 "STP_TABLE",
                 "STP_VLAN_INSTANCE_TABLE",
                 "STP_PORT_STATE_TABLE",
                 "STP_FASTAGEING_FLUSH_TABLE",
-                "STP_INST_PORT_FLUSH_TABLE" // Include new table
+                "STP_INST_PORT_FLUSH_TABLE"
             };
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
         }
-
-        void PreTearDown() override {
+        void PreTearDown() override
+        {
             delete gStpOrch;
             gStpOrch = nullptr;
         }
@@ -116,23 +114,26 @@ namespace stporch_test
         {
             sai_vlan_api = org_sai_vlan_api;
         }
-        StrictMock<mock_sai_fdb::MockSaiFdbApi> mock_sai_fdb_api_;
+
         sai_fdb_api_t ut_sai_fdb_api;
         sai_fdb_api_t *org_sai_fdb_api;
         void _hook_sai_fdb_api() {
+            // Hook SAI FDB API to the test's StrictMock
             ut_sai_fdb_api = *sai_fdb_api;
             org_sai_fdb_api = sai_fdb_api;
-
-            // Redirect to mock implementation
-            ut_sai_fdb_api.flush_fdb_entries = [](sai_object_id_t switch_id, uint32_t attr_count,
-                                                const sai_attribute_t* attr_list) {
-                return mock_sai_fdb_api_.flush_fdb_entries(switch_id, attr_count, attr_list);
+    
+            // Forward FDB flush calls to the mock
+            ut_sai_fdb_api.flush_fdb_entries = [](sai_object_id_t oid, uint32_t count, const sai_attribute_t* attr) {
+                return mock_fdb_api_->flush_fdb_entries(oid, count, attr);
             };
-
+    
             sai_fdb_api = &ut_sai_fdb_api;
         }
-
-        void _unhook_sai_fdb_api() {
+        StrictMock<mock_sai_fdb::MockSaiFdbApi> mock_fdb_api_;
+        sai_fdb_api_t ut_sai_fdb_api;
+        sai_fdb_api_t* org_sai_fdb_api = nullptr;
+        void _unhook_sai_fdb_api()
+        {
             sai_fdb_api = org_sai_fdb_api;
         }
     };
@@ -207,7 +208,7 @@ namespace stporch_test
         EXPECT_CALL(mock_sai_stp_, 
             create_stp(_, _, _, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_oid),
                                         ::testing::Return(SAI_STATUS_SUCCESS)));
-       
+
         auto consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_VLAN_INSTANCE_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
@@ -222,7 +223,7 @@ namespace stporch_test
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_PORT_STATE_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
-        
+
         entries.clear();
         entries.push_back({"Ethernet0:1", "SET", { {"state", "true"}}});
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_FASTAGEING_FLUSH_TABLE"));
@@ -245,39 +246,43 @@ namespace stporch_test
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_VLAN_INSTANCE_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
- 
+
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
     };
-
     TEST_F(StpOrchTest, TestMstInstPortFlushTask) {
-        _hook_sai_stp_api();
-        _hook_sai_vlan_api();
         _hook_sai_fdb_api();
         ApplyInitialConfigs();
-
-        // Add VLANs to STP instance 1
+    
+        // Add VLAN_2000 and Ethernet4
+        Table vlan_table = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        vlan_table.set("Vlan2000", { {"admin_status", "up"}, {"mtu", "9200"} });
+        Table vlan_member_table = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+        vlan_member_table.set("Vlan2000:Ethernet4", { {"tagging_mode", "untagged"} });
+        
+        // Update global PortsOrch with new VLAN
+        gPortsOrch->addExistingData(&vlan_table);
+        gPortsOrch->addExistingData(&vlan_member_table);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+    
+        // Map VLANs to STP instance 1
         gStpOrch->addVlanToStpInstance("Vlan1000", 1);
         gStpOrch->addVlanToStpInstance("Vlan2000", 1);
-
-        // Expect FDB flush calls
-        EXPECT_CALL(mock_sai_fdb_api_, flush_fdb_entries(_, _, _))
+    
+        // Expect two FDB flush calls (one for each VLAN)
+        EXPECT_CALL(mock_fdb_api_, flush_fdb_entries(_, _, _))
             .Times(2)
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-
-        // Send flush command for STP instance 1
-        auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+    
+        // Generate flush command for instance 1
         std::deque<KeyOpFieldsValuesTuple> entries = {
             {"1:Ethernet0", "SET", { {"state", "true"} }}
         };
+        
+        // Process the command
+        auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch*>(gStpOrch)->doTask();
-
-        // Unhook APIs
-        _unhook_sai_stp_api();
-        _unhook_sai_vlan_api();
-        _unhook_sai_fdb_api();
     }
-}
 }
