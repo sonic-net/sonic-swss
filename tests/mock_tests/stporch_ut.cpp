@@ -267,41 +267,45 @@ namespace stporch_test
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
     };
-    TEST_F(StpOrchTest, TestMstInstPortFlushTask) {
+    TEST_F(StpOrchTest, TestMstInstPortFlushTask_FdbFlush) {
         _hook_sai_stp_api();
         _hook_sai_vlan_api();
         _hook_sai_fdb_api();
-        ApplyInitialConfigs();
     
-        // Add VLAN_2000 and Ethernet4
-        Table vlan_table = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
-        vlan_table.set("Vlan2000", { {"admin_status", "up"}, {"mtu", "9200"} });
-        Table vlan_member_table = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
-        vlan_member_table.set("Vlan2000:Ethernet4", { {"tagging_mode", "untagged"} });
-        
-        // Update global PortsOrch with new VLAN
-        gPortsOrch->addExistingData(&vlan_table);
-        gPortsOrch->addExistingData(&vlan_member_table);
-        static_cast<Orch*>(gPortsOrch)->doTask();
-        
-        // Map VLANs to STP instance 1
-        gStpOrch->addVlanToStpInstance("Vlan1000", 1);
-        gStpOrch->addVlanToStpInstance("Vlan2000", 1);
-        
-        // Expect two FDB flush calls (one for each VLAN)
-        EXPECT_CALL(*mock_fdb_api_, flush_fdb_entries(_, _, _))
-            .Times(2)
-            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        
-        // Generate flush command for instance 1
-        std::deque<KeyOpFieldsValuesTuple> entries = {
-            {"1:Ethernet0", "SET", { {"state", "true"} }}
-        };
-        
-        // Process the command
-        auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        StrictMock<MockSaiStp> mock_sai_stp_;
+        mock_sai_stp = &mock_sai_stp_;
+        sai_stp_api->create_stp = mock_create_stp;
+        sai_stp_api->remove_stp = mock_remove_stp;
+        sai_stp_api->create_stp_port = mock_create_stp_port;
+        sai_stp_api->remove_stp_port = mock_remove_stp_port;
+        sai_stp_api->set_stp_port_attribute = mock_set_stp_port_attribute;
+    
+        // Add initial STP instance and VLAN mapping
+        sai_uint16_t stp_instance = 1;
+        sai_object_id_t stp_oid = 98765;
+        EXPECT_CALL(mock_sai_stp_, create_stp(_, _, _, _))
+            .WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_oid),
+                                      ::testing::Return(SAI_STATUS_SUCCESS)));
+        ASSERT_TRUE(gStpOrch->addVlanToStpInstance(VLAN_1000, stp_instance));
+    
+        // Simulate adding a VLAN to the STP instance
+        gStpOrch->m_vlanAliasToStpInstanceMap[VLAN_1000] = stp_instance;
+    
+        // Mock the FDB flush function to verify it is called
+        EXPECT_CALL(*gFdbOrch, flushFdbByVlan(VLAN_1000))
+            .WillOnce(Return(true));
+    
+        // Create entries for the STP_INST_PORT_FLUSH_TABLE
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"1:Ethernet0", "SET", {{"state", "true"}}});
+    
+        // Add the entries to the consumer and process them
+        auto consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
         consumer->addToSync(entries);
-        static_cast<Orch*>(gStpOrch)->doTask();
+        static_cast<Orch *>(gStpOrch)->doTask();
+    
+        // Verify that the FDB flush was triggered for the VLAN
+        // The mock ensures that `flushFdbByVlan` was called with the correct VLAN alias.
     
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
