@@ -41,6 +41,17 @@ namespace stporch_test
         return SAI_STATUS_SUCCESS;
     }
 
+
+    struct FdbFlushHelper {
+        static StrictMock<mock_sai_fdb::MockSaiFdbApi>* mock;
+    
+        static sai_status_t FlushFdbEntries(sai_object_id_t oid, uint32_t count, const sai_attribute_t* attr) {
+            return mock->flush_fdb_entries(oid, count, attr);
+        }
+    };
+    
+    StrictMock<mock_sai_fdb::MockSaiFdbApi>* FdbFlushHelper::mock = nullptr;
+
     class StpOrchTest : public MockOrchTest {
     protected:
         void ApplyInitialConfigs()
@@ -77,11 +88,14 @@ namespace stporch_test
                 "STP_INST_PORT_FLUSH_TABLE"
             };
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
+    
+            mock_fdb_api_ = new StrictMock<mock_sai_fdb::MockSaiFdbApi>();
         }
-        void PreTearDown() override
-        {
+        void PreTearDown() override {
             delete gStpOrch;
+            delete mock_fdb_api_;
             gStpOrch = nullptr;
+            mock_fdb_api_ = nullptr;
         }
 
         sai_stp_api_t ut_sai_stp_api;
@@ -117,25 +131,27 @@ namespace stporch_test
 
         sai_fdb_api_t ut_sai_fdb_api;
         sai_fdb_api_t *org_sai_fdb_api;
+
         void _hook_sai_fdb_api() {
-            // Hook SAI FDB API to the test's StrictMock
             ut_sai_fdb_api = *sai_fdb_api;
             org_sai_fdb_api = sai_fdb_api;
     
-            // Forward FDB flush calls to the mock
-            ut_sai_fdb_api.flush_fdb_entries = [](sai_object_id_t oid, uint32_t count, const sai_attribute_t* attr) {
-                return mock_fdb_api_->flush_fdb_entries(oid, count, attr);
-            };
+            FdbFlushHelper::mock = mock_fdb_api_;
+    
+            ut_sai_fdb_api.flush_fdb_entries = FdbFlushHelper::FlushFdbEntries;
     
             sai_fdb_api = &ut_sai_fdb_api;
         }
-        StrictMock<mock_sai_fdb::MockSaiFdbApi> mock_fdb_api_;
-        sai_fdb_api_t ut_sai_fdb_api;
-        sai_fdb_api_t* org_sai_fdb_api = nullptr;
-        void _unhook_sai_fdb_api()
-        {
+    
+        void _unhook_sai_fdb_api() {
+            FdbFlushHelper::mock = nullptr;
             sai_fdb_api = org_sai_fdb_api;
         }
+    
+        StrictMock<mock_sai_fdb::MockSaiFdbApi>* mock_fdb_api_;
+        sai_fdb_api_t ut_sai_fdb_api;
+        sai_fdb_api_t* org_sai_fdb_api = nullptr;
+    
     };
 
     TEST_F(StpOrchTest, TestAddRemoveStpPort) {
@@ -252,6 +268,8 @@ namespace stporch_test
         _unhook_sai_fdb_api();
     };
     TEST_F(StpOrchTest, TestMstInstPortFlushTask) {
+        _hook_sai_stp_api();
+        _hook_sai_vlan_api();
         _hook_sai_fdb_api();
         ApplyInitialConfigs();
     
@@ -265,16 +283,16 @@ namespace stporch_test
         gPortsOrch->addExistingData(&vlan_table);
         gPortsOrch->addExistingData(&vlan_member_table);
         static_cast<Orch*>(gPortsOrch)->doTask();
-    
+        
         // Map VLANs to STP instance 1
         gStpOrch->addVlanToStpInstance("Vlan1000", 1);
         gStpOrch->addVlanToStpInstance("Vlan2000", 1);
-    
+        
         // Expect two FDB flush calls (one for each VLAN)
-        EXPECT_CALL(mock_fdb_api_, flush_fdb_entries(_, _, _))
+        EXPECT_CALL(*mock_fdb_api_, flush_fdb_entries(_, _, _))
             .Times(2)
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-    
+        
         // Generate flush command for instance 1
         std::deque<KeyOpFieldsValuesTuple> entries = {
             {"1:Ethernet0", "SET", { {"state", "true"} }}
@@ -284,5 +302,9 @@ namespace stporch_test
         auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch*>(gStpOrch)->doTask();
+    
+        _unhook_sai_stp_api();
+        _unhook_sai_vlan_api();
+        _unhook_sai_fdb_api();
     }
 }
