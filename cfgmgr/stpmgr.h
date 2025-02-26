@@ -185,7 +185,7 @@ typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     forward_delay;
     uint8_t     hello_time;
     uint8_t     max_age;
-    uint8_t     max_hop;
+    uint8_t     max_hops;
 }__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
 
 typedef struct STP_MST_INST_CONFIG_MSG {

@@ -409,9 +409,9 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
                 {
                     msg.max_age = static_cast<uint8_t>(stoi(fvValue(i)));
                 }
-                else if (fvField(i) == "max_hop")
+                else if (fvField(i) == "max_hops")
                 {
-                    msg.max_hop = static_cast<uint8_t>(stoi(fvValue(i)));
+                    msg.max_hops = static_cast<uint8_t>(stoi(fvValue(i)));
                 }
                 else
                 {
