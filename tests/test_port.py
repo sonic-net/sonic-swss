@@ -503,7 +503,7 @@ class TestPort(object):
             if fv[0] == "SAI_PORT_ATTR_ADMIN_STATE":
                 assert fv[1] == "true"
 
-        # Verify pCfg.admin_status.is_set is false (fec) = (none)
+        # Verify pCfg.admin_status.is_set false by (fec) = (none)
         fvs = swsscommon.FieldValuePairs([("fec", "none")])
         ptbl.set("Ethernet0", fvs)
 
@@ -518,7 +518,7 @@ class TestPort(object):
             if fv[0] == "SAI_PORT_ATTR_ADMIN_STATE":
                 assert fv[1] == "true"
 
-        # Verify pCfg.admin_status.is_set is true (admin_status, fec) = (down, rs)
+        # Verify pCfg.admin_status.is_set true by (admin_status, fec) = (down, rs)
         fvs = swsscommon.FieldValuePairs([("admin_status", "down"),
                                           ("fec", "rs")])
         ptbl.set("Ethernet0", fvs)
