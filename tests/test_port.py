@@ -482,7 +482,7 @@ class TestPort(object):
 
     def test_PortAdminRestore(self, dvs, testlog):
         appdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        asicdb = dvs.get_asic_db()
+        asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
         ptbl = swsscommon.ProducerStateTable(appdb, "PORT_TABLE")
         atbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
