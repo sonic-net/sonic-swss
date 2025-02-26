@@ -95,7 +95,7 @@ def remove_mclag_interface(dvs, domain_id, mclag_interface):
     key_string = domain_id + "|" + mclag_interface
     tbl._del(key_string)
     time.sleep(1)
-
+    
 # Test-1 Verify basic config add
 
 @pytest.mark.dev_sanity
@@ -579,21 +579,41 @@ def test_mclagFdb_remote_to_local_mac_move_ntf(dvs, testlog):
     )
 
 # Test-13 Verify FDB table flush on MCLAG link down.
-
 @pytest.mark.dev_sanity
 def test_mclagFdb_flush_on_link_down(dvs, testlog):
     dvs.setup_db()
 
-    # add MCLAG interface
-    create_mclag_interface(dvs, "4095", "PortChannel0008")
-    time.sleep(2)
+    # Create PortChannel001. We do not use the pre-created portchannels
+    tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL")
+    fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
 
-    #Add remote MAC to MCLAG_FDB_TABLE on PortChannel0005
+    tbl.set("PortChannel001", fvs)
+    time.sleep(1)
+    
+    # Create vlan
+    dvs.create_vlan("200")
+
+    # Add vlan members
+    dvs.create_vlan_member("200", "PortChannel001")
+    tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_MEMBER")
+    fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+    tbl.set("PortChannel001|Ethernet0", fvs)
+    time.sleep(1)
+
+    # set oper_status for PortChannels
+    ps = swsscommon.ProducerStateTable(dvs.pdb, "LAG_TABLE")
+    fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
+    ps.set("PortChannel001", fvs)
+    time.sleep(1)
+
+    create_mclag_interface(dvs, "4095", "PortChannel001")
+        
+    #Add MAC to FDB_TABLE on PortChannel001
     create_entry_pst(
         dvs.pdb,
         "FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
         [
-            ("port", "PortChannel0008"),
+            ("port", "PortChannel001"),
             ("type", "dynamic"),
         ]
     )
@@ -607,20 +627,30 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
     )
 
     assert ok, str(extra)
-
-    # bring down the MCLAG interface
-    dvs.set_interface_status("Ethernet12", "down")
-    time.sleep(2)
-
+    
+    # bring PortChannel down
+    dvs.servers[0].runcmd("ip link set down dev eth0")
+    time.sleep(1)
+    ps = swsscommon.ProducerStateTable(dvs.pdb, "LAG_TABLE")
+    fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "down")])
+    ps.set("PortChannel001", fvs)
+    time.sleep(1)
+        
     # check that the FDB entry was not deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG fdb entry was deleted"
-    
+
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
                     [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC")]
     )
     assert ok, str(extra)
+
+    # Restore eth0 up
+    dvs.servers[0].runcmd("ip link set up dev eth0")
+    time.sleep(1)
     
+    remove_mclag_interface(dvs, "4095", "PortChannel001")
+
     delete_entry_pst(
         dvs.pdb,
         "FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
@@ -630,11 +660,8 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
     # check that the FDB entry was deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
 
-    dvs.set_interface_status("Ethernet12", "up")
     time.sleep(2)
-    remove_mclag_interface("4095", "PortChannel0008")
-    time.sleep(2)
-
+    
 # Test-14 Verify cleanup of the basic config.
 
 @pytest.mark.dev_sanity
