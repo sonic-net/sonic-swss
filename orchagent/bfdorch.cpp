@@ -583,7 +583,7 @@ bool BfdOrch::remove_bfd_session(const string& key)
 
     BfdUpdate update;
     update.peer = bfd_session_lookup[bfd_session_id].peer;
-    update.state = SAI_BFD_SESSION_STATE_UP;
+    update.state = bfd_session_lookup[bfd_session_id].state;
     notify(SUBJECT_TYPE_BFD_SESSION_DELETION, static_cast<void *>(&update));
 
     m_stateBfdSessionTable.del(bfd_session_lookup[bfd_session_id].peer);

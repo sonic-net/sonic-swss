@@ -162,10 +162,15 @@ void NeighOrch::update(SubjectType type, void *cntx)
             break;
         }
         case SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE:
-        case SUBJECT_TYPE_BFD_SESSION_DELETION:
         {
             BfdUpdate *update = static_cast<BfdUpdate *>(cntx);
             updateNextHop (*update);
+            break;
+        }
+        case SUBJECT_TYPE_BFD_SESSION_DELETION:
+        {
+            BfdUpdate *update = static_cast<BfdUpdate *>(cntx);
+            updateNextHop (*update, true);
             break;
         }
         default:
@@ -554,7 +559,7 @@ bool NeighOrch::ifChangeInformNextHop(const string &alias, bool if_up)
     return rc;
 }
 
-void NeighOrch::updateNextHop(const BfdUpdate& update)
+void NeighOrch::updateNextHop(const BfdUpdate& update, bool is_deletion)
 {
     SWSS_LOG_ENTER();
     bool rc = true;
@@ -597,7 +602,7 @@ void NeighOrch::updateNextHop(const BfdUpdate& update)
          * In the case of bfd session deletion, bfdorch sends out state UP event 
          * to notify consumer. so need to check port status before clear the flag
          */
-        if (state == SAI_BFD_SESSION_STATE_UP)
+        if (is_deletion || state == SAI_BFD_SESSION_STATE_UP)
         {
             if (!gPortsOrch->getPort(nhop->first.alias, p))
             {
@@ -607,7 +612,7 @@ void NeighOrch::updateNextHop(const BfdUpdate& update)
             }
             if (p.m_oper_status == SAI_PORT_OPER_STATUS_UP)
             {
-                SWSS_LOG_INFO("updateNextHop get BFD session UP event, key %s", key.c_str());
+                SWSS_LOG_INFO("updateNextHop get BFD session %s event, key %s", is_deletion?"deletion":"UP", key.c_str());
                 rc = clearNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
             }
         }
