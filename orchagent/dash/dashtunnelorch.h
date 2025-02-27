@@ -7,6 +7,18 @@
 #include "zmqorch.h"
 #include "zmqserver.h"
 
+struct DashTunnelEndpointEntry
+{
+    sai_object_id_t tunnel_nhop_oid;
+    sai_object_id_t tunnel_member_oid;
+};
+struct DashTunnelEntry
+{
+    sai_object_id_t tunnel_oid;
+    std::unordered_map<std::string, DashTunnelEndpointEntry> endpoints;
+    std::string endpoint;
+};
+
 struct DashTunnelBulkContext
 {
     std::deque<sai_object_id_t> tunnel_object_ids;
@@ -44,7 +56,19 @@ private:
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_bulker_;
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_member_bulker_;
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_nhop_bulker_;
+    std::unordered_map<std::string, DashTunnelEntry> tunnel_table_;
 
     void doTask(ConsumerBase &consumer);
-    void doTaskTunnelTable(ConsumerBase &consumer);
+    bool addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    bool addTunnelPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    bool removeTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    bool removeTunnelPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
+    bool addTunnelNextHops(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    bool addTunnelNextHopsPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, const bool tunnel_succeess);
+    bool removeTunnelNextHop(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    bool removeTunnelNextHopPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
+    bool addTunnelMember(const sai_object_id_t tunnel_oid, const sai_object_id_t nhop_oid, DashTunnelBulkContext& ctxt);
+    bool addTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
+    bool removeTunnelMember(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    bool removeTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
 };
