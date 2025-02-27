@@ -36,7 +36,7 @@ namespace orchdaemon_test
                 sai_switch_api->get_switch_attribute = &mock_get_switch_attribute;
                 sai_switch_api->set_switch_attribute = &mock_set_switch_attribute;
 
-                orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
+                orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr, 0, false, false);
 
             };
 
@@ -123,7 +123,7 @@ namespace orchdaemon_test
         EXPECT_TRUE(Executor::gRingBuffer == nullptr);
 
         // reset the orchd for other testcases
-        orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
+        orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr, 0, false, false);
     }
 
     TEST_F(OrchDaemonTest, PushRingBuffer)

@@ -37,11 +37,11 @@ extern string gMySwitchType;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
-        Orch(db, tableNames),
+        ZmqOrch(db, tableNames, zmqServer),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
@@ -599,7 +599,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
     return true;
 }
 
-void RouteOrch::doTask(Consumer& consumer)
+void RouteOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -1104,6 +1104,11 @@ void RouteOrch::doTask(Consumer& consumer)
 
         // Flush the route bulker, so routes will be written to syncd and ASIC
         gRouteBulker.flush();
+        SWSS_LOG_ERROR("[TEST] RouteOrch::doTask, gRouteBulker.flush: %d - %d - %d",
+                        (int)(gRouteBulker.creating_entries_count()),
+                        (int)(gRouteBulker.setting_entries_count()),
+                        (int)(gRouteBulker.removing_entries_count()));
+
 
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();

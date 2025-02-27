@@ -76,9 +76,15 @@ string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
 uint32_t create_switch_timeout = 0;
 
+const string ZMQ_DEFAULT_ADDRESS = "tcp://localhost";
+
+/* ZMQ enable feature flag for orch events */
+const int ENABLE_ZMQ_DASH  = 0x01;
+const int ENABLE_ZMQ_ROUTE = 0x02;
+
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-p zmq_server_port] [-F zmq_flag] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -97,6 +103,8 @@ void usage()
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
+    cout << "    -p zmq_server_port: ZMQ server port (default 0)" << endl;
+    cout << "    -F zmq_flag: Flag for enable ZMQ on event (default disable)" << endl;
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
     cout << "    -t Override create switch timeout, in sec" << endl;
     cout << "    -v vrf: VRF name (default empty)" << endl;
@@ -361,14 +369,16 @@ int main(int argc, char **argv)
     string record_location = Recorder::DEFAULT_DIR;
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
-    string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
+    string zmq_server_address;
+    int zmq_server_port = 0;
+    bool enable_dash_zmq = false;
+    bool enable_route_zmq = false;
     string vrf;
-    bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:p:F:c:t:v:I:R")) != -1)
     {
         switch (opt)
         {
@@ -456,7 +466,28 @@ int main(int argc, char **argv)
             if (optarg)
             {
                 zmq_server_address = optarg;
-                enable_zmq = true;
+            }
+            break;
+        case 'p':
+            if (optarg)
+            {
+                zmq_server_port = atoi(optarg);
+            }
+            break;
+        case 'F':
+            if (optarg)
+            {
+                int zmq_flag = atoi(optarg);
+
+                if (zmq_flag & ENABLE_ZMQ_DASH)
+                {
+                    enable_dash_zmq = true;
+                }
+
+                if (zmq_flag & ENABLE_ZMQ_ROUTE)
+                {
+                    enable_route_zmq = true;
+                }
             }
             break;
         case 't':
@@ -529,10 +560,36 @@ int main(int argc, char **argv)
 
     // Instantiate ZMQ server
     shared_ptr<ZmqServer> zmq_server = nullptr;
-    if (enable_zmq)
+    if (zmq_server_port == 0 and !zmq_server_address.empty())
     {
+        // TODO: remove following code after orchagent.sh migrate to pass zmq_server_port parameter
+        // For backward compatibility with Dash ZMQ feature, when zmq_server_port is 0 and zmq_server_address is not empty
+        // using zmq_server_address as ZMQ address, because in this case zmq_server_address already contains port
         SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
         zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
+        enable_dash_zmq = true;
+    }
+    else if (zmq_server_port != 0)
+    {
+        auto port = zmq_server_port;
+        if (const char* nsid = std::getenv("NAMESPACE_ID"))
+        {
+            // namespace start from 0, using original ZMQ port for global namespace
+            port += atoi(nsid) + 1;
+        }
+
+        string address;
+        if(zmq_server_address.empty())
+        {
+            address = ZMQ_DEFAULT_ADDRESS + ":" + to_string(port);
+        }
+        else
+        {
+            address = zmq_server_address + ":" + to_string(port);
+        }
+
+        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", address.c_str(), vrf.c_str());
+        zmq_server = make_shared<ZmqServer>(address.c_str(), vrf.c_str());
     }
     else
     {
@@ -824,7 +881,14 @@ int main(int argc, char **argv)
     shared_ptr<OrchDaemon> orchDaemon;
     if (gMySwitchType != "fabric")
     {
-        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<OrchDaemon>(&appl_db,
+                                             &config_db,
+                                             &state_db,
+                                             chassis_app_db.get(),
+                                             zmq_server.get(),
+                                             zmq_server_port,
+                                             enable_dash_zmq,
+                                             enable_route_zmq);
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
@@ -834,7 +898,14 @@ int main(int argc, char **argv)
     }
     else
     {
-        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db,
+                                                   &config_db,
+                                                   &state_db,
+                                                   chassis_app_db.get(),
+                                                   zmq_server.get(),
+                                                   zmq_server_port,
+                                                   enable_dash_zmq,
+                                                   enable_route_zmq);
     }
 
     if (gRingMode) {

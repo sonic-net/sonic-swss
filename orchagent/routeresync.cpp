@@ -3,6 +3,8 @@
 #include <vector>
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
 #include "logger.h"
 
 using namespace std;
@@ -19,8 +21,11 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
+    // [Hua] test code, need improve to a parameter
+    ZmqClient zmqClient("tcp://localhost:8100");
+
     DBConnector db("APPL_DB", 0);
-    ProducerStateTable r(&db, APP_ROUTE_TABLE_NAME);
+    ZmqProducerStateTable r(&db, APP_ROUTE_TABLE_NAME, zmqClient);
 
     if (argc != 2)
     {
