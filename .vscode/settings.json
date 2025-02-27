@@ -2,7 +2,8 @@
   "files.associations": {
     "condition_variable": "cpp",
     "chrono": "cpp",
-    "shared_mutex": "cpp"
+    "shared_mutex": "cpp",
+    "bitset": "cpp"
   },
   "C_Cpp_Runner.cCompilerPath": "gcc",
   "C_Cpp_Runner.cppCompilerPath": "g++",

@@ -74,7 +74,8 @@ namespace stporch_test
                 {"STP_TABLE",
                 "STP_VLAN_INSTANCE_TABLE",
                 "STP_PORT_STATE_TABLE",
-                "STP_FASTAGEING_FLUSH_TABLE"};
+                "STP_FASTAGEING_FLUSH_TABLE",
+                "STP_INST_PORT_FLUSH_TABLE"};
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
         }
         void PreTearDown() override
@@ -238,6 +239,34 @@ namespace stporch_test
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_VLAN_INSTANCE_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
+
+        _unhook_sai_stp_api();
+        _unhook_sai_vlan_api();
+        _unhook_sai_fdb_api();
+    };
+    TEST_F(StpOrchTest, TestMstInstPortFlushTask) {
+        _hook_sai_stp_api();
+        _hook_sai_vlan_api();
+        _hook_sai_fdb_api();
+
+        // Add VLANs to STP instance 1
+        gStpOrch->addVlanToStpInstance("Vlan1000", 1);
+        gStpOrch->addVlanToStpInstance("Vlan2000", 1);
+
+        // Set expectation for FDB flush calls
+        EXPECT_CALL(*mock_fdb_api_, flush_fdb_entries(_, _, _))
+            .Times(2) // Expect two calls, one for each VLAN
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        // Simulate MST instance port flush command for STP instance 1
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
+
+        auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        consumer->addToSync(entries);
+
+        // Process the command
+        static_cast<Orch*>(gStpOrch)->doTask();
 
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
