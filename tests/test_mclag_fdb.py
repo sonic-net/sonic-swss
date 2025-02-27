@@ -659,7 +659,15 @@ def test_mclagFdb_flush_on_link_down(dvs, testlog):
     time.sleep(2)
     # check that the FDB entry was deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
+    
+    # remove PortChannel member
+    tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_MEMBER")
+    tbl._del("PortChannel001|Ethernet0")
+    time.sleep(1)
 
+    # remove PortChannel
+    tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL")
+    tbl._del("PortChannel001")
     time.sleep(2)
     
 # Test-14 Verify cleanup of the basic config.
