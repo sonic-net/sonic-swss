@@ -64,6 +64,7 @@
 #define ACTION_PACKET_ACTION                "PACKET_ACTION"
 #define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
 #define ACTION_DO_NOT_NAT_ACTION            "DO_NOT_NAT_ACTION"
+#define ACTION_POLICER_ACTION               "POLICER_ACTION"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
@@ -336,6 +337,7 @@ public:
 
     const vector<AclRangeConfig>& getRangeConfig() const;
     static shared_ptr<AclRule> makeShared(AclOrch *acl,
+                                        PolicerOrch *policer,
                                         MirrorOrch *mirror,
                                         DTelOrch *dtel,
                                         const string& rule,
@@ -398,6 +400,30 @@ public:
 
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
+};
+
+class AclRulePolicer: public AclRule
+{
+public:
+    AclRulePolicer (AclOrch *m_pAclOrch, PolicerOrch *m_pPolicerOrch, string rule, string table);
+
+    bool validateAddAction(string attr_name, string attr_value);
+    bool validate();
+    bool createCounter();
+    bool createRule();
+    bool removeRule();
+    void onUpdate(SubjectType, void *) override;
+
+    bool activate();
+    bool deactivate();
+
+    bool update(const AclRule& updatedRule) override;
+
+protected:
+    protected:
+    bool m_state {false};
+    string m_policerName;
+    PolicerOrch *m_pPolicerOrch {nullptr};
 };
 
 class AclRuleMirror: public AclRule
@@ -548,6 +574,7 @@ public:
             DBConnector             *m_stateDb,
             SwitchOrch              *m_switchOrch,
             PortsOrch               *portOrch,
+            PolicerOrch             *policerOrch,
             MirrorOrch              *mirrorOrch,
             NeighOrch               *neighOrch,
             RouteOrch               *routeOrch,
@@ -566,6 +593,7 @@ public:
 
     // FIXME: Add getters for them? I'd better to add a common directory of orch objects and use it everywhere
     MirrorOrch *m_mirrorOrch;
+    PolicerOrch *m_policerOrch;
     NeighOrch *m_neighOrch;
     RouteOrch *m_routeOrch;
     DTelOrch *m_dTelOrch;
