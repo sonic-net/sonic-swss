@@ -54,9 +54,12 @@ public:
     BgpGlobalStateOrch(swss::DBConnector *db, std::string tableName);
     virtual ~BgpGlobalStateOrch(void);
     bool getTsaState();
+    bool getSoftwareBfd();
 
 private:
     bool tsa_enabled;
+    bool software_bfd;
+    bool offload_supported(bool get_ipv6);
 
 };
 #endif /* SWSS_BFDORCH_H */
