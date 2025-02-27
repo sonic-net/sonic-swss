@@ -254,7 +254,7 @@ namespace stporch_test
         gStpOrch->addVlanToStpInstance("Vlan2000", 1);
 
         // Set expectation for FDB flush calls
-        EXPECT_CALL(*mock_fdb_api_, flush_fdb_entries(_, _, _))
+        EXPECT_CALL(*mock_sai_stp_, flush_fdb_entries(_, _, _))
             .Times(2) // Expect two calls, one for each VLAN
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
