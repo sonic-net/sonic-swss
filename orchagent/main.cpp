@@ -52,6 +52,7 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_BATCH_SIZE  128
 extern int gBatchSize;
 
+bool gRingMode = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
@@ -66,6 +67,7 @@ extern bool gIsNatSupported;
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
 
 string gMySwitchType = "";
+string gMySwitchSubType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
@@ -76,7 +78,7 @@ uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -99,6 +101,7 @@ void usage()
     cout << "    -t Override create switch timeout, in sec" << endl;
     cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
+    cout << "    -R enable the ring thread feature" << endl;
 }
 
 void sighup_handler(int signo)
@@ -164,7 +167,7 @@ void init_gearbox_phys(DBConnector *applDb)
     delete tmpGearboxTable;
 }
 
-void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
+void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_sub_type)
 {
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
 
@@ -188,6 +191,16 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
     	//If configured switch type is none of the supported, assume regular switch
         switch_type = "switch";
     }
+
+    try
+    {
+        cfgDeviceMetaDataTable.hget("localhost", "subtype", switch_sub_type);
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
+    }
+
 }
 
 bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
@@ -355,7 +368,7 @@ int main(int argc, char **argv)
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R")) != -1)
     {
         switch (opt)
         {
@@ -471,6 +484,9 @@ int main(int argc, char **argv)
                 }
             }
             break;
+        case 'R':
+            gRingMode = true;
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -524,7 +540,7 @@ int main(int argc, char **argv)
     }
 
     // Get switch_type
-    getCfgSwitchType(&config_db, gMySwitchType);
+    getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -819,6 +835,11 @@ int main(int argc, char **argv)
     else
     {
         orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+    }
+
+    if (gRingMode) {
+        /* Initialize the ring before OrchDaemon initializing Orchs */
+        orchDaemon->enableRingBuffer();
     }
 
     if (!orchDaemon->init())

@@ -71,10 +71,10 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
     key_items.push_back(full_key_.substr(key_item_start, full_key_.length()));
 
     /*
-     * Attempt to parse an IPv6 address only if the following conditions are met:
+     * Attempt to parse an IPv6/MAC address only if the following conditions are met:
      * - The key separator is ":" 
      *     - The above logic will already correctly parse IPv6 addresses using other key separators
-     *     - Special consideration is only needed for ":" key separators since IPv6 addresses also use ":" as the field separator
+     *     - Special consideration is only needed for ":" key separators since IPv6/MAC addresses also use ":" as the field separator
      * - The number of parsed key items exceeds the number of expected key items
      *     - If we have too many key items and the last key item is supposed to be an IP or prefix, there is a chance that it was an 
      *       IPv6 address that got segmented during parsing
@@ -85,7 +85,8 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
      */
     if (key_separator_ == ':' and 
         key_items.size() > number_of_key_items_ and 
-        (request_description_.key_item_types.back() == REQ_T_IP or request_description_.key_item_types.back() == REQ_T_IP_PREFIX))
+        (request_description_.key_item_types.back() == REQ_T_IP or request_description_.key_item_types.back() == REQ_T_IP_PREFIX
+        or request_description_.key_item_types.back() == REQ_T_MAC_ADDRESS))
     {
         // Remove key_items so that key_items.size() is correct, then assemble the removed items into an IPv6 address
         std::vector<std::string> ip_addr_groups(--key_items.begin() + number_of_key_items_, key_items.end());
