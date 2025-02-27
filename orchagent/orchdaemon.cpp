@@ -26,6 +26,7 @@ using namespace swss;
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
+extern string                      gMySwitchSubType;
 
 extern void syncd_apply_view();
 /*
@@ -256,7 +257,9 @@ bool OrchDaemon::init()
     gDirectory.set(chassis_frontend_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
+    gDirectory.set(gIntfsOrch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
+    gDirectory.set(gNeighOrch);
 
     const int fgnhgorch_pri = 15;
 
@@ -603,6 +606,13 @@ bool OrchDaemon::init()
         };
         gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
         m_orchList.push_back(gFabricPortsOrch);
+    }
+
+    if (gMySwitchSubType == "SmartSwitch")
+    {
+        DashEniFwdOrch *dash_eni_fwd_orch = new DashEniFwdOrch(m_configDb, m_applDb, APP_DASH_ENI_FORWARD_TABLE, gNeighOrch);
+        gDirectory.set(dash_eni_fwd_orch);
+        m_orchList.push_back(dash_eni_fwd_orch);
     }
 
     vector<string> flex_counter_tables = {
