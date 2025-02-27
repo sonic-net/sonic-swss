@@ -5,6 +5,7 @@
 #include "notifier.h"
 #include "sai_serialize.h"
 #include "pfcwdorch.h"
+#include "pfchistoryorch.h"
 #include "bufferorch.h"
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
@@ -46,6 +47,7 @@ extern sai_object_id_t gSwitchId;
 #define ENI_KEY                     "ENI"
 #define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
+#define PFC_STAT_HISTORY_KEY        "PFC_STAT_HISTORY"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -54,6 +56,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
+    {PFC_STAT_HISTORY_KEY, PFC_STAT_HISTORY_FLEX_COUNTER_GROUP},
     {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PG_WATERMARK", PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PG_DROP", PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP},
