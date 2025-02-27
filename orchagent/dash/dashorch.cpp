@@ -85,6 +85,11 @@ bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, d
     return true;
 }
 
+bool DashOrch::hasApplianceEntry()
+{
+    return !appliance_entries_.empty();
+}
+
 bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
@@ -93,6 +98,11 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     {
         SWSS_LOG_WARN("Appliance Entry already exists for %s", appliance_id.c_str());
         return true;
+    }
+    if (!appliance_entries_.empty())
+    {
+        SWSS_LOG_ERROR("Appliance entry is a singleton and already exists");
+        return false;
     }
 
     uint32_t attr_count = 1;

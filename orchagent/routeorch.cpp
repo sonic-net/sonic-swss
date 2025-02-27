@@ -1870,6 +1870,11 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                         return false;
                     }
                 }
+                else if (m_neighOrch->isNextHopFlagSet(nexthop, NHFLAGS_IFDOWN))
+                {
+                    SWSS_LOG_INFO("Interface down for NH %s, skip this Route for programming", nexthop.to_string().c_str());
+                    return false;
+                }
             }
             /* For non-existent MPLS NH, check if IP neighbor NH exists */
             else if (nexthop.isMplsNextHop() &&
