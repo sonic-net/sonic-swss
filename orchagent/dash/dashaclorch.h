@@ -63,8 +63,6 @@ private:
     task_process_status taskUpdateDashAclRule(
         const std::string &key,
         const dash::acl_rule::AclRule &data);
-    task_process_status taskRemoveDashAclRule(
-        const std::string &key);
 
     task_process_status taskUpdateDashPrefixTag(
         const std::string &key,

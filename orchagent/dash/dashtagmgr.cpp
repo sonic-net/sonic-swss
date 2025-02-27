@@ -67,15 +67,6 @@ task_process_status DashTagMgr::update(const string& tag_id, const DashTag& new_
     // Update tag prefixes
     tag.m_prefixes = new_tag.m_prefixes;
 
-    for (auto& group_id: tag.m_groups)
-    {
-        auto handle_status = m_dash_acl_orch->getDashAclGroupMgr().onUpdate(group_id, tag_id, tag);
-        if (handle_status != task_success)
-        {
-            return handle_status;
-        }
-    }
-
     return task_success;
 }
 
