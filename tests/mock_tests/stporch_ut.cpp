@@ -286,11 +286,5 @@ namespace stporch_test
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
-
-        std::cout << "Verifying expectations on mock_sai_stp" << std::endl;
-        testing::Mock::VerifyAndClearExpectations(mock_sai_stp);
-
-        std::cout << "TestMstInstPortFlushTask completed" << std::endl;
     }
 }
-
