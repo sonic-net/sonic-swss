@@ -503,15 +503,27 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
         string op = kfvOp(t);
         string key = kfvKey(t);
 
+
+
+        auto &t = it->second;
+        string key = kfvKey(t);
+        size_t found = key.find(':');
+        /* Return if the format of key is wrong */
+        if (found == string::npos)
+        {
+            return;
+        }
+
+
+
         if (op == SET_COMMAND)
         {
             string state;
 
-            // Parse the key to extract instance and port
-            size_t colon1 = key.find(':');
-            size_t colon2 = key.find(':', colon1 + 1);
-            uint16_t instance = static_cast<uint16_t>(std::stoi(key.substr(colon1 + 1, colon2 - colon1 - 1)));
-            string port_name = key.substr(colon2 + 1);
+
+            string instance_aliase = key.substr(0, found);
+            string port_aliase = key.substr(found+1);
+            uint16_t instance = static_cast<uint16_t>(stoi(instance_aliase));
 
             for (auto i : kfvFieldsValues(t))
             {
