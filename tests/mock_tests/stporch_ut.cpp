@@ -247,6 +247,13 @@ namespace stporch_test
     TEST_F(StpOrchTest, TestMstInstPortFlushTask) {
         std::cout << "Starting TestMstInstPortFlushTask" << std::endl;
 
+        if (!gStpOrch) {
+            FAIL() << "gStpOrch is null";
+        }
+        if (!mock_sai_stp) {
+            FAIL() << "mock_sai_stp is null";
+        }
+
         _hook_sai_stp_api();
         _hook_sai_vlan_api();
         _hook_sai_fdb_api();
@@ -267,6 +274,9 @@ namespace stporch_test
         entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
 
         auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        if (!consumer) {
+            FAIL() << "Failed to cast to Consumer";
+        }
         consumer->addToSync(entries);
 
         std::cout << "Processing the command" << std::endl;
