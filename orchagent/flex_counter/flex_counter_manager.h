@@ -38,7 +38,8 @@ enum class CounterType
     TUNNEL,
     HOSTIF_TRAP,
     ROUTE,
-    ENI
+    ENI,
+    SRV6
 };
 
 extern bool gTraditionalFlexCounter;
