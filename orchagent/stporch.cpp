@@ -502,11 +502,6 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
         auto &t = it->second;
         string op = kfvOp(t);
         string key = kfvKey(t);
-
-
-
-        auto &t = it->second;
-        string key = kfvKey(t);
         size_t found = key.find(':');
         /* Return if the format of key is wrong */
         if (found == string::npos)
