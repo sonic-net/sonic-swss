@@ -250,8 +250,8 @@ namespace stporch_test
         _hook_sai_fdb_api();
 
         // Add VLANs to STP instance 1
-        gStpOrch->addVlanToStpInstance("VLAN1000", 1);
-        gStpOrch->addVlanToStpInstance("VLAN2000", 1);
+        gStpOrch->addVlanToStpInstance(VLAN_1000, 1);
+        gStpOrch->addVlanToStpInstance(VLAN_2000, 1);
 
         // Set expectation for FDB flush calls
         EXPECT_CALL(*mock_sai_stp, flush_fdb_entries(_, _, _))
