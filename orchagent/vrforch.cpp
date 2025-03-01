@@ -186,6 +186,11 @@ bool VRFOrch::delOperation(const Request& request)
         return false;
 
     sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
+    if (vrf_table_[vrf_name].v6_state)
+    {
+        VrfUpdate update = { vrf_name, vrf_table_[vrf_name].router_id, false };
+        notify(SUBJECT_TYPE_VRF_CHANGE, static_cast<void *>(&update));
+    }
     sai_status_t status = sai_virtual_router_api->remove_virtual_router(router_id);
     if (status != SAI_STATUS_SUCCESS)
     {
