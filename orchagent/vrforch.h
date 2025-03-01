@@ -2,6 +2,7 @@
 #define __VRFORCH_H
 
 #include "request_parser.h"
+#include "observer.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -20,7 +21,7 @@ struct VNIEntry
 
 struct VrfUpdate
 {
-    string vrf_name;
+    std::string vrf_name;
     sai_object_id_t router_id;
     bool   active;
 };
