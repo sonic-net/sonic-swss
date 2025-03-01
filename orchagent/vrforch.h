@@ -192,4 +192,7 @@ private:
     L3VNITable l3vni_table_;
 };
 
+// forward declaration for the notify call
+void updateVrfV6Route(const VrfUpdate& update);
+
 #endif // __VRFORCH_H
