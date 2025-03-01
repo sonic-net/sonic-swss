@@ -315,7 +315,7 @@ void updateVrfV6Route(const VrfUpdate& update)
         SWSS_LOG_NOTICE("VRF '%s' is v6 enabled", vrf_name.c_str());
         /* Add link-local fe80::/10 CPU route for the VRF. */
         IpPrefix default_link_local_prefix("fe80::/10");
-        addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
         SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", 
             default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
 
@@ -325,7 +325,7 @@ void updateVrfV6Route(const VrfUpdate& update)
          * address pointing to the CPU port.
          */
         IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
-        addLinkLocalRouteToMe(router_id, linklocal_prefix);
+        gRouteOrch->addLinkLocalRouteToMe(router_id, linklocal_prefix);
         SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", 
             linklocal_prefix.to_string().c_str(), vrf_name.c_str());
     }
@@ -334,13 +334,13 @@ void updateVrfV6Route(const VrfUpdate& update)
         SWSS_LOG_NOTICE("VRF '%s' is v6 disabled", update.vrf_name.c_str());
         /* Delete link-local ipv6 address with eui64 /128 CPU route for the VRF. */
         IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
-        delLinkLocalRouteToMe(router_id, linklocal_prefix);
+        gRouteOrch->delLinkLocalRouteToMe(router_id, linklocal_prefix);
         SWSS_LOG_NOTICE("Deleted link local ipv6 route %s to cpu in VRF %s", 
             linklocal_prefix.to_string().c_str(), vrf_name.c_str());
 
         /* Delete link-local fe80::/10 CPU route for the VRF. */
         IpPrefix default_link_local_prefix("fe80::/10");
-        delLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        gRouteOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
         SWSS_LOG_NOTICE("Deleted link local ipv6 route %s to cpu in VRF %s", 
             default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
     }
