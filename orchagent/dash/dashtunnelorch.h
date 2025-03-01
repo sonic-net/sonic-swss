@@ -70,5 +70,5 @@ private:
     void addTunnelMember(const sai_object_id_t tunnel_oid, const sai_object_id_t nhop_oid, DashTunnelBulkContext& ctxt);
     bool addTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
     bool removeTunnelMember(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
-    bool removeTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
+    bool removeTunnelEndpointPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
 };
