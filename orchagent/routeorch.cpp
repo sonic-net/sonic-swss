@@ -355,7 +355,7 @@ void RouteOrch::update(SubjectType type, void *cntx)
     if (type == SUBJECT_TYPE_VRF_CHANGE)
     {
         VrfUpdate *update = static_cast<VrfUpdate *>(cntx);
-        updateVrfV6Route(*update);
+        gRouteOrch->updateVrfV6Route(*update);
     }
 }
 
