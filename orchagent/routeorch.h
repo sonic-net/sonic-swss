@@ -190,7 +190,7 @@ struct LabelRouteBulkContext
     }
 };
 
-class RouteOrch : public Orch, public Subject
+class RouteOrch : public Orch, public Observer, public Subject
 {
 public:
     RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);

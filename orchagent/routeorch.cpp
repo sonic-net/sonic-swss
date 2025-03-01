@@ -310,7 +310,7 @@ void updateVrfV6Route(const VrfUpdate& update)
     sai_object_id_t router_id = update.router_id;
     bool active = update.active;
 
-    if (update.active)
+    if (active)
     {
         SWSS_LOG_NOTICE("VRF '%s' is v6 enabled", vrf_name.c_str());
         /* Add link-local fe80::/10 CPU route for the VRF. */
@@ -348,7 +348,7 @@ void updateVrfV6Route(const VrfUpdate& update)
     return;
 }
 
-void MirrorOrch::update(SubjectType type, void *cntx)
+void RouteOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
