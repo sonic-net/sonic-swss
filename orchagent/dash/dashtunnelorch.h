@@ -63,11 +63,11 @@ private:
     bool addTunnelPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool removeTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool removeTunnelPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
-    bool addTunnelNextHops(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    void addTunnelNextHops(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool addTunnelNextHopsPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, const bool tunnel_succeess);
     bool removeTunnelNextHop(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool removeTunnelNextHopPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
-    bool addTunnelMember(const sai_object_id_t tunnel_oid, const sai_object_id_t nhop_oid, DashTunnelBulkContext& ctxt);
+    void addTunnelMember(const sai_object_id_t tunnel_oid, const sai_object_id_t nhop_oid, DashTunnelBulkContext& ctxt);
     bool addTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
     bool removeTunnelMember(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool removeTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt);
