@@ -190,6 +190,8 @@ struct LabelRouteBulkContext
     }
 };
 
+void updateVrfV6Route(const VrfUpdate& update);
+
 class RouteOrch : public Orch, public Observer, public Subject
 {
 public:
@@ -238,7 +240,6 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
-    void updateVrfV6Route(const VrfUpdate& update);
     void update(SubjectType, void *);
 
 private:
