@@ -29,7 +29,7 @@ bool VRFOrch::addOperation(const Request& request)
     SWSS_LOG_ENTER();
     uint32_t vni = 0;
     bool error = true;
-
+    bool v6 = false;
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -44,6 +44,7 @@ bool VRFOrch::addOperation(const Request& request)
         {
             attr.id = SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V6_STATE;
             attr.value.booldata = request.getAttrBool("v6");
+            v6 = attr.value.booldata;
         }
         else if (name == "src_mac")
         {
@@ -106,6 +107,7 @@ bool VRFOrch::addOperation(const Request& request)
 
         vrf_table_[vrf_name].vrf_id = router_id;
         vrf_table_[vrf_name].ref_count = 0;
+        vrf_table_[vrf_name].v6_state = v6;
         vrf_id_table_[router_id] = vrf_name;
         gFlowCounterRouteOrch->onAddVR(router_id);
         if (vni != 0)
@@ -119,6 +121,14 @@ bool VRFOrch::addOperation(const Request& request)
         }
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
+
+        if (vrf_table_[vrf_name].v6_state)
+        {
+            SWSS_LOG_NOTICE("VRF '%s' is v6 enabled", vrf_name.c_str());
+
+            VrfUpdate update = { vrf_name, router_id, true };
+            notify(SUBJECT_TYPE_VRF_CHANGE, static_cast<void *>(&update));
+        }
     }
     else
     {
@@ -148,6 +158,12 @@ bool VRFOrch::addOperation(const Request& request)
         }
 
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
+        if (it->second.v6_state != v6)
+        {
+            it->second.v6_state = v6;
+            VrfUpdate update = { vrf_name, router_id, v6 };
+            notify(SUBJECT_TYPE_VRF_CHANGE, static_cast<void *>(&update));
+        }
         SWSS_LOG_NOTICE("VRF '%s' was updated", vrf_name.c_str());
     }
 

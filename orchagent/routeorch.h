@@ -238,6 +238,7 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    void update(SubjectType, void *);
 
 private:
     SwitchOrch *m_switchOrch;
@@ -298,6 +299,7 @@ private:
     void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     void incNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
     void decNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
+    void updateVrfV6Route(const VrfUpdate& update);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

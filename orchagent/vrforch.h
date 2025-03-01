@@ -8,6 +8,7 @@ extern sai_object_id_t gVirtualRouterId;
 struct VrfEntry
 {
     sai_object_id_t vrf_id;
+    bool            v6_state;
     int             ref_count;
 };
 
@@ -15,6 +16,13 @@ struct VNIEntry
 {
     uint16_t vlan_id;
     bool     l3_vni;
+};
+
+struct VrfUpdate
+{
+    string vrf_name;
+    sai_object_id_t router_id;
+    bool   active;
 };
 
 typedef std::unordered_map<std::string, VrfEntry> VRFTable;
@@ -46,7 +54,7 @@ public:
 };
 
 
-class VRFOrch : public Orch2
+class VRFOrch : public Orch2, public Subject
 {
 public:
     VRFOrch(swss::DBConnector *appDb, const std::string& appTableName, swss::DBConnector *stateDb, const std::string& stateTableName) :
