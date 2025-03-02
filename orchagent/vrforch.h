@@ -2,7 +2,6 @@
 #define __VRFORCH_H
 
 #include "request_parser.h"
-#include "observer.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -17,13 +16,6 @@ struct VNIEntry
 {
     uint16_t vlan_id;
     bool     l3_vni;
-};
-
-struct VrfUpdate
-{
-    std::string vrf_name;
-    sai_object_id_t router_id;
-    bool   active;
 };
 
 typedef std::unordered_map<std::string, VrfEntry> VRFTable;
@@ -48,16 +40,15 @@ const request_description_t request_description = {
     { } // no mandatory attributes
 };
 
-void updateVrfV6Route(const VrfUpdate& update);
-
 class VRFRequest : public Request
 {
 public:
     VRFRequest() : Request(request_description, ':') { }
 };
 
+class RouteOrch;
 
-class VRFOrch : public Orch2, public Subject
+class VRFOrch : public Orch2
 {
 public:
     VRFOrch(swss::DBConnector *appDb, const std::string& appTableName, swss::DBConnector *stateDb, const std::string& stateTableName) :
@@ -193,6 +184,5 @@ private:
     swss::Table m_stateVrfObjectTable;
     L3VNITable l3vni_table_;
 };
-
 
 #endif // __VRFORCH_H
