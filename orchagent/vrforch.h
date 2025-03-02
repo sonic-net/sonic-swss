@@ -46,6 +46,7 @@ public:
     VRFRequest() : Request(request_description, ':') { }
 };
 
+// Forward declaration of RouteOrch class, which is used for route management.
 class RouteOrch;
 
 class VRFOrch : public Orch2
