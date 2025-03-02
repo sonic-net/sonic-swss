@@ -8,6 +8,7 @@ extern sai_object_id_t gVirtualRouterId;
 struct VrfEntry
 {
     sai_object_id_t vrf_id;
+    bool            v6_state;
     int             ref_count;
 };
 
@@ -45,6 +46,8 @@ public:
     VRFRequest() : Request(request_description, ':') { }
 };
 
+// Forward declaration of RouteOrch class, which is used for route management.
+class RouteOrch;
 
 class VRFOrch : public Orch2
 {
