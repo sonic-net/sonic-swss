@@ -19,7 +19,6 @@ using namespace swss;
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
-extern RouteOrch* gRouteOrch;
 
 extern Directory<Orch*>      gDirectory;
 extern PortsOrch*            gPortsOrch;
@@ -89,6 +88,7 @@ bool VRFOrch::addOperation(const Request& request)
 
     const std::string& vrf_name = request.getKeyString(0);
     auto it = vrf_table_.find(vrf_name);
+    RouteOrch* routeOrch = gDirectory.get<RouteOrch*>("RouteOrch");
     if (it == std::end(vrf_table_))
     {
         // Create a new vrf
@@ -129,7 +129,7 @@ bool VRFOrch::addOperation(const Request& request)
             SWSS_LOG_NOTICE("VRF '%s' is v6 enabled", vrf_name.c_str());
             /* Add link-local fe80::/10 CPU route for the VRF. */
             IpPrefix default_link_local_prefix("fe80::/10");
-            gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+            routeOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
             SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", 
                 default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
     
@@ -139,7 +139,7 @@ bool VRFOrch::addOperation(const Request& request)
              * address pointing to the CPU port.
              */
             IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
-            gRouteOrch->addLinkLocalRouteToMe(router_id, linklocal_prefix);
+            routeOrch->addLinkLocalRouteToMe(router_id, linklocal_prefix);
             SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", 
                 linklocal_prefix.to_string().c_str(), vrf_name.c_str());
         }
@@ -183,7 +183,7 @@ bool VRFOrch::addOperation(const Request& request)
                 SWSS_LOG_NOTICE("VRF '%s' is v6 enabled", vrf_name.c_str());
                 /* Add link-local fe80::/10 CPU route for the VRF. */
                 IpPrefix default_link_local_prefix("fe80::/10");
-                gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+                routeOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
                 SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", 
                     default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
         
@@ -193,7 +193,7 @@ bool VRFOrch::addOperation(const Request& request)
                  * address pointing to the CPU port.
                  */
                 IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
-                gRouteOrch->addLinkLocalRouteToMe(router_id, linklocal_prefix);
+                routeOrch->addLinkLocalRouteToMe(router_id, linklocal_prefix);
                 SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", 
                     linklocal_prefix.to_string().c_str(), vrf_name.c_str());
             }
@@ -202,13 +202,13 @@ bool VRFOrch::addOperation(const Request& request)
                 SWSS_LOG_NOTICE("VRF '%s' is v6 disabled", update.vrf_name.c_str());
                 /* Delete link-local ipv6 address with eui64 /128 CPU route for the VRF. */
                 IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
-                gRouteOrch->delLinkLocalRouteToMe(router_id, linklocal_prefix);
+                routeOrch->delLinkLocalRouteToMe(router_id, linklocal_prefix);
                 SWSS_LOG_NOTICE("Deleted link local ipv6 route %s to cpu in VRF %s", 
                     linklocal_prefix.to_string().c_str(), vrf_name.c_str());
         
                 /* Delete link-local fe80::/10 CPU route for the VRF. */
                 IpPrefix default_link_local_prefix("fe80::/10");
-                gRouteOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
+                routeOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
                 SWSS_LOG_NOTICE("Deleted link local ipv6 route %s to cpu in VRF %s", 
                     default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
             }
