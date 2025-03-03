@@ -286,7 +286,7 @@ bool DashTunnelOrch::addTunnelPost(const std::string& tunnel_name, DashTunnelBul
     }
     else
     {
-        DashTunnelEntry entry = { tunnel_oid };
+        DashTunnelEntry entry = { tunnel_oid, std::unordered_map<std::string, DashTunnelEndpointEntry>(), std::string() };
         tunnel_table_[tunnel_name] = entry;
         remove_from_consumer = false;
     }
@@ -319,11 +319,11 @@ bool DashTunnelOrch::addTunnelNextHopsPost(const std::string& tunnel_name, DashT
 
         if (parent_tunnel_removed)
         {
-            SWSS_LOG_INFO("Removing tunnel next hop OID %%" PRIx64" for failed DASH tunnel %s", nhop_oid, tunnel_name.c_str());
+            SWSS_LOG_INFO("Removing tunnel next hop OID %" PRIx64" for failed DASH tunnel %s endpoint %s", nhop_oid, tunnel_name.c_str(), to_string(ip).c_str());
             sai_status_t status = sai_dash_tunnel_api->remove_dash_tunnel_next_hop(nhop_oid);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove DASH tunnel next hop OID %%" PRIx64" for failed DASH tunnel %s", nhop_oid, tunnel_name.c_str());
+                SWSS_LOG_ERROR("Failed to remove DASH tunnel next hop OID %" PRIx64" for failed DASH tunnel %s endpoint %s", nhop_oid, tunnel_name.c_str(), to_string(ip).c_str());
             }
             continue;
         }
@@ -352,7 +352,7 @@ void DashTunnelOrch::addTunnelMember(const sai_object_id_t tunnel_oid, const sai
 
     auto& member_object_ids = ctxt.tunnel_member_object_ids;
     member_object_ids.emplace_back();
-    tunnel_member_bulker_.create_entry(&member_object_ids.back(), tunnel_member_attrs.size(), tunnel_member_attrs.data());
+    tunnel_member_bulker_.create_entry(&member_object_ids.back(), (uint32_t) tunnel_member_attrs.size(), tunnel_member_attrs.data());
 }
 
 bool DashTunnelOrch::addTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt)
