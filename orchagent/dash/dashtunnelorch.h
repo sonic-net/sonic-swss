@@ -52,6 +52,8 @@ public:
         std::vector<std::string> &tables,
         swss::ZmqServer *zmqServer);
 
+    sai_object_id_t getTunnelOid(const std::string& tunnel_name);
+
 private:
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_bulker_;
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_member_bulker_;

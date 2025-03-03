@@ -24,6 +24,17 @@ DashTunnelOrch::DashTunnelOrch(
     SWSS_LOG_ENTER();
 }
 
+sai_object_id_t DashTunnelOrch::getTunnelOid(const std::string& tunnel_name)
+{
+    SWSS_LOG_ENTER();
+    auto it = tunnel_table_.find(tunnel_name);
+    if (it == tunnel_table_.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+    return it->second.tunnel_oid;
+}
+
 void DashTunnelOrch::doTask(ConsumerBase &consumer)
 {
     /* bulk ops here need to happen in multiple steps because DASH_TUNNEL_MEMBERS depend on DASH_TUNNEL and DASH_TUNNEL_NEXT_HOPS already existing
