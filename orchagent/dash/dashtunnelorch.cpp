@@ -154,7 +154,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
 
         tunnel_member_bulker_.flush();
 
-        auto it_prev = consumer.m_toSync.begin();
+        it_prev = consumer.m_toSync.begin();
         while (it_prev != it)
         {
             swss::KeyOpFieldsValuesTuple t = it_prev->second;
@@ -245,7 +245,7 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
 
     auto& object_ids = ctxt.tunnel_object_ids;
     object_ids.emplace_back();
-    tunnel_bulker_.create_entry(&object_ids.back(), tunnel_attrs.size(), tunnel_attrs.data());
+    tunnel_bulker_.create_entry(&object_ids.back(), (uint32_t) tunnel_attrs.size(), tunnel_attrs.data());
 
     remove_from_consumer = false;
     return remove_from_consumer;
