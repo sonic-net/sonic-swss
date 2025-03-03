@@ -190,7 +190,9 @@ struct LabelRouteBulkContext
     }
 };
 
-class RouteOrch : public Orch, public Subject
+void updateVrfV6Route(const VrfUpdate& update);
+
+class RouteOrch : public Orch, public Observer, public Subject
 {
 public:
     RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
@@ -238,6 +240,7 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    void update(SubjectType, void *);
 
 private:
     SwitchOrch *m_switchOrch;
