@@ -54,6 +54,7 @@ public:
     bool getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type);
     void handleFCStatusUpdate(bool is_enabled);
     dash::types::IpAddress getApplianceVip();
+    bool hasApplianceEntry();
 
 private:
     ApplianceTable appliance_entries_;
