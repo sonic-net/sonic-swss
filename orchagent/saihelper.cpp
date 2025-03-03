@@ -796,6 +796,8 @@ task_process_status handleSaiRemoveStatus(sai_api_extensions_t api, sai_status_t
                     return task_success;
                 case SAI_STATUS_ITEM_NOT_FOUND:
                     return task_success;
+                case SAI_STATUS_OBJECT_IN_USE:
+                    return task_need_retry;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api((sai_api_t) api).c_str(), sai_serialize_status(status).c_str());
