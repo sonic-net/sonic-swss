@@ -921,7 +921,7 @@ public:
         throw std::logic_error("Not implemented");
     }
 
-    ObjectBulker(typename Ts::api_t* next_hop_group_api, sai_object_id_t switch_id, size_t max_bulk_size, sai_object_type_t object_type) :
+    ObjectBulker(typename Ts::api_t* next_hop_group_api, sai_object_id_t switch_id, size_t max_bulk_size, sai_object_type_extensions_t object_type) :
         max_bulk_size(max_bulk_size)
     {
         throw std::logic_error("Not implemented");
@@ -1275,7 +1275,7 @@ inline ObjectBulker<sai_dash_vnet_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_
 }
 
 template <>
-inline ObjectBulker<sai_dash_tunnel_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_tunnel_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size, sai_object_type_t object_type) :
+inline ObjectBulker<sai_dash_tunnel_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_tunnel_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size, sai_object_type_extensions_t object_type) :
     switch_id(switch_id),
     max_bulk_size(max_bulk_size)
 {
@@ -1294,7 +1294,7 @@ inline ObjectBulker<sai_dash_tunnel_api_t>::ObjectBulker(SaiBulkerTraits<sai_das
             remove_entries = api->remove_dash_tunnel_next_hops;
             break;
         default:
-            std::string type_str = sai_serialize_object_type(object_type);
+            std::string type_str = sai_serialize_object_type((sai_object_type_t) object_type);
             std::stringstream ss;
             ss << "Invalid object type for sai_dash_tunnel_api_t: " << type_str;
             throw std::invalid_argument(ss.str());
