@@ -375,7 +375,6 @@ bool DashTunnelOrch::addTunnelMemberPost(const std::string& tunnel_name, const D
         }
         tunnel_table_[tunnel_name].endpoints[to_string(ip)].tunnel_member_oid = member_oid;
         SWSS_LOG_INFO("Tunnel member entry added for tunnel %s, endpoint %s", tunnel_name.c_str(), to_string(ip).c_str());
-        remove_from_consumer = false;
     }
     return remove_from_consumer;
 }
