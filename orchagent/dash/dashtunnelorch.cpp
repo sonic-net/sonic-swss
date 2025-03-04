@@ -289,15 +289,18 @@ bool DashTunnelOrch::addTunnelPost(const std::string& tunnel_name, DashTunnelBul
         DashTunnelEntry entry = { tunnel_oid, std::unordered_map<std::string, DashTunnelEndpointEntry>(), std::string() };
         tunnel_table_[tunnel_name] = entry;
         remove_from_consumer = false;
+        SWSS_LOG_INFO("Tunnel entry added for %s", tunnel_name.c_str());
     }
 
-    SWSS_LOG_INFO("Tunnel entry added for %s", tunnel_name.c_str());
 
     if (ctxt.metadata.endpoints_size() > 1)
     {
-        return remove_from_consumer && addTunnelNextHopsPost(tunnel_name, ctxt, remove_from_consumer);
+        remove_from_consumer = addTunnelNextHopsPost(tunnel_name, ctxt, remove_from_consumer);
     }
-
+    else
+    {
+        remove_from_consumer = true;
+    }
     return remove_from_consumer;
 }
 
@@ -330,6 +333,7 @@ bool DashTunnelOrch::addTunnelNextHopsPost(const std::string& tunnel_name, DashT
 
         DashTunnelEndpointEntry endpoint = { nhop_oid, SAI_NULL_OBJECT_ID };
         tunnel_table_[tunnel_name].endpoints[to_string(ip)] = endpoint;
+        SWSS_LOG_INFO("Tunnel next hop entry added for tunnel %s, endpoint %s", tunnel_name.c_str(), to_string(ip).c_str());
         addTunnelMember(tunnel_table_[tunnel_name].tunnel_oid, nhop_oid, ctxt);
         remove_from_consumer = false; // if we add at least one tunnel member, tunnel needs to stay in consumer for tunnel member post-bulk ops
     }
