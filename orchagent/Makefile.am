@@ -27,6 +27,7 @@ dist_swss_DATA = \
 		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
+		 pfc_stat_history.lua \
 		 port_rates.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
@@ -87,6 +88,7 @@ orchagent_SOURCES = \
             request_parser.cpp \
             vrforch.cpp \
             countercheckorch.cpp \
+            pfchistoryorch.cpp \
             vxlanorch.cpp \
             vnetorch.cpp \
             dtelorch.cpp \
