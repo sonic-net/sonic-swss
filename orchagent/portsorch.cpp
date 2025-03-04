@@ -842,18 +842,18 @@ void PortsOrch::initializePortOperErrors(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Initialize port oper errors for port %s", port.m_alias.c_str());
-
     for (auto& error : PortOperErrorEvent::db_key_errors)
     {
         const sai_port_error_status_t error_status = error.first;
         std::string error_name = error.second;
-
-        port.m_portOperErrorToEvent[error_status] = PortOperErrorEvent(error_status, error_name);
-        SWSS_LOG_NOTICE("Initialize port %s error %s flag=0x%" PRIx32,
-                                        port.m_alias.c_str(),
-                                        error_name.c_str(),
-                                        error_status);
+        if (port.m_portOperErrorToEvent.find(error_status) == port.m_portOperErrorToEvent.end())
+        {
+            port.m_portOperErrorToEvent[error_status] = PortOperErrorEvent(error_status, error_name);
+            SWSS_LOG_INFO("Initialize port %s error %s flag=0x%" PRIx32,
+                                            port.m_alias.c_str(),
+                                            error_name.c_str(),
+                                            error_status);
+        }
     }
 }
 
