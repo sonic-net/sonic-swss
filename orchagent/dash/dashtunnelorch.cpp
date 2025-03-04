@@ -12,6 +12,42 @@ extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
 extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 
+bool ipAddrLt(const dash::types::IpAddress& lhs, const dash::types::IpAddress& rhs)
+{
+    if (lhs.has_ipv4() && rhs.has_ipv4())
+    {
+        return lhs.ipv4() < rhs.ipv4();
+    }
+    else if (lhs.has_ipv6() && rhs.has_ipv6())
+    {
+        return lhs.ipv6() < rhs.ipv6();
+    }
+    else if (lhs.has_ipv4() && rhs.has_ipv6())
+    {
+        return true;
+    }
+    else if (lhs.has_ipv6() && rhs.has_ipv4())
+    {
+        return false;
+    }
+    SWSS_LOG_ERROR("One or more IP addresses not set");
+    return false;
+}
+
+bool ipAddrEq(const dash::types::IpAddress& lhs, const dash::types::IpAddress& rhs)
+{
+    if (lhs.has_ipv4() && rhs.has_ipv4())
+    {
+        return lhs.ipv4() == rhs.ipv4();
+    }
+    else if (lhs.has_ipv6() && rhs.has_ipv6())
+    {
+        return lhs.ipv6() == rhs.ipv6();
+    }
+    return false;
+};
+
+
 DashTunnelOrch::DashTunnelOrch(
     swss::DBConnector *db,
     std::vector<std::string> &tables,
@@ -202,7 +238,6 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
         return remove_from_consumer;
     }
 
-
     tunnel_attr.id = SAI_DASH_TUNNEL_ATTR_MAX_MEMBER_SIZE;
     tunnel_attr.value.u32 = ctxt.metadata.endpoints_size();
     tunnel_attrs.push_back(tunnel_attr);
@@ -231,6 +266,11 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
     auto tunnel_sip = dash_orch->getApplianceVip();
     to_sai(tunnel_sip, tunnel_attr.value.ipaddr);
     tunnel_attrs.push_back(tunnel_attr);
+
+    // deduplicate endpoint IPs
+    std::sort(ctxt.metadata.mutable_endpoints()->begin(), ctxt.metadata.mutable_endpoints()->end(), ipAddrLt);
+    auto last = std::unique(ctxt.metadata.mutable_endpoints()->begin(), ctxt.metadata.mutable_endpoints()->end(), ipAddrEq);
+    ctxt.metadata.mutable_endpoints()->erase(last, ctxt.metadata.mutable_endpoints()->end());
 
     if (ctxt.metadata.endpoints_size() == 1)
     {
