@@ -59,6 +59,8 @@ cfgmgr/sflowmgrd
 cfgmgr/macsecmgrd
 cfgmgr/coppmgrd
 cfgmgr/tunnelmgrd
+cfgmgr/fabricmgrd
+cfgmgr/stpmgrd
 fpmsyncd/fpmsyncd
 gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
@@ -68,6 +70,7 @@ fdbsyncd/fdbsyncd
 orchagent/orchagent
 orchagent/orchagent_restart_check
 orchagent/routeresync
+orchagent/p4orch/tests/p4orch_tests
 portsyncd/portsyncd
 swssconfig/swssconfig
 swssconfig/swssplayer
