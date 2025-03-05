@@ -19,10 +19,8 @@ def get_expected_tunnel_ips(tunnel_config):
     ips = set()
     for endpoint in tunnel_config["endpoints"]:
         if "ipv4" in endpoint:
-            ip_raw = endpoint["ipv4"]
-            ip = IP(socket.ntohl(ip_raw))
+            ip = IP(socket.ntohl(endpoint["ipv4"]))
         else:
-            ip_raw = endpoint["ipv6"]
             ip = IP(base64.b64decode(endpoint["ipv6"]))
         ips.add(str(ip))
 
