@@ -37,13 +37,15 @@ extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 
-DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, ZmqServer *zmqServer) :
+DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, DBConnector *app_state_db, ZmqServer *zmqServer) :
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
     outbound_ca_to_pa_bulker_(sai_dash_outbound_ca_to_pa_api, gMaxBulkSize),
     pa_validation_bulker_(sai_dash_pa_validation_api, gMaxBulkSize),
     ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
+    dash_vnet_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_VNET_TABLE_NAME));
+    dash_vnet_map_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_VNET_MAPPING_TABLE_NAME));
 }
 
 bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)

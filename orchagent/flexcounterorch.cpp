@@ -158,14 +158,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                     }
                 }
-                else if (field == BULK_CHUNK_SIZE_FIELD)
-                {
-                    bulk_chunk_size = value;
-                }
-                else if (field == BULK_CHUNK_SIZE_PER_PREFIX_FIELD)
-                {
-                    bulk_chunk_size_per_counter = value;
-                }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
                     // Currently, the counters are disabled for polling by default
@@ -286,19 +278,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 {
                     SWSS_LOG_NOTICE("Unsupported field %s", field.c_str());
                 }
-            }
-
-            if (!bulk_chunk_size.empty() || !bulk_chunk_size_per_counter.empty())
-            {
-                m_groupsWithBulkChunkSize.insert(key);
-                setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key],
-                                                 bulk_chunk_size.empty() ? "NULL" : bulk_chunk_size,
-                                                 bulk_chunk_size_per_counter.empty() ? "NULL" : bulk_chunk_size_per_counter);
-            }
-            else if (m_groupsWithBulkChunkSize.find(key) != m_groupsWithBulkChunkSize.end())
-            {
-                setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key], "NULL", "NULL");
-                m_groupsWithBulkChunkSize.erase(key);
             }
         }
 
