@@ -21,17 +21,18 @@ struct VnetEntry
 {
     sai_object_id_t vni;
     dash::vnet::Vnet metadata;
+    std::set<std::string> underlay_ips;
 };
 
 typedef std::unordered_map<std::string, VnetEntry> DashVnetTable;
-typedef std::unordered_map<std::string, uint32_t> PaRefCountTable;
 
 struct DashVnetBulkContext
 {
     std::string vnet_name;
     dash::vnet::Vnet metadata;
     std::deque<sai_object_id_t> object_ids;
-    std::deque<sai_status_t> object_statuses;
+    std::deque<sai_status_t> vnet_statuses;
+    std::deque<sai_status_t> pa_validation_statuses;
     DashVnetBulkContext() {}
 
     DashVnetBulkContext(const DashVnetBulkContext&) = delete;
@@ -40,7 +41,8 @@ struct DashVnetBulkContext
     void clear()
     {
         object_ids.clear();
-        object_statuses.clear();
+        vnet_statuses.clear();
+        pa_validation_statuses.clear();
     }
 };
 
@@ -70,7 +72,6 @@ public:
 
 private:
     DashVnetTable vnet_table_;
-    PaRefCountTable pa_refcount_table_;
     ObjectBulker<sai_dash_vnet_api_t> vnet_bulker_;
     EntityBulker<sai_dash_outbound_ca_to_pa_api_t> outbound_ca_to_pa_bulker_;
     EntityBulker<sai_dash_pa_validation_api_t> pa_validation_bulker_;
@@ -88,8 +89,8 @@ private:
     bool removeOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
     bool addPaValidation(const std::string& key, VnetMapBulkContext& ctxt);
     bool addPaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
-    void removePaValidation(const std::string& key, VnetMapBulkContext& ctxt);
-    bool removePaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
+    void removePaValidation(const std::string& key, DashVnetBulkContext& ctxt);
+    bool removePaValidationPost(const std::string& key, const DashVnetBulkContext& ctxt);
     bool addVnetMap(const std::string& key, VnetMapBulkContext& ctxt);
     bool addVnetMapPost(const std::string& key, const VnetMapBulkContext& ctxt);
     bool removeVnetMap(const std::string& key, VnetMapBulkContext& ctxt);
