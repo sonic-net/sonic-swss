@@ -1527,7 +1527,7 @@ namespace buffermgrdyn_test
     4. Initialize buffer pools and verify
     5. Initialize buffer profiles and PGs with 5m cable length
     6. Verify PG configuration with 5m cable length
-    7. Change cable length to 0m and verify profile behavior
+    7. Create a lossy PG and change cable length to 0m and verify lossy PG profile still there
     8. Verify that no 0m profile is created and existing profile is removed
     9. Verify that the running_profile_name is cleared for lossless PGs
     10. Verify that the 5m profile is removed
@@ -1540,8 +1540,8 @@ namespace buffermgrdyn_test
     17. Create a lossy PG and change cable length to 0m
     18. Verify that lossy PG keeps its profile while lossless PGs have empty profiles
     19. Verify that lossless profiles are removed when cable length is set back to 0m
-    20. Verify that lossy profiles are still there when cable length is 0m
-    21. Verify that lossless PGs are deleted when cable length is 0m
+    20. Update cable length to 0m
+    21. Verify that lossy PG keeps its profile while lossless PGs have empty profiles
     */
 
     TEST_F(BufferMgrDynTest, SkipProfileCreationForZeroCableLength)
@@ -1584,9 +1584,12 @@ namespace buffermgrdyn_test
         CheckPg("Ethernet0", "Ethernet0:3-4", expectedProfile);
 
         // TEST CASE 1: No new lossless profile is created when cable length is "0m"
-        // 7. Change cable length to 0m and verify profile behavior
+        // 7. Create a lossy PG and change cable length to 0m and verify lossy PG profile still there
+        InitBufferPg("Ethernet0|0", "ingress_lossy_profile");
         cableLengthTable.set("AZURE", {{"Ethernet0", "0m"}});
         HandleTable(cableLengthTable);
+        VerifyPgExists("Ethernet0", "Ethernet0:0", true);
+        VerifyPgProfile("Ethernet0", "Ethernet0:0", "ingress_lossy_profile");
 
         // 8. Verify that no 0m profile is created and existing profile is removed
         auto zeroMProfile = "pg_lossless_100000_0m_profile";
@@ -1610,6 +1613,8 @@ namespace buffermgrdyn_test
             << "PG should be created even with 0m cable length";
         ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup["Ethernet0"]["Ethernet0:6"].running_profile_name.empty())
             << "No profile should be assigned to lossless PG when cable length is 0m";
+        VerifyPgExists("Ethernet0", "Ethernet0:0", true);
+        VerifyPgProfile("Ethernet0", "Ethernet0:0", "ingress_lossy_profile");
 
         // TEST CASE 3: Profiles are restored when cable length is changed back to non-zero
         // 13. Change cable length back to 5m
@@ -1622,6 +1627,8 @@ namespace buffermgrdyn_test
         CheckPg("Ethernet0", "Ethernet0:6", "pg_lossless_100000_5m_profile");
 
         // 15. Additional verification of PG state
+        VerifyPgExists("Ethernet0", "Ethernet0:0", true);
+        VerifyPgProfile("Ethernet0", "Ethernet0:0", "ingress_lossy_profile");
         VerifyPgExists("Ethernet0", "Ethernet0:3-4", true);
         VerifyPgExists("Ethernet0", "Ethernet0:6", true);
         VerifyPgProfile("Ethernet0", "Ethernet0:3-4", "pg_lossless_100000_5m_profile");
@@ -1634,6 +1641,8 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->doTask();
 
         // 17. Verify that profiles are removed but PGs remain
+        VerifyPgExists("Ethernet0", "Ethernet0:0", true);
+        VerifyPgProfile("Ethernet0", "Ethernet0:0", "ingress_lossy_profile");
         VerifyProfileExists("pg_lossless_100000_0m_profile", false);
         VerifyProfileExists("pg_lossless_100000_5m_profile", false);
         VerifyPgExists("Ethernet0", "Ethernet0:3-4", true);
@@ -1645,15 +1654,14 @@ namespace buffermgrdyn_test
         // 18. Change cable length to 5m and update MTU
         cableLengthTable.set("AZURE", {{"Ethernet0", "5m"}});
         HandleTable(cableLengthTable);
-        string mtu = "4096";
-        m_dynamicBuffer->m_portInfoLookup["Ethernet0"].mtu = mtu;
+        portTable.set("Ethernet0", {{"mtu", "4096"}});
+        HandleTable(portTable);
 
         // 19. Verify profiles are created correctly with new MTU
-        CheckPg("Ethernet0", "Ethernet0:3-4", "pg_lossless_100000_5m_profile");
-        CheckPg("Ethernet0", "Ethernet0:6", "pg_lossless_100000_5m_profile");
+        CheckPg("Ethernet0", "Ethernet0:3-4", "pg_lossless_100000_5m_mtu4096_profile");
+        CheckPg("Ethernet0", "Ethernet0:6", "pg_lossless_100000_5m_mtu4096_profile");
 
-        // TEST CASE 6: Lossy PGs work correctly with 0m cable length
-        // 20. Create a lossy PG and change cable length to 0m
+        // 20. Update cable length to 0m
         InitBufferPg("Ethernet0|0", "ingress_lossy_profile");
         cableLengthTable.set("AZURE", {{"Ethernet0", "0m"}});
         HandleTable(cableLengthTable);
@@ -1667,5 +1675,6 @@ namespace buffermgrdyn_test
         VerifyPgProfileEmpty("Ethernet0", "Ethernet0:6");
         VerifyProfileExists("pg_lossless_100000_0m_profile", false);
         VerifyProfileExists("pg_lossless_100000_5m_profile", false);
+        VerifyProfileExists("pg_lossless_100000_5m_mtu4096_profile", false);
     }
 }
