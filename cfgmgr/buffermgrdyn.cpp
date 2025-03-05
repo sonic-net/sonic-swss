@@ -1472,8 +1472,18 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
                 }
                 updateBufferObjectToDb(key, oldProfile, false);
                 profilesToBeReleased.insert(oldProfile);
-                m_bufferProfileLookup[oldProfile].port_pgs.erase(key);
-                SWSS_LOG_NOTICE("All lossless profiles for port %s will be removed due to cable length being set to '0m'", port.c_str());
+
+                if (m_bufferProfileLookup.find(oldProfile) != m_bufferProfileLookup.end())
+                {
+                    m_bufferProfileLookup[oldProfile].port_pgs.erase(key);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Attempted to remove non-existent profile %s for port %s.", oldProfile.c_str(), port.c_str());
+                }
+                portPg.running_profile_name.clear();
+                SWSS_LOG_NOTICE("All lossless profiles and PGs for port %s will be removed due to cable length being set to '0m'",
+                                port.c_str());
                 continue;
             }
 
