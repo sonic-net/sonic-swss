@@ -31,11 +31,13 @@ private:
     unique_ptr<Table> m_stpTable;
     std::map<sai_uint16_t, sai_object_id_t> m_stpInstToOid;//Mapping from STP instance id to corresponding object id
     sai_object_id_t m_defaultStpId;
+    std::map<std::string, sai_uint16_t> m_vlanAliasToStpInstanceMap;
     
     void doStpTask(Consumer &consumer);
     void doStpPortStateTask(Consumer &consumer);
     void doStpFastageTask(Consumer &consumer);
     void doStpVlanIntfFlushTask(Consumer &consumer);
+    void doMstInstPortFlushTask(Consumer &consumer);
     
     sai_object_id_t addStpInstance(sai_uint16_t stp_instance);
     bool removeStpInstance(sai_uint16_t stp_instance);
