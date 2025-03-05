@@ -47,6 +47,21 @@ ROUTE_GROUP1 = "RouteGroup1"
 ROUTE_GROUP2 = "RouteGroup2"
 ROUTE_GROUP1_GUID = "48af6ce8-26cc-4293-bfa6-0126e8fcdeb2"
 ROUTE_GROUP2_GUID = "58cf62e0-22cc-4693-baa6-012358fcdec9"
+TUNNEL1 = "Tunnel1"
+TUNNEL1_ENDPOINT = "99.99.99.1"
+TUNNEL1_VNI = "101"
+TUNNEL2 = "Tunnel2"
+TUNNEL2_ENDPOINTS = [f"55.55.55.{i}" for i in range(5)]
+TUNNEL2_VNI = "102"
+TUNNEL3 = "Tunnel3"
+TUNNEL3_ENDPOINTS = ["66.66.66.1"]
+TUNNEL3_VNI = "103"
+TUNNEL4 = "Tunnel4"
+TUNNEL4_ENDPOINTS = [f"77.77.77.{i}" for i in range(1, 100)]
+TUNNEL4_VNI = "104"
+TUNNEL5 = "Tunnel5"
+TUNNEL5_ENDPOINTS = ["88.88.88.1", "88.88.88.1"]
+TUNNEL5_VNI = "105"
 
 APPLIANCE_CONFIG = {
     "sip": {
@@ -163,9 +178,55 @@ ROUTE_GROUP2_CONFIG = {
 }
 
 ENI_ROUTE_GROUP1_CONFIG = {
-    "group_id": ROUTE_GROUP1, 
+    "group_id": ROUTE_GROUP1,
 }
 
 ENI_ROUTE_GROUP2_CONFIG = {
-    "group_id": ROUTE_GROUP2, 
+    "group_id": ROUTE_GROUP2,
+}
+
+TUNNEL1_CONFIG = {
+    "endpoints": [
+        {
+            "ipv4": socket.htonl(int(IP(TUNNEL1_ENDPOINT)))
+        }
+    ],
+    "encap_type": EncapType.ENCAP_TYPE_VXLAN,
+    "vni": TUNNEL1_VNI
+}
+
+TUNNEL2_CONFIG = {
+    "endpoints": [
+        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
+        for endpoint_ip in TUNNEL2_ENDPOINTS
+    ],
+    "encap_type": EncapType.ENCAP_TYPE_NVGRE,
+    "vni": TUNNEL2_VNI
+}
+
+TUNNEL3_CONFIG = {
+    "endpoints": [
+        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
+        for endpoint_ip in TUNNEL3_ENDPOINTS
+    ],
+    "encap_type": EncapType.ENCAP_TYPE_VXLAN,
+    "vni": TUNNEL3_VNI
+}
+
+TUNNEL4_CONFIG = {
+    "endpoints": [
+        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
+        for endpoint_ip in TUNNEL4_ENDPOINTS
+    ],
+    "encap_type": EncapType.ENCAP_TYPE_NVGRE,
+    "vni": TUNNEL4_VNI
+}
+
+TUNNEL5_CONFIG = {
+    "endpoints": [
+        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
+        for endpoint_ip in TUNNEL5_ENDPOINTS
+    ],
+    "encap_type": EncapType.ENCAP_TYPE_VXLAN,
+    "vni": TUNNEL5_VNI
 }
