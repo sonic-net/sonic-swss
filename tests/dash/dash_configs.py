@@ -48,20 +48,30 @@ ROUTE_GROUP2 = "RouteGroup2"
 ROUTE_GROUP1_GUID = "48af6ce8-26cc-4293-bfa6-0126e8fcdeb2"
 ROUTE_GROUP2_GUID = "58cf62e0-22cc-4693-baa6-012358fcdec9"
 TUNNEL1 = "Tunnel1"
-TUNNEL1_ENDPOINT = "99.99.99.1"
+TUNNEL1_ENDPOINTS = [IP("99.99.99.1")]
 TUNNEL1_VNI = "101"
 TUNNEL2 = "Tunnel2"
-TUNNEL2_ENDPOINTS = [f"55.55.55.{i}" for i in range(5)]
+TUNNEL2_ENDPOINTS = [IP("55.55.55.1") + i for i in range(5)]
 TUNNEL2_VNI = "102"
 TUNNEL3 = "Tunnel3"
-TUNNEL3_ENDPOINTS = ["66.66.66.1"]
+TUNNEL3_ENDPOINTS = [IP("2001:db8::1")]
 TUNNEL3_VNI = "103"
 TUNNEL4 = "Tunnel4"
-TUNNEL4_ENDPOINTS = [f"77.77.77.{i}" for i in range(1, 100)]
+TUNNEL4_ENDPOINTS = [IP("77.77.77.1") + i for i in range(1, 50)] + [IP("2002:db8::1") + i for i in range(1, 50)]
 TUNNEL4_VNI = "104"
 TUNNEL5 = "Tunnel5"
-TUNNEL5_ENDPOINTS = ["88.88.88.1", "88.88.88.1"]
+TUNNEL5_ENDPOINTS = [IP("88.88.88.1")] * 2
 TUNNEL5_VNI = "105"
+
+
+def fmt_tunnel_endpoints(endpoints):
+    return [
+        {"ipv4": socket.htonl(int(endpoint))}
+        if endpoint.version == 4 else
+        {"ipv6": base64.b64encode(endpoint.packed)}
+        for endpoint in endpoints
+    ]
+
 
 APPLIANCE_CONFIG = {
     "sip": {
@@ -210,47 +220,31 @@ ENI_ROUTE_GROUP2_CONFIG = {
 }
 
 TUNNEL1_CONFIG = {
-    "endpoints": [
-        {
-            "ipv4": socket.htonl(int(IP(TUNNEL1_ENDPOINT)))
-        }
-    ],
+    "endpoints": fmt_tunnel_endpoints(TUNNEL1_ENDPOINTS),
     "encap_type": EncapType.ENCAP_TYPE_VXLAN,
     "vni": TUNNEL1_VNI
 }
 
 TUNNEL2_CONFIG = {
-    "endpoints": [
-        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
-        for endpoint_ip in TUNNEL2_ENDPOINTS
-    ],
+    "endpoints": fmt_tunnel_endpoints(TUNNEL2_ENDPOINTS),
     "encap_type": EncapType.ENCAP_TYPE_NVGRE,
     "vni": TUNNEL2_VNI
 }
 
 TUNNEL3_CONFIG = {
-    "endpoints": [
-        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
-        for endpoint_ip in TUNNEL3_ENDPOINTS
-    ],
+    "endpoints": fmt_tunnel_endpoints(TUNNEL3_ENDPOINTS),
     "encap_type": EncapType.ENCAP_TYPE_VXLAN,
     "vni": TUNNEL3_VNI
 }
 
 TUNNEL4_CONFIG = {
-    "endpoints": [
-        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
-        for endpoint_ip in TUNNEL4_ENDPOINTS
-    ],
+    "endpoints": fmt_tunnel_endpoints(TUNNEL4_ENDPOINTS),
     "encap_type": EncapType.ENCAP_TYPE_NVGRE,
     "vni": TUNNEL4_VNI
 }
 
 TUNNEL5_CONFIG = {
-    "endpoints": [
-        {"ipv4": socket.htonl(int(IP(endpoint_ip)))}
-        for endpoint_ip in TUNNEL5_ENDPOINTS
-    ],
+    "endpoints": fmt_tunnel_endpoints(TUNNEL5_ENDPOINTS),
     "encap_type": EncapType.ENCAP_TYPE_VXLAN,
     "vni": TUNNEL5_VNI
 }

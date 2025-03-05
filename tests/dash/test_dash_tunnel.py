@@ -1,3 +1,4 @@
+import base64
 import pytest
 import socket
 from collections import namedtuple
@@ -21,8 +22,12 @@ def get_expected_tunnel_ips(tunnel_config):
     # We expect orchagent to ignore duplicate IPs, so use a set to ensure the expected IPs are unique
     ips = set()
     for endpoint in tunnel_config["endpoints"]:
-        ip_raw = endpoint["ipv4"]
-        ip = IP(socket.ntohl(ip_raw))
+        if "ipv4" in endpoint:
+            ip_raw = endpoint["ipv4"]
+            ip = IP(socket.ntohl(ip_raw))
+        else:
+            ip_raw = endpoint["ipv6"]
+            ip = IP(base64.b64decode(endpoint["ipv6"]))
         ips.add(str(ip))
 
     return list(ips)
