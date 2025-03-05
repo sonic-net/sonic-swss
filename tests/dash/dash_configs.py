@@ -130,6 +130,30 @@ VNET_MAPPING_CONFIG_PRIVATELINK = {
     },
 }
 
+VNET_MAPPING_CONFIG_PLNSG= {
+    "routing_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+    "underlay_ip": {
+        "ipv4": socket.htonl(int(IP(UNDERLAY_IP)))
+    },
+    "overlay_sip_prefix": {
+        "ip": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_SIP).packed)
+        },
+        "mask": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_SIP_MASK).packed)
+        }
+    },
+    "overlay_dip_prefix": {
+        "ip": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_DIP).packed)
+        },
+        "mask": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_DIP_MASK).packed)
+        }
+    },
+    "tunnel": TUNNEL1
+}
+
 ROUTE_VNET_CONFIG = {
     "routing_type": RoutingType.ROUTING_TYPE_VNET,
     "vnet": VNET1,
