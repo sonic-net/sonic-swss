@@ -326,7 +326,7 @@ bool DashTunnelOrch::addTunnelPost(const std::string& tunnel_name, DashTunnelBul
     }
     else
     {
-        DashTunnelEntry entry = { tunnel_oid, std::unordered_map<std::string, DashTunnelEndpointEntry>(), std::string() };
+        DashTunnelEntry entry = { tunnel_oid, std::map<std::string, DashTunnelEndpointEntry>(), std::string() };
         tunnel_table_[tunnel_name] = entry;
         remove_from_consumer = false;
         SWSS_LOG_INFO("Tunnel entry added for %s", tunnel_name.c_str());
@@ -539,14 +539,14 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
 
     auto tm_it_status = tunnel_member_statuses.begin();
     auto nh_it_status = tunnel_nhop_statuses.begin();
-    auto& endpoints = tunnel_table_[tunnel_name].endpoints;
-    for (auto& endpoint : endpoints)
+    auto endpoint_it = tunnel_table_[tunnel_name].endpoints.begin();
+    while (endpoint_it != tunnel_table_[tunnel_name].endpoints.end())
     {
         sai_status_t tm_status = *tm_it_status++;
         sai_status_t nh_status = *nh_it_status++;
         if (tm_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("DASH tunnel member removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint.first.c_str(), sai_serialize_status(tm_status).c_str());
+            SWSS_LOG_WARN("DASH tunnel member removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(tm_status).c_str());
             task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, tm_status);
             if (handle_status == task_need_retry)
             {
@@ -555,16 +555,16 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
         }
         else
         {
-            if (endpoint.second.tunnel_member_oid != SAI_NULL_OBJECT_ID)
+            if (endpoint_it->second.tunnel_member_oid != SAI_NULL_OBJECT_ID)
             {
-                SWSS_LOG_INFO("DASH tunnel member removed for tunnel %s ip %s", tunnel_name.c_str(), endpoint.first.c_str());
-                endpoint.second.tunnel_member_oid = SAI_NULL_OBJECT_ID;
+                SWSS_LOG_INFO("DASH tunnel member removed for tunnel %s ip %s", tunnel_name.c_str(), endpoint_it->first.c_str());
+                endpoint_it->second.tunnel_member_oid = SAI_NULL_OBJECT_ID;
             }
         }
 
         if (nh_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("DASH tunnel next hop removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint.first.c_str(), sai_serialize_status(tm_status).c_str());
+            SWSS_LOG_WARN("DASH tunnel next hop removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(tm_status).c_str());
             task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, nh_status);
             if (handle_status == task_need_retry)
             {
@@ -573,9 +573,11 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
         }
         else
         {
-            SWSS_LOG_INFO("DASH tunnel next hop removed for tunnel %s ip %s", tunnel_name.c_str(), endpoint.first.c_str());
-            endpoints.erase(endpoint.first);
+            SWSS_LOG_INFO("DASH tunnel next hop removed for tunnel %s ip %s", tunnel_name.c_str(), endpoint_it->first.c_str());
+            endpoint_it = tunnel_table_[tunnel_name].endpoints.erase(endpoint_it);
+            continue;
         }
+        endpoint_it++;
     }
 
     return remove_from_consumer;

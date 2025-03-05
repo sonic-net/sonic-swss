@@ -15,7 +15,7 @@ struct DashTunnelEndpointEntry
 struct DashTunnelEntry
 {
     sai_object_id_t tunnel_oid;
-    std::unordered_map<std::string, DashTunnelEndpointEntry> endpoints;
+    std::map<std::string, DashTunnelEndpointEntry> endpoints;
     std::string endpoint;
 };
 
