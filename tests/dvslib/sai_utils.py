@@ -1,5 +1,5 @@
 from ipaddress import ip_address as IP
-from dash.dash_db import Table
+
 
 def assert_sai_attribute_exists(attr_name, attrs, expected_val=None):
     assert attr_name in attrs, f"Attribute {attr_name} not found in {attrs}"
