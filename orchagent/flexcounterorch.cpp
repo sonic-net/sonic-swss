@@ -263,6 +263,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                     }
 
+                    gPortsOrch->flushCounters();
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
                     if (gPortsOrch && gPortsOrch->isGearboxEnabled())
