@@ -1,7 +1,6 @@
 import base64
 import pytest
 import socket
-from collections import namedtuple
 from ipaddress import ip_address as IP
 from swsscommon.swsscommon import (
     APP_DASH_TUNNEL_TABLE_NAME,
@@ -13,9 +12,6 @@ from dash_db import dash_db, DashDB
 from dvslib.sai_utils import assert_sai_attribute_exists
 import sai_attrs as sai
 import dash_api.route_type_pb2 as rt
-
-
-EndpointOids = namedtuple("EndpointOids", ["tunnel_member_oids", "tunnel_nhop_oids"])
 
 
 def get_expected_tunnel_ips(tunnel_config):
@@ -50,9 +46,8 @@ def verify_sai_tunnel_endpoints(
             min_keys=len(expected_ips),
             old_keys=prev_member_keys,
         )
-        assert len(member_keys) == len(
-            expected_ips
-        ), f"Expected {len(expected_ips)} tunnel members, but got: {len(member_keys)}"
+        assert len(member_keys) == len(expected_ips), \
+            f"Expected {len(expected_ips)} tunnel members, but got: {len(member_keys)}"
         for member in member_keys:
             attrs = dash_db.get_asic_db_entry(
                 "ASIC_STATE:SAI_OBJECT_TYPE_DASH_TUNNEL_MEMBER", member
@@ -68,24 +63,20 @@ def verify_sai_tunnel_endpoints(
                 tunnel_nhop_ips.append(nhop_ip[sai.SAI_DASH_TUNNEL_NEXT_HOP_ATTR_DIP])
                 tunnel_nhop_oids.append(nhop_oid)
 
-        assert len(tunnel_nhop_oids) == len(
-            expected_ips
-        ), f"Expected {len(expected_ips)} tunnel nhops, but got: {len(tunnel_nhop_oids)}"
-        assert sorted(tunnel_nhop_ips) == sorted(
-            expected_ips
-        ), f"Expected tunnel nhop IPs: {expected_ips}, but got: {tunnel_nhop_ips}"
-        assert len(tunnel_member_oids) == len(
-            expected_ips
-        ), f"Expected {len(expected_ips)} tunnel members, but got: {len(tunnel_member_oids)}"
+        assert len(tunnel_nhop_oids) == len(expected_ips), \
+            f"Expected {len(expected_ips)} tunnel nhops, but got: {len(tunnel_nhop_oids)}"
+        assert sorted(tunnel_nhop_ips) == sorted(expected_ips), \
+            f"Expected tunnel nhop IPs: {expected_ips}, but got: {tunnel_nhop_ips}"
+        assert len(tunnel_member_oids) == len(expected_ips), \
+            f"Expected {len(expected_ips)} tunnel members, but got: {len(tunnel_member_oids)}"
     else:
         member_keys = dash_db.wait_for_asic_db_keys(
             "ASIC_STATE:SAI_OBJECT_TYPE_DASH_TUNNEL_MEMBER",
             min_keys=0,
             old_keys=prev_member_keys,
         )
-        assert (
-            len(member_keys) == 0
-        ), f"Expected no tunnel members for single endpoint, but got: {len(member_keys)}"
+        assert (len(member_keys) == 0), \
+            f"Expected no tunnel members for single endpoint, but got: {len(member_keys)}"
 
     return tunnel_member_oids, tunnel_nhop_oids
 
