@@ -43,6 +43,7 @@ namespace flexcounter_test
         mockOldSaiSetSwitchAttribute = old;
     }
 
+    uint32_t mockFlexCounterOperationCallCount;
     sai_status_t mockFlexCounterOperation(sai_object_id_t objectId, const sai_attribute_t *attr)
     {
         if (objectId != gSwitchId)
@@ -53,22 +54,41 @@ namespace flexcounter_test
         auto *param = reinterpret_cast<sai_redis_flex_counter_parameter_t*>(attr->value.ptr);
         std::vector<swss::FieldValueTuple> entries;
         auto serializedObjectId = sai_serialize_object_id(objectId);
-        std::string key((const char*)param->counter_key.list);
+        auto keys = tokenize(string((const char*)param->counter_key.list), ',');
+        bool first = true;
+        string groupName;
+        string key;
 
-        if (param->stats_mode.list != nullptr)
+        for(auto key : keys)
         {
-            entries.push_back({STATS_MODE_FIELD, (const char*)param->stats_mode.list});
+            if (first)
+            {
+                groupName = tokenize(key, ':')[0];
+                first = false;
+            }
+            else
+            {
+                key = groupName + ":" + key;
+            }
+
+            if (param->stats_mode.list != nullptr)
+            {
+                entries.push_back({STATS_MODE_FIELD, (const char*)param->stats_mode.list});
+            }
+
+            if (param->counter_ids.list != nullptr)
+            {
+                entries.push_back({(const char*)param->counter_field_name.list, (const char*)param->counter_ids.list});
+                mockFlexCounterTable->set(key, entries);
+                entries.clear();
+            }
+            else
+            {
+                mockFlexCounterTable->del(key);
+            }
         }
 
-        if (param->counter_ids.list != nullptr)
-        {
-            entries.push_back({(const char*)param->counter_field_name.list, (const char*)param->counter_ids.list});
-            mockFlexCounterTable->set(key, entries);
-        }
-        else
-        {
-            mockFlexCounterTable->del(key);
-        }
+        mockFlexCounterOperationCallCount++;
 
         return SAI_STATUS_SUCCESS;
     }
@@ -127,6 +147,14 @@ namespace flexcounter_test
 
         if (table->get(key, fieldValues))
         {
+            if (entries.size() == 1 && fieldValues.size() == 1 && fvField(entries[0]).find("COUNTER_ID_LIST") != std::string::npos)
+            {
+                auto counterIds = tokenize(fvValue(entries[0]), ',');
+                auto expectedCounterIds = tokenize(fvValue(fieldValues[0]), ',');
+                set<string> counterIdSet(counterIds.begin(), counterIds.end());
+                set<string> expectedCounterSet(expectedCounterIds.begin(), expectedCounterIds.end());
+                return (counterIdSet == expectedCounterSet);
+            }
             set<FieldValueTuple> fvSet(fieldValues.begin(), fieldValues.end());
             set<FieldValueTuple> expectedSet(entries.begin(), entries.end());
 
@@ -186,6 +214,31 @@ namespace flexcounter_test
     bool checkFlexCounter(const std::string group, sai_object_id_t oid, std::vector<swss::FieldValueTuple> entries)
     {
         return _checkFlexCounterTableContent(mockFlexCounterTable, group + ":" + sai_serialize_object_id(oid), entries);
+    }
+
+    void isNoPendingCounterObjects()
+    {
+        std::vector<FlexCounterTaggedCachedManager<sai_queue_type_t>*> queueCounterManagers({
+                &gPortsOrch->queue_stat_manager,
+                &gPortsOrch->queue_watermark_manager
+            });
+        std::vector<FlexCounterTaggedCachedManager<void>*> pgCounterManagers({
+                &gPortsOrch->pg_drop_stat_manager,
+                &gPortsOrch->pg_watermark_manager
+            });
+
+        for (auto pgCounterManager : pgCounterManagers)
+        {
+            ASSERT_TRUE(pgCounterManager->cached_objects.pending_sai_objects.empty());
+        }
+
+        for (auto queueCounterManager : queueCounterManagers)
+        {
+            for (auto it : queueCounterManager->cached_objects)
+            {
+                ASSERT_TRUE(it.second.pending_sai_objects.empty());
+            }
+        }
     }
 
     sai_switch_api_t ut_sai_switch_api;
@@ -448,12 +501,14 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {POLL_INTERVAL_FIELD, QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {QUEUE_PLUGIN_FIELD, ""}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {POLL_INTERVAL_FIELD, PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {PG_PLUGIN_FIELD, ""}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
@@ -467,6 +522,7 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
@@ -583,6 +639,8 @@ namespace flexcounter_test
             flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
             static_cast<Orch *>(flexCounterOrch)->doTask();
         }
+
+        isNoPendingCounterObjects();
 
         ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
@@ -816,7 +874,7 @@ namespace flexcounter_test
 
         ASSERT_TRUE(checkFlexCounter(PFC_WD_FLEX_COUNTER_GROUP, firstPort.m_queue_ids[3],
                                      {
-                                         {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_PACKETS,SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES"},
+                                         {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,SAI_QUEUE_STAT_PACKETS"},
                                          {QUEUE_ATTR_ID_LIST, "SAI_QUEUE_ATTR_PAUSE_STATUS"}
                                      }));
 
@@ -844,10 +902,24 @@ namespace flexcounter_test
             entries.clear();
             static_cast<Orch *>(gBufferOrch)->doTask();
 
+            isNoPendingCounterObjects();
+
             ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid));
             ASSERT_TRUE(checkFlexCounter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid));
             ASSERT_TRUE(checkFlexCounter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid));
             ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid));
+
+            if (!gTraditionalFlexCounter)
+            {
+                // Create and remove without flushing counters
+                auto oldMockFlexCounterCallCount = mockFlexCounterOperationCallCount;
+                gPortsOrch->createPortBufferQueueCounters(firstPort, "3");
+                gPortsOrch->removePortBufferQueueCounters(firstPort, "3");
+                gPortsOrch->createPortBufferPgCounters(firstPort, "3");
+                gPortsOrch->removePortBufferPgCounters(firstPort, "3");
+                ASSERT_EQ(oldMockFlexCounterCallCount, mockFlexCounterOperationCallCount);
+                isNoPendingCounterObjects();
+            }
 
             // Remove buffer profiles
             entries.push_back({"ingress_lossless_profile", "DEL", { {} }});
