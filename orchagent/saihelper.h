@@ -18,7 +18,6 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy);
 task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-task_process_status handleSaiRemoveStatus(sai_api_extensions_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 bool parseHandleSaiStatusFailure(task_process_status status);
 void handleSaiFailure(bool abort_on_failure);
