@@ -406,7 +406,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
             attr_count, &pa_validation_attr);
     vnet_table_[ctxt.vnet_name].underlay_ips.insert(underlay_sip_str);
     SWSS_LOG_INFO("Bulk create PA validation entry for Vnet %s underlay IP %s",
-                    ctxt.vnet_name.c_str(), ctxt.metadata.underlay_ip());
+                    ctxt.vnet_name.c_str(), to_string(ctxt.metadata.underlay_ip()).c_str());
     return true;
 }
 
@@ -612,7 +612,7 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const DashVnetBulkC
             if (status == SAI_STATUS_NOT_EXECUTED)
             {
                 SWSS_LOG_INFO("PA validation entry for Vnet %s IP %s still in use",
-                                ctxt.vnet_name.c_str(), (*it_ip).c_str());
+                                ctxt.vnet_name.c_str(), it_ip->c_str());
                 remove_from_consumer = false;
                 it_ip++;
                 continue;
