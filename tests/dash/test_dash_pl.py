@@ -28,8 +28,10 @@ from swsscommon.swsscommon import (
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
+
 @pytest.fixture(autouse=True)
-def common_setup_teardown(dash_db: DashDB):
+def common_setup_teardown(dash_db: DashDB, dvs):
+    dvs.runcmd("swssloglevel -l INFO -c orchagent") 
     dash_db.set_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID, APPLIANCE_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1, VNET_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID, ENI_CONFIG)

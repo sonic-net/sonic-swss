@@ -293,6 +293,7 @@ class DashAcl(object):
 
 
 
+@pytest.mark.skip(reason="Needs SAI to support implicit deletion of ACL rules when parent ACL group is deleted")
 class TestAcl(object):
     @pytest.fixture
     def ctx(self, dvs):
