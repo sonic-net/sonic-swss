@@ -1467,7 +1467,7 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
             {
                 if (oldProfile.empty())
                 {
-                    SWSS_LOG_NOTICE("No lossless profile found for port %s when cable length is set to '0m'.", port.c_str());
+                    SWSS_LOG_INFO("No lossless profile found for port %s when cable length is set to '0m'.", port.c_str());
                     continue;
                 }
 
