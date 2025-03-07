@@ -45,6 +45,7 @@ size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 bool gSyncMode = false;
 bool gIsNatSupported = false;
 bool gTraditionalFlexCounter = false;
+sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 
 PortsOrch *gPortsOrch;
 CrmOrch *gCrmOrch;
