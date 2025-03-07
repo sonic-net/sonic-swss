@@ -14,6 +14,7 @@
 #include "neighsync.h"
 #include "warm_restart.h"
 #include <algorithm>
+#include <linux/neighbour.h>
 
 using namespace std;
 using namespace swss;
@@ -98,18 +99,28 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         if ((isLinkLocalEnabled(intfName) == false) && (nlmsg_type != RTM_DELNEIGH))
         {
+            SWSS_LOG_INFO("LinkLocal address received, ignoring for %s", ipStr);
             return;
         }
     }
     /* Ignore IPv6 multicast link-local addresses as neighbors */
     if (family == IPV6_NAME && IN6_IS_ADDR_MC_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
+    {
+        SWSS_LOG_INFO("Multicast LinkLocal address received, ignoring for %s", ipStr);
         return;
+    }
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
     if (state == NUD_NOARP)
     {
-        return;
+        /* For externally learned neighbors, e.g. VXLAN EVPN, we want to keep
+         * these neighbors. */
+        if (!(rtnl_neigh_get_flags(neigh) & NTF_EXT_LEARNED))
+        {
+            SWSS_LOG_INFO("NOARP address received, ignoring for %s", ipStr);
+            return;
+        }
     }
 
     bool delete_key = false;

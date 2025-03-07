@@ -13,6 +13,11 @@ class DVSVlan(object):
         vlan_entry = {"vlanid": vlanID}
         self.config_db.create_entry("VLAN", vlan, vlan_entry)
 
+    def create_vlan_with_mac(self, vlanID, mac):
+        vlan = f"Vlan{vlanID}"
+        vlan_entry = {"vlanid": vlanID, "mac": mac}
+        self.config_db.create_entry("VLAN", vlan, vlan_entry)
+
     def create_vlan_interface(self,  vlanID):
         vlan = "Vlan{}".format(vlanID)
         vlan_intf_entry = {}
