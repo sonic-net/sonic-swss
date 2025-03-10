@@ -5703,8 +5703,18 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
         Port lag, port;
         if (!getPort(lag_alias, lag))
         {
-            SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
-            it++;
+            size_t pos = lag_alias.find('|');
+            std::string port_hostname = (pos != std::string::npos) ? lag_alias.substr(0, pos) : lag_alias;
+
+            if (gMySwitchType == "voq" && gMyHostName == port_hostname)
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
+                it++;
+            }
             continue;
         }
 
