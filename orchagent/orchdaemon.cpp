@@ -325,7 +325,7 @@ bool OrchDaemon::init()
         APP_DASH_HA_SET_TABLE_NAME,
         APP_DASH_HA_SCOPE_TABLE_NAME
     };
-    // TODO: dbconnector should be dpu_app_db?
+    // TODO: dbconnector should be dpu_app_db? SSW DB HLD: an async insert to redis will be done for each message 
     DashHaOrch *dash_ha_orch = new DashHaOrch(m_applDb, dash_ha_tables, m_zmqServer);
     gDirectory.set(dash_ha_orch);
 
