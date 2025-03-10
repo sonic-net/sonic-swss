@@ -321,7 +321,15 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
-	vector<string> dash_vnet_tables = {
+    vector<string> dash_ha_tables = {
+        APP_DASH_HA_SET_TABLE_NAME,
+        APP_DASH_HA_SCOPE_TABLE_NAME
+    };
+    // TODO: dbconnector should be dpu_app_db?
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_applDb, dash_ha_tables, m_zmqServer);
+    gDirectory.set(dash_ha_orch);
+
+    vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
