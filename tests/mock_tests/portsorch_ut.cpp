@@ -1307,17 +1307,16 @@ namespace portsorch_test
         ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
 
         // Get queue info
-        string type;
+        sai_queue_type_t type;
         uint8_t index;
         auto queue_id = port.m_queue_ids[0];
         auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
-        type = "";
         index = 255;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
         ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
 
