@@ -316,7 +316,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             else
             {
                 SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
-                return false;
+                return true;
             }
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
@@ -372,7 +372,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
-    return true;
+    return false;
 }
 
 bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
@@ -394,7 +394,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
         SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
                         pa_refcount_table_[pa_ref_key],
                         underlay_ip_str.c_str());
-        return true;
+        return false;
     }
 
     uint32_t attr_count = 1;
@@ -413,7 +413,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     pa_refcount_table_[pa_ref_key] = 1;
     SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
                     underlay_ip_str.c_str());
-    return true;
+    return false;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -430,7 +430,7 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
             SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
             return false;
         }
-        return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
+        return addOutboundCaToPa(key, ctxt) || addPaValidation(key, ctxt);
     }
     /*
      * If the VNET map is already added, don't add it to the bulker and
@@ -455,8 +455,7 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
     {
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            // Retry if item exists in the bulker
-            return false;
+            return true;
         }
 
         SWSS_LOG_ERROR("Failed to create CA to PA entry for %s", key.c_str());
@@ -490,14 +489,13 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        /* PA validation entry add failed. Remove PA refcount entry */
         pa_refcount_table_.erase(pa_ref_key);
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            // Retry if item exists in the bulker
-            return false;
+            return true;
         }
 
+        /* PA validation entry add failed. Remove PA refcount entry */
         SWSS_LOG_ERROR("Failed to create PA validation entry for %s", key.c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
         if (handle_status != task_success)
@@ -517,11 +515,11 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
 {
     SWSS_LOG_ENTER();
 
-    bool status = addOutboundCaToPaPost(key, ctxt) && addPaValidationPost(key, ctxt);
-    if (!status)
+    bool remove_from_consumer = addOutboundCaToPaPost(key, ctxt) && addPaValidationPost(key, ctxt);
+    if (!remove_from_consumer)
     {
         SWSS_LOG_ERROR("addVnetMapPost failed for %s ", key.c_str());
-        return false;
+        return remove_from_consumer;
     }
 
     string vnet_name = ctxt.vnet_name;
@@ -529,10 +527,10 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
     vnet_map_table_[key] = entry;
     SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
 
-    return true;
+    return remove_from_consumer;
 }
 
-void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -544,9 +542,10 @@ void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& c
 
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.remove_entry(&object_statuses.back(), &outbound_ca_to_pa_entry);
+    return false;
 }
 
-void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -556,7 +555,7 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
     auto it = pa_refcount_table_.find(pa_ref_key);
     if (it == pa_refcount_table_.end())
     {
-        return;
+        SWSS_LOG_INFO("PA refcount entry not found for %s", key.c_str());
     }
     else
     {
@@ -570,7 +569,6 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
             SWSS_LOG_INFO("Decrement PA refcount to %u for PA IP %s",
                             pa_refcount_table_[pa_ref_key],
                             underlay_ip.c_str());
-            return;
         }
         else
         {
@@ -586,6 +584,8 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
             pa_refcount_table_.erase(pa_ref_key);
         }
     }
+
+    return false;
 }
 
 bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -681,15 +681,16 @@ bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext
 {
     SWSS_LOG_ENTER();
 
-    bool status = removeOutboundCaToPaPost(key, ctxt) && removePaValidationPost(key, ctxt);
-    if (!status)
+    bool remove_from_consumer = removeOutboundCaToPaPost(key, ctxt) && removePaValidationPost(key, ctxt);
+    if (!remove_from_consumer)
     {
-        return false;
+        SWSS_LOG_ERROR("removeVnetMapPost failed for %s ", key.c_str());
+        return remove_from_consumer;
     }
     vnet_map_table_.erase(key);
     SWSS_LOG_INFO("Vnet map removed for %s", key.c_str());
 
-    return true;
+    return remove_from_consumer;
 }
 
 void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
