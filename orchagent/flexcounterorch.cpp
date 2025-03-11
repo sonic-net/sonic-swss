@@ -16,6 +16,7 @@
 #include "dash/dashorch.h"
 #include "flowcounterrouteorch.h"
 #include "warm_restart.h"
+#include "arsorch.h"
 
 extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
@@ -46,6 +47,8 @@ extern sai_object_id_t gSwitchId;
 #define ENI_KEY                     "ENI"
 #define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
+#define ARS_NEXTHOP_GROUP_KEY       "ARS_NEXTHOP_GROUP"
+#define ARS_LAG_KEY                 "ARS_LAG"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -71,6 +74,8 @@ unordered_map<string, string> flexCounterGroupMap =
     {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {ARS_NEXTHOP_GROUP_KEY, ARS_NEXTHOP_GROUP_FLEX_COUNTER_GROUP},
+    {ARS_LAG_KEY, ARS_LAG_FLEX_COUNTER_GROUP}
 };
 
 
@@ -110,6 +115,8 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    ArsOrch* ars_orch = gDirectory.get<ArsOrch*>();
+
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -212,17 +219,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_pg_watermark_enabled = true;
                             gPortsOrch->addPriorityGroupWatermarkFlexCounters(getPgConfigurations());
                         }
-			else if(key == WRED_PORT_KEY)
-			{
+                        else if(key == WRED_PORT_KEY)
+                        {
                             gPortsOrch->generateWredPortCounterMap();
                             m_wred_port_counter_enabled = true;
-			}
-			else if(key == WRED_QUEUE_KEY)
-			{
+                        }
+                        else if(key == WRED_QUEUE_KEY)
+                        {
                             gPortsOrch->generateQueueMap(getQueueConfigurations());
                             m_wred_queue_counter_enabled = true;
                             gPortsOrch->addWredQueueFlexCounters(getQueueConfigurations());
-			}
+                        }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
                     {
@@ -268,6 +275,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             gFlowCounterRouteOrch->clearRouteFlowStats();
                             m_route_flow_counter_enabled = false;
+                        }
+                    }
+                    if (ars_orch)
+                    {
+                        if (key == ARS_NEXTHOP_GROUP_KEY)
+                        {
+                            ars_orch->generateNexthopGroupCounterMap();
+                        }
+                        if (key == ARS_LAG_KEY)
+                        {
+                            ars_orch->generateLagCounterMap();
                         }
                     }
 

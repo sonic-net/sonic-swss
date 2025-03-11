@@ -1303,7 +1303,7 @@ bool RouteOrch::removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
     return true;
 }
 
-bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
+bool RouteOrch::addNextHopGroup(const NextHopGroupKey& nexthops, vector<sai_attribute_t> &nhg_attrs)
 {
     SWSS_LOG_ENTER();
 
@@ -1366,13 +1366,6 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         SWSS_LOG_INFO("Skipping creation of nexthop group as none of nexthop are active");
         return false;
     }
-    sai_attribute_t nhg_attr;
-    vector<sai_attribute_t> nhg_attrs;
-
-    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = m_switchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
-    nhg_attrs.push_back(nhg_attr);
-
     sai_object_id_t next_hop_group_id;
     sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
                                                                         gSwitchId,
@@ -1480,6 +1473,270 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
      */
     next_hop_group_entry.ref_count = 0;
     m_syncdNextHopGroups[nexthops] = next_hop_group_entry;
+
+    return true;
+}
+
+bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nextHops)
+{
+    sai_attribute_t nhg_attr;
+    vector<sai_attribute_t> nhg_attrs;
+
+    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+    nhg_attr.value.s32 = m_switchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+    nhg_attrs.push_back(nhg_attr);
+
+    return addNextHopGroup(nextHops, nhg_attrs);
+}
+
+bool RouteOrch::replicateNextHopGroup(const NextHopGroupKey& nexthops, vector<sai_attribute_t> &nhg_attrs)
+{
+    SWSS_LOG_ENTER();
+
+    vector<sai_object_id_t> next_hop_ids;
+    set<NextHopKey> next_hop_set = nexthops.getNextHops();
+    std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
+    std::map<sai_object_id_t, set<NextHopKey>> nhopgroup_shared_set;
+
+    /* Assert each IP address exists in m_syncdNextHops table,
+     * and add the corresponding next_hop_id to next_hop_ids. */
+    for (auto it : next_hop_set)
+    {
+        sai_object_id_t next_hop_id;
+        if (m_neighOrch->hasNextHop(it))
+        {
+            next_hop_id = m_neighOrch->getNextHopId(it);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Failed to get next hop %s in %s",
+                    it.to_string().c_str(), nexthops.to_string().c_str());
+            return false;
+        }
+        // skip next hop group member create for neighbor from down port
+        if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
+        {
+            SWSS_LOG_INFO("Interface down for NH %s, skip this NH", it.to_string().c_str());
+            continue;
+        }
+
+        next_hop_ids.push_back(next_hop_id);
+        if (nhopgroup_members_set.find(next_hop_id) == nhopgroup_members_set.end())
+        {
+            nhopgroup_members_set[next_hop_id] = it;
+        }
+        else
+        {
+            nhopgroup_shared_set[next_hop_id].insert(it);
+        }
+    }
+
+    if (!next_hop_ids.size())
+    {
+        SWSS_LOG_INFO("Skipping creation of nexthop group as none of nexthop are active");
+        return false;
+    }
+    sai_object_id_t next_hop_group_id;
+    sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
+                                                                        gSwitchId,
+                                                                        (uint32_t)nhg_attrs.size(),
+                                                                        nhg_attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
+                       nexthops.to_string().c_str(), status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Create next hop group %s", nexthops.to_string().c_str());
+
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
+    NextHopGroupEntry next_hop_group_entry;
+    next_hop_group_entry.next_hop_group_id = next_hop_group_id;
+
+    size_t npid_count = next_hop_ids.size();
+    vector<sai_object_id_t> nhgm_ids(npid_count);
+    for (size_t i = 0; i < npid_count; i++)
+    {
+        auto nhid = next_hop_ids[i];
+        auto weight = nhopgroup_members_set[nhid].weight;
+
+        // Create a next hop group member
+        vector<sai_attribute_t> nhgm_attrs;
+
+        sai_attribute_t nhgm_attr;
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+        nhgm_attr.value.oid = next_hop_group_id;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+        nhgm_attr.value.oid = nhid;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        if (weight)
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+            nhgm_attr.value.s32 = weight;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
+
+        if (m_switchOrch->checkOrderedEcmpEnable())
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+            nhgm_attr.value.u32 = ((uint32_t)i) + 1; // To make non-zero sequence id
+            nhgm_attrs.push_back(nhgm_attr);
+        }
+
+        gNextHopGroupMemberBulker.create_entry(&nhgm_ids[i],
+                                                 (uint32_t)nhgm_attrs.size(),
+                                                 nhgm_attrs.data());
+    }
+
+    gNextHopGroupMemberBulker.flush();
+    for (size_t i = 0; i < npid_count; i++)
+    {
+        auto nhid = next_hop_ids[i];
+        auto nhgm_id = nhgm_ids[i];
+        if (nhgm_id == SAI_NULL_OBJECT_ID)
+        {
+            // TODO: do we need to clean up?
+            SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
+                           next_hop_group_id, nhgm_ids[i], status);
+            return false;
+        }
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+
+        // Save the membership into next hop structure
+        if (nhopgroup_shared_set.find(nhid) != nhopgroup_shared_set.end())
+        {
+            auto it = nhopgroup_shared_set[nhid].begin();
+            next_hop_group_entry.nhopgroup_members[*it].next_hop_id = nhgm_id;
+            next_hop_group_entry.nhopgroup_members[*it].seq_id = (uint32_t)i + 1;
+            nhopgroup_shared_set[nhid].erase(it);
+            if (nhopgroup_shared_set[nhid].empty())
+            {
+                nhopgroup_shared_set.erase(nhid);
+            }
+        }
+        else
+        {
+            next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].next_hop_id = nhgm_id;
+            next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].seq_id = ((uint32_t)i) + 1;
+        }
+    }
+
+    /* Increment the ref_count for the next hops used by the next hop group. */
+    for (auto it : next_hop_set)
+        m_neighOrch->increaseNextHopRefCount(it);
+
+    /*
+     * Initialize the next hop group structure with ref_count as 0. This
+     * count will increase once the route is successfully syncd.
+     */
+    next_hop_group_entry.ref_count = 0;
+    m_syncdNextHopGroups[nexthops] = next_hop_group_entry;
+
+    return true;
+}
+
+bool RouteOrch::removeReplicatedNextHopGroup(const NextHopGroupKey &nexthops, NextHopGroupEntry &next_hop_group_entry)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t next_hop_group_id;
+    sai_status_t status;
+    bool overlay_nh = nexthops.is_overlay_nexthop();
+    bool srv6_nh = nexthops.is_srv6_nexthop();
+
+    next_hop_group_id = next_hop_group_entry.next_hop_group_id;
+    SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
+
+    vector<sai_object_id_t> next_hop_ids;
+    auto& nhgm = next_hop_group_entry.nhopgroup_members;
+    for (auto nhop = nhgm.begin(); nhop != nhgm.end();)
+    {
+        if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN))
+        {
+            SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
+                           nhop->first.to_string().c_str(), nhop->second.next_hop_id);
+            nhop = nhgm.erase(nhop);
+            continue;
+        }
+
+        next_hop_ids.push_back(nhop->second.next_hop_id);
+        nhop = nhgm.erase(nhop);
+    }
+
+    size_t nhid_count = next_hop_ids.size();
+    vector<sai_status_t> statuses(nhid_count);
+    for (size_t i = 0; i < nhid_count; i++)
+    {
+        gNextHopGroupMemberBulker.remove_entry(&statuses[i], next_hop_ids[i]);
+    }
+    gNextHopGroupMemberBulker.flush();
+    for (size_t i = 0; i < nhid_count; i++)
+    {
+        if (statuses[i] != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove next hop group member[%zu] %" PRIx64 ", rv:%d",
+                           i, next_hop_ids[i], statuses[i]);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, statuses[i]);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+    }
+
+    status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    set<NextHopKey> next_hop_set = nexthops.getNextHops();
+    for (auto it : next_hop_set)
+    {
+        m_neighOrch->decreaseNextHopRefCount(it);
+        if (overlay_nh && !srv6_nh && !m_neighOrch->getNextHopRefCount(it))
+        {
+            if(!m_neighOrch->removeTunnelNextHop(it))
+            {
+                SWSS_LOG_ERROR("Tunnel Nexthop %s delete failed", nexthops.to_string().c_str());
+            }
+            else
+            {
+                m_neighOrch->removeOverlayNextHop(it);
+                SWSS_LOG_INFO("Tunnel Nexthop %s delete success", nexthops.to_string().c_str());
+                SWSS_LOG_INFO("delete remote vtep %s", it.to_string(overlay_nh, srv6_nh).c_str());
+                status = deleteRemoteVtep(SAI_NULL_OBJECT_ID, it);
+                if (status == false)
+                {
+                    SWSS_LOG_ERROR("Failed to delete remote vtep %s ecmp", it.to_string(overlay_nh, srv6_nh).c_str());
+                }
+            }
+        }
+        /* Remove any MPLS-specific NH that was created */
+        else if (it.isMplsNextHop() &&
+                 (m_neighOrch->getNextHopRefCount(it) == 0))
+        {
+            m_neighOrch->removeMplsNextHop(it);
+        }
+    }
 
     return true;
 }
@@ -2997,4 +3254,69 @@ inline void RouteOrch::removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
     string key = tunnel_name + ":" + ipPrefix.to_string();
     m_appTunnelDecapTermProducer.del(key);
     m_SubnetDecapTermsCreated.erase(it);
+}
+
+
+bool RouteOrch::reconfigureNexthopGroupWithArsState(NextHopGroupKey nexthopGroupKey, sai_object_id_t next_hop_group_id, const sai_object_id_t ars_object_id)
+{
+    /* 1. crete new nexthop group with ARS object id
+       2. create nexthop memebers for new nexthop group
+       3. remove old nexthop group
+    */
+
+    SWSS_LOG_NOTICE("Reconfiguring nexthopgroup %s", nexthopGroupKey.to_string().c_str());
+
+    // unlink NHG from route
+    auto tmp_nexthop_group = m_syncdNextHopGroups[nexthopGroupKey];
+    m_syncdNextHopGroups.erase(nexthopGroupKey);
+
+    // create new NHG with ARS object id
+    sai_attribute_t nhg_attr;
+    vector<sai_attribute_t> nhg_attrs;
+
+    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+    nhg_attr.value.s32 = m_switchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+    nhg_attrs.push_back(nhg_attr);
+
+    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID;
+    nhg_attr.value.oid = ars_object_id;
+    nhg_attrs.push_back(nhg_attr);
+
+    if (!replicateNextHopGroup(nexthopGroupKey, nhg_attrs))
+    {
+        SWSS_LOG_ERROR("Failed to create new nexthopgroup %s", nexthopGroupKey.to_string().c_str());
+        return false;
+    }
+
+    // use old NHG ref count
+    m_syncdNextHopGroups[nexthopGroupKey].ref_count = tmp_nexthop_group.ref_count;
+
+    // remove stale NHG 
+    if (!removeReplicatedNextHopGroup(nexthopGroupKey, tmp_nexthop_group))
+    {
+        SWSS_LOG_ERROR("Failed to remove old nexthopgroup %s", nexthopGroupKey.to_string().c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Reconfigured nexthopgroup %s", nexthopGroupKey.to_string().c_str());
+
+    return true;
+}
+
+bool RouteOrch::updateNexthopGroupArsState(const sai_object_id_t next_hop_group_id, const sai_object_id_t ars_object_id)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID;
+    attr.value.oid = ars_object_id;
+    sai_status_t status = sai_next_hop_group_api->set_next_hop_group_attribute(next_hop_group_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set ARS object id %s to next hop group %s",
+                       sai_serialize_status(status).c_str(), sai_serialize_object_id(next_hop_group_id).c_str());
+        return false;
+    }
+    SWSS_LOG_NOTICE("Set ARS object id %s to next hop group %s",
+                    sai_serialize_object_id(ars_object_id).c_str(), sai_serialize_object_id(next_hop_group_id).c_str());
+    return true;
 }

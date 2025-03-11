@@ -87,6 +87,8 @@ sai_dash_direction_lookup_api_t*    sai_dash_direction_lookup_api;
 sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
+sai_ars_api_t*                      sai_ars_api;
+sai_ars_profile_api_t*              sai_ars_profile_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -236,6 +238,8 @@ void initSaiApi()
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
+    sai_api_query(SAI_API_ARS,                  (void **)&sai_ars_api);
+    sai_api_query(SAI_API_ARS_PROFILE,          (void **)&sai_ars_profile_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -278,6 +282,8 @@ void initSaiApi()
     sai_log_set(SAI_API_TWAMP,                  SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TAM,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_STP,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_ARS,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_ARS_PROFILE,            SAI_LOG_LEVEL_NOTICE);
 }
 
 void initFlexCounterTables()

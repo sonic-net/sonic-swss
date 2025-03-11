@@ -76,6 +76,7 @@
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
+#define ACTION_DISABLE_ARS_FORWARDING       "DISABLE_ARS_FORWARDING"
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
@@ -115,6 +116,7 @@
 #define TABLE_ACL_USER_META_DATA_MAX                 "ACL_USER_META_DATA_MAX"
 #define TABLE_ACL_ENTRY_ATTR_META_CAPABLE            "ACL_ENTRY_ATTR_META_CAPABLE"
 #define TABLE_ACL_ENTRY_ACTION_META_CAPABLE          "ACL_ENTRY_ACTION_META_CAPABLE"
+#define TABLE_ACL_ENTRY_ACTION_DISABLE_ARS_CAPABLE   "ACL_ENTRY_ACTION_DISABLE_ARS_CAPABLE"
 
 enum AclObjectStatus
 {
@@ -459,6 +461,21 @@ protected:
     MetaDataMgr* m_metaDataMgr;
 };
 
+class AclRuleArs: public AclRule
+{
+public:
+    AclRuleArs (AclOrch *m_pAclOrch, string rule, string table);
+    bool validateAddAction(string attr_name, string attr_value);
+    bool validate();
+    bool createRule();
+    bool removeRule();
+    bool activate();
+    bool deactivate();
+    void onUpdate(SubjectType, void *) override;
+protected:
+    bool m_state;
+};
+
 class AclTable
 {
 public:
@@ -604,6 +621,7 @@ public:
     bool isAclMetaDataSupported() const;
     uint16_t getAclMetaDataMin() const;
     uint16_t getAclMetaDataMax() const;
+    bool isAclArsSupported() const;
 
     void addMetaDataRef(string key, uint16_t metadata);
     void removeMetaDataRef(string key, uint16_t metadata);
@@ -614,6 +632,7 @@ public:
     map<string, bool> m_mirrorTableCapabilities;
     map<acl_stage_type_t, bool> m_L3V4V6Capability;
     map<string, string> m_switchMetaDataCapabilities;
+    map<string, string> m_switchArsCapabilities;
     
     void registerFlexCounter(const AclRule& rule);
     void deregisterFlexCounter(const AclRule& rule);

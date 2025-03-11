@@ -15,6 +15,7 @@
 #include "nexthopgroupkey.h"
 #include "bulker.h"
 #include "fgnhgorch.h"
+#include "arsorch.h"
 #include <map>
 
 /* Maximum next hop group number */
@@ -206,6 +207,7 @@ public:
     bool isRefCounterZero(const NextHopGroupKey&) const;
 
     bool addNextHopGroup(const NextHopGroupKey&);
+    bool addNextHopGroup(const NextHopGroupKey& nexthops, vector<sai_attribute_t> &nhg_attrs);
     bool removeNextHopGroup(const NextHopGroupKey&);
 
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
@@ -238,6 +240,9 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    
+    bool updateNexthopGroupArsState(const sai_object_id_t next_hop_group_id, const sai_object_id_t ars_object_id);
+    bool reconfigureNexthopGroupWithArsState(NextHopGroupKey nexthopGroupKey, sai_object_id_t next_hop_group_id, const sai_object_id_t ars_object_id);
 
 private:
     SwitchOrch *m_switchOrch;
@@ -298,6 +303,9 @@ private:
     void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     void incNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
     void decNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
+
+    bool replicateNextHopGroup(const NextHopGroupKey& nexthops, vector<sai_attribute_t> &nhg_attrs);
+    bool removeReplicatedNextHopGroup(const NextHopGroupKey &nexthops, NextHopGroupEntry &next_hop_group_entry);
 };
 
 #endif /* SWSS_ROUTEORCH_H */
