@@ -290,7 +290,6 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
                 it++;
             }
         }
@@ -299,7 +298,6 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
-        writeResultToDB(dash_appliance_result_table_, appliance_id, result);
     }
 }
 
@@ -389,7 +387,6 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
                 it++;
             }
         }
@@ -398,7 +395,6 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
-        writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
     }
 }
 
@@ -719,7 +715,6 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
                 it++;
             }
         }
@@ -728,7 +723,6 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
-        writeResultToDB(dash_eni_result_table_, eni, result);
     }
 }
 
@@ -791,18 +785,17 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
-            writeResultToDB(dash_eni_qos_table_, qos_name, result);
+            writeResultToDB(dash_qos_result_table_, qos_name, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeQosEntry(qos_name))
             {
                 it = consumer.m_toSync.erase(it);
-                removeResultFromDB(dash_eni_qos_table_, qos_name);
+                removeResultFromDB(dash_qos_result_table_, qos_name);
             }
             else
             {
-                result = 1;
                 it++;
             }
         }
@@ -811,7 +804,6 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
-        writeResultToDB(dash_qos_result_table_, qos_name, result);
     }
 }
 
@@ -956,7 +948,6 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
                 it++;
             }
         }
@@ -965,7 +956,6 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
-        writeResultToDB(dash_eni_route_result_table_, eni, result);
     }
 }
 

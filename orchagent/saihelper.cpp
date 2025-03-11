@@ -1136,15 +1136,8 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
     return stat_list;
 }
 
-FieldValueTuple makeResultDbEntry(uint32_t res)
-{
-    auto field = "result";
-    auto value = std::to_string(res);
-
-    return FieldValueTuple(field, value);
-}
-
-void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key, uint32_t res)
+void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key,
+                     uint32_t res, const string& version)
 {
     SWSS_LOG_ENTER();
 
@@ -1154,12 +1147,17 @@ void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& ke
         return;
     }
 
-    std::vector<FieldValueTuple> fvList = {
-        makeResultDbEntry(res)
-    };
+    std::vector<FieldValueTuple> fvVector;
 
-    table->set(key, fvList);
-    SWSS_LOG_NOTICE("Wrote result to DB for key %s", key.c_str());
+    fvVector.emplace_back("result", std::to_string(res));
+
+    if (!version.empty())
+    {
+        fvVector.emplace_back("version", version);
+    }
+
+    table->set(key, fvVector);
+    SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
 }
 
 void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
@@ -1172,5 +1170,6 @@ void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string&
         return;
     }
 
-    table_->del(key);
+    table->del(key);
+    SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }

@@ -383,11 +383,9 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 }
                 else
                 {
-                    result = 1;
                     it_prev++;
                 }
             }
-            writeResultToDB(dash_route_result_table_, key, result);
         }
     }
 }
@@ -668,11 +666,9 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 }
                 else
                 {
-                    result = 1;
                     it_prev++;
                 }
             }
-            writeResultToDB(dash_route_rule_result_table_, key, result);
         }
     }
 }
@@ -807,6 +803,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
         if (op == SET_COMMAND)
         {
             dash::route_group::RouteGroup entry;
+            string version = entry.version();
             if (!parsePbMessage(kfvFieldsValues(t), entry))
             {
                 SWSS_LOG_WARN("Requires protobuf at RouteGroup :%s", route_group.c_str());
@@ -823,7 +820,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
                 result = 1;
                 it++;
             }
-            writeResultToDB(dash_route_group_result_table_, route_group, result);
+            writeResultToDB(dash_route_group_result_table_, route_group, result, version);
         }
         else if (op == DEL_COMMAND)
         {
@@ -834,7 +831,6 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
                 it++;
             }
         }
@@ -843,7 +839,6 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
-        writeResultToDB(dash_route_group_result_table_, route_group, result);
     }
 }
 
