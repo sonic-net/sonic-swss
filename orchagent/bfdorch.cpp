@@ -130,7 +130,8 @@ void BfdOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (use_software_bfd) {
+            if (use_software_bfd)
+            {
                 //program entry in software BFD table
                 m_stateSoftBfdSessionTable->set(createStateDBKey(key), data);
                 it = consumer.m_toSync.erase(it);
@@ -178,7 +179,8 @@ void BfdOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (use_software_bfd) {
+            if (use_software_bfd)
+            {
                 //delete entry from software BFD table
                 m_stateSoftBfdSessionTable->del(createStateDBKey(key));
                 it = consumer.m_toSync.erase(it);
@@ -706,7 +708,8 @@ BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
 {
     SWSS_LOG_ENTER();
     tsa_enabled = false;
-    software_bfd = (!offload_supported(false) || !offload_supported(true));
+    bool ipv6 = true;
+    bfd_offload = (offload_supported(!ipv6) && offload_supported(ipv6));
 }
 
 BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
@@ -723,7 +726,7 @@ bool BgpGlobalStateOrch::getTsaState()
 bool BgpGlobalStateOrch::getSoftwareBfd()
 {
     SWSS_LOG_ENTER();
-    return software_bfd;
+    return !bfd_offload;
 }
 
 bool BgpGlobalStateOrch::offload_supported(bool get_ipv6)
