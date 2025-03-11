@@ -10193,12 +10193,18 @@ bool PortsOrch::setPortArsEnable(const Port& port, bool is_enable)
     return true;
 }
 
-bool PortsOrch::setPortArsLoadScaling(const Port& port)
+bool PortsOrch::setPortArsLoadScaling(const Port& port, const uint32_t scaling_factor)
 {
     sai_attribute_t attr;
 
+    if (scaling_factor == 0)
+    {
+        SWSS_LOG_ERROR("Invalid scaling factor %u for port %s", scaling_factor, port.m_alias.c_str());
+        return false;
+    }
+
     attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR;
-    attr.value.u32 = port.m_speed / 10000;
+    attr.value.u32 = port.m_speed / scaling_factor;
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
 
     if (status != SAI_STATUS_SUCCESS)
@@ -10213,12 +10219,6 @@ bool PortsOrch::setPortArsLoadScaling(const Port& port)
     return true;
 }
 
-bool PortsOrch::setPortArsAltPath(const Port& port, bool is_enable)
-{
-    sai_attribute_t attr;
-
-    attr.id = SAI_PORT_ATTR_ARS_ALTERNATE_PATH;
-    attr.value.booldata = is_enable;
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
 
     if (status != SAI_STATUS_SUCCESS)

@@ -51,6 +51,14 @@ struct NextHopUpdate
     NextHopGroupKey nexthopGroup;
 };
 
+struct NextHopGroupUpdate
+{
+    sai_object_id_t vrf_id;
+    IpPrefix prefix;
+    NextHopGroupKey nexthopGroup;
+    bool update;                    // true if add/change, false if delete
+};
+
 /*
  * Structure describing the next hop group used by a route.  As the next hop
  * groups can either be owned by RouteOrch or by NhgOrch, we have to keep track
@@ -74,10 +82,13 @@ struct RouteNhg
 
     bool operator==(const RouteNhg& rnhg)
        { return ((nhg_key == rnhg.nhg_key) && (nhg_index == rnhg.nhg_index) && (context_index == rnhg.context_index)); }
+    bool operator==(const NextHopGroupKey& other_key) 
+        { return nhg_key == other_key; }
     bool operator!=(const RouteNhg& rnhg) { return !(*this == rnhg); }
 };
 
 struct NextHopObserverEntry;
+struct NextHopGroupObserverEntry;
 
 /* Route destination key for a nexthop */
 struct RouteKey
@@ -105,12 +116,24 @@ typedef std::map<sai_object_id_t, LabelRouteTable> LabelRouteTables;
 typedef std::pair<sai_object_id_t, IpAddress> Host;
 /* NextHopObserverTable: Host, next hop observer entry */
 typedef std::map<Host, NextHopObserverEntry> NextHopObserverTable;
+/* Prefix: vrf_id, IpPrefix */
+typedef std::pair<sai_object_id_t, IpPrefix> Prefix;
+/* NextHopGroupObserverTable: Prefix, next hop group observer entry */
+typedef std::map<Prefix, NextHopGroupObserverEntry> NextHopGroupObserverTable;
 /* Single Nexthop to Routemap */
 typedef std::map<NextHopKey, std::set<RouteKey>> NextHopRouteTable;
+/* NexthopGroup set */
+typedef std::vector<RouteNhg> NhgTable;
 
 struct NextHopObserverEntry
 {
     RouteTable routeTable;
+    list<Observer *> observers;
+};
+
+struct NextHopGroupObserverEntry
+{
+    NhgTable nhgTable;
     list<Observer *> observers;
 };
 
@@ -200,7 +223,9 @@ public:
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
 
     void attach(Observer *, const IpAddress&, sai_object_id_t vrf_id = gVirtualRouterId);
+    void attach(Observer *, const IpPrefix&, sai_object_id_t vrf_id = gVirtualRouterId);
     void detach(Observer *, const IpAddress&, sai_object_id_t vrf_id = gVirtualRouterId);
+    void detach(Observer *, const IpPrefix&, sai_object_id_t vrf_id = gVirtualRouterId);
 
     void increaseNextHopRefCount(const NextHopGroupKey&);
     void decreaseNextHopRefCount(const NextHopGroupKey&);
@@ -209,6 +234,7 @@ public:
     bool addNextHopGroup(const NextHopGroupKey&);
     bool addNextHopGroup(const NextHopGroupKey& nexthops, vector<sai_attribute_t> &nhg_attrs);
     bool removeNextHopGroup(const NextHopGroupKey&);
+    bool updateNextHopGroupRoutes(const NextHopGroupKey& nextHopGroup, sai_object_id_t next_hop_group_id);
 
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
     void removeNextHopRoute(const NextHopKey&, const RouteKey&);
@@ -227,6 +253,7 @@ public:
     bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
     bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
     bool isRouteExists(const IpPrefix& prefix);
+    bool isRouteExists(sai_object_id_t& vrf_id, const IpPrefix& prefix);
     bool removeRoutePrefix(const IpPrefix& prefix);
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
@@ -242,7 +269,7 @@ public:
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
     
     bool updateNexthopGroupArsState(const sai_object_id_t next_hop_group_id, const sai_object_id_t ars_object_id);
-    bool reconfigureNexthopGroupWithArsState(NextHopGroupKey nexthopGroupKey, sai_object_id_t next_hop_group_id, const sai_object_id_t ars_object_id);
+    bool reconfigureNexthopGroupWithArsState(NextHopGroupKey nexthopGroupKey, const sai_object_id_t ars_object_id);
 
 private:
     SwitchOrch *m_switchOrch;
@@ -272,6 +299,7 @@ private:
     std::vector<NextHopGroupKey> m_bulkSrv6NhgReducedVec;
 
     NextHopObserverTable m_nextHopObservers;
+    NextHopGroupObserverTable m_nextHopGroupObservers;
 
     EntityBulker<sai_route_api_t>           gRouteBulker;
     EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;

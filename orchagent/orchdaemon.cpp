@@ -486,14 +486,14 @@ bool OrchDaemon::init()
         CFG_ARS_PROFILE,                 
         CFG_ARS_INTERFACE,               
         CFG_ARS_NEXTHOP_GROUP,           
-        CFG_ARS_PORTCHANNEL,             
         APP_ARS_PROFILE_TABLE_NAME,      
         APP_ARS_INTERFACE_TABLE_NAME,    
-        APP_ARS_NEXTHOP_GROUP_TABLE_NAME,
-        APP_ARS_PORTCHANNEL_TABLE_NAME
+        APP_ARS_NEXTHOP_GROUP_TABLE_NAME
     };
 
     ArsOrch* ars_orch = new ArsOrch(m_configDb, m_applDb, m_stateDb, ars_tables, vrf_orch);
+    gDirectory.set(ars_orch);
+
     gDirectory.set(ars_orch);
 
     /*
