@@ -124,13 +124,6 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     {
                         if (l2ProtoEnabled == L2_NONE)
                         {
-                            const std::string cmd = std::string("") +
-                                " ebtables -A FORWARD -d 01:80:c2:00:00:00 -j DROP";
-                            std::string res;
-                            int ret = swss::exec(cmd, res);
-                            if (ret != 0)
-                                SWSS_LOG_ERROR("ebtables add failed for MSTP %d", ret);
-
                             l2ProtoEnabled = L2_MSTP;
                         }
                         msg.stp_mode = L2_MSTP;
@@ -145,15 +138,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                 }
                 else if (fvField(i) == "rootguard_timeout")
                 {
-                    // For MSTP, skip setting rootguard_timeout or set to 0
-                    if (msg.stp_mode == L2_MSTP)
-                    {
-                        msg.rootguard_timeout = -1;  // Set to zero for MSTP
-                    }
-                    else
-                    {
-                        msg.rootguard_timeout = stoi(fvValue(i).c_str());
-                    }
+                    msg.rootguard_timeout = stoi(fvValue(i).c_str());
                 }
             }
 
@@ -179,16 +164,6 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                 if (ret_pvst != 0)
                     SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
             }
-            else if (l2ProtoEnabled == L2_MSTP)
-            {
-                const std::string mst_cmd =
-                    "ebtables -D FORWARD -d 01:80:c2:00:00:00 -j DROP";
-                std::string res_mst;
-                int ret_mst = swss::exec(mst_cmd, res_mst);
-                if (ret_mst != 0)
-                    SWSS_LOG_ERROR("ebtables del failed for MSTP %d", ret_mst);
-            }
-
             l2ProtoEnabled = L2_NONE;
         }
 
@@ -366,25 +341,25 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false )
+    if (stpGlobalTask == false)
         return;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        STP_MST_GLOBAL_CONFIG_MSG msg;
-        memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
-
         KeyOpFieldsValuesTuple t = it->second;
-
         string key = kfvKey(t);
         string op = kfvOp(t);
 
         SWSS_LOG_INFO("STP MST global key %s op %s", key.c_str(), op.c_str());
 
+        STP_MST_GLOBAL_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(msg)); // Initialize message structure to zero
+
         if (op == SET_COMMAND)
         {
             msg.opcode = STP_SET_COMMAND;
+
             for (auto i : kfvFieldsValues(t))
             {
                 SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
@@ -423,15 +398,41 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
         {
             msg.opcode = STP_DEL_COMMAND;
 
-            // Reset all MST global configurations to default
-            memset(&msg, 0, sizeof(STP_MST_GLOBAL_CONFIG_MSG));
-            SWSS_LOG_INFO("MST global configuration deleted.");
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "name")
+                {
+                    msg.name[0] = '\0'; // Reset to default empty string
+                }
+                else if (fvField(i) == "revision")
+                {
+                    msg.revision_number = 0; // Default revision
+                }
+                else if (fvField(i) == "forward_delay")
+                {
+                    msg.forward_delay = 15; // Default forward delay
+                }
+                else if (fvField(i) == "hello_time")
+                {
+                    msg.hello_time = 2; // Default hello time
+                }
+                else if (fvField(i) == "max_age")
+                {
+                    msg.max_age = 20; // Default max age
+                }
+                else if (fvField(i) == "max_hops")
+                {
+                    msg.max_hops = 40; // Default max hops
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid field: %s", fvField(i).c_str());
+                }
+            }
         }
 
-        // Send the populated message to the STP daemon
         sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
 
-        // Remove the processed task from the queue
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -1474,7 +1475,7 @@ void StpMgr::updateVlanInstanceMap(int instance, const std::vector<uint16_t>& ne
                 m_vlanInstMap[vlan] = 0; // Reset to default instance
             }
         }
-    } 
+    }
     else {
         // Add/Update instance: Handle additions and deletions
         // Use an unordered_set for efficient lookup of new VLAN list
