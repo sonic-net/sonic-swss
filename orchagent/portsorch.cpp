@@ -5200,7 +5200,8 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     string key_v = kfvKey(t_v);
                     if (key_v == key && kfvOp(t_v) == DEL_COMMAND)
                     {
-                        SWSS_LOG_NOTICE("VLAN %s already been reused, remove the pending del.", vlan_alias.c_str());
+                        SWSS_LOG_NOTICE("Reused VLAN %s , remove the pending deletion.", 
+                                        vlan_alias.c_str());
                         it_v = consumer.m_toSync.erase(it_v);
                         break;
                     }
