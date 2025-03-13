@@ -142,7 +142,19 @@ bool StpOrch::addVlanToStpInstance(string vlan_alias, sai_uint16_t stp_instance)
 
     vlan.m_stp_id = stp_instance;
     gPortsOrch->setPort(vlan_alias, vlan);
-    m_vlanAliasToStpInstanceMap[vlan_alias] = stp_instance;
+
+    // Update the new map structure
+    auto it = m_vlanAliasToStpInstanceMap.find(stp_instance);
+    if (it == m_vlanAliasToStpInstanceMap.end())
+    {
+        StpInstEntry entry = {stp_oid, {vlan_alias}};
+        m_vlanAliasToStpInstanceMap[stp_instance] = entry;
+    }
+    else
+    {
+        it->second.stp_inst_vlan_list.insert(vlan_alias);
+    }
+
     SWSS_LOG_INFO("Add VLAN %s to STP instance:%hu m_stp_id:%d", vlan_alias.c_str(), stp_instance, vlan.m_stp_id);
     return true;
 }
@@ -165,16 +177,26 @@ bool StpOrch::removeVlanFromStpInstance(string vlan_alias, sai_uint16_t stp_inst
     sai_status_t status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to add VLAN %s to STP instance:%d status %u", vlan_alias.c_str(), vlan.m_stp_id, status);
+        SWSS_LOG_ERROR("Failed to remove VLAN %s from STP instance:%d status %u", vlan_alias.c_str(), vlan.m_stp_id, status);
         return false;
     }
 
     SWSS_LOG_INFO("Remove %s from instance:%d add instance:%" PRIx64 "", vlan_alias.c_str(), vlan.m_stp_id, m_defaultStpId);
 
-    removeStpInstance(vlan.m_stp_id);
+    // Update the new map structure
+    auto it = m_vlanAliasToStpInstanceMap.find(stp_instance);
+    if (it != m_vlanAliasToStpInstanceMap.end())
+    {
+        it->second.stp_inst_vlan_list.erase(vlan_alias);
+        if (it->second.stp_inst_vlan_list.empty())
+        {
+            removeStpInstance(stp_instance);
+            m_vlanAliasToStpInstanceMap.erase(it);
+        }
+    }
+
     vlan.m_stp_id = -1;
     gPortsOrch->setPort(vlan_alias, vlan);
-    m_vlanAliasToStpInstanceMap.erase(vlan_alias);
     return true;
 }
 
@@ -509,16 +531,13 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
             return;
         }
 
-
-
         if (op == SET_COMMAND)
         {
             string state;
 
-
-            string instance_aliase = key.substr(0, found);
-            string port_aliase = key.substr(found+1);
-            uint16_t instance = static_cast<uint16_t>(stoi(instance_aliase));
+            string instance_alias = key.substr(0, found);
+            string port_alias = key.substr(found+1);
+            uint16_t instance = static_cast<uint16_t>(stoi(instance_alias));
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -529,12 +548,10 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
             if (state.compare("true") == 0)
             {
                 // Get all VLAN aliases for the given STP instance
-                for (const auto& entry : m_vlanAliasToStpInstanceMap)
+                auto it_map = m_vlanAliasToStpInstanceMap.find(instance);
+                if (it_map != m_vlanAliasToStpInstanceMap.end())
                 {
-                    const auto& vlan_alias = entry.first;
-                    const auto& vlan_instance = entry.second;
-
-                    if (vlan_instance == instance)
+                    for (const auto& vlan_alias : it_map->second.stp_inst_vlan_list)
                     {
                         stpVlanFdbFlush(vlan_alias);
                     }

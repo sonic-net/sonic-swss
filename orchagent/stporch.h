@@ -17,6 +17,11 @@ typedef enum _stp_state
 	STP_STATE_INVALID               = 5
 }stp_state;
 
+typedef struct StpInstEntry
+{
+    sai_object_id_t stp_inst_oid;
+    std::set<uint16_t> stp_inst_vlan_list;
+} StpInstEntry;
 
 class StpOrch : public Orch
 {
@@ -31,7 +36,7 @@ private:
     unique_ptr<Table> m_stpTable;
     std::map<sai_uint16_t, sai_object_id_t> m_stpInstToOid;//Mapping from STP instance id to corresponding object id
     sai_object_id_t m_defaultStpId;
-    std::map<std::string, sai_uint16_t> m_vlanAliasToStpInstanceMap;
+    std::map<sai_uint16_t, StpInstEntry> m_vlanAliasToStpInstanceMap;
     
     void doStpTask(Consumer &consumer);
     void doStpPortStateTask(Consumer &consumer);
