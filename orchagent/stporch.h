@@ -23,6 +23,7 @@ typedef struct StpInstEntry
     std::set<std::string> stp_inst_vlan_list;
 } StpInstEntry;
 
+
 class StpOrch : public Orch
 {
 public:
