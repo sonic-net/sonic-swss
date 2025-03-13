@@ -224,12 +224,6 @@ namespace stporch_test
         static_cast<Orch *>(gStpOrch)->doTask();
 
         entries.clear();
-        entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
-        consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gStpOrch)->doTask();
-
-        entries.clear();
         entries.push_back({"Ethernet0:1", "DEL", { {} }});
         EXPECT_CALL(mock_sai_stp_,
             remove_stp_port(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
@@ -245,51 +239,14 @@ namespace stporch_test
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
 
+        entries.clear();
+        entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
+        consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gStpOrch)->doTask();
+
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
-    }//;
-    // TEST_F(StpOrchTest, TestMstInstPortFlushTask) {
-    //     std::cout << "Starting TestMstInstPortFlushTask" << std::endl;
-
-    //     if (!gStpOrch) {
-    //         FAIL() << "gStpOrch is null";
-    //     }
-    //     if (!mock_sai_stp) {
-    //         FAIL() << "mock_sai_stp is null";
-    //     }
-
-    //     _hook_sai_stp_api();
-    //     _hook_sai_vlan_api();
-    //     _hook_sai_fdb_api();
-
-    //     sai_uint16_t stp_instance = 1;
-
-    //     std::cout << "Adding VLANs to STP instance 1" << std::endl;
-    //     gStpOrch->addVlanToStpInstance(VLAN_1000, stp_instance);
-    //     gStpOrch->addVlanToStpInstance(VLAN_2000, stp_instance);
-
-    //     std::cout << "Setting expectation for FDB flush calls" << std::endl;
-    //     EXPECT_CALL(*mock_sai_stp, flush_fdb_entries(_, _, _))
-    //         .Times(2) // Expect two calls, one for each VLAN
-    //         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-
-    //     std::cout << "Simulating MST instance port flush command for STP instance 1" << std::endl;
-    //     std::deque<KeyOpFieldsValuesTuple> entries;
-    //     entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
-
-    //     auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
-    //     if (!consumer) {
-    //         FAIL() << "Failed to cast to Consumer";
-    //     }
-    //     consumer->addToSync(entries);
-
-    //     std::cout << "Processing the command" << std::endl;
-    //     static_cast<Orch*>(gStpOrch)->doTask();
-
-    //     std::cout << "Unhooking APIs" << std::endl;
-    //     _unhook_sai_stp_api();
-    //     _unhook_sai_vlan_api();
-    //     _unhook_sai_fdb_api();
-    // }
+    }
 }

@@ -58,8 +58,3 @@ private:
     void doTask(Consumer& consumer);
 };
 #endif /* SWSS_STPORCH_H */
-
-
-
-
-
