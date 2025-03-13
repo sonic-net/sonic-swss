@@ -20,7 +20,7 @@ typedef enum _stp_state
 typedef struct StpInstEntry
 {
     sai_object_id_t stp_inst_oid;
-    std::set<uint16_t> stp_inst_vlan_list;
+    std::set<std::string> stp_inst_vlan_list;
 } StpInstEntry;
 
 class StpOrch : public Orch
