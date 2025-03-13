@@ -4,6 +4,7 @@ from swsscommon import swsscommon
 #SOFT_BFD_STATE_TABLE = swsscommon.STATE_BFD_SOFTWARE_SESSION_TABLE_NAME
 SOFT_BFD_STATE_TABLE = "BFD_SOFTWARE_SESSION_TABLE"
 
+DVS_ENV = ["BFDOFFLOAD=false"]
 
 class TestSoftBfd(object):
     def setup_db(self, dvs):
@@ -11,8 +12,6 @@ class TestSoftBfd(object):
         self.pdb = dvs.get_app_db()
         self.sdb = dvs.get_state_db()
         self.cdb = dvs.get_config_db()
-
-        self.cdb.db_connection.hset('DEVICE_METADATA|localhost', "switch_type", "dpu")
 
         #Restart swss to pick up new switch type
         dvs.stop_swss()
