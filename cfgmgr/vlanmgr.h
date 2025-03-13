@@ -37,6 +37,7 @@ private:
 
     bool addHostVlan(int vlan_id);
     bool removeHostVlan(int vlan_id);
+    void addVlanArpReply(int vlan_id);
     bool setHostVlanAdminState(int vlan_id, const std::string &admin_status);
     bool setHostVlanMtu(int vlan_id, uint32_t mtu);
     bool setHostVlanMac(int vlan_id, const std::string &mac);
