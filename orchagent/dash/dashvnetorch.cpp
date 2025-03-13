@@ -264,6 +264,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                     it_prev++;
                 }
                 writeResultToDB(dash_vnet_result_table_, key, result);
+                SWSS_LOG_ERROR("Wrote result %u for key %s", result, key.c_str());
             }
             else if (op == DEL_COMMAND)
             {
@@ -475,7 +476,7 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
 
     gCrmOrch->incCrmResUsedCounter(ctxt.dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
 
-    SWSS_LOG_INFO("Outbound CA to PA  map entry for %s added", key.c_str());
+    SWSS_LOG_ERROR("Outbound CA to PA  map entry for %s added", key.c_str());
 
     return true;
 }
@@ -514,7 +515,7 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
 
     gCrmOrch->incCrmResUsedCounter(ctxt.metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
 
-    SWSS_LOG_INFO("PA validation entry for %s added", key.c_str());
+    SWSS_LOG_ERROR("PA validation entry for %s added", key.c_str());
 
     return true;
 }
@@ -533,7 +534,7 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
     string vnet_name = ctxt.vnet_name;
     VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.dip, ctxt.metadata };
     vnet_map_table_[key] = entry;
-    SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
+    SWSS_LOG_ERROR("Vnet map added for %s", key.c_str());
 
     return true;
 }

@@ -821,6 +821,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
                 it++;
             }
             writeResultToDB(dash_route_group_result_table_, route_group, result, version);
+            SWSS_LOG_ERROR("Wrote result %u version %s for key %s", result, version.c_str(), route_group.c_str());
         }
         else if (op == DEL_COMMAND)
         {

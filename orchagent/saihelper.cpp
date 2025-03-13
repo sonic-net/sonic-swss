@@ -1157,7 +1157,7 @@ void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& ke
     }
 
     table->set(key, fvVector);
-    SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
+    SWSS_LOG_ERROR("Wrote result to DB for key %s", key.c_str());
 }
 
 void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
@@ -1171,5 +1171,5 @@ void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string&
     }
 
     table->del(key);
-    SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
+    SWSS_LOG_ERROR("Removed result from DB for key %s", key.c_str());
 }
