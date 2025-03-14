@@ -375,7 +375,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     return false;
 }
 
-bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -394,7 +394,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
         SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
                         pa_refcount_table_[pa_ref_key],
                         underlay_ip_str.c_str());
-        return false;
+        return;
     }
 
     uint32_t attr_count = 1;
@@ -413,13 +413,13 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     pa_refcount_table_[pa_ref_key] = 1;
     SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
                     underlay_ip_str.c_str());
-    return false;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
+    bool remove_from_consumer = true;
     bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
     if (!exists)
     {
@@ -430,13 +430,18 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
             SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
             return false;
         }
-        return addOutboundCaToPa(key, ctxt) || addPaValidation(key, ctxt);
+
+        remove_from_consumer = addOutboundCaToPa(key, ctxt);
+        if (!remove_from_consumer)
+        {
+            addPaValidation(key, ctxt);
+        }
     }
     /*
      * If the VNET map is already added, don't add it to the bulker and
      * return true so it's removed from the consumer
      */
-    return true;
+    return remove_from_consumer;
 }
 
 bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt)
@@ -523,14 +528,14 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
     }
 
     string vnet_name = ctxt.vnet_name;
-    VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.dip, ctxt.metadata };
+    VnetMapEntry entry = { gVnetNameToId[vnet_name], ctxt.dip, ctxt.metadata };
     vnet_map_table_[key] = entry;
     SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
 
     return remove_from_consumer;
 }
 
-bool DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -542,10 +547,9 @@ bool DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& c
 
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.remove_entry(&object_statuses.back(), &outbound_ca_to_pa_entry);
-    return false;
 }
 
-bool DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -584,8 +588,6 @@ bool DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
             pa_refcount_table_.erase(pa_ref_key);
         }
     }
-
-    return false;
 }
 
 bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
