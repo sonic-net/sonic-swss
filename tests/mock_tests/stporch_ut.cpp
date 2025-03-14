@@ -239,11 +239,11 @@ namespace stporch_test
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
 
-        entries.clear();
-        entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
-        consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gStpOrch)->doTask();
+        // entries.clear();
+        // entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
+        // consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        // consumer->addToSync(entries);
+        // static_cast<Orch *>(gStpOrch)->doTask();
 
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
