@@ -5190,6 +5190,24 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     continue;
                 }
             }
+            else
+            {
+                /* loop to find the existing vlan and remove DEL_COMMAND */
+                auto it_v = consumer.m_toSync.begin();
+                while (it_v != consumer.m_toSync.end())
+                {
+                    auto &t_v = it_v->second;
+                    string key_v = kfvKey(t_v);
+                    if (key_v == key && kfvOp(t_v) == DEL_COMMAND)
+                    {
+                        SWSS_LOG_NOTICE("Reused VLAN %s , remove the pending deletion.", 
+                                        vlan_alias.c_str());
+                        it_v = consumer.m_toSync.erase(it_v);
+                        break;
+                    }
+                    it_v++;
+                }
+            }
 
             // Process attributes
             Port vl;
