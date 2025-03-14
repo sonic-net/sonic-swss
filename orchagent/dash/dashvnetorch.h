@@ -90,6 +90,7 @@ private:
 
     // The following add/remove methods will return true if the provided key should be removed from the
     // consumer (i.e. task is done and no retries are required) and false otherwise.
+    // Methods which only have one possible outcome will have return type void.
     bool addVnet(const std::string& key, DashVnetBulkContext& ctxt);
     bool addVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
     bool removeVnet(const std::string& key, DashVnetBulkContext& ctxt);
