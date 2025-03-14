@@ -646,6 +646,9 @@ class TestVlan(object):
         time.sleep(1)
 
     def test_VlanReuse(self, dvs):
+        """
+        Verified that the non-empty VLAN can be created and the pending DEL can be removed from the queue.
+        """
         vlan = "2"
         interface = "Ethernet0"
         
