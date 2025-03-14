@@ -75,7 +75,7 @@ namespace stporch_test
                 "STP_VLAN_INSTANCE_TABLE",
                 "STP_PORT_STATE_TABLE",
                 "STP_FASTAGEING_FLUSH_TABLE",
-                "STP_INST_PORT_FLUSH_TABLE"};
+                };//"STP_INST_PORT_FLUSH_TABLE"
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
         }
         void PreTearDown() override

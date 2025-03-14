@@ -515,57 +515,57 @@ void StpOrch::doStpFastageTask(Consumer &consumer)
     }
 }
 
-void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
+// void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
+// {
+//     SWSS_LOG_ENTER();
 
-    for (auto it = consumer.m_toSync.begin(); it != consumer.m_toSync.end(); )
-    {
-        auto &t = it->second;
-        string op = kfvOp(t);
-        string key = kfvKey(t);
-        size_t found = key.find(':');
-        /* Return if the format of key is wrong */
-        if (found == string::npos)
-        {
-            return;
-        }
+//     for (auto it = consumer.m_toSync.begin(); it != consumer.m_toSync.end(); )
+//     {
+//         auto &t = it->second;
+//         string op = kfvOp(t);
+//         string key = kfvKey(t);
+//         size_t found = key.find(':');
+//         /* Return if the format of key is wrong */
+//         if (found == string::npos)
+//         {
+//             return;
+//         }
 
-        if (op == SET_COMMAND)
-        {
-            string state;
+//         if (op == SET_COMMAND)
+//         {
+//             string state;
 
-            string instance_alias = key.substr(0, found);
-            string port_alias = key.substr(found+1);
-            uint16_t instance = static_cast<uint16_t>(stoi(instance_alias));
+//             string instance_alias = key.substr(0, found);
+//             string port_alias = key.substr(found+1);
+//             uint16_t instance = static_cast<uint16_t>(stoi(instance_alias));
 
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "state")
-                    state = fvValue(i);
-            }
+//             for (auto i : kfvFieldsValues(t))
+//             {
+//                 if (fvField(i) == "state")
+//                     state = fvValue(i);
+//             }
 
-            if (state.compare("true") == 0)
-            {
-                // Get all VLAN aliases for the given STP instance
-                auto it_map = m_vlanAliasToStpInstanceMap.find(instance);
-                if (it_map != m_vlanAliasToStpInstanceMap.end())
-                {
-                    for (const auto& vlan_alias : it_map->second.stp_inst_vlan_list)
-                    {
-                        stpVlanFdbFlush(vlan_alias);
-                    }
-                }
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            // Handle delete command if necessary
-        }
+//             if (state.compare("true") == 0)
+//             {
+//                 // Get all VLAN aliases for the given STP instance
+//                 auto it_map = m_vlanAliasToStpInstanceMap.find(instance);
+//                 if (it_map != m_vlanAliasToStpInstanceMap.end())
+//                 {
+//                     for (const auto& vlan_alias : it_map->second.stp_inst_vlan_list)
+//                     {
+//                         stpVlanFdbFlush(vlan_alias);
+//                     }
+//                 }
+//             }
+//         }
+//         else if (op == DEL_COMMAND)
+//         {
+//             // Handle delete command if necessary
+//         }
 
-        it = consumer.m_toSync.erase(it);
-    }
-}
+//         it = consumer.m_toSync.erase(it);
+//     }
+// }
 
 
 void StpOrch::doTask(Consumer &consumer)
@@ -590,8 +590,8 @@ void StpOrch::doTask(Consumer &consumer)
     {
         doStpFastageTask(consumer);
     }
-    else if (table_name == "STP_INST_PORT_FLUSH_TABLE")
-    {
-        doMstInstPortFlushTask(consumer);
-    }
+    // else if (table_name == "STP_INST_PORT_FLUSH_TABLE")
+    // {
+    //     doMstInstPortFlushTask(consumer);
+    // }
 }
