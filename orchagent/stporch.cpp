@@ -190,11 +190,11 @@ bool StpOrch::removeVlanFromStpInstance(string vlan_alias, sai_uint16_t stp_inst
         it->second.stp_inst_vlan_list.erase(vlan_alias);
         if (it->second.stp_inst_vlan_list.empty())
         {
-            removeStpInstance(stp_instance);
+            //removeStpInstance(stp_instance);
             m_vlanAliasToStpInstanceMap.erase(it);
         }
     }
-
+    removeStpInstance(vlan.m_stp_id);
     vlan.m_stp_id = -1;
     gPortsOrch->setPort(vlan_alias, vlan);
     return true;
@@ -590,8 +590,8 @@ void StpOrch::doTask(Consumer &consumer)
     {
         doStpFastageTask(consumer);
     }
-    // else if (table_name == "STP_INST_PORT_FLUSH_TABLE")
-    // {
-    //     doMstInstPortFlushTask(consumer);
-    // }
+    else if (table_name == "STP_INST_PORT_FLUSH_TABLE")
+    {
+        doMstInstPortFlushTask(consumer);
+    }
 }

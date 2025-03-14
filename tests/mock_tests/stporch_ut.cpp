@@ -75,7 +75,7 @@ namespace stporch_test
                 "STP_VLAN_INSTANCE_TABLE",
                 "STP_PORT_STATE_TABLE",
                 "STP_FASTAGEING_FLUSH_TABLE",
-                };//"STP_INST_PORT_FLUSH_TABLE"
+                "STP_INST_PORT_FLUSH_TABLE"};
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
         }
         void PreTearDown() override
@@ -239,11 +239,11 @@ namespace stporch_test
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
 
-        // entries.clear();
-        // entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
-        // consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
-        // consumer->addToSync(entries);
-        // static_cast<Orch *>(gStpOrch)->doTask();
+        entries.clear();
+        entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
+        consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gStpOrch)->doTask();
 
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
