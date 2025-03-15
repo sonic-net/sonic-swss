@@ -52,6 +52,7 @@ jobs:
 
   pool: sonictest
 
+
   steps:
   - script: |
       ip a show dev eth0 || true
