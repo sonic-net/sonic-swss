@@ -66,7 +66,7 @@ typedef struct
 {
     uint32_t start_index;
     uint32_t end_index;
-} HashIndexRange;
+} BankIndexRange;
 
 typedef struct FgNhgEntry
 {
@@ -77,7 +77,7 @@ typedef struct FgNhgEntry
     NextHops next_hops;                               // The IP to Bank mapping configured by user
     Links links;                                      // Link to IP map for oper changes
     std::vector<IpPrefix> prefixes;                   // Prefix which desires FG behavior
-    std::vector<HashIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
+    std::vector<BankIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
     FGMatchMode match_mode;                           // Stores a match_mode from FGMatchModes
 } FgNhgEntry;
 
@@ -145,7 +145,7 @@ private:
                     std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const IpPrefix &ipPrefix,
-                    HashIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
+                    BankIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
                     uint32_t bank, BankMemberChanges &bank_member_change,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
 

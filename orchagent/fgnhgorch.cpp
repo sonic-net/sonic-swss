@@ -188,30 +188,30 @@ void FgNhgOrch::calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry)
 
     for (uint32_t i = 0; i < memb_per_bank.size(); i++)
     {
-        HashIndexRange hIdxRange;
-        hIdxRange.start_index = prev_idx;
-        hIdxRange.end_index = hIdxRange.start_index + (buckets_per_nexthop * memb_per_bank[i]) + split_extra_buckets_among_bank - 1;
+        BankIndexRange bir;
+        bir.start_index = prev_idx;
+        bir.end_index = bir.start_index + (buckets_per_nexthop * memb_per_bank[i]) + split_extra_buckets_among_bank - 1;
         if (extra_buckets > 0)
         {
-            hIdxRange.end_index = hIdxRange.end_index + 1;
+            bir.end_index = bir.end_index + 1;
             extra_buckets--;
         }
         if (i == fgNhgEntry->hash_bucket_indices.size())
         {
-            fgNhgEntry->hash_bucket_indices.push_back(hIdxRange);
+            fgNhgEntry->hash_bucket_indices.push_back(bir);
         }
         else
         {
-            fgNhgEntry->hash_bucket_indices[i] = hIdxRange;
+            fgNhgEntry->hash_bucket_indices[i] = bir;
         }
-        prev_idx = hIdxRange.end_index + 1;
+        prev_idx = bir.end_index + 1;
         SWSS_LOG_INFO("Calculate_bank_hash_bucket_start_indices: bank %d, si %d, ei %d",
                        i, fgNhgEntry->hash_bucket_indices[i].start_index, fgNhgEntry->hash_bucket_indices[i].end_index);
     }
 }
 
 
-void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t bucket_index, NextHopKey nextHop)
+void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
 
@@ -228,12 +228,12 @@ void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t bucket_i
     }
     auto &stateTblBucketMap = m_stateTblPrefixMap[key];
 
-    // search for the bucket_index to retrieve warm restart state table index
-    auto tbl_idx_search = stateTblBucketMap.find(bucket_index);
+    // search for the index to retrieve warm restart state table index
+    auto tbl_idx_search = stateTblBucketMap.find(index);
     if (tbl_idx_search != stateTblBucketMap.end())
     {
         // replace this
-        FieldValueTuple fv(std::to_string(bucket_index), nextHop.to_string());
+        FieldValueTuple fv(std::to_string(index), nextHop.to_string());
         // make sure this tbl index is present
         if (fvs.size() <= tbl_idx_search->second)
         {
@@ -243,21 +243,21 @@ void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t bucket_i
         }
         fvs[tbl_idx_search->second] = fv;
         SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
-                        key.c_str(), nextHop.to_string().c_str(), bucket_index);
+                        key.c_str(), nextHop.to_string().c_str(), index);
     }
     else
     {
         // add this
-        fvs.push_back(FieldValueTuple(std::to_string(bucket_index), nextHop.to_string()));
+        fvs.push_back(FieldValueTuple(std::to_string(index), nextHop.to_string()));
         SWSS_LOG_INFO("Add new next hop entry %s with index %d for ip prefix %s",
-                nextHop.to_string().c_str(), bucket_index, key.c_str());
-        stateTblBucketMap[bucket_index] = fvs.size() - 1;
+                nextHop.to_string().c_str(), index, key.c_str());
+        stateTblBucketMap[index] = fvs.size() - 1;
     }
 
     m_stateWarmRestartRouteTable.set(key, fvs);
 }
 
-bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, HashBucketIdx bucket_idx, sai_object_id_t nh_oid,
+bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, HashBucketIdx index, sai_object_id_t nh_oid,
         const IpPrefix &ipPrefix, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
@@ -266,12 +266,12 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
     nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
     nhgm_attr.value.oid = nh_oid;
     sai_status_t status = sai_next_hop_group_api->set_next_hop_group_member_attribute(
-                                                              syncd_fg_route_entry->nhopgroup_members[bucket_idx],
+                                                              syncd_fg_route_entry->nhopgroup_members[index],
                                                               &nhgm_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set next hop oid %" PRIx64 " member %" PRIx64 ": %d",
-            syncd_fg_route_entry->nhopgroup_members[bucket_idx], nh_oid, status);
+            syncd_fg_route_entry->nhopgroup_members[index], nh_oid, status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_NEXT_HOP_GROUP, status);
         if (handle_status != task_success)
         {
@@ -279,7 +279,7 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
         }
     }
 
-    setStateDbRouteEntry(ipPrefix, bucket_idx, nextHop);
+    setStateDbRouteEntry(ipPrefix, index, nextHop);
     return true;
 }
 
@@ -611,14 +611,14 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
     SWSS_LOG_ENTER();
 
     uint32_t add_idx = 0, del_idx = 0;
-    FGNextHopGroupMap *fgnhg_bucket_map = &(syncd_fg_route_entry->syncd_fgnhg_map[syncd_bank]);
+    FGNextHopGroupMap *bank_fgnhg_map = &(syncd_fg_route_entry->syncd_fgnhg_map[syncd_bank]);
 
     // Replace hash bucket indices of deleted NHs with added NHs
     while(del_idx < bank_member_change.nhs_to_del.size() &&
             add_idx < bank_member_change.nhs_to_add.size())
     {
         // get the hash bucket indices for the deleted NHs
-        HashBuckets *hash_buckets = &(fgnhg_bucket_map->at(bank_member_change.nhs_to_del[del_idx]));
+        HashBuckets *hash_buckets = &(bank_fgnhg_map->at(bank_member_change.nhs_to_del[del_idx]));
         // fill the hash bucket indices with the added NHs
         for (uint32_t i = 0; i < hash_buckets->size(); i++)
         {
@@ -630,9 +630,9 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
             }
         }
 
-        (*fgnhg_bucket_map)[bank_member_change.nhs_to_add[add_idx]] =*hash_buckets;
+        (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]] =*hash_buckets;
 
-        fgnhg_bucket_map->erase(bank_member_change.nhs_to_del[del_idx]);
+        bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
         bank_member_change.active_nhs.push_back(bank_member_change.nhs_to_add[add_idx]);
         syncd_fg_route_entry->active_nexthops.erase(bank_member_change.nhs_to_del[del_idx]);
         syncd_fg_route_entry->active_nexthops.insert(bank_member_change.nhs_to_add[add_idx]);
@@ -651,11 +651,10 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
             fgNhgEntry->hash_bucket_indices[syncd_bank].start_index;
         uint32_t exp_bucket_size = num_buckets_in_bank / (uint32_t)bank_member_change.active_nhs.size();
         uint32_t num_nhs_with_one_more = (num_buckets_in_bank % (uint32_t)bank_member_change.active_nhs.size());
-        bool ends_with_balance = num_nhs_with_one_more ? false : true;
         auto active_nh_list = bank_member_change.active_nhs;
         size_t act_nh_exp_size = exp_bucket_size;
 
-        if (!ends_with_balance)
+        if (num_nhs_with_one_more > 0)
         {
             act_nh_exp_size++;
         }
@@ -663,14 +662,14 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
         // arrange the active nhs in increasing order of size of their hash bucket map
         // so that we add buckets to the nhs which have lower bucket size first
         auto compare_active_buckets = [&](NextHopKey e1, NextHopKey e2) {
-            return fgnhg_bucket_map->at(e1).size() < fgnhg_bucket_map->at(e2).size();
+            return bank_fgnhg_map->at(e1).size() < bank_fgnhg_map->at(e2).size();
         };
         std::sort(active_nh_list.begin(), active_nh_list.end(), compare_active_buckets);
 
         auto it = active_nh_list.begin();
         while(del_idx < bank_member_change.nhs_to_del.size())
         {
-            HashBuckets *hash_buckets = &(fgnhg_bucket_map->at(bank_member_change.nhs_to_del[del_idx]));
+            HashBuckets *hash_buckets = &(bank_fgnhg_map->at(bank_member_change.nhs_to_del[del_idx]));
             for (uint32_t bkt_idx = 0; bkt_idx < hash_buckets->size(); bkt_idx++)
             {
                 if (it == active_nh_list.end())
@@ -687,7 +686,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                 }
 
                 // remove the active nhs that have reached their expected bucket size
-                while (fgnhg_bucket_map->at(*it).size() == act_nh_exp_size)
+                while (bank_fgnhg_map->at(*it).size() == act_nh_exp_size)
                 {
                     SWSS_LOG_INFO("%s Already reached expected bucket size %zu, don't add more buckets, del(%d)",
                             (*it).to_string().c_str(), act_nh_exp_size, del_idx);
@@ -716,7 +715,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                 {
                     return false;
                 }
-                fgnhg_bucket_map->at(*it).push_back(hash_buckets->at(bkt_idx));
+                bank_fgnhg_map->at(*it).push_back(hash_buckets->at(bkt_idx));
 
                 /* Logic below ensure that # hash buckets assigned to a nh is equalized,
                  * we could have used simple round robin to reassign hash buckets to
@@ -725,23 +724,23 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                  * distribution non-ideal, thereby nhs can attract unequal traffic */
                 if (num_nhs_with_one_more == 0)
                 {
-                    if (fgnhg_bucket_map->at(*it).size() == exp_bucket_size)
+                    if (bank_fgnhg_map->at(*it).size() == exp_bucket_size)
                     {
                         SWSS_LOG_INFO("%s reached %d, don't add more buckets del(%d)",
                                 (*it).to_string().c_str(), exp_bucket_size, del_idx);
                         it = active_nh_list.erase(it);
                         continue;
                     }
-                    else if (fgnhg_bucket_map->at((*it)).size() > exp_bucket_size)
+                    else if (bank_fgnhg_map->at((*it)).size() > exp_bucket_size)
                     {
                         SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d, del(%d)",
-                                (*it).to_string().c_str(), fgnhg_bucket_map->at((*it)).size(),
+                                (*it).to_string().c_str(), bank_fgnhg_map->at((*it)).size(),
                                 exp_bucket_size, del_idx);
                     }
                 }
                 else
                 {
-                    if (fgnhg_bucket_map->at((*it)).size() == exp_bucket_size +1)
+                    if (bank_fgnhg_map->at((*it)).size() == exp_bucket_size +1)
                     {
                         SWSS_LOG_INFO("%s reached %d, don't add more buckets num_nhs_with_one_more %d, del(%d)",
                                 (*it).to_string().c_str(),
@@ -750,17 +749,17 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                         num_nhs_with_one_more--;
                         continue;
                     }
-                    else if (fgnhg_bucket_map->at((*it)).size() > exp_bucket_size +1)
+                    else if (bank_fgnhg_map->at((*it)).size() > exp_bucket_size +1)
                     {
                         SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d, del(%d)",
-                                (*it).to_string().c_str(), fgnhg_bucket_map->at((*it)).size(),
+                                (*it).to_string().c_str(), bank_fgnhg_map->at((*it)).size(),
                                 exp_bucket_size + 1, del_idx);
                     }
                 }
                 it++;
             }
 
-            fgnhg_bucket_map->erase(bank_member_change.nhs_to_del[del_idx]);
+            bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
             syncd_fg_route_entry->active_nexthops.erase(bank_member_change.nhs_to_del[del_idx]);
             del_idx++;
         }
@@ -780,7 +779,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
 
         auto active_nh_list = bank_member_change.active_nhs;
         auto compare_active_buckets = [&](NextHopKey e1, NextHopKey e2) {
-            return fgnhg_bucket_map->at(e1).size() > fgnhg_bucket_map->at(e2).size();
+            return bank_fgnhg_map->at(e1).size() > bank_fgnhg_map->at(e2).size();
         };
         // arrange the active nhs in decreasing order of size of their hash bucket map
         // so that we replace buckets of the active nhs which have higher bucket size first
@@ -788,7 +787,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
 
         while(add_idx < bank_member_change.nhs_to_add.size())
         {
-            (*fgnhg_bucket_map)[bank_member_change.nhs_to_add[add_idx]] =
+            (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]] =
                 HashBuckets();
             auto it = active_nh_list.begin();
             if (num_nhs_with_eq_to_exp > 0)
@@ -802,14 +801,14 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
             }
 
             // add buckets to this nh until HashBuckets size has reached the expected size
-            while(fgnhg_bucket_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
+            while(bank_fgnhg_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
             {
                 if (it == active_nh_list.end())
                 {
                     it = active_nh_list.begin();
                 }
                 // get the active nh's hashbuckets
-                HashBuckets *map_entry = &(fgnhg_bucket_map->at(*it));
+                HashBuckets *map_entry = &(bank_fgnhg_map->at(*it));
                 if ((*map_entry).size() <= 1)
                 {
                     /* Case where the number of hash buckets for the nh is <= 1 */
@@ -835,7 +834,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                         return false;
                     }
 
-                    (*fgnhg_bucket_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
+                    (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
                     (*map_entry).erase((*map_entry).end() - 1);
                 }
                 /* Logic below ensure that # hash buckets assigned to a nh is equalized,
@@ -1191,7 +1190,7 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
 }
 
 bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const IpPrefix &ipPrefix,
-        HashIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
+        BankIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
         uint32_t bank, BankMemberChanges &bank_member_change,
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set)
 {
@@ -1407,7 +1406,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
 
     if (!fgNhgEntry)
     {
-        SWSS_LOG_INFO("fgNhgOrch got a route addition %s:%s with %s",
+        SWSS_LOG_ERROR("fgNhgOrch got a route addition %s:%s with %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str(),
                 (prefix_entry == m_fgNhgPrefixes.end()) ? " no prefix and FG ECMP nexthop entries" :
                 "no FG ECMP entry for the prefix");
