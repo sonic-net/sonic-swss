@@ -48,13 +48,13 @@ MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
 extern size_t gMaxBulkSize;
+extern bool gSyncMode;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
 #define DEFAULT_BATCH_SIZE  128
 extern int gBatchSize;
 
 bool gRingMode = false;
-bool gSyncMode = false;
-sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
 extern bool gIsNatSupported;
@@ -570,19 +570,6 @@ int main(int argc, char **argv)
         memcpy(attr.value.mac, gMacAddress.getMac(), 6);
         attrs.push_back(attr);
     }
-
-    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
-    // since it is not using ASIC_DB, we can execute it before create_switch
-    // when g_syncMode is set to true here, create_switch will wait the response from syncd
-    if (gSyncMode)
-    {
-        SWSS_LOG_WARN("sync mode is depreacated, use -z param");
-
-        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
-    }
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
-    attr.value.s32 = gRedisCommunicationMode;
 
     sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
