@@ -601,6 +601,44 @@ class TestVlan(object):
         self.dvs_vlan.get_and_verify_vlan_member_ids(0)
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
+    
+    def test_VlanReuse(self, dvs):
+        """
+        Verified that the non-empty VLAN can be created and the pending DEL can be removed from the queue.
+        """
+        vlan = "2"
+        interface = "Ethernet0"
+        
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+        self.dvs_vlan.verify_vlan(vlan_oid, vlan)
+
+        self.dvs_vlan.create_vlan_member(vlan, interface)
+        self.dvs_vlan.verify_vlan_member(vlan_oid, interface)
+
+        # Verify the physical port configuration
+        member_port = self.dvs_vlan.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                                      dvs.asic_db.port_name_map[interface])
+        assert member_port.get("SAI_PORT_ATTR_PORT_VLAN_ID") == vlan
+
+        # Verify the host interface configuration
+        member_iface = self.dvs_vlan.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF",
+                                              dvs.asic_db.hostif_name_map[interface])
+        assert member_iface.get("SAI_HOSTIF_ATTR_VLAN_TAG") == "SAI_HOSTIF_VLAN_TAG_KEEP"
+
+        self.dvs_vlan.remove_vlan(vlan)
+        time.sleep(2)
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+        self.dvs_vlan.verify_vlan(vlan_oid, vlan) 
+        self.dvs_vlan.remove_vlan_member(vlan, interface)
+        time.sleep(2)
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+        time.sleep(4)
+        _, oa_pid = dvs.runcmd("pgrep orchagent")
+        assert oa_pid != "", "Orchagent process was not found"
 
     def test_MacMatchesLinkLocalIPv6(self, dvs):
         """
@@ -644,44 +682,6 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan_member(vlan_interface, vlan_member)
         self.dvs_vlan.remove_vlan(vlan_interface)
         time.sleep(1)
-
-    def test_VlanReuse(self, dvs):
-        """
-        Verified that the non-empty VLAN can be created and the pending DEL can be removed from the queue.
-        """
-        vlan = "2"
-        interface = "Ethernet0"
-        
-        self.dvs_vlan.create_vlan(vlan)
-        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
-        self.dvs_vlan.verify_vlan(vlan_oid, vlan)
-
-        self.dvs_vlan.create_vlan_member(vlan, interface)
-        self.dvs_vlan.verify_vlan_member(vlan_oid, interface)
-
-        # Verify the physical port configuration
-        member_port = self.dvs_vlan.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
-                                                      dvs.asic_db.port_name_map[interface])
-        assert member_port.get("SAI_PORT_ATTR_PORT_VLAN_ID") == vlan
-
-        # Verify the host interface configuration
-        member_iface = self.dvs_vlan.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF",
-                                              dvs.asic_db.hostif_name_map[interface])
-        assert member_iface.get("SAI_HOSTIF_ATTR_VLAN_TAG") == "SAI_HOSTIF_VLAN_TAG_KEEP"
-
-        self.dvs_vlan.remove_vlan(vlan)
-        time.sleep(2)
-        self.dvs_vlan.create_vlan(vlan)
-        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
-        self.dvs_vlan.verify_vlan(vlan_oid, vlan) 
-        self.dvs_vlan.remove_vlan_member(vlan, interface)
-        time.sleep(2)
-        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
-        self.dvs_vlan.remove_vlan(vlan)
-        self.dvs_vlan.get_and_verify_vlan_ids(0)
-        time.sleep(4)
-        _, oa_pid = dvs.runcmd("pgrep orchagent")
-        assert oa_pid != "", "Orchagent process was not found"
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
