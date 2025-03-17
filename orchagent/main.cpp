@@ -526,6 +526,7 @@ int main(int argc, char **argv)
     DBConnector appl_db("APPL_DB", 0);
     DBConnector config_db("CONFIG_DB", 0);
     DBConnector state_db("STATE_DB", 0);
+    DBConnector dpu_appl_db("DPU_APPL_DB", 0);
 
     // Instantiate ZMQ server
     shared_ptr<ZmqServer> zmq_server = nullptr;
