@@ -19,6 +19,7 @@ public:
     bool fecIsOverrideRequired(const std::string &str) const;
 
     std::string getAutonegStr(const PortConfig &port) const;
+    std::string getUnreliableLosStr(const PortConfig &port) const;
     std::string getPortInterfaceTypeStr(const PortConfig &port) const;
     std::string getAdvInterfaceTypesStr(const PortConfig &port) const;
     std::string getFecStr(const PortConfig &port) const;
@@ -47,6 +48,7 @@ private:
     bool parsePortLanes(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortSpeed(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAutoneg(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortUnreliableLos(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdvSpeeds(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortInterfaceType(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdvInterfaceTypes(PortConfig &port, const std::string &field, const std::string &value) const;
