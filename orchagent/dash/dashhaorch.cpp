@@ -17,6 +17,13 @@ extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 
+DashHaOrch::DashHaOrch(DbConnector *db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer) :
+    ZmqOrch(db, tables, zmqServer),
+    m_dash_orch(dash_orch)
+{
+    SWSS_LOG_ENTER();
+}
+
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
 {
     SWSS_LOG_ENTER();
@@ -186,8 +193,8 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     ha_scope_attrs[0].value.oid = ha_set_oid
 
     // TODO: add ha_role to attribute value enum
-    ha_scope_attrs[1].id = SAI_HA_SCOPE_ATTR_HA_ROLE;
-    ha_scope_attrs[1].value.ha_role = entry.direction();
+    ha_scope_attrs[1].id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
+    ha_scope_attrs[1].value.ha_role = entry.ha_role();
 
     status = sai_dash_ha_api->create_ha_scope(&sai_ha_scope_oid,
                                          gSwitchId,
@@ -206,28 +213,70 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     m_ha_scope_entries[key] = HaScopeEntry {sai_ha_scope_oid, entry};
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
 
-    // TODO: check HLD to confirm if need to set scope_id for ENI when scope == SCOPE_DPU. If yes, how?
-    if (m_ha_set_entries[key].second.scope == dash::ha_set::Scope::SCOPE_ENI)
+    // set HA Scope ID to ENI
+    if (ha_set_it->second.scope == dash::ha_set::Scope::SCOPE_ENI)
     {
-        sai_attribute_t eni_attr;
-        eni_attr.id = SAI_ENI_ATTR_HA_SCOPE_ID;
-        eni_attr.value.oid = sai_ha_scope_oid;
-
-        status = sai_dash_eni_api->set_eni_attribute(ha_set_oid, &eni_attr);
-
-        if (status != SAI_STATUS_SUCCESS)
+        auto eni_entry = m_dash_orch->getEni(key);
+        if (eni_entry == nullptr)
         {
-            SWSS_LOG_ERROR("Failed to set HA Scope ID for ENI %s", key.c_str());
-            task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
-            if (handle_status != task_success)
+            SWSS_LOG_ERROR("ENI entry does not exist for %s", entry.eni_id().c_str());
+            return false;
+        }
+
+        return setEniHaScopeId(eni_entry->eni_id, sai_ha_scope_oid);
+
+    } else if (ha_set_it->second.scope == dash::ha_set::Scope::SCOPE_DPU)
+    {
+        auto eni_table = m_dash_orch->getEniTable();
+        auto it = eni_table->begin();
+        bool success = true;
+        while (it != eni_table->end())
+        {
+            if (!setEniHaScopeId(it->second.eni_id, sai_ha_scope_oid))
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                SWSS_LOG_ERROR("Failed to set HA Scope ID for ENI %s", it->first.c_str());
+                success = false;
             }
+            it++;
+        }
+
+        if (!success)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), ha_set_it->second.scope.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t eni_attr;
+    eni_attr.id = SAI_ENI_ATTR_HA_SCOPE_ID;
+    eni_attr.value.oid = ha_scope_id;
+    sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_id, &eni_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope ID for ENI %s", key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
 
     return true;
 }
+
+
 
 bool DashHaOrch::removeHaScopeEntry(const std::string &key)
 {

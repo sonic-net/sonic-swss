@@ -33,6 +33,8 @@ private:
     HaSetTable m_ha_set_entries;
     HaScopeTable m_ha_scope_entries;
 
+    DashOrch *m_dash_orch;
+
     void doTask(ConsumerBase &consumer);
     void doTaskEniTable(ConsumerBase &consumer);
     void doTaskHaSetTable(ConsumerBase &consumer);
@@ -42,4 +44,6 @@ private:
     bool removeHaSetEntry(const std::string &key);
     bool addHaScopeEntry(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool removeHaScopeEntry(const std::string &key);
+    bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
+
 }
