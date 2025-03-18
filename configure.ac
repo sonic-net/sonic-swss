@@ -163,6 +163,7 @@ AC_CONFIG_FILES([
     tlm_teamd/Makefile
     mclagsyncd/Makefile
     swssconfig/Makefile
+    sswsyncd/Makefile
     cfgmgr/Makefile
     tests/Makefile
     orchagent/p4orch/tests/Makefile
