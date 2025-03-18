@@ -16,6 +16,8 @@ public:
 
     void execute()
     {
-        m_orch->doTask(*getNotificationConsumer());
+        swss::NotificationConsumer *nc = getNotificationConsumer();
+        while(nc->hasData())
+            m_orch->doTask(*nc);
     }
 };
