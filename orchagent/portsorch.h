@@ -369,6 +369,7 @@ private:
     bool m_cmisModuleAsicSyncSupported = false;
 
     void doTask() override;
+    void onWarmBootEnd() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doSendToIngressPortTask(Consumer &consumer);
@@ -415,6 +416,8 @@ private:
 
     void initPortCapAutoNeg(Port &port);
     void initPortCapLinkTraining(Port &port);
+
+    void postPortInit(Port &p);
 
     bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
@@ -589,5 +592,6 @@ private:
 
     // Port OA helper
     PortHelper m_portHlpr;
+    bool m_isWarmRestoreStage = false;
 };
 #endif /* SWSS_PORTSORCH_H */
