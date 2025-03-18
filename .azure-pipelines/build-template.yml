@@ -104,7 +104,8 @@ jobs:
         libzmq3-dev \
         swig4.0 \
         libdbus-1-dev \
-        libteam-dev
+        libteam-dev \
+        libyaml-cpp-dev
       sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
