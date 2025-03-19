@@ -1458,6 +1458,22 @@ bool PortsOrch::getPort(string alias, Port &p)
 
     if (m_portList.find(alias) == m_portList.end())
     {
+        // For local ports strip the asic names and check for interface name
+        size_t pos = alias.find('|');
+        if (pos != std::string::npos) {
+            pos = alias.find_last_of('|');
+            string intf_name = alias.substr(pos + 1);
+
+            if (m_portList.find(intf_name) != m_portList.end())
+            {
+                Port port = m_portList[intf_name];
+                if (gIntfsOrch->isLocalSystemPortIntf(port))
+                {
+                    p = port;
+                    return true;
+                }
+            }
+        }
         return false;
     }
     else

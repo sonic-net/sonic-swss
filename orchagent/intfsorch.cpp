@@ -1652,17 +1652,20 @@ bool IntfsOrch::isRemoteSystemPortIntf(string alias)
     return false;
 }
 
+bool IntfsOrch::isLocalSystemPortIntf(Port& port)
+{
+    if (port.m_type == Port::LAG)
+        return(port.m_system_lag_info.switch_id == gVoqMySwitchId);
+    else
+        return(port.m_system_port_info.type != SAI_SYSTEM_PORT_TYPE_REMOTE);
+}
+
 bool IntfsOrch::isLocalSystemPortIntf(string alias)
 {
     Port port;
     if(gPortsOrch->getPort(alias, port))
     {
-        if (port.m_type == Port::LAG)
-        {
-            return(port.m_system_lag_info.switch_id == gVoqMySwitchId);
-        }
-
-        return(port.m_system_port_info.type != SAI_SYSTEM_PORT_TYPE_REMOTE);
+        return isLocalSystemPortIntf(port);
     }
     //Given alias is system port alias of the local port/LAG
     return false;
