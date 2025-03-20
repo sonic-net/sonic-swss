@@ -2017,6 +2017,22 @@ class TestRouterInterface(object):
         (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Loopback0"])
         assert "UP" in result
 
+        # Cleanup
+        self.remove_ip_address("Loopback0", "10.1.0.1/32")
+        self.remove_l3_intf("Loopback0")
+
+        # Check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback0")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.1.0.1/32":
+                assert False
+
 
     def create_ipv6_link_local(self, interface):
         if interface.startswith("PortChannel"):
