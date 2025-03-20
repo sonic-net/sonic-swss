@@ -82,7 +82,8 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
     { MATCH_AETH_SYNDROME,     SAI_ACL_ENTRY_ATTR_FIELD_AETH_SYNDROME},
     { MATCH_TUNNEL_TERM,       SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_TERMINATED},
-    { MATCH_METADATA,          SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META}
+    { MATCH_METADATA,          SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META},
+    { MATCH_INNER_SRC_IP,      SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP}
 };
 
 static acl_range_type_lookup_t aclRangeTypeLookup =
@@ -102,6 +103,7 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
+    { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC},
 };
 
 static acl_rule_attr_lookup_t aclMirrorStageLookup =
@@ -195,7 +197,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_EGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_SRC_MAC
                 }
             }
         }
@@ -1017,7 +1020,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             matchData.data.u8 = to_uint<uint8_t>(attr_value);
             matchData.mask.u8 = 0xFF;
         }
-        else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+        else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
         {
             IpPrefix ip(attr_value);
 
@@ -1714,6 +1717,10 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         }
         else if (aclL3ActionLookup.find(action) != aclL3ActionLookup.cend())
         {
+            if (action == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
+            {
+                return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
+            }
             return make_shared<AclRulePacket>(acl, rule, table);
         }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
@@ -2062,6 +2069,53 @@ void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
+
+AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string rule, string table, bool createCounter) :
+         AclRule(aclOrch, rule, table, createCounter)
+ {
+ }
+ 
+ bool AclRuleInnerSrcMacRewrite::validateAddAction(string attr_name, string _attr_value)
+ {
+    SWSS_LOG_ENTER();
+ 
+    sai_acl_action_data_t actionData;
+
+    auto action_str = attr_name;
+
+    if (attr_name == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
+    {
+        SWSS_LOG_INFO("entry here");
+        memcpy(actionData.parameter.mac ,  MacAddress(_attr_value).getMac(), sizeof(sai_mac_t));
+        action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
+    }
+    else
+    {
+        return false;
+    }
+
+    return setAction(aclL3ActionLookup[action_str], actionData);
+ }
+
+ bool AclRuleInnerSrcMacRewrite::validate()
+ {
+    SWSS_LOG_ENTER();
+
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    {
+        return false;
+    }
+
+    return true;
+ }
+
+
+ void AclRuleInnerSrcMacRewrite::onUpdate(SubjectType type, void *cntx)
+ {
+    //do nothing
+    
+ }
+
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
         AclRule(aclOrch, rule, table),
@@ -3556,6 +3610,8 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI))
             .build()
     );
 
@@ -5406,7 +5462,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     bHasTCPFlag = true;
                 }
-                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
                 {
                     bHasIPV4 = true;
                 }

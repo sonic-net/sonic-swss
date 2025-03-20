@@ -1824,10 +1824,11 @@ namespace aclorch_test
         auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
         updatedRule2->setCounterEnabled(false);
         updatedRule2->disableMatch(SAI_ACL_ENTRY_ATTR_FIELD_DST_IP);
+        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_SRC_IP, "12.2.2.2/24"));
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
         ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), false));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.2.2.2&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_DST_IP), "disabled");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_DROP");
 
@@ -1954,5 +1955,237 @@ namespace aclorch_test
 
         // Restore sai_switch_api.
         sai_switch_api = old_sai_switch_api;
+    }
+
+    TEST_F(AclOrchTest, AclMockTableType_ActionValidation)
+    {
+        const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TYPE";
+        const string aclTableName = "INNER_SRC_MAC_REWRITE_TABLE";
+        const string aclRuleName = "INNER_SRC_MAC_REWRITE_RULE";
+        string acl_table_id = "acl_table_1";
+        string acl_rule_id = "acl_rule_1";
+
+        auto orch = createAclOrch();
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        SET_COMMAND,
+                        {
+                            {
+                                ACL_TABLE_TYPE_MATCHES,
+                                string(MATCH_INNER_SRC_IP) + comma + MATCH_TUNNEL_VNI
+                            },
+                            {
+                                ACL_TABLE_TYPE_BPOINT_TYPES,
+                                BIND_POINT_TYPE_PORTCHANNEL
+                            },
+                            {
+                                ACL_TABLE_TYPE_ACTIONS,
+                                ACTION_INNER_SRC_MAC_REWRITE_ACTION
+                            }
+                        }
+                    }
+                }
+            )
+        );
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName,
+                        SET_COMMAND,
+                        {
+                            { ACL_TABLE_DESCRIPTION, "Test table" },
+                            { ACL_TABLE_TYPE, aclTableTypeName},
+                            { ACL_TABLE_STAGE, STAGE_EGRESS },
+                            { ACL_TABLE_PORTS, "1,2" }
+                        }
+                    }
+                }
+            )
+        );
+
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        auto fvs = vector<FieldValueTuple>{
+            { "SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP", "true" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI", "true" },
+            { "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_SET_SRC_MAC" },
+        };
+
+        ASSERT_TRUE(validateAclTable(
+            orch->getAclTable(aclTableName)->getOid(),
+            *orch->getAclTable(aclTableName),
+            make_shared<SaiAttributeList>(SAI_OBJECT_TYPE_ACL_TABLE, fvs, false))
+        );
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_TUNNEL_VNI, "233" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+
+        // Packet action is not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_TUNNEL_VNI, "233" },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
+                        }
+                    }
+                }
+            )
+        );
+
+        // Inner src mac action is supported on this table
+        ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
+
+        class AclRuleTest : public AclRuleInnerSrcMacRewrite
+        {
+        public:
+            AclRuleTest(AclOrch* orch, string rule, string table):
+            AclRuleInnerSrcMacRewrite(orch, rule, table, true)
+            {}
+
+            void setCounterEnabled(bool enabled)
+            {
+                m_createCounter = enabled;
+            }
+
+            void disableMatch(sai_acl_entry_attr_t attr)
+            {
+                m_matches.erase(attr);
+            }
+        };
+
+        auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, aclRuleName, aclTableName);
+        ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2/24"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
+        ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
+
+        ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, aclTableName));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
+
+    }
+
+    TEST_F(AclOrchTest, AclisrcmacRuleUpdate)
+    {
+        string acl_table_id = "acl_table_1";
+        string acl_rule_id = "acl_rule_1";
+
+        auto orch = createAclOrch();
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "TEST" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_EGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+
+        orch->doAclTableTask(kvfAclTable);
+
+        // validate acl table ...
+
+        auto acl_table_oid = orch->getTableById(acl_table_id);
+        ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+
+        const auto &acl_tables = orch->getAclTables();
+        auto it_table = acl_tables.find(acl_table_oid);
+        ASSERT_NE(it_table, acl_tables.end());
+
+        class AclRuleTest : public AclRuleInnerSrcMacRewrite
+        {
+        public:
+            AclRuleTest(AclOrch* orch, string rule, string table):
+            AclRuleInnerSrcMacRewrite(orch, rule, table, true)
+            {}
+
+            void setCounterEnabled(bool enabled)
+            {
+                m_createCounter = enabled;
+            }
+
+            void disableMatch(sai_acl_entry_attr_t attr)
+            {
+                m_matches.erase(attr);
+            }
+        };
+
+        // First update
+        auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, acl_rule_id, acl_table_id);
+        ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2/24"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_SRC_IP, "12.12.12.12/24"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
+        ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
+
+        ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, acl_table_id));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.12.12.12&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
+
+        // Second update
+        auto updatedRule = make_shared<AclRuleTest>(*rule);
+        ASSERT_TRUE(updatedRule->validateAddPriority(RULE_PRIORITY, "900"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_INNER_SRC_IP, "2.3.2.2/24"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
+
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.13.12.12&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
+
+        // Third update
+        auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
+        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_INNER_SRC_IP, "3.3.3.3/24"));
+        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
+        ASSERT_TRUE(updatedRule2->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:35:AB:CD:EF"));
+        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_SRC_IP, "2.13.12.12/24"));
+
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.13.12.12&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "3.3.3.3&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.13.12.12&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:35:AB:CD:EF");
+
+        auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
+        updatedRule3->setCounterEnabled(true);
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule3));
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), true));
+
+        ASSERT_TRUE(orch->m_aclOrch->removeAclRule(rule->getTableId(), rule->getId()));
     }
 } // namespace nsAclOrchTest

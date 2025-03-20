@@ -26,6 +26,7 @@
 #define MATCH_OUT_PORT          "OUT_PORT"
 #define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
+#define MATCH_INNER_SRC_IP      "INNER_SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
 #define MATCH_SRC_IPV6          "SRC_IPV6"
 #define MATCH_DST_IPV6          "DST_IPV6"
@@ -73,6 +74,7 @@
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
+#define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
@@ -379,6 +381,16 @@ public:
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
 };
+
+class AclRuleInnerSrcMacRewrite: public AclRule
+ {
+ public:
+     AclRuleInnerSrcMacRewrite(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = true);
+ 
+     bool validateAddAction(string attr_name, string attr_value);
+     bool validate();
+     void onUpdate(SubjectType, void *) override;
+ };
 
 class AclRuleMirror: public AclRule
 {
