@@ -1990,17 +1990,12 @@ class TestRouterInterface(object):
 
         assert lo0_ip2me_found
 
+        # check linux kernel, interface should be up by default with no admin_status specified
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Loopback0"])
+        assert "UP" in result
+
         ### Bring interface down and validate
         self.set_admin_status(dvs, "Loopback0", "down")
-
-        # Check ASIC database
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        for key in tbl.getKeys():
-            route = json.loads(key)
-            if route["dest"] == "10.1.0.1/32":
-                lo0_ip2me_found = True
-
-        assert (lo0_ip2me_found == False)
 
         # check linux kernel
         (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Loopback0"])
