@@ -6079,8 +6079,13 @@ bool PortsOrch::initializePort(Port &port)
         initializePortBufferMaximumParameters(port);
     }
 
+    /*
+     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
+     */
+    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+
     /* Create host interface */
-    if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
+    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
         return false;
@@ -6176,21 +6181,10 @@ bool PortsOrch::initializePort(Port &port)
         setHostTxReady(port, hostTxReadyStr);
     }
 
-    /*
-     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
-     */
-    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
-    if (!setHostIntfsOperStatus(port, isUp))
-    {
-        SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
-                      operStatus.c_str(), port.m_alias.c_str());
-        return false;
-    }
-
     return true;
 }
 
-bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id)
+bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp)
 {
     SWSS_LOG_ENTER();
 
@@ -6224,6 +6218,10 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
         port.m_host_tx_queue_configured = true;
     }
 
+    attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+    attr.value.booldata = isUp;
+    attrs.push_back(attr);
+
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -6235,7 +6233,10 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
         }
     }
 
-    SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
+    SWSS_LOG_NOTICE("Create host interface for port %s with oper status %s", alias.c_str(), isUp ? "up" : "down");
+
+    event_params_t params = {{"ifname", alias},{"status", isUp ? "up" : "down"}};
+    event_publish(g_events_handle, "if-state", &params);
 
     return true;
 }
