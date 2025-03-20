@@ -198,8 +198,7 @@ void IntfMgr::addLoopbackIntf(const string &alias)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link add " << alias << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy && ";
-    cmd << IP_CMD << " link set " << alias << " up";
+    cmd << IP_CMD << " link add " << alias << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy";
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
@@ -842,6 +841,28 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 addLoopbackIntf(alias);
                 m_loopbackIntfList.insert(alias);
                 SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
+            }
+
+            if (adminStatus.empty())
+            {
+                adminStatus = "up";
+            }
+            else if (adminStatus != "up" && adminStatus != "down")
+            {
+                SWSS_LOG_ERROR("Got incorrect value for admin_status as %s for intf %s, defaulting as up", adminStatus.c_str(), alias.c_str());
+                adminStatus = "up";
+            }
+
+            try
+            {
+                string intf_admin = setHostSubIntfAdminStatus(alias, adminStatus, "up");
+                FieldValueTuple newAdminFvTuple("admin_status", intf_admin);
+                data.push_back(newAdminFvTuple);
+            }
+            catch (const std::runtime_error &e)
+            {
+                SWSS_LOG_NOTICE("Lo interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                return false;
             }
         }
         else
