@@ -17,6 +17,8 @@ class TestRouterInterface(object):
             tbl_name = "PORTCHANNEL"
         elif interface.startswith("Vlan"):
             tbl_name = "VLAN"
+        elif interface.startswith("Loopback"):
+            tbl_name = "LOOPBACK_INTERFACE"
         else:
             tbl_name = "PORT"
         tbl = swsscommon.Table(self.cdb, tbl_name)
@@ -1964,6 +1966,61 @@ class TestRouterInterface(object):
             route = json.loads(key)
             if route["dest"] == "10.0.0.4/32":
                 assert False
+
+    def test_LoopbackInterfaceAdminStatus(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # Create loopback interfaces
+        self.create_l3_intf("Loopback0", "")
+
+        # add ip address
+        self.add_ip_address("Loopback0", "10.1.0.1/32")
+
+        # Check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback0")
+        intf_entries = tbl.getKeys()
+        assert intf_entries[0] == "10.1.0.1/32"
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.1.0.1/32":
+                lo0_ip2me_found = True
+
+        assert lo0_ip2me_found
+
+        ### Bring interface down and validate
+        self.set_admin_status(dvs, "Loopback0", "down")
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.1.0.1/32":
+                lo0_ip2me_found = True
+
+        assert (lo0_ip2me_found == False)
+
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Loopback0"])
+        assert "DOWN" in result
+
+        ### Bring interface up and validate
+        self.set_admin_status(dvs, "Loopback0", "up")
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.1.0.1/32":
+                lo0_ip2me_found = True
+
+        assert lo0_ip2me_found
+
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Loopback0"])
+        assert "UP" in result
 
 
     def create_ipv6_link_local(self, interface):
