@@ -9,12 +9,12 @@
 
 #include <boost/algorithm/string.hpp>
 
-#include "portschema.h"
+#include "orchagent/port/portschema.h"
 #include "converter.h"
 #include "tokenize.h"
 #include "logger.h"
 
-#include "porthlpr.h"
+#include "orchagent/port/porthlpr.h"
 
 using namespace swss;
 

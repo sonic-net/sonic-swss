@@ -1,7 +1,7 @@
-#include "macsecmgr.h"
+#include "cfgmgr/macsecmgr.h"
 
 #include <exec.h>
-#include <shellcmd.h>
+#include "cfgmgr/shellcmd.h"
 #include <swss/stringutility.h>
 #include <swss/redisutility.h>
 #include <boost/algorithm/string/predicate.hpp>

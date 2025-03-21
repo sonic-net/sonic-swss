@@ -1,14 +1,14 @@
 #include "sai.h"
-#include "copporch.h"
-#include "portsorch.h"
-#include "flexcounterorch.h"
+#include "orchagent/copporch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/flexcounterorch.h"
 #include "tokenize.h"
 #include "logger.h"
 #include "sai_serialize.h"
 #include "schema.h"
-#include "directory.h"
-#include "flow_counter_handler.h"
-#include "timer.h"
+#include "orchagent/directory.h"
+#include "orchagent/flex_counter/flow_counter_handler.h"
+#include "orchagent/timer.h"
 
 #include <inttypes.h>
 #include <sstream>

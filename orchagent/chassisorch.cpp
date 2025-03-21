@@ -1,5 +1,5 @@
-#include "chassisorch.h"
-#include "routeorch.h"
+#include "orchagent/chassisorch.h"
+#include "orchagent/routeorch.h"
 
 ChassisOrch::ChassisOrch(
     DBConnector* cfgDb,

@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir)/lib
+INCLUDES = -I $(top_srcdir)
 
 CFLAGS_SAI = -I /usr/include/sai
 

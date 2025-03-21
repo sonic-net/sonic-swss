@@ -26,7 +26,7 @@
 #include "netmsg.h"
 #include "linkcache.h"
 
-#include "natsync.h"
+#include "natsyncd/natsync.h"
 #include "warm_restart.h"
 
 using namespace std;

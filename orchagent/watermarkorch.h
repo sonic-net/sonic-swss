@@ -3,11 +3,11 @@
 
 #include <map>
 
-#include "orch.h"
-#include "port.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
 
 #include "notificationconsumer.h"
-#include "timer.h"
+#include "orchagent/timer.h"
 
 const uint8_t queue_wm_status_mask = 1 << 0;
 const uint8_t pg_wm_status_mask = 1 << 1;

@@ -1,6 +1,6 @@
 #include "gtest/gtest.h"
 #include "../mock_table.h"
-#include "teammgr.h"
+#include "cfgmgr/teammgr.h"
 #include <dlfcn.h>
 
 extern int (*callback)(const std::string &cmd, std::string &stdout);

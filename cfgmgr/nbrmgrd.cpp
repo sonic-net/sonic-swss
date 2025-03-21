@@ -8,7 +8,7 @@
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "nbrmgr.h"
+#include "cfgmgr/nbrmgr.h"
 #include "warm_restart.h"
 
 using namespace std;

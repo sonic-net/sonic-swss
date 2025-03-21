@@ -4,22 +4,22 @@
 #include <map>
 #include <unordered_set>
 
-#include "acltable.h"
-#include "orch.h"
-#include "port.h"
-#include "observer.h"
+#include "orchagent/acltable.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
+#include "orchagent/observer.h"
 #include "macaddress.h"
 #include "producertable.h"
-#include "flex_counter_manager.h"
-#include "gearboxutils.h"
-#include "saihelper.h"
-#include "lagid.h"
-#include "flexcounterorch.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
+#include "lib/gearboxutils.h"
+#include "orchagent/saihelper.h"
+#include "orchagent/lagid.h"
+#include "orchagent/flexcounterorch.h"
 #include "events.h"
 
-#include "port/port_capabilities.h"
-#include "port/porthlpr.h"
-#include "port/portschema.h"
+#include "orchagent/port/port_capabilities.h"
+#include "orchagent/port/porthlpr.h"
+#include "orchagent/port/portschema.h"
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4

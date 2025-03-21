@@ -12,11 +12,11 @@
 #include <macaddress.h>
 #include <exec.h>
 #include <tokenize.h>
-#include <shellcmd.h>
+#include "cfgmgr/shellcmd.h"
 #include <warm_restart.h>
 #include <select.h>
 
-#include "macsecmgr.h"
+#include "cfgmgr/macsecmgr.h"
 
 using namespace std;
 using namespace swss;

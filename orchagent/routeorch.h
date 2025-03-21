@@ -1,20 +1,20 @@
 #ifndef SWSS_ROUTEORCH_H
 #define SWSS_ROUTEORCH_H
 
-#include "orch.h"
-#include "observer.h"
-#include "switchorch.h"
-#include "intfsorch.h"
-#include "neighorch.h"
-#include "vxlanorch.h"
-#include "srv6orch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/switchorch.h"
+#include "orchagent/intfsorch.h"
+#include "orchagent/neighorch.h"
+#include "orchagent/vxlanorch.h"
+#include "orchagent/srv6orch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
-#include "nexthopgroupkey.h"
-#include "bulker.h"
-#include "fgnhgorch.h"
+#include "orchagent/nexthopgroupkey.h"
+#include "orchagent/bulker.h"
+#include "orchagent/fgnhgorch.h"
 #include <map>
 
 /* Maximum next hop group number */

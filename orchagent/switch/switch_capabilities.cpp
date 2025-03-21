@@ -20,8 +20,8 @@ extern "C" {
 #include <schema.h>
 #include <logger.h>
 
-#include "switch_schema.h"
-#include "switch_capabilities.h"
+#include "orchagent/switch/switch_schema.h"
+#include "orchagent/switch/switch_capabilities.h"
 
 using namespace swss;
 

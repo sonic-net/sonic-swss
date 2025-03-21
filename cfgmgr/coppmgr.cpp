@@ -4,9 +4,9 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "coppmgr.h"
+#include "cfgmgr/coppmgr.h"
 #include "exec.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "warm_restart.h"
 #include <nlohmann/json.hpp>
 #include <unordered_map>

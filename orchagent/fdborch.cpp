@@ -7,13 +7,13 @@
 
 #include "logger.h"
 #include "tokenize.h"
-#include "fdborch.h"
-#include "crmorch.h"
-#include "notifier.h"
+#include "orchagent/fdborch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/notifier.h"
 #include "sai_serialize.h"
-#include "mlagorch.h"
-#include "vxlanorch.h"
-#include "directory.h"
+#include "orchagent/mlagorch.h"
+#include "orchagent/vxlanorch.h"
+#include "orchagent/directory.h"
 
 extern sai_fdb_api_t    *sai_fdb_api;
 

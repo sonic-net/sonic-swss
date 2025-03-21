@@ -1,5 +1,5 @@
-#include "ut_helper.h"
-#include "swssnet.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "orchagent/swssnet.h"
 
 namespace swssnet_test
 {

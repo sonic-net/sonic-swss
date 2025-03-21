@@ -1,9 +1,9 @@
 #pragma once
 
-#include "gearboxutils.h"
+#include "lib/gearboxutils.h"
 
 #include <string>
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "producertable.h"
 
 #define IS_ATTR_ID_IN_RANGE(attrId, objectType, attrPrefix) \

@@ -1,4 +1,4 @@
-#include "drop_counter.h"
+#include "orchagent/debug_counter/drop_counter.h"
 
 #include "logger.h"
 #include "sai_serialize.h"

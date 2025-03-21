@@ -6,17 +6,17 @@
 #include <inttypes.h>
 
 #include "sai_serialize.h"
-#include "intfsorch.h"
+#include "orchagent/intfsorch.h"
 #include "ipprefix.h"
 #include "logger.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "tokenize.h"
-#include "routeorch.h"
-#include "flowcounterrouteorch.h"
-#include "crmorch.h"
-#include "bufferorch.h"
-#include "directory.h"
-#include "vnetorch.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/flex_counter/flowcounterrouteorch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/bufferorch.h"
+#include "orchagent/directory.h"
+#include "orchagent/vnetorch.h"
 #include "subscriberstatetable.h"
 
 extern sai_object_id_t gVirtualRouterId;

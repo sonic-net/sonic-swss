@@ -3,16 +3,16 @@
 #include <inttypes.h>
 #include <iomanip>
 
-#include "switchorch.h"
-#include "crmorch.h"
+#include "orchagent/switchorch.h"
+#include "orchagent/crmorch.h"
 #include "converter.h"
-#include "notifier.h"
+#include "orchagent/notifier.h"
 #include "notificationproducer.h"
 #include "macaddress.h"
-#include "return_code.h"
-#include "saihelper.h"
+#include "orchagent/return_code.h"
+#include "orchagent/saihelper.h"
 #include "sai_serialize.h"
-#include "notifications.h"
+#include "orchagent/notifications.h"
 #include "redisapi.h"
 
 using namespace std;

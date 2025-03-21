@@ -1,10 +1,10 @@
 #include <assert.h>
 #include <inttypes.h>
-#include "fgnhgorch.h"
-#include "routeorch.h"
+#include "orchagent/fgnhgorch.h"
+#include "orchagent/routeorch.h"
 #include "logger.h"
-#include "swssnet.h"
-#include "crmorch.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/crmorch.h"
 #include <array>
 #include <algorithm>
 

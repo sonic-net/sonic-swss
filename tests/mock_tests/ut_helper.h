@@ -5,10 +5,10 @@
 #define WITH_SAI LIBVS
 
 #include "gtest/gtest.h"
-#include "portal.h"
-#include "saispy.h"
+#include "tests/mock_tests/portal.h"
+#include "tests/mock_tests/saispy.h"
 
-#include "check.h"
+#include "tests/mock_tests/check.h"
 
 namespace ut_helper
 {

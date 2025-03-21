@@ -6,22 +6,22 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-#include "acl_rule_manager.h"
-#include "acl_table_manager.h"
-#include "acl_util.h"
-#include "acltable.h"
-#include "mock_sai_acl.h"
-#include "mock_sai_hostif.h"
-#include "mock_sai_policer.h"
-#include "mock_sai_serialize.h"
-#include "mock_sai_switch.h"
-#include "mock_sai_udf.h"
-#include "p4orch.h"
-#include "return_code.h"
-#include "switchorch.h"
+#include "orchagent/p4orch/acl_rule_manager.h"
+#include "orchagent/p4orch/acl_table_manager.h"
+#include "orchagent/p4orch/acl_util.h"
+#include "orchagent/acltable.h"
+#include "orchagent/p4orch/tests/mock_sai_acl.h"
+#include "orchagent/p4orch/tests/mock_sai_hostif.h"
+#include "orchagent/p4orch/tests/mock_sai_policer.h"
+#include "orchagent/p4orch/tests/mock_sai_serialize.h"
+#include "orchagent/p4orch/tests/mock_sai_switch.h"
+#include "orchagent/p4orch/tests/mock_sai_udf.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/return_code.h"
+#include "orchagent/switchorch.h"
 #include "table.h"
 #include "tokenize.h"
-#include "vrforch.h"
+#include "orchagent/vrforch.h"
 
 using ::p4orch::kTableKeyDelimiter;
 

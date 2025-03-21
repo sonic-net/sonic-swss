@@ -3,12 +3,12 @@
 #define private public
 #define protected public
 
-#include "aclorch.h"
-#include "crmorch.h"
-#include "copporch.h"
-#include "sfloworch.h"
-#include "twamporch.h"
-#include "directory.h"
+#include "orchagent/aclorch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/copporch.h"
+#include "orchagent/sfloworch.h"
+#include "orchagent/twamporch.h"
+#include "orchagent/directory.h"
 
 #undef protected
 #undef private

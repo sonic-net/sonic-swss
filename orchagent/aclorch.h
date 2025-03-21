@@ -9,18 +9,18 @@
 #include <map>
 #include <condition_variable>
 
-#include "orch.h"
-#include "switchorch.h"
-#include "portsorch.h"
-#include "mirrororch.h"
-#include "dtelorch.h"
-#include "observer.h"
-#include "vxlanorch.h"
-#include "flex_counter_manager.h"
+#include "orchagent/orch.h"
+#include "orchagent/switchorch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/mirrororch.h"
+#include "orchagent/dtelorch.h"
+#include "orchagent/observer.h"
+#include "orchagent/vxlanorch.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 
-#include "acltable.h"
+#include "orchagent/acltable.h"
 
-#include "saiattr.h"
+#include "orchagent/saiattr.h"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"

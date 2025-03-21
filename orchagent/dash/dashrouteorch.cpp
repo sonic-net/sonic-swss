@@ -9,20 +9,19 @@
 #include <numeric>
 
 #include "converter.h"
-#include "dashrouteorch.h"
+#include "orchagent/dash/dashrouteorch.h"
 #include "macaddress.h"
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "sai.h"
 #include "saiextensions.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "tokenize.h"
-#include "dashorch.h"
-#include "crmorch.h"
-#include "saihelper.h"
-#include "dashtunnelorch.h"
+#include "orchagent/dash/dashorch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/saihelper.h"
 
-#include "taskworker.h"
-#include "pbutils.h"
+#include "orchagent/dash/taskworker.h"
+#include "orchagent/dash/pbutils.h"
 #include "dash_api/route_type.pb.h"
 #include "directory.h"
 

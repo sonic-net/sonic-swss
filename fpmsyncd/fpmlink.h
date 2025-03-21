@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include <exception>
 
-#include "fpm/fpm.h"
+#include "fpmsyncd/fpm/fpm.h"
 #include "fpmsyncd/fpminterface.h"
 #include "fpmsyncd/routesync.h"
 

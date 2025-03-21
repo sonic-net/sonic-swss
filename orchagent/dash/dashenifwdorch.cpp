@@ -1,7 +1,7 @@
 #include <memory>
 #include <numeric>
-#include "dashenifwdorch.h"
-#include "directory.h"
+#include "orchagent/dash/dashenifwdorch.h"
+#include "orchagent/directory.h"
 
 extern Directory<Orch*>      gDirectory;
 

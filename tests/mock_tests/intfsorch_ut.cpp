@@ -1,10 +1,10 @@
 #define private public // make Directory::m_values available to clean it.
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 #include "gtest/gtest.h"
-#include "ut_helper.h"
-#include "mock_orchagent_main.h"
-#include "mock_table.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "tests/mock_tests/mock_orchagent_main.h"
+#include "tests/mock_tests/mock_table.h"
 #include <memory>
 #include <vector>
 

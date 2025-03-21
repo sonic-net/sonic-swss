@@ -3,11 +3,11 @@
 #include <inttypes.h>
 #include <iterator>
 
-#include "routeorch.h"
+#include "orchagent/routeorch.h"
 #include "logger.h"
-#include "srv6orch.h"
+#include "orchagent/srv6orch.h"
 #include "sai_serialize.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "subscriberstatetable.h"
 #include "redisutility.h"
 

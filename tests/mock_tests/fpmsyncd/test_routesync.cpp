@@ -1,8 +1,8 @@
 #include "redisutility.h"
-#include "ut_helpers_fpmsyncd.h"
+#include "tests/mock_tests/fpmsyncd/ut_helpers_fpmsyncd.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "mock_table.h"
+#include "tests/mock_tests/mock_table.h"
 #define private public
 #include "fpmsyncd/routesync.h"
 #undef private

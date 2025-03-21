@@ -1,16 +1,16 @@
 #define private public // make Directory::m_values available to clean it.
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 
 #include "json.h"
-#include "ut_helper.h"
-#include "mock_orchagent_main.h"
-#include "mock_table.h"
-#include "notifier.h"
-#include "mock_sai_bridge.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "tests/mock_tests/mock_orchagent_main.h"
+#include "tests/mock_tests/mock_table.h"
+#include "orchagent/notifier.h"
+#include "tests/mock_tests/mock_sai_bridge.h"
 #define private public
-#include "pfcactionhandler.h"
-#include "switchorch.h"
+#include "orchagent/pfcactionhandler.h"
+#include "orchagent/switchorch.h"
 #include <sys/mman.h>
 #undef private
 #define private public

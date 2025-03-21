@@ -1,7 +1,7 @@
 #ifndef __VRFORCH_H
 #define __VRFORCH_H
 
-#include "request_parser.h"
+#include "orchagent/request_parser.h"
 
 extern sai_object_id_t gVirtualRouterId;
 

@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "return_code.h"
+#include "orchagent/return_code.h"
 #include "table.h"
 
 class ResponsePublisherInterface

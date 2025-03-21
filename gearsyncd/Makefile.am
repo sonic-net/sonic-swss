@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir)/lib -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I $(top_srcdir)/cfgmgr
+INCLUDES = -I $(top_srcdir)
 
 bin_PROGRAMS = gearsyncd
 

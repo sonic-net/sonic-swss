@@ -3,15 +3,15 @@
 #include <swss/redisutility.h>
 #include <swss/ipaddress.h>
 
-#include <swssnet.h>
+#include "orchagent/swssnet.h"
 
-#include "dashaclorch.h"
-#include "taskworker.h"
-#include "pbutils.h"
-#include "crmorch.h"
-#include "dashaclgroupmgr.h"
-#include "dashtagmgr.h"
-#include "saihelper.h"
+#include "orchagent/dash/dashaclorch.h"
+#include "orchagent/dash/taskworker.h"
+#include "orchagent/dash/pbutils.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/dash/dashaclgroupmgr.h"
+#include "orchagent/dash/dashtagmgr.h"
+#include "orchagent/saihelper.h"
 
 using namespace std;
 using namespace swss;

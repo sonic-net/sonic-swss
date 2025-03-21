@@ -3,7 +3,6 @@ DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
 DASH_ORCH_DIR = $(top_srcdir)/orchagent/dash
 DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
-
 CFLAGS_SAI = -I /usr/include/sai
 
 TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
@@ -23,7 +22,7 @@ LDADD_GTEST = -L/usr/src/gtest
 
 ## Orchagent Unit Tests
 
-tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(DASH_ORCH_DIR) -I$(top_srcdir)/warmrestart
+tests_INCLUDES = -I $(top_srcdir)
 
 tests_SOURCES = aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
@@ -187,7 +186,7 @@ tests_portsyncd_SOURCES = portsyncd/portsyncd_ut.cpp \
                           mock_hiredis.cpp \
                           mock_redisreply.cpp
 
-tests_portsyncd_INCLUDES = -I $(top_srcdir)/portsyncd -I $(top_srcdir)/cfgmgr -I $(top_srcdir)/lib
+tests_portsyncd_INCLUDES = $(tests_INCLUDES)
 tests_portsyncd_CXXFLAGS = -Wl,-wrap,if_nameindex -Wl,-wrap,if_freenameindex
 tests_portsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
 tests_portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_portsyncd_INCLUDES)
@@ -210,7 +209,7 @@ tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                          mock_redisreply.cpp \
                          common/mock_shell_command.cpp
 
-tests_intfmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
+tests_intfmgrd_INCLUDES = $(tests_INCLUDES)
 tests_intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_intfmgrd_INCLUDES)
 tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
@@ -232,7 +231,7 @@ tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
                          mock_redisreply.cpp \
                          common/mock_shell_command.cpp
 
-tests_teammgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
+tests_teammgrd_INCLUDES = $(tests_INCLUDES)
 tests_teammgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teammgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teammgrd_INCLUDES)
 tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
@@ -255,7 +254,7 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp
 
-tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
+tests_fpmsyncd_INCLUDES = $(tests_INCLUDES)
 tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name
 tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fpmsyncd_INCLUDES)

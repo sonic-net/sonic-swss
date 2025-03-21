@@ -11,14 +11,14 @@
 #include <sai.h>
 #include <logger.h>
 #include <dbconnector.h>
-#include <bulker.h>
-#include <orch.h>
-#include "zmqorch.h"
+#include "orchagent/bulker.h"
+#include "orchagent/orch.h"
+#include "orchagent/zmqorch.h"
 #include "zmqserver.h"
 
-#include "dashorch.h"
-#include "dashaclgroupmgr.h"
-#include "dashtagmgr.h"
+#include "orchagent/dash/dashorch.h"
+#include "orchagent/dash/dashaclgroupmgr.h"
+#include "orchagent/dash/dashtagmgr.h"
 #include "dash_api/acl_group.pb.h"
 #include "dash_api/acl_rule.pb.h"
 #include "dash_api/acl_in.pb.h"

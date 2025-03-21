@@ -11,7 +11,7 @@
 #include <inttypes.h>
 #include <type_traits>
 #include "sai_serialize.h"
-#include "saihelper.h"
+#include "orchagent/saihelper.h"
 
 extern "C" {
 #include "sai.h"

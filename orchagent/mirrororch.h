@@ -1,13 +1,13 @@
 #ifndef SWSS_MIRRORORCH_H
 #define SWSS_MIRRORORCH_H
 
-#include "orch.h"
-#include "observer.h"
-#include "portsorch.h"
-#include "neighorch.h"
-#include "routeorch.h"
-#include "fdborch.h"
-#include "policerorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/neighorch.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/fdborch.h"
+#include "orchagent/policerorch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"

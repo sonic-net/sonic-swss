@@ -1,8 +1,8 @@
 #include <tuple>
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 #include "logger.h"
-#include "fdborch.h"
-#include "stporch.h"
+#include "orchagent/fdborch.h"
+#include "orchagent/stporch.h"
 
 extern sai_stp_api_t *sai_stp_api;
 extern sai_vlan_api_t *sai_vlan_api;

@@ -3,7 +3,7 @@
 #include <logger.h>
 #include <table.h>
 
-#include "values_store.h"
+#include "tlm_teamd/values_store.h"
 
 ///
 /// Extract port names from teamd status json dump.

@@ -5,15 +5,15 @@
 #include <set>
 #include <string>
 #include <unordered_map>
-#include "bulker.h"
+#include "orchagent/bulker.h"
 #include "dbconnector.h"
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "macaddress.h"
-#include "timer.h"
-#include "dashorch.h"
-#include "zmqorch.h"
+#include "orchagent/timer.h"
+#include "orchagent/dash/dashorch.h"
+#include "orchagent/zmqorch.h"
 #include "zmqserver.h"
 
 #include "dash_api/route.pb.h"

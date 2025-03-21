@@ -1,12 +1,4 @@
-INCLUDES = -I $(top_srcdir)/lib \
-           -I $(top_srcdir) \
-           -I $(top_srcdir)/warmrestart \
-           -I switch \
-           -I flex_counter \
-           -I debug_counter \
-           -I port \
-           -I pbh \
-           -I nhg
+INCLUDES = -I $(top_srcdir)
 
 SUBDIRS = p4orch/tests
 

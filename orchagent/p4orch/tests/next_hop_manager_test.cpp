@@ -1,4 +1,4 @@
-#include "next_hop_manager.h"
+#include "orchagent/p4orch/next_hop_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -9,15 +9,15 @@
 #include <unordered_map>
 
 #include "ipaddress.h"
-#include "mock_response_publisher.h"
-#include "mock_sai_hostif.h"
-#include "mock_sai_next_hop.h"
-#include "mock_sai_serialize.h"
-#include "mock_sai_switch.h"
-#include "p4oidmapper.h"
-#include "p4orch.h"
-#include "return_code.h"
-#include "swssnet.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_hostif.h"
+#include "orchagent/p4orch/tests/mock_sai_next_hop.h"
+#include "orchagent/p4orch/tests/mock_sai_serialize.h"
+#include "orchagent/p4orch/tests/mock_sai_switch.h"
+#include "orchagent/p4orch/p4oidmapper.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/return_code.h"
+#include "orchagent/swssnet.h"
 extern "C"
 {
 #include "sai.h"

@@ -1,16 +1,16 @@
 #ifndef SWSS_FGNHGORCH_H
 #define SWSS_FGNHGORCH_H
 
-#include "orch.h"
-#include "observer.h"
-#include "intfsorch.h"
-#include "neighorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/intfsorch.h"
+#include "orchagent/neighorch.h"
 #include "producerstatetable.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
-#include "nexthopgroupkey.h"
+#include "orchagent/nexthopgroupkey.h"
 
 #include <map>
 
