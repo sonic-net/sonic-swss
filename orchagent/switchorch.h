@@ -1,10 +1,10 @@
 #pragma once
 
-#include "acltable.h"
-#include "orch.h"
-#include "timer.h"
-#include "switch/switch_capabilities.h"
-#include "switch/switch_helper.h"
+#include "orchagent/acltable.h"
+#include "orchagent/orch.h"
+#include "orchagent/timer.h"
+#include "orchagent/switch/switch_capabilities.h"
+#include "orchagent/switch/switch_helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"

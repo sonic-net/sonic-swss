@@ -3,8 +3,8 @@ extern "C" {
 }
 
 #include "logger.h"
-#include "notifications.h"
-#include "switchorch.h"
+#include "orchagent/notifications.h"
+#include "orchagent/switchorch.h"
 
 extern SwitchOrch *gSwitchOrch;
 

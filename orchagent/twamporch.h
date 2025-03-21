@@ -1,11 +1,11 @@
 #ifndef SWSS_TWAMPORCH_H
 #define SWSS_TWAMPORCH_H
 
-#include "orch.h"
-#include "observer.h"
-#include "switchorch.h"
-#include "portsorch.h"
-#include "vrforch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/switchorch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/vrforch.h"
 #include "ipaddress.h"
 #include "table.h"
 #include <map>

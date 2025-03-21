@@ -12,8 +12,8 @@ extern "C" {
 #include <tokenize.h>
 #include <logger.h>
 
-#include "switch_schema.h"
-#include "switch_helper.h"
+#include "orchagent/switch/switch_schema.h"
+#include "orchagent/switch/switch_helper.h"
 
 using namespace swss;
 

@@ -1,17 +1,17 @@
 #define private public
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
-#include "ut_helper.h"
+#include "tests/mock_tests/ut_helper.h"
 #define private public
-#include "neighorch.h"
-#include "muxorch.h"
+#include "orchagent/neighorch.h"
+#include "orchagent/muxorch.h"
 #undef private
-#include "mock_orchagent_main.h"
-#include "mock_sai_api.h"
-#include "mock_orch_test.h"
+#include "tests/mock_tests/mock_orchagent_main.h"
+#include "tests/mock_tests/mock_sai_api.h"
+#include "tests/mock_tests/mock_orch_test.h"
 #include "gtest/gtest.h"
 #include <string>
 

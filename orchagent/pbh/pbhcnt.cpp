@@ -2,7 +2,7 @@
 
 #include <limits>
 
-#include "pbhcnt.h"
+#include "orchagent/pbh/pbhcnt.h"
 
 using namespace swss;
 

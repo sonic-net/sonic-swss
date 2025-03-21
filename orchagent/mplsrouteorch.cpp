@@ -1,14 +1,14 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <algorithm>
-#include "routeorch.h"
+#include "orchagent/routeorch.h"
 #include "logger.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "converter.h"
-#include "crmorch.h"
-#include "nhgorch.h"
-#include "directory.h"
-#include "cbf/cbfnhgorch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/nhgorch.h"
+#include "orchagent/directory.h"
+#include "orchagent/cbf/cbfnhgorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;

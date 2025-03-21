@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "exec.h"
-#include "coppmgr.h"
+#include "cfgmgr/coppmgr.h"
 #include "schema.h"
 #include "select.h"
 #include "warm_restart.h"

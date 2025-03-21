@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "p4orch/p4orch_util.h"
-#include "return_code.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/return_code.h"
 extern "C"
 {
 #include "sai.h"

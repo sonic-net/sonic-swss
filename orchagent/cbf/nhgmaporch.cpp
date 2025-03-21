@@ -1,6 +1,6 @@
-#include "nhgmaporch.h"
+#include "orchagent/cbf/nhgmaporch.h"
 #include "climits"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;

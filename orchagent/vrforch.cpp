@@ -7,12 +7,12 @@
 
 #include "sai.h"
 #include "macaddress.h"
-#include "orch.h"
-#include "request_parser.h"
-#include "vrforch.h"
-#include "vxlanorch.h"
-#include "flowcounterrouteorch.h"
-#include "directory.h"
+#include "orchagent/orch.h"
+#include "orchagent/request_parser.h"
+#include "orchagent/vrforch.h"
+#include "orchagent/vxlanorch.h"
+#include "orchagent/flex_counter/flowcounterrouteorch.h"
+#include "orchagent/directory.h"
 
 using namespace std;
 using namespace swss;

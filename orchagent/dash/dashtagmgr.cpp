@@ -1,7 +1,7 @@
-#include "dashtagmgr.h"
+#include "orchagent/dash/dashtagmgr.h"
 
-#include "dashaclorch.h"
-#include "saihelper.h"
+#include "orchagent/dash/dashaclorch.h"
+#include "orchagent/saihelper.h"
 
 using namespace std;
 using namespace swss;

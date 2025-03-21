@@ -1,6 +1,6 @@
 #include <fstream>
 
-#include "stpmgr.h"
+#include "cfgmgr/stpmgr.h"
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "select.h"
