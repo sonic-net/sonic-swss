@@ -50,7 +50,7 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
 6. Define a method to apply the mock
 7. Define a method to remove the mock
 */
-#define DEFINE_SAI_API_MOCK(sai_object_type)                                                                                    \
+#define DEFINE_SAI_API_MOCK_SPECIFY_ENTRY(sai_object_type)                                                                                    \
     static sai_##sai_object_type##_api_t *old_sai_##sai_object_type##_api;                                                      \
     static sai_##sai_object_type##_api_t ut_sai_##sai_object_type##_api;                                                        \
     class mock_sai_##sai_object_type##_api_t                                                                                    \
@@ -119,6 +119,17 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
         sai_##sai_object_type##_api = old_sai_##sai_object_type##_api;                                                          \
         delete mock_sai_##sai_object_type##_api;                                                                                \
     }
+
+    #define DEFINE_SAI_API_MOCK_MATCH_ENTRY(sai_object_type) DEFINE_SAI_API_MOCK_SPECIFY_ENTRY(sai_object_type, sai_object_type)
+
+    /* Overload DEFINE_SAI_API_MOCK by number of arguments to account for entry types that do not match the API name
+     * 1. If one argument is provided, assume the entry type matches API name (e.g. sai_neighbor_api_t and sai_neighbor_entry_t)
+     * 2. If two arguments are provided, use the second argument as the entry type (e.g. sai_dash_outbound_ca_to_pa_api_t and sai_outbound_ca_to_pa_entry_t)
+     */
+    #define GET_MOCK_MACRO(_1, _2, NAME, ...) NAME
+    #define DEFINE_SAI_API_MOCK(...)                                                                                              \
+        GET_MOCK_MACRO(__VA_ARGS__, DEFINE_SAI_API_MOCK_SPECIFY_ENTRY, DEFINE_SAI_API_MOCK_MATCH_ENTRY)(__VA_ARGS__)
+    
 
 #define DEFINE_SAI_GENERIC_API_MOCK(sai_api_name, sai_object_type)                                                           \
     static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api;                                                         \
