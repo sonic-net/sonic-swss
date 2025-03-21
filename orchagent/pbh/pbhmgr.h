@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pbhcnt.h"
+#include "orchagent/pbh/pbhcnt.h"
 
 class PbhHelper final
 {

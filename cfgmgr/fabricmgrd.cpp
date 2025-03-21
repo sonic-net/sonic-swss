@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "exec.h"
-#include "fabricmgr.h"
+#include "cfgmgr/fabricmgr.h"
 #include "schema.h"
 #include "select.h"
 

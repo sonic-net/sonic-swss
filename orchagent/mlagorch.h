@@ -20,8 +20,8 @@
 
 #include <set>
 #include <string>
-#include "orch.h"
-#include "port.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
 
 struct MlagIfUpdate
 {

@@ -1,4 +1,4 @@
-#include "macsecmgr.h"
+#include "cfgmgr/macsecmgr.h"
 
 #include <exec.h>
 #include <shellcmd.h>

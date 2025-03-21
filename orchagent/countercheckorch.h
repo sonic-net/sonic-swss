@@ -1,9 +1,9 @@
 #ifndef COUNTERCHECK_ORCH_H
 #define COUNTERCHECK_ORCH_H
 
-#include "orch.h"
-#include "port.h"
-#include "timer.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
+#include "orchagent/timer.h"
 #include <array>
 
 #define PFC_WD_TC_MAX 8

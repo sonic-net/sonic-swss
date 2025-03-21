@@ -1,12 +1,12 @@
 #ifndef PFC_WATCHDOG_H
 #define PFC_WATCHDOG_H
 
-#include "orch.h"
-#include "port.h"
-#include "pfcactionhandler.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
+#include "orchagent/pfcactionhandler.h"
 #include "producertable.h"
 #include "notificationconsumer.h"
-#include "timer.h"
+#include "orchagent/timer.h"
 #include "events.h"
 
 extern "C" {

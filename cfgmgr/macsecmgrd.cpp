@@ -16,7 +16,7 @@
 #include <warm_restart.h>
 #include <select.h>
 
-#include "macsecmgr.h"
+#include "cfgmgr/macsecmgr.h"
 
 using namespace std;
 using namespace swss;

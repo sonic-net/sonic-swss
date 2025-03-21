@@ -1,8 +1,8 @@
 #ifndef FLEXCOUNTER_ORCH_H
 #define FLEXCOUNTER_ORCH_H
 
-#include "orch.h"
-#include "port.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
 #include "producertable.h"
 #include "selectabletimer.h"
 #include "table.h"

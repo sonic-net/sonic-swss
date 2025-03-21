@@ -4,9 +4,9 @@
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
-#include "orch.h"
-#include "switchorch.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/switchorch.h"
+#include "orchagent/portsorch.h"
 
 const string dscp_to_tc_field_name              = "dscp_to_tc_map";
 const string mpls_tc_to_tc_field_name           = "mpls_tc_to_tc_map";

@@ -4,7 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "netmsg.h"
-#include "warmRestartAssist.h"
+#include "warmrestart/warmRestartAssist.h"
 
 // The timeout value (in seconds) for neighsyncd reconcilation logic
 #define DEFAULT_NEIGHSYNC_WARMSTART_TIMER 5

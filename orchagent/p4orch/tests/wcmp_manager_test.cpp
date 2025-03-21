@@ -1,4 +1,4 @@
-#include "wcmp_manager.h"
+#include "orchagent/p4orch/wcmp_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -6,17 +6,17 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-#include "mock_response_publisher.h"
-#include "mock_sai_acl.h"
-#include "mock_sai_hostif.h"
-#include "mock_sai_next_hop_group.h"
-#include "mock_sai_serialize.h"
-#include "mock_sai_switch.h"
-#include "p4oidmapper.h"
-#include "p4orch.h"
-#include "p4orch/p4orch_util.h"
-#include "p4orch_util.h"
-#include "return_code.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_acl.h"
+#include "orchagent/p4orch/tests/mock_sai_hostif.h"
+#include "orchagent/p4orch/tests/mock_sai_next_hop_group.h"
+#include "orchagent/p4orch/tests/mock_sai_serialize.h"
+#include "orchagent/p4orch/tests/mock_sai_switch.h"
+#include "orchagent/p4orch/p4oidmapper.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/return_code.h"
 #include "sai_serialize.h"
 extern "C"
 {
