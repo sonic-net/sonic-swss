@@ -170,7 +170,27 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
 {
     SWSS_LOG_ENTER();
 
-    if (m_ha_scope_entries.find(key) != m_ha_scope_entries.end())
+    auto ha_scope_it = m_ha_scope_entries.find(key);
+    if (ha_scope_it != m_ha_scope_entries.end())
+    {
+        if (ha_scope_it->second.metadata.ha_role() != entry.ha_role())
+        {
+            return setHaScopeHaRole(key, entry);
+        }
+
+        if (entry.flow_reconcile_requested() == true)
+        {
+            return setHaScopeFlowReconcileRequest(key);
+        }
+
+        if (entry.activate_role_requested() == true)
+        {
+            return setHaScopeActivateRoleRequest(key);
+        }
+
+    }
+
+    if (ha_scope_it != m_ha_scope_entries.end())
     {
         SWSS_LOG_WARN("HA Scope entry already exists for %s", key.c_str());
         return true;
@@ -254,6 +274,88 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     return true;
 }
 
+bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::HaScope &entry)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    sai_attribute_t ha_scope_attr;
+    ha_scope_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
+    ha_scope_attr.value.u32 = entry.ha_role();
+
+    sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
+                                                                &ha_scope_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope role in SAI for %s", key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    m_ha_scope_entries[key].metadata.set_ha_role(entry.ha_role());
+    SWSS_LOG_NOTICE("Set HA Scope role for %s to %s", key.c_str(), entry.ha_role().c_str());
+
+    return true;
+}
+
+bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    sai_attribute_t ha_scope_attr;
+    ha_scope_attr.id = SAI_HA_SCOPE_ATTR_FLOW_RECONCILE_REQUESTED;
+    ha_scope_attr.value.booldata = true；
+
+    sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
+                                                                &ha_scope_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope flow reconcile request in SAI for %s", key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Set HA Scope flow reconcile request for %s", key.c_str());
+
+    return true;
+}
+
+bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    sai_attribute_t ha_scope_attr;
+    ha_scope_attr.id = SAI_HA_SCOPE_ATTR_ACTIVATE_ROLE;
+    ha_scope_attr.value.booldata = true;
+
+    sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
+                                                                &ha_scope_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope activate role request in SAI for %s", key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Set HA Scope activate role request for %s", key.c_str());
+
+    return true;
+}
+
 bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id)
 {
     SWSS_LOG_ENTER();
@@ -275,8 +377,6 @@ bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_
 
     return true;
 }
-
-
 
 bool DashHaOrch::removeHaScopeEntry(const std::string &key)
 {

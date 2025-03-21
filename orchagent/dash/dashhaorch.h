@@ -44,6 +44,8 @@ private:
     bool removeHaSetEntry(const std::string &key);
     bool addHaScopeEntry(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool removeHaScopeEntry(const std::string &key);
+    bool setHaScopeHaRole(const std::string::&key, const dash::ha_scope::HaScope &entry);
+    bool setHaScopeFlowReconcileRequest(const  std::string &key);
+    bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
-
 }
