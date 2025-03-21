@@ -72,11 +72,12 @@ event_handle_t g_events_handle;
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, DBConnector *dpuApplDb, ZmqServer *zmqServer) :
         m_applDb(applDb),
         m_configDb(configDb),
         m_stateDb(stateDb),
         m_chassisAppDb(chassisAppDb),
+        m_dpuApplDb(dpuApplDb),
         m_zmqServer(zmqServer)
 {
     SWSS_LOG_ENTER();
@@ -321,7 +322,14 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
-	vector<string> dash_vnet_tables = {
+    vector<string> dash_ha_tables = {
+        APP_DASH_HA_SET_TABLE_NAME,
+        APP_DASH_HA_SCOPE_TABLE_NAME
+    };
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpuApplDb, dash_ha_tables, dash_orch, m_zmqServer);
+    gDirectory.set(dash_ha_orch);
+
+    vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
