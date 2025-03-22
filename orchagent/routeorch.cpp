@@ -407,6 +407,7 @@ void RouteOrch::updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key,
 
 bool RouteOrch::addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set)
 {
+    /* In the function we update the member of existing NexthopGroup to the Default Route Nexthop's */
     SWSS_LOG_ENTER();
     sai_object_id_t nexthop_group_member_id;
     sai_status_t status;
@@ -517,6 +518,8 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         ++count;
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         nhopgroup->second.nhopgroup_members[nexthop].next_hop_id = nexthop_id;
+        /* Keep the count of number of nexthop members are present in Nexthop Group
+         * when the links became active again*/
         nhopgroup->second.nh_member_install_count++;
     }
 
@@ -566,11 +569,13 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
+        // Reduce the member install count when links down
         if (nhopgroup->second.nh_member_install_count)
         {
             nhopgroup->second.nh_member_install_count--;
         }
-        
+        // Nexthop Group member count has become zero so swap it's memebers with default route
+        // nexthop's if this route is eligible for such a swap
         if (nhopgroup->second.nh_member_install_count == 0 && nhopgroup->second.eligible_for_default_route_nh_swap && !nhopgroup->second.is_default_route_nh_swap)
         {
             if(nexthop.ip_address.isV4())
@@ -1171,6 +1176,8 @@ void RouteOrch::doTask(Consumer& consumer)
                     else
                         it_prev++;
 
+		    // Save the Default Route of Default VRF to be used for 
+		    // enabling fallback to it as needed
                     if (ip_prefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
                     {
                        if (ip_prefix.isV4())
@@ -1213,14 +1220,17 @@ void RouteOrch::doTask(Consumer& consumer)
         {
             m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
         }
+        /* No Update to Default Route so we can return */
         if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
         {
             return;
         }
+	/* Update to v4 Default Route so update the data structure */
         if (v4_default_nhg_key.getSize())
         {
             updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
         }
+	/* Update to v6 Default Route so update the data structure */
         if (v6_default_nhg_key.getSize())
         {
             updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
@@ -1594,6 +1604,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         {
             next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].next_hop_id = nhgm_id;
             next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].seq_id = ((uint32_t)i) + 1;
+            /* Keep the count of number of nexthop members are present in Nexthop Group*/
             next_hop_group_entry.nh_member_install_count++;
         }
     }
@@ -1633,9 +1644,14 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
     vector<sai_object_id_t> next_hop_ids;
+    /* If the NexthopGroup is the one that has been swapped with default route members
+     * than when deleting such Nexthop Group we have to remove default route nexthop group members */
     auto& nhgm = is_default_route_nh_swap ? next_hop_group_entry->second.default_route_nhopgroup_members : next_hop_group_entry->second.nhopgroup_members;
     for (auto nhop = nhgm.begin(); nhop != nhgm.end();)
     {
+        /* This check we skip for Nexthop Group that has been swapped 
+         * as Nexthop Group Members are not original member which are already removed 
+         * as part of API invalidnexthopinNextHopGroup */
         if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN) && (!is_default_route_nh_swap))
         {
             SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
@@ -2148,6 +2164,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             }
             else
             {
+                /* Nexthop Creation Successful. So the save the state if eligible to fallback to default route
+                 * based on APP_DB value for the route. Also initialize the present to False as swap did not happen */
                 m_syncdNextHopGroups[nextHops].eligible_for_default_route_nh_swap = ctx.fallback_to_default_route;
                 m_syncdNextHopGroups[nextHops].is_default_route_nh_swap = false;
             }
