@@ -17,11 +17,22 @@ extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 
-DashHaOrch::DashHaOrch(DbConnector *db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer) :
-    ZmqOrch(db, tables, zmqServer),
-    m_dash_orch(dash_orch)
+DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, zmqClient *zmqClient) :
+    ZmqOrch(dpu_appl_db, tables, zmqServer),
+    m_dpu_state_db(dpu_state_db),
+    m_dash_orch(dash_orch),
+    m_zmqClient(zmqClient)
 {
     SWSS_LOG_ENTER();
+
+    dash_ha_set_state_table = ZmqProducerStateTable(m_dpu_state_db,
+                                                    STATE_DASH_HA_SET_STATE_TABLE_NAME,
+                                                    m_zmqClient,
+                                                    true);
+    dash_ha_scope_state_table = ZmqProducerStateTable(m_dpu_state_db,
+                                                      STATE_DASH_HA_SCOPE_STATE_TABLE_NAME,
+                                                      m_zmqClient,
+                                                      true);
 }
 
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
