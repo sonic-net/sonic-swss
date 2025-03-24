@@ -103,6 +103,10 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
+};
+
+static acl_rule_attr_lookup_t aclL3InnerActionLookup = 
+{
     { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC},
 };
 
@@ -163,7 +167,8 @@ static const acl_capabilities_t defaultAclActionsSupported =
             {
                 SAI_ACL_ACTION_TYPE_PACKET_ACTION,
                 SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
-                SAI_ACL_ACTION_TYPE_NO_NAT
+                SAI_ACL_ACTION_TYPE_NO_NAT,
+                SAI_ACL_ACTION_TYPE_SET_SRC_MAC
             },
             false
         }
@@ -173,7 +178,8 @@ static const acl_capabilities_t defaultAclActionsSupported =
         AclActionCapabilities
         {
             {
-                SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                SAI_ACL_ACTION_TYPE_SET_SRC_MAC
             },
             false
         }
@@ -197,8 +203,7 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_EGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT,
-                    SAI_ACL_ACTION_TYPE_SET_SRC_MAC
+                    SAI_ACL_ACTION_TYPE_REDIRECT
                 }
             }
         }
@@ -773,10 +778,15 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto mirrorAction = aclMirrorStageLookup.find(action);
         auto dtelAction = aclDTelActionLookup.find(action);
         auto otherAction = aclOtherActionLookup.find(action);
+        auto l3innerAction = aclL3InnerActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
         if (l3Action != aclL3ActionLookup.end())
         {
             saiActionAttr = l3Action->second;
+        }
+        else if (l3innerAction != aclL3InnerActionLookup.end())
+        {
+            saiActionAttr = l3innerAction->second;
         }
         else if (mirrorAction != aclMirrorStageLookup.end())
         {
@@ -1717,11 +1727,14 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         }
         else if (aclL3ActionLookup.find(action) != aclL3ActionLookup.cend())
         {
+            return make_shared<AclRulePacket>(acl, rule, table);
+        }
+        else if (aclL3InnerActionLookup.find(action) != aclL3InnerActionLookup.cend())
+        {
             if (action == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
             {
                 return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
             }
-            return make_shared<AclRulePacket>(acl, rule, table);
         }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
@@ -2094,7 +2107,7 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
         return false;
     }
 
-    return setAction(aclL3ActionLookup[action_str], actionData);
+    return setAction(aclL3InnerActionLookup[action_str], actionData);
  }
 
  bool AclRuleInnerSrcMacRewrite::validate()
@@ -3940,7 +3953,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     {
         metadataActionLookup = aclMetadataDscpActionLookup;
     }
-    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup})
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclL3InnerActionLookup})
     {
         for (const auto& it: action_map)
         {

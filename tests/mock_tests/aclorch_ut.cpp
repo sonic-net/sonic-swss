@@ -1959,14 +1959,13 @@ namespace aclorch_test
 
     TEST_F(AclOrchTest, AclMockTableType_ActionValidation)
     {
-        const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TYPE";
+        const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TABLE_TYPE";
         const string aclTableName = "INNER_SRC_MAC_REWRITE_TABLE";
         const string aclRuleName = "INNER_SRC_MAC_REWRITE_RULE";
-        string acl_table_id = "acl_table_1";
-        string acl_rule_id = "acl_rule_1";
-
+    
         auto orch = createAclOrch();
-
+    
+        // Creating a new custom table type INNER_SRC_MAC_REWRITE_TABLE_TYPE
         orch->doAclTableTypeTask(
             deque<KeyOpFieldsValuesTuple>(
                 {
@@ -1980,7 +1979,7 @@ namespace aclorch_test
                             },
                             {
                                 ACL_TABLE_TYPE_BPOINT_TYPES,
-                                BIND_POINT_TYPE_PORTCHANNEL
+                                string(BIND_POINT_TYPE_PORT) + comma + BIND_POINT_TYPE_PORTCHANNEL
                             },
                             {
                                 ACL_TABLE_TYPE_ACTIONS,
@@ -1991,7 +1990,8 @@ namespace aclorch_test
                 }
             )
         );
-
+    
+        // Creating a table of the type INNER_SRC_MAC_REWRITE_TABLE_TYPE
         orch->doAclTableTask(
             deque<KeyOpFieldsValuesTuple>(
                 {
@@ -1999,7 +1999,7 @@ namespace aclorch_test
                         aclTableName,
                         SET_COMMAND,
                         {
-                            { ACL_TABLE_DESCRIPTION, "Test table" },
+                            { ACL_TABLE_DESCRIPTION, "Inner src mac rewrite test table" },
                             { ACL_TABLE_TYPE, aclTableTypeName},
                             { ACL_TABLE_STAGE, STAGE_EGRESS },
                             { ACL_TABLE_PORTS, "1,2" }
@@ -2008,21 +2008,21 @@ namespace aclorch_test
                 }
             )
         );
-
+    
         ASSERT_TRUE(orch->getAclTable(aclTableName));
-
+    
         auto fvs = vector<FieldValueTuple>{
             { "SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP", "true" },
             { "SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI", "true" },
             { "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_SET_SRC_MAC" },
         };
-
+    
         ASSERT_TRUE(validateAclTable(
             orch->getAclTable(aclTableName)->getOid(),
             *orch->getAclTable(aclTableName),
             make_shared<SaiAttributeList>(SAI_OBJECT_TYPE_ACL_TABLE, fvs, false))
         );
-
+    
         orch->doAclRuleTask(
             deque<KeyOpFieldsValuesTuple>(
                 {
@@ -2038,10 +2038,67 @@ namespace aclorch_test
                 }
             )
         );
-
+    
         // Packet action is not supported on this table
         ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
-
+    
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
+                        }
+                    }
+                }
+            )
+        );
+    
+        // Missing VNI is not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+    
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_TUNNEL_VNI, "233" },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "" }
+                        }
+                    }
+                }
+            )
+        );
+    
+        // Empty mac in Inner src mac action is not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+    
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_TUNNEL_VNI, "233" },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:" }
+                        }
+                    }
+                }
+            )
+        );
+    
+        // Incorrect mac in Inner src mac action is not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+    
+    
         orch->doAclRuleTask(
             deque<KeyOpFieldsValuesTuple>(
                 {
@@ -2057,34 +2114,34 @@ namespace aclorch_test
                 }
             )
         );
-
+    
         // Inner src mac action is supported on this table
         ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
-
+    
         class AclRuleTest : public AclRuleInnerSrcMacRewrite
         {
         public:
             AclRuleTest(AclOrch* orch, string rule, string table):
             AclRuleInnerSrcMacRewrite(orch, rule, table, true)
             {}
-
+    
             void setCounterEnabled(bool enabled)
             {
                 m_createCounter = enabled;
             }
-
+    
             void disableMatch(sai_acl_entry_attr_t attr)
             {
                 m_matches.erase(attr);
             }
         };
-
+    
         auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, aclRuleName, aclTableName);
         ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
         ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2/24"));
         ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
         ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
-
+    
         ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, aclTableName));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
