@@ -150,6 +150,7 @@ public:
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
+    bool setLagCollectionDistribution(Port& port, bool lag_oper_status);
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
     void updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus);
 
