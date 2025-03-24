@@ -424,6 +424,7 @@ class TestMACsec(object):
         wpa.init_macsec_port(port_name)
         wpa.config_macsec_port(port_name, {"enable_protect": True})
         wpa.config_macsec_port(port_name, {"enable_encrypt": True})
+        wpa.config_macsec_port(port_name, {"send_sci": True})
         wpa.config_macsec_port(
             port_name,
             {
