@@ -194,7 +194,7 @@ void CoppOrch::initDefaultTrapIds()
     if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
-        attr.value.u32 = 0;
+        attr.value.u32 = 1;
         trap_id_attrs.push_back(attr);
     }
 
