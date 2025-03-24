@@ -1824,11 +1824,10 @@ namespace aclorch_test
         auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
         updatedRule2->setCounterEnabled(false);
         updatedRule2->disableMatch(SAI_ACL_ENTRY_ATTR_FIELD_DST_IP);
-        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_SRC_IP, "12.2.2.2/24"));
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
         ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), false));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.2.2.2&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_DST_IP), "disabled");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_DROP");
 
@@ -1893,71 +1892,7 @@ namespace aclorch_test
         return old_sai_switch_api->get_switch_attribute(switch_id, attr_count, attr_list);
     }
 
-    TEST_F(AclOrchTest, AclTableCreationWithMandatoryActions)
-    {
-        // Override SAI API get_switch_attribute to request passing mandatory ACL actions to SAI
-        // when creating mirror ACL table.
-        old_sai_switch_api = sai_switch_api;
-        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
-        sai_switch_api = &new_sai_switch_api;
-        sai_switch_api->get_switch_attribute = getSwitchAttribute;
-
-        // Set platform env to enable support of MIRRORV6 ACL table.
-        bool unset_platform_env = false;
-        if (!getenv("platform"))
-        {
-            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
-            unset_platform_env = true;
-        }
-
-        auto orch = createAclOrch();
-
-        for (const auto &acl_table_type : { TABLE_TYPE_MIRROR, TABLE_TYPE_MIRRORV6, TABLE_TYPE_MIRROR_DSCP })
-        {
-            for (const auto &acl_table_stage : { STAGE_INGRESS, STAGE_EGRESS })
-            {
-                // Create ACL table.
-                string acl_table_id = "mirror_acl_table";
-                auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
-                    { { acl_table_id,
-                        SET_COMMAND,
-                        { { ACL_TABLE_DESCRIPTION, acl_table_type },
-                          { ACL_TABLE_TYPE, acl_table_type },
-                          { ACL_TABLE_STAGE, acl_table_stage },
-                          { ACL_TABLE_PORTS, "1,2" } } } });
-                orch->doAclTableTask(kvfAclTable);
-                auto acl_table = orch->getAclTable(acl_table_id);
-                ASSERT_NE(acl_table, nullptr);
-
-                // Verify mandaotry ACL actions has been added.
-                auto acl_actions = acl_table->type.getActions();
-                ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end());
-                sai_acl_action_type_t action = strcmp(acl_table_stage, STAGE_INGRESS) == 0 ?
-                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS : SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
-                ASSERT_NE(acl_actions.find(action), acl_actions.end());
-
-                // Delete ACL table.
-                kvfAclTable = deque<KeyOpFieldsValuesTuple>(
-                    { { acl_table_id,
-                        DEL_COMMAND,
-                        {} } });
-                orch->doAclTableTask(kvfAclTable);
-                acl_table = orch->getAclTable(acl_table_id);
-                ASSERT_EQ(acl_table, nullptr);
-            }
-        }
-
-        // Unset platform env.
-        if (unset_platform_env)
-        {
-            unsetenv("platform");
-        }
-
-        // Restore sai_switch_api.
-        sai_switch_api = old_sai_switch_api;
-    }
-
-    TEST_F(AclOrchTest, AclMockTableType_ActionValidation)
+    TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
     {
         const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TABLE_TYPE";
         const string aclTableName = "INNER_SRC_MAC_REWRITE_TABLE";
@@ -2069,45 +2004,6 @@ namespace aclorch_test
                         {
                             { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
                             { MATCH_TUNNEL_VNI, "233" },
-                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "" }
-                        }
-                    }
-                }
-            )
-        );
-    
-        // Empty mac in Inner src mac action is not supported on this table
-        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
-    
-        orch->doAclRuleTask(
-            deque<KeyOpFieldsValuesTuple>(
-                {
-                    {
-                        aclTableName + "|" + aclRuleName,
-                        SET_COMMAND,
-                        {
-                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
-                            { MATCH_TUNNEL_VNI, "233" },
-                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:" }
-                        }
-                    }
-                }
-            )
-        );
-    
-        // Incorrect mac in Inner src mac action is not supported on this table
-        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
-    
-    
-        orch->doAclRuleTask(
-            deque<KeyOpFieldsValuesTuple>(
-                {
-                    {
-                        aclTableName + "|" + aclRuleName,
-                        SET_COMMAND,
-                        {
-                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
-                            { MATCH_TUNNEL_VNI, "233" },
                             { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
                         }
                     }
@@ -2118,6 +2014,7 @@ namespace aclorch_test
         // Inner src mac action is supported on this table
         ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
     
+        // Rule update verification
         class AclRuleTest : public AclRuleInnerSrcMacRewrite
         {
         public:
@@ -2135,114 +2032,152 @@ namespace aclorch_test
                 m_matches.erase(attr);
             }
         };
-    
+
+        // First Update, 2 matches and 1 action
         auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, aclRuleName, aclTableName);
         ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
         ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2/24"));
-        ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
+        ASSERT_FALSE(rule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
         ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
-    
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
+        ASSERT_FALSE(rule->validate());
+
         ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, aclTableName));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
-    }
-
-    TEST_F(AclOrchTest, AclisrcmacRuleUpdate)
-    {
-        string acl_table_id = "acl_table_1";
-        string acl_rule_id = "acl_rule_1";
-
-        auto orch = createAclOrch();
-
-        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
-            { { acl_table_id,
-                SET_COMMAND,
-                { { ACL_TABLE_DESCRIPTION, "TEST" },
-                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
-                  { ACL_TABLE_STAGE, STAGE_EGRESS },
-                  { ACL_TABLE_PORTS, "1,2" } } } });
-
-        orch->doAclTableTask(kvfAclTable);
-
-        // validate acl table ...
-
-        auto acl_table_oid = orch->getTableById(acl_table_id);
-        ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
-
-        const auto &acl_tables = orch->getAclTables();
-        auto it_table = acl_tables.find(acl_table_oid);
-        ASSERT_NE(it_table, acl_tables.end());
-
-        class AclRuleTest : public AclRuleInnerSrcMacRewrite
-        {
-        public:
-            AclRuleTest(AclOrch* orch, string rule, string table):
-            AclRuleInnerSrcMacRewrite(orch, rule, table, true)
-            {}
-
-            void setCounterEnabled(bool enabled)
-            {
-                m_createCounter = enabled;
-            }
-
-            void disableMatch(sai_acl_entry_attr_t attr)
-            {
-                m_matches.erase(attr);
-            }
-        };
-
-        // First update
-        auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, acl_rule_id, acl_table_id);
-        ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
-        ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2/24"));
-        ASSERT_TRUE(rule->validateAddMatch(MATCH_SRC_IP, "12.12.12.12/24"));
-        ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
-        ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
-
-        ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, acl_table_id));
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.12.12.12&mask:255.255.255.0");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
-
-        // Second update
+        // Second update, invalid action & extra match
         auto updatedRule = make_shared<AclRuleTest>(*rule);
         ASSERT_TRUE(updatedRule->validateAddPriority(RULE_PRIORITY, "900"));
         ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_INNER_SRC_IP, "2.3.2.2/24"));
         ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
-        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
+        ASSERT_FALSE(updatedRule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
+        ASSERT_FALSE(updatedRule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD"));
+        
 
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.13.12.12&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
-        // Third update
+        // Third update, change in 2 matches and with invalid action
         auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
         ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_INNER_SRC_IP, "3.3.3.3/24"));
         ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
-        ASSERT_TRUE(updatedRule2->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:35:AB:CD:EF"));
-        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_SRC_IP, "2.13.12.12/24"));
+        ASSERT_FALSE(updatedRule2->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, ""));
 
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.13.12.12&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "3.3.3.3&mask:255.255.255.0");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.13.12.12&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:35:AB:CD:EF");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
         auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
         updatedRule3->setCounterEnabled(true);
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule3));
-        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), true));
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(aclTableName, aclRuleName), true));
 
+        // Remove rule
         ASSERT_TRUE(orch->m_aclOrch->removeAclRule(rule->getTableId(), rule->getId()));
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        DEL_COMMAND,
+                        {}
+                   }
+                }
+            )
+       );
+
+       // Table still exists
+       ASSERT_TRUE(orch->getAclTable(aclTableName));
+       ASSERT_FALSE(orch->getAclTableType(aclTableTypeName));
+
+       orch->doAclTableTask(
+           deque<KeyOpFieldsValuesTuple>(
+               {
+                   {
+                       aclTableName,
+                       DEL_COMMAND,
+                       {}
+                   }
+               }
+           )
+       );
+
+       // Table is removed
+       ASSERT_FALSE(orch->getAclTable(aclTableName));
+
     }
+
+    TEST_F(AclOrchTest, AclTableCreationWithMandatoryActions)
+    {
+        // Override SAI API get_switch_attribute to request passing mandatory ACL actions to SAI
+        // when creating mirror ACL table.
+        old_sai_switch_api = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttribute;
+
+        // Set platform env to enable support of MIRRORV6 ACL table.
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        for (const auto &acl_table_type : { TABLE_TYPE_MIRROR, TABLE_TYPE_MIRRORV6, TABLE_TYPE_MIRROR_DSCP })
+        {
+            for (const auto &acl_table_stage : { STAGE_INGRESS, STAGE_EGRESS })
+            {
+                // Create ACL table.
+                string acl_table_id = "mirror_acl_table";
+                auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                    { { acl_table_id,
+                        SET_COMMAND,
+                        { { ACL_TABLE_DESCRIPTION, acl_table_type },
+                          { ACL_TABLE_TYPE, acl_table_type },
+                          { ACL_TABLE_STAGE, acl_table_stage },
+                          { ACL_TABLE_PORTS, "1,2" } } } });
+                orch->doAclTableTask(kvfAclTable);
+                auto acl_table = orch->getAclTable(acl_table_id);
+                ASSERT_NE(acl_table, nullptr);
+
+                // Verify mandaotry ACL actions has been added.
+                auto acl_actions = acl_table->type.getActions();
+                ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end());
+                sai_acl_action_type_t action = strcmp(acl_table_stage, STAGE_INGRESS) == 0 ?
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS : SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+                ASSERT_NE(acl_actions.find(action), acl_actions.end());
+
+                // Delete ACL table.
+                kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                    { { acl_table_id,
+                        DEL_COMMAND,
+                        {} } });
+                orch->doAclTableTask(kvfAclTable);
+                acl_table = orch->getAclTable(acl_table_id);
+                ASSERT_EQ(acl_table, nullptr);
+            }
+        }
+
+        // Unset platform env.
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+
+        // Restore sai_switch_api.
+        sai_switch_api = old_sai_switch_api;
+    }
+    
 } // namespace nsAclOrchTest

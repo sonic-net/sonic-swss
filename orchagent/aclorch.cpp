@@ -1729,12 +1729,9 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRulePacket>(acl, rule, table);
         }
-        else if (aclL3InnerActionLookup.find(action) != aclL3InnerActionLookup.cend())
+        else if (aclL3InnerActionLookup.find(action) != aclL3InnerActionLookup.cend() || action == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
         {
-            if (action == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
-            {
-                return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
-            }
+            return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
         }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
@@ -2098,15 +2095,30 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
 
     if (attr_name == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
     {
-        SWSS_LOG_INFO("entry here");
-        memcpy(actionData.parameter.mac ,  MacAddress(_attr_value).getMac(), sizeof(sai_mac_t));
-        action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
+        if (!_attr_value.empty())
+        {
+            try {
+                MacAddress(_attr_value).getMac();
+            }
+            catch (invalid_argument &e)
+            {
+                SWSS_LOG_ERROR("Mac address in the wrong format");
+                return false;
+            }
+            memcpy(actionData.parameter.mac ,  MacAddress(_attr_value).getMac(), sizeof(sai_mac_t));
+            action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
+            SWSS_LOG_INFO("Converting the mac address to SAI acl action parameter");
+        }    
+        else{
+            return false;
+        }
     }
     else
     {
         return false;
     }
 
+    actionData.enable = true;
     return setAction(aclL3InnerActionLookup[action_str], actionData);
  }
 
@@ -2114,7 +2126,7 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
  {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if ((m_rangeConfig.empty() && m_matches.size() != 2) || m_actions.size() != 1 )
     {
         return false;
     }
@@ -2122,13 +2134,10 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
     return true;
  }
 
-
  void AclRuleInnerSrcMacRewrite::onUpdate(SubjectType type, void *cntx)
  {
-    //do nothing
-    
+    //do nothing  
  }
-
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
         AclRule(aclOrch, rule, table),
@@ -3623,8 +3632,6 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI))
             .build()
     );
 
