@@ -22,6 +22,11 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
 {
     // don't use this event handler, because it runs by libsairedis in a separate thread
     // which causes concurrency access to the DB
+    swss::DBConnector db("ASIC_DB", 0);
+    swss::NotificationProducer port_state_change(&db, "NOTIFICATIONS");
+    std::string sdata = sai_serialize_port_oper_status_ntf(count, data);
+    std::vector<swss::FieldValueTuple> values;
+    port_state_change.send("port_state_change", sdata, values);
 }
 
 void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notification_t *data)
