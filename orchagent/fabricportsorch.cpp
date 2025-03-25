@@ -1174,7 +1174,7 @@ void FabricPortsOrch::updateFabricCapacity()
             lastTime = to_string(nse.count());
             if (gMySwitchType == "voq")
             {
-                SWSS_LOG_NOTICE("Total links %d. Expected up links %d. Operational links %d. Fabric capacity %s than expected.",
+                SWSS_LOG_NOTICE("Total links %d. Expected up links %d. Operational links %d. Fabric capacity %s than threshold.",
                       total_links, expect_links, operating_links, cur_event.c_str());
             }
         }
@@ -1187,7 +1187,7 @@ void FabricPortsOrch::updateFabricCapacity()
             lastTime = to_string(nse.count());
             if (gMySwitchType == "voq")
             {
-                SWSS_LOG_NOTICE("Total links %d. Expected up links %d. Operational links %d. Fabric capacity %s than expected.",
+                SWSS_LOG_NOTICE("Total links %d. Expected up links %d. Operational links %d. Fabric capacity %s than threshold.",
                       total_links, expect_links, operating_links, cur_event.c_str());
 
             }
