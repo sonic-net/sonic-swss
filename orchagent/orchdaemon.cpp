@@ -676,25 +676,7 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        bool pfcDlrInit = gSwitchOrch->checkPfcDlrInitEnable();
-
-        // Override pfcDlrInit if needed, and this change is only for PFC tests.
-        if(getenv("PFC_DLR_INIT_ENABLE"))
-        {
-            string envPfcDlrInit = getenv("PFC_DLR_INIT_ENABLE");
-            if(envPfcDlrInit == "1")
-            {
-                pfcDlrInit = true;
-                SWSS_LOG_NOTICE("Override PfcDlrInitEnable to true");
-            }
-            else if(envPfcDlrInit == "0")
-            {
-                pfcDlrInit = false;
-                SWSS_LOG_NOTICE("Override PfcDlrInitEnable to false");
-            }
-        }
-
-        if(pfcDlrInit)
+        if(gSwitchOrch->checkPfcDlrInitEnable())
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
