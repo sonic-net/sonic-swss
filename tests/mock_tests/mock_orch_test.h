@@ -50,6 +50,7 @@ namespace mock_orch_test
         MuxStateOrch *m_MuxStateOrch;
         FlexCounterOrch *m_FlexCounterOrch;
         VxlanTunnelOrch *m_VxlanTunnelOrch;
+        VNetOrch *m_vnetOrch;
         DashOrch *m_DashOrch;
 
         void PrepareSai();

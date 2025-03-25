@@ -120,22 +120,67 @@ namespace bufferorch_test
         return pold_sai_queue_api->set_queue_attribute(queue_id, attr);
     }
 
+    sai_status_t _ut_stub_sai_set_ports_attribute(
+        uint32_t object_count,
+        const sai_object_id_t *object_id,
+        const sai_attribute_t *attr_list,
+        sai_bulk_op_error_mode_t mode,
+        sai_status_t *object_statuses)
+    {
+        for (size_t i = 0; i < object_count; i++)
+        {
+            object_statuses[i] = _ut_stub_sai_set_port_attribute(object_id[i], attr_list + i);
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_set_ingress_priority_groups_attribute(
+        uint32_t object_count,
+        const sai_object_id_t *object_id,
+        const sai_attribute_t *attr_list,
+        sai_bulk_op_error_mode_t mode,
+        sai_status_t *object_statuses)
+    {
+        for (size_t i = 0; i < object_count; i++)
+        {
+            object_statuses[i] = _ut_stub_sai_set_ingress_priority_group_attribute(object_id[i], attr_list + i);
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_set_queues_attribute(
+        uint32_t object_count,
+        const sai_object_id_t *object_id,
+        const sai_attribute_t *attr_list,
+        sai_bulk_op_error_mode_t mode,
+        sai_status_t *object_statuses)
+    {
+        for (size_t i = 0; i < object_count; i++)
+        {
+            object_statuses[i] = _ut_stub_sai_set_queue_attribute(object_id[i], attr_list + i);
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
     void _hook_sai_apis()
     {
         ut_sai_port_api = *sai_port_api;
         pold_sai_port_api = sai_port_api;
         ut_sai_port_api.set_port_attribute = _ut_stub_sai_set_port_attribute;
+        ut_sai_port_api.set_ports_attribute = _ut_stub_sai_set_ports_attribute;
         sai_port_api = &ut_sai_port_api;
 
         ut_sai_buffer_api = *sai_buffer_api;
         pold_sai_buffer_api = sai_buffer_api;
         ut_sai_buffer_api.set_ingress_priority_group_attribute = _ut_stub_sai_set_ingress_priority_group_attribute;
+        ut_sai_buffer_api.set_ingress_priority_groups_attribute = _ut_stub_sai_set_ingress_priority_groups_attribute;
         ut_sai_buffer_api.set_buffer_profile_attribute = _ut_stub_sai_set_buffer_profile_attribute;
         sai_buffer_api = &ut_sai_buffer_api;
 
         ut_sai_queue_api = *sai_queue_api;
         pold_sai_queue_api = sai_queue_api;
         ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
+        ut_sai_queue_api.set_queues_attribute = _ut_stub_sai_set_queues_attribute;
         sai_queue_api = &ut_sai_queue_api;
     }
 
