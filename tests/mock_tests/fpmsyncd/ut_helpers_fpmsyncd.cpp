@@ -1,4 +1,4 @@
-#include "ut_helpers_fpmsyncd.h"
+#include "tests/mock_tests/fpmsyncd/ut_helpers_fpmsyncd.h"
 #include "ipaddress.h"
 #include "ipprefix.h"
 #include <linux/netlink.h>

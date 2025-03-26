@@ -1,7 +1,7 @@
-#include "warmRestartHelper.h"
+#include "warmrestart/warmRestartHelper.h"
 #include "warm_restart.h"
-#include "mock_table.h"
-#include "ut_helper.h"
+#include "tests/mock_tests/mock_table.h"
+#include "tests/mock_tests/ut_helper.h"
 
 using namespace testing_db;
 
