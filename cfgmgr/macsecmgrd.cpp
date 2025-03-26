@@ -12,7 +12,7 @@
 #include <macaddress.h>
 #include <exec.h>
 #include <tokenize.h>
-#include <shellcmd.h>
+#include "cfgmgr/shellcmd.h"
 #include <warm_restart.h>
 #include <select.h>
 

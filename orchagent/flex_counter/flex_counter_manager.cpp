@@ -6,7 +6,7 @@
 #include "rediscommand.h"
 #include "logger.h"
 
-#include <macsecorch.h>
+#include "orchagent/macsecorch.h"
 
 using std::shared_ptr;
 using std::string;

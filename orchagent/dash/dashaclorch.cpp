@@ -3,7 +3,7 @@
 #include <swss/redisutility.h>
 #include <swss/ipaddress.h>
 
-#include <swssnet.h>
+#include "orchagent/swssnet.h"
 
 #include "orchagent/dash/dashaclorch.h"
 #include "orchagent/dash/taskworker.h"
