@@ -1556,6 +1556,8 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
             }
         }
     }
+    else
+        SWSS_LOG_WARN("Next hop group ID is NULL.");
 
     m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
