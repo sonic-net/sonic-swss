@@ -1020,6 +1020,10 @@ namespace portsorch_test
         EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
         EXPECT_EQ(attr.value.u16, 0x8101);
 
+        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.s32, SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE);
+
         attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX;
         EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
         EXPECT_EQ(attr.value.u8, 0xff);

@@ -1231,7 +1231,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         if (cit.pfc_asym.is_set)
         {
             sai_attribute_t attr;
-            attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+            attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
             attr.value.s32 = cit.pfc_asym.value;
             attrList.push_back(attr);
 
