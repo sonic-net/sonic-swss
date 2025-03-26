@@ -17,6 +17,7 @@ from dash_api.types_pb2 import *
 from google.protobuf.json_format import ParseDict
 from google.protobuf.message import Message
 
+ASIC_DASH_APPLIANCE_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_DASH_APPLIANCE"
 ASIC_DIRECTION_LOOKUP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY"
 ASIC_VIP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VIP_ENTRY"
 ASIC_VNET_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VNET"
@@ -154,6 +155,20 @@ class DashDB(object):
         else:
             return None
 
+    def wait_for_asic_db_keys_(self, table_name, min_keys=1):
+
+        def polling_function():
+            table = Table(self.dvs.get_asic_db().db_connection, table_name)
+            keys = table.get_keys()
+            return len(keys) >= min_keys, keys
+
+        _, keys = wait_for_result(polling_function, failure_message=f"Found fewer than {min_keys} keys in ASIC_DB table {table_name}")
+        return keys
+
+    def get_keys(self, table_name):
+        table = Table(self.dvs.get_asic_db().db_connection, table_name)
+        return table.get_keys()
+
     def __init__(self, dvs):
         self.dvs = dvs
         self.app_dash_routing_type_table = ProducerStateTable(
@@ -175,6 +190,8 @@ class DashDB(object):
         self.app_dash_route_group_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_ROUTE_GROUP_TABLE")
 
+        self.asic_dash_appliance_table = Table(
+            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_DASH_APPLIANCE")
         self.asic_direction_lookup_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY")
         self.asic_vip_table = Table(
