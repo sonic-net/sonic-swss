@@ -144,7 +144,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
-      patterns: '**/target/debs/${{ debian_version }}/framework_*.deb'
+      patterns: '**/target/debs/${{ parameters.debian_version }}/framework_*.deb'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
 
   - script: |
