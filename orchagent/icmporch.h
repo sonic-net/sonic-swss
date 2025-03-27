@@ -137,7 +137,7 @@ private:
 
     // map of sai icmp session state to string
     static const std::map<sai_icmp_echo_session_state_t, std::string> m_session_state_lkup;
-    // map of icmp session state strin to sai icmp session state
+    // map of icmp session state string to sai icmp session state
     static const std::map<std::string, sai_icmp_echo_session_state_t> m_session_state_str_lkup;
 };
 
@@ -237,7 +237,7 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
      *
      *@brief auxilary remove method for icmp echo session
      *
-     *@return SUCEES_VALID_ENTRY session id found and removed
+     *@return SUCCESS_VALID_ENTRY session id found and removed
      *        FAILED_INVALID_ENTRY session id not found
      *        FAILED_VALID_ENTRY unable to remove session for a found id
      *        RETRY_VALID_ENTRY retry session removal for a found id
@@ -246,7 +246,7 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
 
     // stored reference to the IcmpOrch
     IcmpOrch& m_orch;
-    // icmp echo session type, SELF/PEER
+    // icmp echo session type, NORMAL/RX
     std::string m_session_type;
     // icmp echo session guid string from key
     std::string m_guid;
@@ -258,6 +258,19 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
     static sai_attr_handler_map_t m_handler_map;
     // name of the icmp orch
     static const std::string m_name;
+
+    // handlers for icmp echo session app_db fields
+    static void handle_tx_interval_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_rx_interval_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_src_ip_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_dst_ip_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_src_mac_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_dst_mac_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_tos_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_ttl_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_session_guid_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_session_cookie_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
+    static void handle_hw_lookup_field(std::string& sval, sai_attr_id_val_map_t& id_val_map, fv_vector_t& fvVector);
 
     // fieldname strings used by app_db and state_db for icmp echo sessions
     static const std::string m_tx_interval_fname;

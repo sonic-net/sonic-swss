@@ -622,7 +622,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
                     return task_success;
                     /*
-                     * Oflload table resource maybe a shared resource,
+                     * Offload table resource maybe a shared resource,
                      * avoid abort when icmp offload table is full.
                      */
                 case SAI_STATUS_TABLE_FULL:
