@@ -1462,6 +1462,26 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
                 continue;
             }
 
+            // If cable len is 0m, remove lossless PG, keep lossy PG.
+            if (cable_length == "0m" && portPg.lossless)
+            {
+                if (oldProfile.empty())
+                {
+                    SWSS_LOG_INFO("No lossless profile found for port %s when cable length is set to '0m'.", port.c_str());
+                    continue;
+                }
+
+                if (m_bufferProfileLookup.find(oldProfile) != m_bufferProfileLookup.end())
+                {
+                    m_bufferProfileLookup[oldProfile].port_pgs.erase(key);
+                }
+
+                updateBufferObjectToDb(key, oldProfile, false);
+                profilesToBeReleased.insert(oldProfile);
+                portPg.running_profile_name.clear();
+                continue;
+            }
+
             string threshold;
             // Calculate new headroom size
             if (portPg.static_configured)
