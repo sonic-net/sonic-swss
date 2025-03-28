@@ -470,51 +470,6 @@ class TestPortchannel(object):
         # wait for port-channel deletion
         time.sleep(1)
 
-    # Make sure if a PortChannel member port tries to set an MTU that it is
-    # ignored and does not cause a runtime error.
-    def test_portchannel_member_mtu(self, dvs, testlog):
-        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-
-        # create port-channel
-        tbl = swsscommon.Table(config_db, "PORTCHANNEL")
-        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
-        tbl.set("PortChannel111", fvs)
-
-        # set port-channel oper status
-        tbl = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
-        tbl.set("PortChannel111", fvs)
-
-        # add members to port-channel
-        tbl = swsscommon.Table(config_db, "PORTCHANNEL_MEMBER")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
-        tbl.set("PortChannel111|Ethernet0", fvs)
-        tbl.set("PortChannel111|Ethernet4", fvs)
-
-        # wait for port-channel netdev creation
-        time.sleep(1)
-
-        tbl = swsscommon.Table(config_db, "PORT")
-        fvs = swsscommon.FieldValuePairs([("mtu", "9100")])
-        tbl.set("Ethernet0", fvs)
-
-        # wait for attempted configuration to be applied
-        time.sleep(1)
-
-        # remove port-channel members
-        tbl = swsscommon.Table(config_db, "PORTCHANNEL_MEMBER")
-        tbl._del("PortChannel111|Ethernet0")
-        tbl._del("PortChannel111|Ethernet4")
-
-        # remove port-channel
-        tbl = swsscommon.Table(config_db, "PORTCHANNEL")
-        tbl._del("PortChannel111")
-
-        # wait for port-channel deletion
-        time.sleep(1)
-
-
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

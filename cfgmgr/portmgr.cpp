@@ -7,7 +7,6 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include <swss/redisutility.h>
-#include <unordered_map>
 
 using namespace std;
 using namespace swss;
@@ -23,40 +22,7 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
 }
 
-bool PortMgr::isLagMember(const std::string &alias, std::unordered_map<std::string, int> &lagMembers)
-{
-    /* Lag members are lazily loaded on the first call to isLagMember and cached
-     * within a variable inside of doTask() for future calls.
-     */
-    if (lagMembers.empty())
-    {
-        vector<string> keys;
-        m_cfgLagMemberTable.getKeys(keys);
-        for (auto key: keys)
-        {
-            auto tokens = tokenize(key, config_db_key_delimiter);
-            std::string member = tokens[1];
-            if (!member.empty()) {
-                lagMembers[member] = 1;
-            }
-        }
-
-        /* placeholder to state we already read lagmembers even though there are
-         * none */
-        if (lagMembers.empty()) {
-            lagMembers["none"] = 1;
-        }
-    }
-
-    if (lagMembers.find(alias) != lagMembers.end())
-    {
-        return true;
-    }
-
-    return false;
-}
-
-bool PortMgr::setPortMtu(const string &alias, const string &mtu, std::unordered_map<std::string, int> &lagMembers)
+bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 {
     stringstream cmd;
     string res, cmd_str;
@@ -75,12 +41,6 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu, std::unordered_
     {
         // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
         SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-        return false;
-    }
-    else if (isLagMember(alias, lagMembers))
-    {
-        // Catch user improperly specified an MTU on the PortChannel
-        SWSS_LOG_WARN("Setting mtu to alias:%s which is a member of a PortChannel is invalid", alias.c_str());
         return false;
     }
     else
@@ -168,16 +128,9 @@ void PortMgr::doSendToIngressPortTask(Consumer &consumer)
 
 }
 
-
 void PortMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-
-    /* Variable to lazily cache lag members upon first call into isLagMember(). We
-     * don't want to always query for lag members if not needed, and we also don't
-     * want to query it for each call to isLagMember() which may be on every port.
-     */
-    std::unordered_map<std::string, int> lagMembers;
 
     auto table = consumer.getTableName();
     if (table == CFG_SEND_TO_INGRESS_PORT_TABLE_NAME)
@@ -203,7 +156,6 @@ void PortMgr::doTask(Consumer &consumer)
             bool portOk = isPortStateOk(alias);
 
             string admin_status, mtu;
-            bool   isMtuSet = false;
             std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
@@ -215,6 +167,7 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
+
                 m_portList.insert(alias);
             }
             else if (!portOk)
@@ -228,10 +181,6 @@ void PortMgr::doTask(Consumer &consumer)
                 if (fvField(i) == "mtu")
                 {
                     mtu = fvValue(i);
-                    /* mtu read might be "", so we can't just use .empty() to
-                     * know if its set.  There's test cases that depend on this
-                     * logic ... */
-                    isMtuSet = true;
                 }
                 else if (fvField(i) == "admin_status")
                 {
@@ -241,11 +190,6 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     field_values.emplace_back(i);
                 }
-            }
-
-            /* Clear default MTU if LAG member as this will otherwise fail. */
-            if (!isMtuSet && isLagMember(alias, lagMembers)) {
-                mtu = "";
             }
 
             if (!portOk)
@@ -277,14 +221,14 @@ void PortMgr::doTask(Consumer &consumer)
 
             if (!mtu.empty())
             {
+                setPortMtu(alias, mtu);
                 SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
-                setPortMtu(alias, mtu, lagMembers);
             }
 
             if (!admin_status.empty())
             {
-                SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
                 setPortAdminStatus(alias, admin_status == "up");
+                SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
         }
         else if (op == DEL_COMMAND)
