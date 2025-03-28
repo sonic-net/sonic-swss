@@ -106,6 +106,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       swss_artifact_name: sonic-swss-${{ parameters.debian_version }}
+      debian_version: ${{ parameters.debian_version }}
       artifact_name: docker-sonic-vs
 
 - stage: BuildDockerAsan
@@ -118,6 +119,7 @@ stages:
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       swss_artifact_name: sonic-swss-asan-${{ parameters.debian_version }}
       artifact_name: docker-sonic-vs-asan
+      debian_version: ${{ parameters.debian_version }}
       asan: true
 
 - stage: Test
