@@ -47,6 +47,31 @@ ROUTE_GROUP1 = "RouteGroup1"
 ROUTE_GROUP2 = "RouteGroup2"
 ROUTE_GROUP1_GUID = "48af6ce8-26cc-4293-bfa6-0126e8fcdeb2"
 ROUTE_GROUP2_GUID = "58cf62e0-22cc-4693-baa6-012358fcdec9"
+TUNNEL1 = "Tunnel1"
+TUNNEL1_ENDPOINTS = [IP("99.99.99.1")]
+TUNNEL1_VNI = "101"
+TUNNEL2 = "Tunnel2"
+TUNNEL2_ENDPOINTS = [IP("55.55.55.1") + i for i in range(5)]
+TUNNEL2_VNI = "102"
+TUNNEL3 = "Tunnel3"
+TUNNEL3_ENDPOINTS = [IP("2001:db8::1")]
+TUNNEL3_VNI = "103"
+TUNNEL4 = "Tunnel4"
+TUNNEL4_ENDPOINTS = [IP("77.77.77.1") + i for i in range(1, 50)] + [IP("2002:db8::1") + i for i in range(1, 50)]
+TUNNEL4_VNI = "104"
+TUNNEL5 = "Tunnel5"
+TUNNEL5_ENDPOINTS = [IP("88.88.88.1")] * 2
+TUNNEL5_VNI = "105"
+
+
+def fmt_tunnel_endpoints(endpoints):
+    return [
+        {"ipv4": socket.htonl(int(endpoint))}
+        if endpoint.version == 4 else
+        {"ipv6": base64.b64encode(endpoint.packed)}
+        for endpoint in endpoints
+    ]
+
 
 APPLIANCE_CONFIG = {
     "sip": {
@@ -115,6 +140,30 @@ VNET_MAPPING_CONFIG_PRIVATELINK = {
     },
 }
 
+VNET_MAPPING_CONFIG_PLNSG= {
+    "routing_type": RoutingType.ROUTING_TYPE_PRIVATELINK,
+    "underlay_ip": {
+        "ipv4": socket.htonl(int(IP(UNDERLAY_IP)))
+    },
+    "overlay_sip_prefix": {
+        "ip": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_SIP).packed)
+        },
+        "mask": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_SIP_MASK).packed)
+        }
+    },
+    "overlay_dip_prefix": {
+        "ip": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_DIP).packed)
+        },
+        "mask": {
+            "ipv6": base64.b64encode(IP(PL_OVERLAY_DIP_MASK).packed)
+        }
+    },
+    "tunnel": TUNNEL1
+}
+
 ROUTE_VNET_CONFIG = {
     "routing_type": RoutingType.ROUTING_TYPE_VNET,
     "vnet": VNET1,
@@ -163,9 +212,39 @@ ROUTE_GROUP2_CONFIG = {
 }
 
 ENI_ROUTE_GROUP1_CONFIG = {
-    "group_id": ROUTE_GROUP1, 
+    "group_id": ROUTE_GROUP1,
 }
 
 ENI_ROUTE_GROUP2_CONFIG = {
-    "group_id": ROUTE_GROUP2, 
+    "group_id": ROUTE_GROUP2,
+}
+
+TUNNEL1_CONFIG = {
+    "endpoints": fmt_tunnel_endpoints(TUNNEL1_ENDPOINTS),
+    "encap_type": EncapType.ENCAP_TYPE_VXLAN,
+    "vni": TUNNEL1_VNI
+}
+
+TUNNEL2_CONFIG = {
+    "endpoints": fmt_tunnel_endpoints(TUNNEL2_ENDPOINTS),
+    "encap_type": EncapType.ENCAP_TYPE_NVGRE,
+    "vni": TUNNEL2_VNI
+}
+
+TUNNEL3_CONFIG = {
+    "endpoints": fmt_tunnel_endpoints(TUNNEL3_ENDPOINTS),
+    "encap_type": EncapType.ENCAP_TYPE_VXLAN,
+    "vni": TUNNEL3_VNI
+}
+
+TUNNEL4_CONFIG = {
+    "endpoints": fmt_tunnel_endpoints(TUNNEL4_ENDPOINTS),
+    "encap_type": EncapType.ENCAP_TYPE_NVGRE,
+    "vni": TUNNEL4_VNI
+}
+
+TUNNEL5_CONFIG = {
+    "endpoints": fmt_tunnel_endpoints(TUNNEL5_ENDPOINTS),
+    "encap_type": EncapType.ENCAP_TYPE_VXLAN,
+    "vni": TUNNEL5_VNI
 }
