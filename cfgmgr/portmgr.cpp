@@ -37,18 +37,17 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
         // the port MTU and possibly the port based router interface MTU
         return writeConfigToAppDb(alias, "mtu", mtu);
     }
-
-    // Failure happens on PortChannels during system startup.  PortChannel enslaves
-    // members before a default MTU on the port (set in this file, not via the config!).
-    // Therefore this error is always emitted on startup for portchannel members.
-    // In theory we shouldn't log in this case, the correct fix is to detect the
-    // port is part of a portchannel and not even try this but that is rejected for
-    // possible performance implications.
-    //
-    // This can also happen when a DEL notification is sent by portmgrd
-    // immediately followed by a new SET notif
-    SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-    return false;
+    else if (!isPortStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+        SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
+    else
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
+    return true;
 }
 
 bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
