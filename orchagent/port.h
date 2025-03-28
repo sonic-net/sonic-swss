@@ -172,6 +172,7 @@ public:
     uint32_t            m_speed = 0;    // Mbps
     port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     bool                m_autoneg = false;
+    bool                m_unreliable_los = false;
     bool                m_link_training = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;
