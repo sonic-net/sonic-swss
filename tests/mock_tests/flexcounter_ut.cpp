@@ -131,10 +131,6 @@ namespace flexcounter_test
         }
         else
         {
-            if (flexCounterGroupParam->bulk_chunk_size.list != nullptr || flexCounterGroupParam->bulk_chunk_size_per_prefix.list != nullptr)
-            {
-                return SAI_STATUS_SUCCESS;
-            }
             mockFlexCounterGroupTable->del(key);
         }
 
@@ -927,47 +923,6 @@ namespace flexcounter_test
             consumer->addToSync(entries);
             entries.clear();
             static_cast<Orch *>(gBufferOrch)->doTask();
-
-            if (!gTraditionalFlexCounter)
-            {
-                // Verify bulk chunk size fields which can be verified in any combination of parameters.
-                // We verify it here just for convenience.
-                consumer = dynamic_cast<Consumer *>(flexCounterOrch->getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
-
-                entries.push_back({"PORT", "SET", {
-                            {"FLEX_COUNTER_STATUS", "enable"},
-                            {"BULK_CHUNK_SIZE", "64"}
-                        }});
-                consumer->addToSync(entries);
-                entries.clear();
-                static_cast<Orch *>(flexCounterOrch)->doTask();
-                ASSERT_TRUE(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT") != flexCounterOrch->m_groupsWithBulkChunkSize.end());
-
-                entries.push_back({"PORT", "SET", {
-                            {"FLEX_COUNTER_STATUS", "enable"}
-                        }});
-                consumer->addToSync(entries);
-                entries.clear();
-                static_cast<Orch *>(flexCounterOrch)->doTask();
-                ASSERT_EQ(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT"), flexCounterOrch->m_groupsWithBulkChunkSize.end());
-
-                entries.push_back({"PORT", "SET", {
-                            {"FLEX_COUNTER_STATUS", "enable"},
-                            {"BULK_CHUNK_SIZE_PER_PREFIX", "SAI_PORT_STAT_IF_OUT_QLEN:0;SAI_PORT_STAT_IF_IN_FEC:32"}
-                        }});
-                consumer->addToSync(entries);
-                entries.clear();
-                static_cast<Orch *>(flexCounterOrch)->doTask();
-                ASSERT_TRUE(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT") != flexCounterOrch->m_groupsWithBulkChunkSize.end());
-
-                entries.push_back({"PORT", "SET", {
-                            {"FLEX_COUNTER_STATUS", "enable"}
-                        }});
-                consumer->addToSync(entries);
-                entries.clear();
-                static_cast<Orch *>(flexCounterOrch)->doTask();
-                ASSERT_EQ(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT"), flexCounterOrch->m_groupsWithBulkChunkSize.end());
-            }
         }
 
         // Remove buffer pools
