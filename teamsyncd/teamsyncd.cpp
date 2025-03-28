@@ -5,7 +5,7 @@
 #include "select.h"
 #include "netdispatcher.h"
 #include "netlink.h"
-#include "teamsync.h"
+#include "teamsyncd/teamsync.h"
 
 using namespace std;
 using namespace swss;

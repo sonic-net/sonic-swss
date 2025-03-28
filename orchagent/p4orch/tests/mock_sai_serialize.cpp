@@ -1,4 +1,4 @@
-#include "mock_sai_serialize.h"
+#include "orchagent/p4orch/tests/mock_sai_serialize.h"
 
 MockSaiSerialize *mock_sai_serialize;
 

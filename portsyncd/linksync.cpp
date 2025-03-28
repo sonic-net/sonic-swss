@@ -14,7 +14,7 @@
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
 #include "warm_restart.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 
 #include <iostream>
 #include <set>

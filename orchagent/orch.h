@@ -23,8 +23,8 @@ extern "C" {
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
-#include "response_publisher.h"
-#include "recorder.h"
+#include "orchagent/response_publisher.h"
+#include "lib/recorder.h"
 #include "schema.h"
 
 const char delimiter           = ':';
@@ -328,7 +328,7 @@ private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };
 
-#include "request_parser.h"
+#include "orchagent/request_parser.h"
 
 class Orch2 : public Orch
 {

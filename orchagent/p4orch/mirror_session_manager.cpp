@@ -1,15 +1,15 @@
-#include "p4orch/mirror_session_manager.h"
+#include "orchagent/p4orch/mirror_session_manager.h"
 
 #include <map>
 #include <nlohmann/json.hpp>
 
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
-#include "p4orch/p4orch_util.h"
-#include "portsorch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
 #include "sai_serialize.h"
 #include "swss/logger.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "table.h"
 
 using ::p4orch::kTableKeyDelimiter;

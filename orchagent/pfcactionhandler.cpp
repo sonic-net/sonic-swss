@@ -1,8 +1,8 @@
 #include <unordered_map>
-#include "pfcactionhandler.h"
+#include "orchagent/pfcactionhandler.h"
 #include "logger.h"
 #include "sai_serialize.h"
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 #include <vector>
 #include <inttypes.h>
 

@@ -1,12 +1,12 @@
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
-#include "ut_helper.h"
-//#include "mock_orchagent_main.h"
-#include "mock_table.h"
+#include "tests/mock_tests/ut_helper.h"
+//#include "tests/mock_tests/mock_orchagent_main.h"
+#include "tests/mock_tests/mock_table.h"
 #include "warm_restart.h"
 #define private public
-#include "warmRestartAssist.h"
+#include "warmrestart/warmRestartAssist.h"
 #undef private
 
 #define APP_WRA_TEST_TABLE_NAME "TEST_TABLE"

@@ -3,8 +3,8 @@
 #include <thread>
 #include <chrono>
 #include <map>
-#include "orch.h"
-#include "port.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
 #include "events.h"
 
 extern "C" {

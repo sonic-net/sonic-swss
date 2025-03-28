@@ -1,4 +1,4 @@
-#include "p4orch/gre_tunnel_manager.h"
+#include "orchagent/p4orch/gre_tunnel_manager.h"
 
 #include <map>
 #include <nlohmann/json.hpp>
@@ -7,13 +7,13 @@
 #include <vector>
 
 #include "SaiAttributeList.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "dbconnector.h"
 #include "ipaddress.h"
 #include "logger.h"
-#include "p4orch/p4orch_util.h"
+#include "orchagent/p4orch/p4orch_util.h"
 #include "sai_serialize.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "table.h"
 extern "C"
 {

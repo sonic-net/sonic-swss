@@ -4,9 +4,9 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "vrfmgr.h"
+#include "cfgmgr/vrfmgr.h"
 #include "exec.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "warm_restart.h"
 
 #define VRF_TABLE_START 1001

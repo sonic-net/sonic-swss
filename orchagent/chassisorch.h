@@ -8,9 +8,9 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "orch.h"
-#include "observer.h"
-#include "vnetorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/vnetorch.h"
 
 class ChassisOrch : public Orch, public Observer
 {

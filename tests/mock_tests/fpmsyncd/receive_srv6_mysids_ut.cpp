@@ -1,15 +1,15 @@
-#include "ut_helpers_fpmsyncd.h"
+#include "tests/mock_tests/fpmsyncd/ut_helpers_fpmsyncd.h"
 #include "gtest/gtest.h"
 #include <gmock/gmock.h>
-#include "mock_table.h"
+#include "tests/mock_tests/mock_table.h"
 #include <net/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include "ipaddress.h"
 
 #define private public // Need to modify internal cache
-#include "fpmlink.h"
-#include "routesync.h"
+#include "fpmsyncd/fpmlink.h"
+#include "fpmsyncd/routesync.h"
 #undef private
 
 using namespace swss;

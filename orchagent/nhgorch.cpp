@@ -1,11 +1,11 @@
-#include "nhgorch.h"
-#include "neighorch.h"
-#include "crmorch.h"
-#include "routeorch.h"
-#include "srv6orch.h"
-#include "bulker.h"
+#include "orchagent/nhgorch.h"
+#include "orchagent/neighorch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/srv6orch.h"
+#include "orchagent/bulker.h"
 #include "logger.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 
 extern sai_object_id_t gSwitchId;
 

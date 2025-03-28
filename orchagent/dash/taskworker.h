@@ -12,7 +12,7 @@
 #include <swss/redisutility.h>
 #include <swss/rediscommand.h>
 
-#include <orch.h>
+#include "orchagent/orch.h"
 
 class TaskWorker
 {
