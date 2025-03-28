@@ -8411,10 +8411,16 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
     std::vector<swss::FieldValueTuple> values;
 
     consumer.pop(op, data, values);
+    SWSS_LOG_ERROR("Got port state change for a port");
 
     if (&consumer != m_portStatusNotificationConsumer && &consumer != m_portHostTxReadyNotificationConsumer)
     {
         return;
+    }
+
+    if (&consumer != m_portStatusNotificationConsumer)
+    {
+        SWSS_LOG_ERROR("#1 Consumer not found for port state change notification");
     }
 
     if (&consumer == m_portStatusNotificationConsumer && op == "port_state_change")
@@ -8431,7 +8437,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
             sai_port_oper_status_t status = portoperstatus[i].port_state;
             sai_port_error_status_t port_oper_err = portoperstatus[i].port_error_status;
 
-            SWSS_LOG_NOTICE("Get port state change notification id:%" PRIx64 " status:%d "
+            SWSS_LOG_ERROR("#2 Get port state change notification id:%" PRIx64 " status:%d "
                                 "oper_error_status:0x%" PRIx32,
                                 id, status, port_oper_err);
 

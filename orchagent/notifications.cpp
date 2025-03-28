@@ -5,6 +5,7 @@ extern "C" {
 #include "logger.h"
 #include "notifications.h"
 #include "switchorch.h"
+#include <inttypes.h>
 
 extern SwitchOrch *gSwitchOrch;
 
@@ -20,8 +21,25 @@ void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
 
 void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *data)
 {
+    for (uint32_t i = 0; i < count; i++)
+    {
+        sai_object_id_t id = data[i].port_id;
+        sai_port_oper_status_t status = data[i].port_state;
+        sai_port_error_status_t port_oper_err = data[i].port_error_status;
+
+        SWSS_LOG_ERROR("Got port state change notification id:%" PRIx64 " status:%d "
+                            "oper_error_status:0x%" PRIx32,
+                            id, status, port_oper_err);
+    }
+
     // don't use this event handler, because it runs by libsairedis in a separate thread
     // which causes concurrency access to the DB
+    swss::DBConnector db("ASIC_DB", 0);
+    swss::NotificationProducer port_state_change(&db, "NOTIFICATIONS");
+    std::string sdata = sai_serialize_port_oper_status_ntf(count, data);
+    std::vector<swss::FieldValueTuple> values;
+    port_state_change.send("port_state_change", sdata, values);
+    SWSS_LOG_ERROR("Forwarded port_state_change notification to portsotch");
 }
 
 void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notification_t *data)
