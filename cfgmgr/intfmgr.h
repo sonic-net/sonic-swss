@@ -64,6 +64,7 @@ private:
     std::string getIntfMtu(const std::string &alias);
     void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
     std::string setHostSubIntfMtu(const std::string &alias, const std::string &mtu, const std::string &parent_mtu);
+    bool setIntfAdminStatus(const std::string &alias, const std::string &admin_status);
     std::string setHostSubIntfAdminStatus(const std::string &alias, const std::string &admin_status, const std::string &parent_admin_status);
     void removeHostSubIntf(const std::string &subIntf);
     void setSubIntfStateOk(const std::string &alias);
