@@ -92,7 +92,7 @@ bool DashVnetOrch::addVnetPost(const string& vnet_name, const DashVnetBulkContex
         return false;
     }
 
-    VnetEntry entry = { id, ctxt.metadata };
+    VnetEntry entry = { id, ctxt.metadata, std::set<std::string>() };
     vnet_table_[vnet_name] = entry;
     gVnetNameToId[vnet_name] = id;
 
@@ -114,21 +114,26 @@ bool DashVnetOrch::removeVnet(const string& vnet_name, DashVnetBulkContext& ctxt
         return true;
     }
 
-    auto& object_statuses = ctxt.object_statuses;
+    auto& object_statuses = ctxt.vnet_statuses;
     sai_object_id_t vni;
     VnetEntry entry = vnet_table_[vnet_name];
     vni = entry.vni;
     object_statuses.emplace_back();
     vnet_bulker_.remove_entry(&object_statuses.back(), vni);
 
+    removePaValidation(vnet_name, ctxt);
     return false;
 }
 
 bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
+    if (!removePaValidationPost(vnet_name, ctxt))
+    {
+        return false;
+    }
 
-    const auto& object_statuses = ctxt.object_statuses;
+    const auto& object_statuses = ctxt.vnet_statuses;
 
     if (object_statuses.empty())
     {
@@ -241,7 +246,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             }
 
             const auto& vnet_ctxt = found->second;
-            const auto& object_statuses = vnet_ctxt.object_statuses;
+            const auto& object_statuses = vnet_ctxt.vnet_statuses;
             const auto& object_ids = vnet_ctxt.object_ids;
 
             if (op == SET_COMMAND)
@@ -382,18 +387,13 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     auto& object_statuses = ctxt.pa_validation_object_statuses;
     string underlay_ip_str = to_string(ctxt.metadata.underlay_ip());
     string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip_str;
-    auto it = pa_refcount_table_.find(pa_ref_key);
-    if (it != pa_refcount_table_.end())
+
+    auto vnet_underlay_ips = vnet_table_[ctxt.vnet_name].underlay_ips;
+    std::string underlay_sip_str = to_string(ctxt.metadata.underlay_ip());
+    if (vnet_underlay_ips.find(underlay_sip_str) != vnet_underlay_ips.end())
     {
-        /*
-         * PA validation entry already exisits. Just increment refcount and add
-         * a dummy success status to satisfy postop
-         */
-        object_statuses.emplace_back(SAI_STATUS_SUCCESS);
-        pa_refcount_table_[pa_ref_key]++;
-        SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
-                        pa_refcount_table_[pa_ref_key],
-                        underlay_ip_str.c_str());
+        SWSS_LOG_INFO("Vnet %s already has PA validation entry for IP %s", ctxt.vnet_name.c_str(), to_string(ctxt.metadata.underlay_ip()).c_str());
+        object_statuses.emplace_back(SAI_STATUS_ITEM_ALREADY_EXISTS);
         return true;
     }
 
@@ -410,9 +410,9 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     object_statuses.emplace_back();
     pa_validation_bulker_.create_entry(&object_statuses.back(), &pa_validation_entry,
             attr_count, &pa_validation_attr);
-    pa_refcount_table_[pa_ref_key] = 1;
-    SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
-                    underlay_ip_str.c_str());
+    vnet_table_[ctxt.vnet_name].underlay_ips.insert(underlay_sip_str);
+    SWSS_LOG_INFO("Bulk create PA validation entry for Vnet %s underlay IP %s",
+                    ctxt.vnet_name.c_str(), to_string(ctxt.metadata.underlay_ip()).c_str());
     return true;
 }
 
@@ -420,23 +420,13 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
-    bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
-    if (!exists)
+    bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end());
+    if (!vnet_exists)
     {
-        
-        bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end());
-        if (!vnet_exists)
-        {
-            SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
-            return false;
-        }
-        return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
+        SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
+        return false;
     }
-    /*
-     * If the VNET map is already added, don't add it to the bulker and
-     * return true so it's removed from the consumer
-     */
-    return true;
+    return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
 }
 
 bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt)
@@ -490,12 +480,9 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        /* PA validation entry add failed. Remove PA refcount entry */
-        pa_refcount_table_.erase(pa_ref_key);
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            // Retry if item exists in the bulker
-            return false;
+            return true;
         }
 
         SWSS_LOG_ERROR("Failed to create PA validation entry for %s", key.c_str());
@@ -524,9 +511,6 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
         return false;
     }
 
-    string vnet_name = ctxt.vnet_name;
-    VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.dip, ctxt.metadata };
-    vnet_map_table_[key] = entry;
     SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
 
     return true;
@@ -538,53 +522,32 @@ void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& c
 
     auto& object_statuses = ctxt.outbound_ca_to_pa_object_statuses;
     sai_outbound_ca_to_pa_entry_t outbound_ca_to_pa_entry;
-    outbound_ca_to_pa_entry.dst_vnet_id = vnet_map_table_[key].dst_vnet_id;
+    outbound_ca_to_pa_entry.dst_vnet_id = gVnetNameToId[ctxt.vnet_name];
     outbound_ca_to_pa_entry.switch_id = gSwitchId;
-    swss::copy(outbound_ca_to_pa_entry.dip, vnet_map_table_[key].dip);
+    swss::copy(outbound_ca_to_pa_entry.dip, ctxt.dip);
 
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.remove_entry(&object_statuses.back(), &outbound_ca_to_pa_entry);
 }
 
-void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::removePaValidation(const string& key, DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
-    auto& object_statuses = ctxt.pa_validation_object_statuses;
-    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
-    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
-    auto it = pa_refcount_table_.find(pa_ref_key);
-    if (it == pa_refcount_table_.end())
+    auto& object_statuses = ctxt.pa_validation_statuses;
+    for (auto ip_str : vnet_table_[ctxt.vnet_name].underlay_ips)
     {
-        return;
-    }
-    else
-    {
-        if (--pa_refcount_table_[pa_ref_key] > 0)
-        {
-            /*
-             * PA validation entry already exisits. Just decrement refcount and add
-             * a dummy success status to satisfy postop
-             */
-            object_statuses.emplace_back(SAI_STATUS_SUCCESS);
-            SWSS_LOG_INFO("Decrement PA refcount to %u for PA IP %s",
-                            pa_refcount_table_[pa_ref_key],
-                            underlay_ip.c_str());
-            return;
-        }
-        else
-        {
-            sai_pa_validation_entry_t pa_validation_entry;
-            pa_validation_entry.vnet_id = vnet_map_table_[key].dst_vnet_id;
-            pa_validation_entry.switch_id = gSwitchId;
-            to_sai(vnet_map_table_[key].metadata.underlay_ip(), pa_validation_entry.sip);
+        swss::IpAddress underlay_ip(ip_str);
+        sai_pa_validation_entry_t pa_validation_entry;
+        pa_validation_entry.vnet_id = gVnetNameToId[ctxt.vnet_name];
+        pa_validation_entry.switch_id = gSwitchId;
+        swss::copy(pa_validation_entry.sip, underlay_ip);
 
-            object_statuses.emplace_back();
-            pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
-            SWSS_LOG_INFO("PA refcount refcount is zero for PA IP %s, removing refcount table entry",
-                            underlay_ip.c_str());
-            pa_refcount_table_.erase(pa_ref_key);
-        }
+        object_statuses.emplace_back();
+        pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
+        SWSS_LOG_INFO("Bulk remove PA validation entry for Vnet %s IP %s, removing refcount table entry",
+                        ctxt.vnet_name.c_str(), underlay_ip.to_string().c_str());
+
     }
 }
 
@@ -592,14 +555,6 @@ bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
-    bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
-    if (!exists)
-    {
-        SWSS_LOG_INFO("Failed to find vnet mapping %s to remove", key.c_str());
-        return true;
-    }
-
-    removePaValidation(key, ctxt);
     removeOutboundCaToPa(key, ctxt);
 
     return false;
@@ -625,7 +580,7 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
             return false;
         }
 
-        SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
+        SWSS_LOG_ERROR("Failed to remove outbound CA to PA entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_CA_TO_PA, status);
         if (handle_status != task_success)
         {
@@ -633,60 +588,64 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
         }
     }
 
-    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
+    gCrmOrch->decCrmResUsedCounter(ctxt.dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
 
     SWSS_LOG_INFO("Outbound CA to PA map entry for %s removed", key.c_str());
 
     return true;
 }
 
-bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removePaValidationPost(const string& key, const DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
+    bool remove_from_consumer = true;
 
-    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
-    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
-    const auto& object_statuses = ctxt.pa_validation_object_statuses;
+    const auto& object_statuses = ctxt.pa_validation_statuses;
     if (object_statuses.empty())
     {
         return false;
     }
 
     auto it_status = object_statuses.begin();
-    sai_status_t status = *it_status++;
-    if (status != SAI_STATUS_SUCCESS)
+    auto it_ip = vnet_table_[ctxt.vnet_name].underlay_ips.begin();
+    while (it_ip != vnet_table_[ctxt.vnet_name].underlay_ips.end())
     {
-        // Retry later if object has non-zero reference to it
-        if (status == SAI_STATUS_NOT_EXECUTED)
+        sai_status_t status = *it_status++;
+        swss::IpAddress underlay_ip(*it_ip);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return false;
-        }
+            // Retry later if object has non-zero reference to it
+            if (status == SAI_STATUS_NOT_EXECUTED)
+            {
+                SWSS_LOG_INFO("PA validation entry for Vnet %s IP %s still in use",
+                                ctxt.vnet_name.c_str(), it_ip->c_str());
+                remove_from_consumer = false;
+                it_ip++;
+                continue;
+            }
 
-        SWSS_LOG_ERROR("Failed to remove PA validation entry for %s", key.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to remove PA validation entry for %s", key.c_str());
+            
         }
+        it_ip = vnet_table_[ctxt.vnet_name].underlay_ips.erase(it_ip);
+        if (*it_status == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
+        }
+        gCrmOrch->decCrmResUsedCounter(underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
     }
-
-    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
-
-    SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
-
-    return true;
+    return remove_from_consumer;
 }
 
 bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
-    bool status = removeOutboundCaToPaPost(key, ctxt) && removePaValidationPost(key, ctxt);
+    bool status = removeOutboundCaToPaPost(key, ctxt);
     if (!status)
     {
         return false;
     }
-    vnet_map_table_.erase(key);
     SWSS_LOG_INFO("Vnet map removed for %s", key.c_str());
 
     return true;
