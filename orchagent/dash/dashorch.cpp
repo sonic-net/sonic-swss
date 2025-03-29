@@ -257,7 +257,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string appliance_id = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = 0;
+        uint32_t result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -276,7 +276,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
             writeResultToDB(dash_appliance_result_table_, appliance_id, result);
@@ -344,7 +344,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
         string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
         dash::route_type::RoutingType routing_type;
-        uint32_t result = 0;
+        uint32_t result = DASH_RESULT_SUCCESS;
 
         std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
         routing_type_str = "ROUTING_TYPE_" + routing_type_str;
@@ -373,7 +373,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
             writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
@@ -683,7 +683,7 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
         auto t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = 0;
+        uint32_t result = DASH_RESULT_SUCCESS;
         if (op == SET_COMMAND)
         {
             EniEntry entry;
@@ -701,7 +701,7 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
             writeResultToDB(dash_eni_result_table_, eni, result);
@@ -763,7 +763,7 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string qos_name = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = 0;
+        uint32_t result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -782,7 +782,7 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
             writeResultToDB(dash_qos_result_table_, qos_name, result);
@@ -915,7 +915,7 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = 0;
+        uint32_t result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -934,7 +934,7 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
             writeResultToDB(dash_eni_route_result_table_, eni, result);

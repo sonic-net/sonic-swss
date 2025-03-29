@@ -345,7 +345,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
-            uint32_t result = 0;
+            uint32_t result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {
@@ -369,7 +369,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 }
                 else
                 {
-                    result = 1;
+                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
                 writeResultToDB(dash_route_result_table_, key, result);
@@ -628,7 +628,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
-            uint32_t result = 0;
+            uint32_t result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {
@@ -652,7 +652,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 }
                 else
                 {
-                    result = 1;
+                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
                 writeResultToDB(dash_route_rule_result_table_, key, result);
@@ -799,7 +799,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
         auto t = it->second;
         string route_group = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = 0;
+        uint32_t result = DASH_RESULT_SUCCESS;
         if (op == SET_COMMAND)
         {
             dash::route_group::RouteGroup entry;
@@ -817,7 +817,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
             }
             else
             {
-                result = 1;
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
             writeResultToDB(dash_route_group_result_table_, route_group, result, version);

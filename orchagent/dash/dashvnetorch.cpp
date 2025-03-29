@@ -235,7 +235,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
 
             string key = kfvKey(t);
             string op = kfvOp(t);
-            uint32_t result = 0;
+            uint32_t result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {
@@ -260,7 +260,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                 }
                 else
                 {
-                    result = 1;
+                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
                 writeResultToDB(dash_vnet_result_table_, key, result);
@@ -788,7 +788,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
-            uint32_t result = 0;
+            uint32_t result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {
@@ -813,7 +813,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                 }
                 else
                 {
-                    result = 1;
+                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
                 writeResultToDB(dash_vnet_map_result_table_, key, result);
