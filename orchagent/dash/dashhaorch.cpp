@@ -17,7 +17,7 @@ extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 
-DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, zmqClient *zmqClient) :
+DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient) :
     ZmqOrch(dpu_appl_db, tables, zmqServer),
     m_dpu_state_db(dpu_state_db),
     m_dash_orch(dash_orch),
@@ -53,10 +53,10 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
     sai_object_id_t sai_ha_set_oid = 0UL;
 
     ha_set_attr_list[0].id = SAI_HA_SET_ATTR_LOCAL_IP;
-    ha_set_attr_list[0].value.ipaddr = entry.local_ip();
+    ha_set_attr_list[0].value.ipaddr = covertPbIpaddrToSaiIpaddr(entry.local_ip());
 
     ha_set_attr_list[1].id = SAI_HA_SET_ATTR_PEER_IP;
-    ha_set_attr_list[1].value.ipaddr = entry.peer_ip();
+    ha_set_attr_list[1].value.ipaddr = convertPbIpaddrToSaiIpaddr(entry.peer_ip());
 
     ha_set_attr_list[2].id = SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT;
     ha_set_attr_list[2].value.u16 = entry.cp_data_channel_port();
@@ -484,4 +484,23 @@ void DashHaOrch::doTask(ConsumerBase &consumer)
     {
         SWSS_LOG_ERROR("Unknown table: %s", consumer.getTableName().c_str());
     }
+}
+
+sai_ip_address_t DashHaOrch::covertPbIpaddrToSaiIpaddr(dash::types::IpAddress &ipaddr)
+{
+    SWSS_LOG_ENTER();
+
+    sai_ip_address_t sai_ipaddr;
+    if (ipaddr.has_ipv4())
+    {
+        sai_ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        sai_ipaddr.addr.ipv4 = ipaddr.ipv4();
+    }
+    else
+    {
+        sai_ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+        memcpy(sai_ipaddr.addr.ipv6, ipaddr.ipv6().data(), sizeof(sai_ipaddr.addr.ipv6));
+    }
+
+    return sai_ipaddr;
 }

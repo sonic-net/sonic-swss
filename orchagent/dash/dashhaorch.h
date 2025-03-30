@@ -6,6 +6,7 @@
 #include "zmqserver.h"
 #include "zmqclient.h"
 #include "zmqproducerstatetable.h"
+#include "saitypes.h"
 
 #include "dash_api/ha_set.pb.h"
 #include "dash_api/ha_scope.pb.h"
@@ -29,7 +30,7 @@ class DashHaOrch : public ZmqOrch
 {
 public:
 
-    DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient);
+    DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient);
 
 private:
     HaSetTable m_ha_set_entries;
@@ -37,10 +38,10 @@ private:
 
     DashOrch *m_dash_orch;
 
-    DBConnector *m_dpu_state_db;
-    ZmqClient *m_zmqClient;
-    ZmqProducerStateTable dash_ha_set_state_table;
-    ZmqProducerStateTable dash_ha_scope_state_table;
+    swss::DBConnector *m_dpu_state_db;
+    swss::ZmqClient *m_zmqClient;
+    swss::ZmqProducerStateTable dash_ha_set_state_table;
+    swss::ZmqProducerStateTable dash_ha_scope_state_table;
 
     void doTask(ConsumerBase &consumer);
     void doTaskEniTable(ConsumerBase &consumer);
@@ -55,4 +56,6 @@ private:
     bool setHaScopeFlowReconcileRequest(const  std::string &key);
     bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
+
+    sai_ip_address_t covertPbIpaddrToSaiIpaddr(dash::types::IpAddress &ipaddr);
 };
