@@ -59,16 +59,16 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
     ha_set_attr_list[1].value.ipaddr = convertPbIpaddrToSaiIpaddr(entry.peer_ip());
 
     ha_set_attr_list[2].id = SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT;
-    ha_set_attr_list[2].value.u16 = entry.cp_data_channel_port();
+    ha_set_attr_list[2].value.u16 = static_cast<sai_uint16_t>(entry.cp_data_channel_port());
     
     ha_set_attr_list[3].id = SAI_HA_SET_ATTR_DP_CHANNEL_DST_PORT;
-    ha_set_attr_list[3].value.u16 = entry.dp_channel_dst_port();
+    ha_set_attr_list[3].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_dst_port());
 
     ha_set_attr_list[4].id = SAI_HA_SET_ATTR_DP_CHANNEL_SRC_PORT_MIN;
-    ha_set_attr_list[4].value.u16 = entry.dp_channel_src_port_min();
+    ha_set_attr_list[4].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_src_port_min());
 
     ha_set_attr_list[5].id = SAI_HA_SET_ATTR_DP_CHANNEL_SRC_PORT_MAX;
-    ha_set_attr_list[5].value.u16 = entry.dp_channel_src_port_max();
+    ha_set_attr_list[5].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_src_port_max());
 
     ha_set_attr_list[6].id = SAI_HA_SET_ATTR_DP_CHANNEL_PROBE_INTERVAL_MS;
     ha_set_attr_list[6].value.u32 = entry.dp_channel_probe_interval_ms();
