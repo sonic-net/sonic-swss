@@ -30,7 +30,7 @@ class DashHaOrch : public ZmqOrch
 {
 public:
 
-    DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient);
+    DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, std::vector<std::string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient);
 
 private:
     HaSetTable m_ha_set_entries;
@@ -57,5 +57,5 @@ private:
     bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
 
-    sai_ip_address_t covertPbIpaddrToSaiIpaddr(dash::types::IpAddress &ipaddr);
+    sai_ip_address_t covertPbIpaddrToSaiIpaddr(const dash::types::IpAddress &ipaddr);
 };

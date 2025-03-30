@@ -17,6 +17,14 @@ extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 
+std::map<dash::ha_scope::Role, std::string> ha_role_to_str_map = {
+    {HA_SCOPE_ROLE_DEAD, "HA_SCOPE_ROLE_DEAD"},
+    {HA_SCOPE_ROLE_ACTIVE, "HA_SCOPE_ROLE_ACTIVE"},
+    {HA_SCOPE_ROLE_STANDBY, "HA_SCOPE_ROLE_STANDBY"},
+    {HA_SCOPE_ROLE_STANDALONE, "HA_SCOPE_ROLE_STANDALONE"},
+    {HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE, "HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE"}
+};
+
 DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient) :
     ZmqOrch(dpu_appl_db, tables, zmqServer),
     m_dpu_state_db(dpu_state_db),
@@ -56,7 +64,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
     ha_set_attr_list[0].value.ipaddr = covertPbIpaddrToSaiIpaddr(entry.local_ip());
 
     ha_set_attr_list[1].id = SAI_HA_SET_ATTR_PEER_IP;
-    ha_set_attr_list[1].value.ipaddr = convertPbIpaddrToSaiIpaddr(entry.peer_ip());
+    ha_set_attr_list[1].value.ipaddr = covertPbIpaddrToSaiIpaddr(entry.peer_ip());
 
     ha_set_attr_list[2].id = SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT;
     ha_set_attr_list[2].value.u16 = static_cast<sai_uint16_t>(entry.cp_data_channel_port());
@@ -210,7 +218,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     auto ha_set_it = m_ha_set_entries.find(key);
     if (ha_set_it == m_ha_set_entries.end())
     {
-        SWSS_LOG_ERROR("HA Set entry does not exist for %s", entry.ha_set_id().c_str());
+        SWSS_LOG_ERROR("HA Set entry does not exist for %s", key.c_str());
         return false;
     }
     sai_object_id_t ha_set_oid = ha_set_it->second.ha_set_id;
@@ -221,11 +229,11 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     sai_object_id_t sai_ha_scope_oid = 0UL;
 
     ha_scope_attrs[0].id = SAI_HA_SCOPE_ATTR_HA_SET_ID;
-    ha_scope_attrs[0].value.oid = ha_set_oid
+    ha_scope_attrs[0].value.oid = ha_set_oid;
 
     // TODO: add ha_role to attribute value enum
     ha_scope_attrs[1].id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
-    ha_scope_attrs[1].value.ha_role = entry.ha_role();
+    ha_scope_attrs[1].value.u16 = static_cast<sai_uint16_t>(entry.ha_role());
 
     status = sai_dash_ha_api->create_ha_scope(&sai_ha_scope_oid,
                                          gSwitchId,
@@ -245,18 +253,18 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
 
     // set HA Scope ID to ENI
-    if (ha_set_it->second.scope == dash::ha_set::Scope::SCOPE_ENI)
+    if (ha_set_it->second.metadata.scope() == dash::ha_set::Scope::SCOPE_ENI)
     {
         auto eni_entry = m_dash_orch->getEni(key);
         if (eni_entry == nullptr)
         {
-            SWSS_LOG_ERROR("ENI entry does not exist for %s", entry.eni_id().c_str());
+            SWSS_LOG_ERROR("ENI entry does not exist for %s", key.c_str());
             return false;
         }
 
         return setEniHaScopeId(eni_entry->eni_id, sai_ha_scope_oid);
 
-    } else if (ha_set_it->second.scope == dash::ha_set::Scope::SCOPE_DPU)
+    } else if (ha_set_it->second.metadata.scope() == dash::ha_set::Scope::SCOPE_DPU)
     {
         auto eni_table = m_dash_orch->getEniTable();
         auto it = eni_table->begin();
@@ -278,7 +286,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     }
     else
     {
-        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), ha_set_it->second.scope.c_str());
+        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), ha_set_it->second.metadata.scope().c_str());
         return false;
     }
 
@@ -308,7 +316,7 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
     }
 
     m_ha_scope_entries[key].metadata.set_ha_role(entry.ha_role());
-    SWSS_LOG_NOTICE("Set HA Scope role for %s to %s", key.c_str(), entry.ha_role().c_str());
+    SWSS_LOG_NOTICE("Set HA Scope role for %s to %s", key.c_str(), ha_role_to_str_map[entry.ha_role()]);
 
     return true;
 }
@@ -321,7 +329,7 @@ bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
 
     sai_attribute_t ha_scope_attr;
     ha_scope_attr.id = SAI_HA_SCOPE_ATTR_FLOW_RECONCILE_REQUESTED;
-    ha_scope_attr.value.booldata = true；
+    ha_scope_attr.value.booldata = true;
 
     sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
                                                                 &ha_scope_attr);
@@ -486,7 +494,7 @@ void DashHaOrch::doTask(ConsumerBase &consumer)
     }
 }
 
-sai_ip_address_t DashHaOrch::covertPbIpaddrToSaiIpaddr(dash::types::IpAddress &ipaddr)
+sai_ip_address_t DashHaOrch::covertPbIpaddrToSaiIpaddr(const dash::types::IpAddress &ipaddr)
 {
     SWSS_LOG_ENTER();
 
@@ -494,12 +502,12 @@ sai_ip_address_t DashHaOrch::covertPbIpaddrToSaiIpaddr(dash::types::IpAddress &i
     if (ipaddr.has_ipv4())
     {
         sai_ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-        sai_ipaddr.addr.ipv4 = ipaddr.ipv4();
+        sai_ipaddr.addr.ip4 = ipaddr.ipv4();
     }
     else
     {
         sai_ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-        memcpy(sai_ipaddr.addr.ipv6, ipaddr.ipv6().data(), sizeof(sai_ipaddr.addr.ipv6));
+        memcpy(sai_ipaddr.addr.ip6, ipaddr.ipv6().data(), sizeof(sai_ipaddr.addr.ipv6));
     }
 
     return sai_ipaddr;
