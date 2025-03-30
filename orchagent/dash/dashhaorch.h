@@ -40,7 +40,7 @@ private:
     DBConnector *m_dpu_state_db;
     ZmqClient *m_zmqClient;
     ZmqProducerStateTable dash_ha_set_state_table;
-    zmqProducerStateTable dash_ha_scope_state_table;
+    ZmqProducerStateTable dash_ha_scope_state_table;
 
     void doTask(ConsumerBase &consumer);
     void doTaskEniTable(ConsumerBase &consumer);

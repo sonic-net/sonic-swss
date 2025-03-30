@@ -358,7 +358,7 @@ bool OrchDaemon::init()
         APP_DASH_HA_SET_TABLE_NAME,
         APP_DASH_HA_SCOPE_TABLE_NAME
     };
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpuApplDb, m_dpuStateDb, dash_orch, m_zmqServer, m_zmqClient);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpuApplDb, m_dpuStateDb, dash_ha_tables, dash_orch, m_zmqServer, m_zmqClient);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
