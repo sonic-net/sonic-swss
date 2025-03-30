@@ -9,13 +9,13 @@
 #include "dash_api/ha_set.pb.h"
 #include "dash_api/ha_scope.pb.h"
 
-structure HaSetEntry
+struct HaSetEntry
 {
     sai_object_id_t ha_set_id;
     dash::ha_set::HaSet metadata;
 };
 
-structure HaScopeEntry
+struct HaScopeEntry
 {
     sai_object_id_t ha_scope_id;
     dash::ha_scope::HaScope metadata;
