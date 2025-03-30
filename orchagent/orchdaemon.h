@@ -62,6 +62,7 @@ using namespace swss;
 class OrchDaemon
 {
 public:
+    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
     OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *, ZmqClient *);
     virtual ~OrchDaemon();
 
