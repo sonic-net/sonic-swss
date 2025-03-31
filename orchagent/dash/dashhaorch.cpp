@@ -17,12 +17,17 @@ extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 
-std::map<dash::ha_scope::Role, std::string> ha_role_to_str_map = {
-    {HA_SCOPE_ROLE_DEAD, "HA_SCOPE_ROLE_DEAD"},
-    {HA_SCOPE_ROLE_ACTIVE, "HA_SCOPE_ROLE_ACTIVE"},
-    {HA_SCOPE_ROLE_STANDBY, "HA_SCOPE_ROLE_STANDBY"},
-    {HA_SCOPE_ROLE_STANDALONE, "HA_SCOPE_ROLE_STANDALONE"},
-    {HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE, "HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE"}
+static std::map<dash::ha_scope::Role, std::string> ha_role_to_str_map = {
+    {dash::ha_scope::HA_SCOPE_ROLE_DEAD, "HA_SCOPE_ROLE_DEAD"},
+    {dash::ha_scope::HA_SCOPE_ROLE_ACTIVE, "HA_SCOPE_ROLE_ACTIVE"},
+    {dash::ha_scope::HA_SCOPE_ROLE_STANDBY, "HA_SCOPE_ROLE_STANDBY"},
+    {dash::ha_scope::HA_SCOPE_ROLE_STANDALONE, "HA_SCOPE_ROLE_STANDALONE"},
+    {dash::ha_scope::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE, "HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE"}
+};
+
+static std::map<dash::ha_set::Scope, std::string> ha_set_scope_to_str_map = {
+    {dash::ha_set::SCOPE_DPU, "SCOPE_DPU"},
+    {dash::ha_set::SCOPE_ENI, "SCOPE_ENI"},
 };
 
 DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient) :
@@ -72,10 +77,10 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
     ha_set_attr_list[3].id = SAI_HA_SET_ATTR_DP_CHANNEL_DST_PORT;
     ha_set_attr_list[3].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_dst_port());
 
-    ha_set_attr_list[4].id = SAI_HA_SET_ATTR_DP_CHANNEL_SRC_PORT_MIN;
+    ha_set_attr_list[4].id = SAI_HA_SET_ATTR_DP_CHANNEL_MIN_SRC_PORT;
     ha_set_attr_list[4].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_src_port_min());
 
-    ha_set_attr_list[5].id = SAI_HA_SET_ATTR_DP_CHANNEL_SRC_PORT_MAX;
+    ha_set_attr_list[5].id = SAI_HA_SET_ATTR_DP_CHANNEL_MAX_SRC_PORT;
     ha_set_attr_list[5].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_src_port_max());
 
     ha_set_attr_list[6].id = SAI_HA_SET_ATTR_DP_CHANNEL_PROBE_INTERVAL_MS;
@@ -286,7 +291,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     }
     else
     {
-        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), ha_set_it->second.metadata.scope().c_str());
+        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), ha_set_scope_to_str_map[ha_set_it->second.metadata.scope()]);
         return false;
     }
 
@@ -386,7 +391,7 @@ bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set HA Scope ID for ENI %s", key.c_str());
+        SWSS_LOG_ERROR("Failed to set HA Scope ID for ENI %s", eni_id.c_str());
         task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
@@ -507,7 +512,7 @@ sai_ip_address_t DashHaOrch::covertPbIpaddrToSaiIpaddr(const dash::types::IpAddr
     else
     {
         sai_ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-        memcpy(sai_ipaddr.addr.ip6, ipaddr.ipv6().data(), sizeof(sai_ipaddr.addr.ipv6));
+        memcpy(sai_ipaddr.addr.ip6, ipaddr.ipv6().data(), sizeof(sai_ipaddr.addr.ip6));
     }
 
     return sai_ipaddr;
