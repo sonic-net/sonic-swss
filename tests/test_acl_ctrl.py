@@ -4,6 +4,7 @@ RULE_NAME = "CTRL_ACL_TEST_RULE"
 
 class TestPortChannelAcl:
     def test_AclCtrl(self, dvs_acl):
+        assert False
         # Create ACL table and ACL rule
         dvs_acl.create_control_plane_acl_table(TABLE_NAME, ["SNMP"])
         dvs_acl.create_acl_rule(TABLE_NAME, RULE_NAME, {"L4_SRC_PORT": "8888"}, priority="88")
