@@ -54,7 +54,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
     }
 
     uint32_t attr_count = 8;
-    sai_attribute_t ha_set_attr_list[attr_count]={};
+    sai_attribute_t ha_set_attr_list[8]={};
     sai_status_t status;
     sai_object_id_t sai_ha_set_oid = 0UL;
 
