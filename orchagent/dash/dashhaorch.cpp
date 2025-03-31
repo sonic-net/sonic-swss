@@ -291,7 +291,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     }
     else
     {
-        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), ha_set_scope_to_str_map[ha_set_it->second.metadata.scope()]);
+        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), (ha_set_scope_to_str_map[ha_set_it->second.metadata.scope()]).c_str);
         return false;
     }
 
@@ -321,7 +321,7 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
     }
 
     m_ha_scope_entries[key].metadata.set_ha_role(entry.ha_role());
-    SWSS_LOG_NOTICE("Set HA Scope role for %s to %s", key.c_str(), ha_role_to_str_map[entry.ha_role()]);
+    SWSS_LOG_NOTICE("Set HA Scope role for %s to %s", key.c_str(), (ha_role_to_str_map[entry.ha_role()]).c_str());
 
     return true;
 }
@@ -391,7 +391,7 @@ bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set HA Scope ID for ENI %s", eni_id.c_str());
+        SWSS_LOG_ERROR("Failed to set HA Scope ID for ENI %s", std::to_string(eni_id).c_str());
         task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {

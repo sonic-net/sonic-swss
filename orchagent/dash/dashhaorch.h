@@ -30,7 +30,7 @@ class DashHaOrch : public ZmqOrch
 {
 public:
 
-    DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, std::vector<std::string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient);
+    DashHaOrch(swss::DBConnector *dpu_appl_db, swss::DBConnector *dpu_state_db, std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer, swss::ZmqClient *zmqClient);
 
 private:
     HaSetTable m_ha_set_entries;
