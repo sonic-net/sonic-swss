@@ -35,8 +35,8 @@ DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vect
     m_dpu_state_db(dpu_state_db),
     m_dash_orch(dash_orch),
     m_zmqClient(zmqClient),
-    dash_ha_set_state_table(dpu_state_db, STATE_DASH_HA_SET_STATE_TABLE_NAME, zmqClient, true),
-    dash_ha_scope_state_table(dpu_state_db, STATE_DASH_HA_SCOPE_STATE_TABLE_NAME, zmqClient, true)
+    dash_ha_set_state_table(dpu_state_db, STATE_DASH_HA_SET_STATE_TABLE_NAME, *zmqClient, true),
+    dash_ha_scope_state_table(dpu_state_db, STATE_DASH_HA_SCOPE_STATE_TABLE_NAME, *zmqClient, true)
 {
     SWSS_LOG_ENTER();
 }
