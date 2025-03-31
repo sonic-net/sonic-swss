@@ -34,18 +34,11 @@ DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vect
     ZmqOrch(dpu_appl_db, tables, zmqServer),
     m_dpu_state_db(dpu_state_db),
     m_dash_orch(dash_orch),
-    m_zmqClient(zmqClient)
+    m_zmqClient(zmqClient),
+    dash_ha_set_state_table(dpu_state_db, STATE_DASH_HA_SET_STATE_TABLE_NAME, zmqClient, true),
+    dash_ha_scope_state_table(dpu_state_db, STATE_DASH_HA_SCOPE_STATE_TABLE_NAME, zmqClient, true)
 {
     SWSS_LOG_ENTER();
-
-    dash_ha_set_state_table = ZmqProducerStateTable(m_dpu_state_db,
-                                                    STATE_DASH_HA_SET_STATE_TABLE_NAME,
-                                                    m_zmqClient,
-                                                    true);
-    dash_ha_scope_state_table = ZmqProducerStateTable(m_dpu_state_db,
-                                                      STATE_DASH_HA_SCOPE_STATE_TABLE_NAME,
-                                                      m_zmqClient,
-                                                      true);
 }
 
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
@@ -291,7 +284,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     }
     else
     {
-        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), (ha_set_scope_to_str_map[ha_set_it->second.metadata.scope()]).c_str);
+        SWSS_LOG_ERROR("Invalid HA Scope type %s: %s", ha_set_it->first.c_str(), ha_set_scope_to_str_map[ha_set_it->second.metadata.scope()].c_str());
         return false;
     }
 
