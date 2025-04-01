@@ -36,6 +36,7 @@
 #include "subscriberstatetable.h"
 
 #include "saitam.h"
+#include <QuickTrace/QtFmtGeneric.h>
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -1470,6 +1471,10 @@ bool PortsOrch::getPort(string alias, Port &p)
 bool PortsOrch::getPort(sai_object_id_t id, Port &port)
 {
     SWSS_LOG_ENTER();
+
+    // A simple qtrace message
+    SWSS_LOG_NOTICE("Testing!!!");
+    QTFMT0_RAW("Hello world: {}", 42 );
 
     auto itr = saiOidToAlias.find(id);
     if (itr == saiOidToAlias.end())
