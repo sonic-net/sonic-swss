@@ -1535,12 +1535,6 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
 {
     sai_stat_capability_list_t queue_stats_capability, port_stats_capability;
 
-    uint32_t  queue_stat_count = (uint32_t) queue_stat_ids.size() +
-                                 (uint32_t) queueWatermarkStatIds.size() +
-                                 (uint32_t) wred_queue_stat_ids.size();
-    uint32_t  port_stat_count = (uint32_t) port_stat_ids.size() +
-                                 (uint32_t) wred_port_stat_ids.size() +
-                                 (uint32_t) port_buffer_drop_stat_ids.size();
     uint32_t  it = 0;
     bool      pt_grn_pkt = false, pt_red_pkt = false, pt_ylw_pkt = false, pt_tot_pkt = false;
     bool      q_ecn_byte = false, q_ecn_pkt = false, q_wred_byte = false, q_wred_pkt = false;
@@ -1548,9 +1542,9 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
     sai_stat_capability_t stat_initializer;
     stat_initializer.stat_enum = 0;
     stat_initializer.stat_modes = 0;
-    vector<sai_stat_capability_t> qstat_cap_list(queue_stat_count, stat_initializer);
-    queue_stats_capability.count = queue_stat_count;
-    queue_stats_capability.list = qstat_cap_list.data();
+    vector<sai_stat_capability_t> qstat_cap_list;
+    queue_stats_capability.count = 0;
+    queue_stats_capability.list = nullptr;
 
     vector<FieldValueTuple> fieldValuesTrue;
     fieldValuesTrue.push_back(FieldValueTuple("isSupported", "true"));
@@ -1572,7 +1566,7 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
     sai_status_t status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_QUEUE, &queue_stats_capability);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
-        qstat_cap_list.resize(queue_stats_capability.count);
+        qstat_cap_list.resize(queue_stats_capability.count, stat_initializer);
         queue_stats_capability.list = qstat_cap_list.data();
         status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_QUEUE, &queue_stats_capability);
     }
@@ -1611,15 +1605,15 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
         SWSS_LOG_NOTICE("Queue stat capability get failed: WRED queue stats can not be enabled, rv:%d", status);
     }
 
-    vector<sai_stat_capability_t> pstat_cap_list(port_stat_count, stat_initializer);
-    port_stats_capability.count = port_stat_count;
-    port_stats_capability.list = pstat_cap_list.data();
+    vector<sai_stat_capability_t> pstat_cap_list;
+    port_stats_capability.count = 0;
+    port_stats_capability.list = nullptr;
 
     /*  4. Get port stats capability from the platform*/
     status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_PORT, &port_stats_capability);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
-        pstat_cap_list.resize(port_stats_capability.count);
+        pstat_cap_list.resize(port_stats_capability.count, stat_initializer);
         port_stats_capability.list = pstat_cap_list.data();
         status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_PORT, &port_stats_capability);
     }
@@ -4897,7 +4891,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 initializePortOperErrors(p);
 
                 // Restore admin status if the port was brought down
-                if (admin_status != p.m_admin_state_up)
+                if (admin_status != p.m_admin_state_up && pCfg.admin_status.is_set == false)
                 {
                     pCfg.admin_status.is_set = true;
                     pCfg.admin_status.value = admin_status;
