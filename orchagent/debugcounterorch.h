@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <chrono>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -11,6 +12,7 @@
 #include "debug_counter.h"
 #include "drop_counter.h"
 #include "observer.h"
+#include "timer.h"
 
 extern "C" {
 #include "sai.h"
@@ -19,6 +21,7 @@ extern "C" {
 #define DEBUG_COUNTER_FLEX_COUNTER_GROUP "DEBUG_COUNTER"
 
 using DebugCounterMap = std::unordered_map<std::string, std::unique_ptr<DebugCounter>>;
+using Timestamp = std::chrono::system_clock::time_point;
 
 // DebugCounterOrch is an orchestrator for managing debug counters. It handles
 // the creation, deletion, and modification of debug counters.
@@ -28,6 +31,7 @@ public:
     DebugCounterOrch(swss::DBConnector *db, const std::vector<std::string>& table_names, int poll_interval);
     virtual ~DebugCounterOrch(void);
 
+    virtual void doTask(swss::SelectableTimer &timer);
     void doTask(Consumer& consumer);
 
     void update(SubjectType, void *cntx);
@@ -40,6 +44,7 @@ private:
     task_process_status uninstallDebugCounter(const std::string& counter_name);
     task_process_status addDropReason(const std::string& counter_name, const std::string& drop_reason);
     task_process_status removeDropReason(const std::string& counter_name, const std::string& drop_reason);
+    task_process_status updateDropMonitorConfig(const std::vector<FieldValueTuple>& configs);
 
     // Free Table Management Functions
     void addFreeCounter(const std::string& counter_name, const std::string& counter_type);
@@ -80,12 +85,30 @@ private:
     std::shared_ptr<swss::Table> m_debugCapabilitiesTable = nullptr;
 
     std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
+    std::shared_ptr<swss::Table> m_counterTable = nullptr;
+    std::shared_ptr<swss::Table> m_counterPortNameMap = nullptr;
     std::shared_ptr<swss::Table> m_counterNameToPortStatMap = nullptr;
     std::shared_ptr<swss::Table> m_counterNameToSwitchStatMap = nullptr;
 
     std::unordered_set<std::string> supported_counter_types;
     std::unordered_set<std::string> supported_ingress_drop_reasons;
     std::unordered_set<std::string> supported_egress_drop_reasons;
+
+    // Data Members for Persistent Drop Monitoring
+    uint32_t m_window = 900; /* Window size in seconds */
+    uint32_t m_drop_count_threshold = 100; /* Drops above this threshold are classified as incidents */
+    uint32_t m_incident_count_threshold = 2; /* Incidents above this threshold will trigger an entry to syslog */
+    swss::SelectableTimer *m_dropCountMonitorTimer = nullptr;
+
+    // This map stores the incidents/violations as queues of timestamps. Incidents involve drop counts
+    // where the number of drops exceed the drop_count_threshold. The first key corresponds to
+    // the drop counter stat being tracked, the inner key corresponds to the port which experienced
+    // the drops
+    std::unordered_map<std::string, std::unordered_map<std::string, std::queue<Timestamp>>> m_violationsMap;
+
+    // This is a map that stores the previous drop counts of various drop counters. The first key
+    // corresponds to the drop counter stat being tracked and the inner key corresponds to the port
+    std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> m_prevDropCountMap;
 
     FlexCounterStatManager flex_counter_manager;
 
