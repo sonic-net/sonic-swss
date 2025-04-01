@@ -207,23 +207,30 @@ void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, N
     // check if profile already exists - if yes - skip creation
     m_stateWarmRestartRouteTable.get(key, fvs);
 
-    //bucket rewrite
-    if (fvs.size() > index)
+    bool isUpdated = false;
+    for (auto &tuple : fvs)
     {
-        FieldValueTuple fv(std::to_string(index), nextHop.to_string());
-        fvs[index] = fv;
-        SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
-                        ipPrefix.to_string().c_str(), nextHop.to_string().c_str(), index);
-        m_stateWarmRestartRouteTable.set(key, fvs);
+        if (static_cast<uint32_t>(stoi(fvField(tuple))) == index)
+        {
+            tuple = FieldValueTuple(std::to_string(index), nextHop.to_string());
+            isUpdated = true;
+            break;
+        }
     }
-    else
+
+    if (!isUpdated)
     {
         fvs.push_back(FieldValueTuple(std::to_string(index), nextHop.to_string()));
         SWSS_LOG_INFO("Add new next hop entry %s with index %d for ip prefix %s",
-                nextHop.to_string().c_str(), index, ipPrefix.to_string().c_str());
-        m_stateWarmRestartRouteTable.set(key, fvs);
+                      nextHop.to_string().c_str(), index, ipPrefix.to_string().c_str());
+    }
+    else
+    {
+        SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
+                      ipPrefix.to_string().c_str(), nextHop.to_string().c_str(), index);
     }
 
+    m_stateWarmRestartRouteTable.set(key, fvs);
 }
 
 bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
