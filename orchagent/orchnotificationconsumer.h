@@ -18,3 +18,5 @@ class OrchNotificationConsumer : public swss::NotificationConsumer {
     private:
         std::deque<swss::KeyOpFieldsValuesTuple> m_toSync;
 };
+
+#endif /* SWSS_ORCH_NOTIFICATION_CONSUMER_H */
