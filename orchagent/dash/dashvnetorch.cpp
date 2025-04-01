@@ -432,6 +432,7 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
         }
 
         remove_from_consumer = addOutboundCaToPa(key, ctxt);
+        // If addOutboundCaToPa fails, skip addPaValidation
         if (!remove_from_consumer)
         {
             addPaValidation(key, ctxt);
@@ -494,13 +495,13 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        /* PA validation entry add failed. Remove PA refcount entry */
         pa_refcount_table_.erase(pa_ref_key);
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
             return true;
         }
 
-        /* PA validation entry add failed. Remove PA refcount entry */
         SWSS_LOG_ERROR("Failed to create PA validation entry for %s", key.c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
         if (handle_status != task_success)
