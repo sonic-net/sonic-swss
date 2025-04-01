@@ -870,7 +870,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
             try
             {
-                if(setIntfAdminStatus(alias, adminStatus))
+                if (setIntfAdminStatus(alias, adminStatus))
                 {
                     FieldValueTuple newAdminFvTuple("admin_status", adminStatus);
                     data.push_back(newAdminFvTuple);
