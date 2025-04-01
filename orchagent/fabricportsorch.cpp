@@ -29,7 +29,7 @@
 #define SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP  "SWITCH_DEBUG_COUNTER"
 #define SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS 500
 #define FABRIC_SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS 60000
-#define SWITCH_STANDARD_DROP_COUNTERS  "SWITCH_STD_DROP_COUNTER-"
+#define SWITCH_STANDARD_DROP_COUNTERS  "SWITCH_ID"
 
 // constants for link monitoring
 #define MAX_SKIP_CRCERR_ON_LNKUP_POLLS 20
@@ -1589,9 +1589,11 @@ void FabricPortsOrch::createSwitchDropCounters(void)
     {
          std::string drop_stats = sai_serialize_switch_stat(it);
          counter_stats.emplace(drop_stats);
-         vector<FieldValueTuple> switchNameSwitchCounterMap;
-         switchNameSwitchCounterMap.emplace_back((SWITCH_STANDARD_DROP_COUNTERS + drop_stats), drop_stats);
-         m_counterNameToSwitchStatMap->set("", switchNameSwitchCounterMap);
     }
+    const auto switch_id= sai_serialize_object_id(gSwitchId);
+    vector<FieldValueTuple> switchNameSwitchCounterMap;
+    switchNameSwitchCounterMap.emplace_back(SWITCH_STANDARD_DROP_COUNTERS, switch_id);
+    m_counterNameToSwitchStatMap->set("", switchNameSwitchCounterMap);
+
     switch_drop_counter_manager->setCounterIdList(gSwitchId, CounterType::SWITCH_DEBUG, counter_stats);
 }

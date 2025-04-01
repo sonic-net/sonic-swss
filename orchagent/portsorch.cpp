@@ -78,6 +78,9 @@ extern event_handle_t g_events_handle;
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
+#define QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
+#define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
+#define PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 
 // types --------------------------------------------------------------------------------------------------------------
 
@@ -159,6 +162,14 @@ static map<string, sai_port_path_tracing_timestamp_type_t> pt_timestamp_template
  { "template2", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_12_19 },
  { "template3", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23 },
  { "template4", SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_20_27 }
+};
+
+static map<sai_queue_type_t, string> sai_queue_type_string_map =
+{
+    {SAI_QUEUE_TYPE_ALL, "SAI_QUEUE_TYPE_ALL"},
+    {SAI_QUEUE_TYPE_UNICAST, "SAI_QUEUE_TYPE_UNICAST"},
+    {SAI_QUEUE_TYPE_MULTICAST, "SAI_QUEUE_TYPE_MULTICAST"},
+    {SAI_QUEUE_TYPE_UNICAST_VOQ, "SAI_QUEUE_TYPE_UNICAST_VOQ"},
 };
 
 const vector<sai_port_stat_t> port_stat_ids =
@@ -553,8 +564,21 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        queue_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         wred_port_stat_manager(WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         wred_queue_stat_manager(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        counter_managers({
+                ref(port_stat_manager),
+                ref(port_buffer_drop_stat_manager),
+                ref(queue_stat_manager),
+                ref(queue_watermark_manager),
+                ref(pg_watermark_manager),
+                ref(pg_drop_stat_manager),
+                ref(wred_port_stat_manager),
+                ref(wred_queue_stat_manager)
+            }),
         m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
@@ -869,18 +893,18 @@ void PortsOrch::initializePortOperErrors(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Initialize port oper errors for port %s", port.m_alias.c_str());
-
     for (auto& error : PortOperErrorEvent::db_key_errors)
     {
         const sai_port_error_status_t error_status = error.first;
         std::string error_name = error.second;
-
-        port.m_portOperErrorToEvent[error_status] = PortOperErrorEvent(error_status, error_name);
-        SWSS_LOG_NOTICE("Initialize port %s error %s flag=0x%" PRIx32,
-                                        port.m_alias.c_str(),
-                                        error_name.c_str(),
-                                        error_status);
+        if (port.m_portOperErrorToEvent.find(error_status) == port.m_portOperErrorToEvent.end())
+        {
+            port.m_portOperErrorToEvent[error_status] = PortOperErrorEvent(error_status, error_name);
+            SWSS_LOG_INFO("Initialize port %s error %s flag=0x%" PRIx32,
+                                            port.m_alias.c_str(),
+                                            error_name.c_str(),
+                                            error_status);
+        }
     }
 }
 
@@ -1511,12 +1535,6 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
 {
     sai_stat_capability_list_t queue_stats_capability, port_stats_capability;
 
-    uint32_t  queue_stat_count = (uint32_t) queue_stat_ids.size() +
-                                 (uint32_t) queueWatermarkStatIds.size() +
-                                 (uint32_t) wred_queue_stat_ids.size();
-    uint32_t  port_stat_count = (uint32_t) port_stat_ids.size() +
-                                 (uint32_t) wred_port_stat_ids.size() +
-                                 (uint32_t) port_buffer_drop_stat_ids.size();
     uint32_t  it = 0;
     bool      pt_grn_pkt = false, pt_red_pkt = false, pt_ylw_pkt = false, pt_tot_pkt = false;
     bool      q_ecn_byte = false, q_ecn_pkt = false, q_wred_byte = false, q_wred_pkt = false;
@@ -1524,9 +1542,9 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
     sai_stat_capability_t stat_initializer;
     stat_initializer.stat_enum = 0;
     stat_initializer.stat_modes = 0;
-    vector<sai_stat_capability_t> qstat_cap_list(queue_stat_count, stat_initializer);
-    queue_stats_capability.count = queue_stat_count;
-    queue_stats_capability.list = qstat_cap_list.data();
+    vector<sai_stat_capability_t> qstat_cap_list;
+    queue_stats_capability.count = 0;
+    queue_stats_capability.list = nullptr;
 
     vector<FieldValueTuple> fieldValuesTrue;
     fieldValuesTrue.push_back(FieldValueTuple("isSupported", "true"));
@@ -1548,7 +1566,7 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
     sai_status_t status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_QUEUE, &queue_stats_capability);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
-        qstat_cap_list.resize(queue_stats_capability.count);
+        qstat_cap_list.resize(queue_stats_capability.count, stat_initializer);
         queue_stats_capability.list = qstat_cap_list.data();
         status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_QUEUE, &queue_stats_capability);
     }
@@ -1587,15 +1605,15 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
         SWSS_LOG_NOTICE("Queue stat capability get failed: WRED queue stats can not be enabled, rv:%d", status);
     }
 
-    vector<sai_stat_capability_t> pstat_cap_list(port_stat_count, stat_initializer);
-    port_stats_capability.count = port_stat_count;
-    port_stats_capability.list = pstat_cap_list.data();
+    vector<sai_stat_capability_t> pstat_cap_list;
+    port_stats_capability.count = 0;
+    port_stats_capability.list = nullptr;
 
     /*  4. Get port stats capability from the platform*/
     status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_PORT, &port_stats_capability);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
-        pstat_cap_list.resize(port_stats_capability.count);
+        pstat_cap_list.resize(port_stats_capability.count, stat_initializer);
         port_stats_capability.list = pstat_cap_list.data();
         status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_PORT, &port_stats_capability);
     }
@@ -3290,7 +3308,7 @@ task_process_status PortsOrch::setPortAdvInterfaceTypes(Port &port, std::set<sai
     return task_success;
 }
 
-bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
+bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, sai_queue_type_t &queue_type, uint8_t &index)
 {
     SWSS_LOG_ENTER();
 
@@ -3317,6 +3335,12 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
 
         m_queueInfo[queue_id].type = static_cast<sai_queue_type_t>(attr[0].value.s32);
         m_queueInfo[queue_id].index = attr[1].value.u8;
+
+        if (sai_queue_type_string_map.find(m_queueInfo[queue_id].type) == sai_queue_type_string_map.end())
+        {
+            SWSS_LOG_ERROR("Got unsupported queue type %d for %" PRIx64 " queue", attr[0].value.s32, queue_id);
+            throw runtime_error("Got unsupported queue type");
+        }
     }
     else
     {
@@ -3326,26 +3350,8 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
         SWSS_LOG_INFO("Fetched cached information (index %d type %d) for queue %" PRIx64, attr[1].value.u8, attr[0].value.s32, queue_id);
     }
 
-    switch (attr[0].value.s32)
-    {
-    case SAI_QUEUE_TYPE_ALL:
-        type = "SAI_QUEUE_TYPE_ALL";
-        break;
-    case SAI_QUEUE_TYPE_UNICAST:
-        type = "SAI_QUEUE_TYPE_UNICAST";
-        break;
-    case SAI_QUEUE_TYPE_MULTICAST:
-        type = "SAI_QUEUE_TYPE_MULTICAST";
-        break;
-    case SAI_QUEUE_TYPE_UNICAST_VOQ:
-        type = "SAI_QUEUE_TYPE_UNICAST_VOQ";
-        break;
-    default:
-        SWSS_LOG_ERROR("Got unsupported queue type %d for %" PRIx64 " queue", attr[0].value.s32, queue_id);
-        throw runtime_error("Got unsupported queue type");
-    }
-
     index = attr[1].value.u8;
+    queue_type = static_cast<sai_queue_type_t>(attr[0].value.s32);
 
     return true;
 }
@@ -3731,10 +3737,10 @@ bool PortsOrch::initPort(const PortConfig &port)
                 If they are enabled, install the counters immediately */
                 if (flex_counters_orch->getPortCountersState())
                 {
-                    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+                    auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
                     port_stat_manager.setCounterIdList(p.m_port_id,
                             CounterType::PORT, port_counter_stats);
-                    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
+                    auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
                     if (p.m_system_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
                                 CounterType::PORT, gbport_counter_stats, p.m_switch_id);
@@ -3744,13 +3750,13 @@ bool PortsOrch::initPort(const PortConfig &port)
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
-                    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
+                    auto port_buffer_drop_stats = generateCounterStats(port_buffer_drop_stat_ids, sai_serialize_port_stat);
                     port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
                 }
 
 		if (flex_counters_orch->getWredPortCountersState())
                 {
-                    auto wred_port_stats = generateCounterStats(WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+                    auto wred_port_stats = generateCounterStats(wred_port_stat_ids, sai_serialize_port_stat);
                     wred_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, wred_port_stats);
                 }
 
@@ -4885,7 +4891,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 initializePortOperErrors(p);
 
                 // Restore admin status if the port was brought down
-                if (admin_status != p.m_admin_state_up)
+                if (admin_status != p.m_admin_state_up && pCfg.admin_status.is_set == false)
                 {
                     pCfg.admin_status.is_set = true;
                     pCfg.admin_status.value = admin_status;
@@ -5827,6 +5833,7 @@ void PortsOrch::doTask(Consumer &consumer)
     else if (table_name == APP_PORT_TABLE_NAME)
     {
         doPortTask(consumer);
+        flushCounters();
     }
     else if (table_name == APP_SEND_TO_INGRESS_PORT_TABLE_NAME)
     {
@@ -7597,7 +7604,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
 
         const auto id = sai_serialize_object_id(queue_ids[queueIndex]);
 
-        string queueType;
+        sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(queue_ids[queueIndex], queueType, queueRealIndex))
         {
@@ -7607,7 +7614,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
             {
                 continue;
             }
-            queueTypeVector.emplace_back(id, queueType);
+            queueTypeVector.emplace_back(id, sai_queue_type_string_map[queueType]);
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
 
@@ -7617,7 +7624,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
             // Install a flex counter for this voq to track stats. Voq counters do
             // not have buffer queue config. So it does not get enabled through the
             // flexcounter orch logic. Always enabled voq counters.
-            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, true);
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, true, queueType);
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_system_port_oid));
         }
         else
@@ -7630,7 +7637,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
             // counter on voq systems.
             if (gMySwitchType == "voq")
             {
-               addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+               addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
             }
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
         }
@@ -7696,7 +7703,7 @@ void PortsOrch::addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueSt
 {
     for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
-        string queueType;
+        sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
@@ -7705,12 +7712,12 @@ void PortsOrch::addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueSt
                 continue;
             }
             // Install a flex counter for this queue to track stats
-            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
         }
     }
 }
 
-void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq)
+void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq, sai_queue_type_t queueType)
 {
     std::unordered_set<string> counter_stats;
     std::vector<sai_object_id_t> queue_ids;
@@ -7732,7 +7739,7 @@ void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_
         queue_ids = port.m_queue_ids;
     }
 
-    queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
+    queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats, queueType);
 }
 
 
@@ -7782,7 +7789,7 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCount
 
     for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
-        string queueType;
+        sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
@@ -7790,28 +7797,15 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCount
             {
                 continue;
             }
-            addQueueWatermarkFlexCountersPerPortPerQueueIndex(port, queueIndex);
+            addQueueWatermarkFlexCountersPerPortPerQueueIndex(port, queueIndex, queueType);
         }
     }
 }
 
-void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex)
+void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, sai_queue_type_t queueType)
 {
-    const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
-
-    /* add watermark queue counters */
-    string key = getQueueWatermarkFlexCounterTableKey(id);
-
-    string delimiter("");
-    std::ostringstream counters_stream;
-    for (const auto& it: queueWatermarkStatIds)
-    {
-        counters_stream << delimiter << sai_serialize_queue_stat(it);
-        delimiter = comma;
-    }
-    auto &&counters_str = counters_stream.str();
-
-    startFlexCounterPolling(gSwitchId, key, counters_str, QUEUE_COUNTER_ID_LIST);
+    auto queue_counter_stats = generateCounterStats(queueWatermarkStatIds, sai_serialize_queue_stat);
+    queue_watermark_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, queue_counter_stats, queueType);
 }
 
 void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue)
@@ -7844,11 +7838,11 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
 
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
-        string queueType;
+        sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            queueTypeVector.emplace_back(id, queueType);
+            queueTypeVector.emplace_back(id, sai_queue_type_string_map[queueType]);
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
 
@@ -7859,18 +7853,18 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
         if (flexCounterOrch->getQueueCountersState())
         {
             // Install a flex counter for this queue to track stats
-            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
         }
         if (flexCounterOrch->getQueueWatermarkCountersState())
         {
             /* add watermark queue counters */
-            addQueueWatermarkFlexCountersPerPortPerQueueIndex(port, queueIndex);
+            addQueueWatermarkFlexCountersPerPortPerQueueIndex(port, queueIndex, queueType);
         }
 
         if (flexCounterOrch->getWredQueueCountersState())
         {
             /* add wred queue counters */
-            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
         }
     }
 
@@ -7911,7 +7905,7 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, b
         m_queueTable->hdel("", name.str());
         m_queuePortTable->hdel("", id);
 
-        string queueType;
+        sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
@@ -7923,19 +7917,18 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, b
         if (flexCounterOrch->getQueueCountersState())
         {
             // Remove the flex counter for this queue
-            queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
+            queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex], queueType);
         }
 
         if (flexCounterOrch->getQueueWatermarkCountersState())
         {
             // Remove watermark queue counters
-            string key = getQueueWatermarkFlexCounterTableKey(id);
-            stopFlexCounterPolling(gSwitchId, key);
+            queue_watermark_manager.clearCounterIdList(port.m_queue_ids[queueIndex], queueType);
         }
         if (flexCounterOrch->getWredQueueCountersState())
         {
             /* Remove wred queue counters */
-            wred_queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
+            wred_queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex], queueType);
         }
     }
 
@@ -8108,22 +8101,8 @@ void PortsOrch::addPriorityGroupFlexCountersPerPort(const Port& port, FlexCounte
 
 void PortsOrch::addPriorityGroupFlexCountersPerPortPerPgIndex(const Port& port, size_t pgIndex)
 {
-    const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
-
-    string delimiter = "";
-    std::ostringstream ingress_pg_drop_packets_counters_stream;
-    string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-    /* Add dropped packets counters to flex_counter */
-    for (const auto& it: ingressPriorityGroupDropStatIds)
-    {
-        ingress_pg_drop_packets_counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
-        if (delimiter.empty())
-        {
-            delimiter = comma;
-        }
-    }
-    auto &&counters_str = ingress_pg_drop_packets_counters_stream.str();
-    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
+    auto pg_counter_stats = generateCounterStats(ingressPriorityGroupDropStatIds, sai_serialize_ingress_priority_group_stat);
+    pg_drop_stat_manager.setCounterIdList(port.m_priority_group_ids[pgIndex], CounterType::PRIORITY_GROUP, pg_counter_stats);
 }
 
 void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector)
@@ -8178,22 +8157,8 @@ void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPort(const Port& port, F
 
 void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPortPerPgIndex(const Port& port, size_t pgIndex)
 {
-    const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
-
-    string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-
-    std::string delimiter = "";
-    std::ostringstream counters_stream;
-    /* Add watermark counters to flex_counter */
-    for (const auto& it: ingressPriorityGroupWatermarkStatIds)
-    {
-        counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
-        delimiter = comma;
-    }
-
-    auto &&counters_str = counters_stream.str();
-
-    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
+    auto pg_counter_stats = generateCounterStats(ingressPriorityGroupWatermarkStatIds, sai_serialize_ingress_priority_group_stat);
+    pg_watermark_manager.setCounterIdList(port.m_priority_group_ids[pgIndex], CounterType::PRIORITY_GROUP, pg_counter_stats);
 }
 
 void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
@@ -8225,15 +8190,13 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
         if (flexCounterOrch->getPgCountersState())
         {
             // Remove dropped packets counters from flex_counter
-            string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-            stopFlexCounterPolling(gSwitchId, key);
+            pg_drop_stat_manager.clearCounterIdList(port.m_priority_group_ids[pgIndex]);
         }
 
         if (flexCounterOrch->getPgWatermarkCountersState())
         {
             // Remove watermark counters from flex_counter
-            string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-            stopFlexCounterPolling(gSwitchId, key);
+            pg_watermark_manager.clearCounterIdList(port.m_priority_group_ids[pgIndex]);
         }
     }
 
@@ -8247,8 +8210,8 @@ void PortsOrch::generatePortCounterMap()
         return;
     }
 
-    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
-    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
+    auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
+    auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -8276,7 +8239,7 @@ void PortsOrch::generatePortBufferDropCounterMap()
         return;
     }
 
-    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
+    auto port_buffer_drop_stats = generateCounterStats(port_buffer_drop_stat_ids, sai_serialize_port_stat);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -8303,7 +8266,7 @@ void PortsOrch::generateWredPortCounterMap()
         return;
     }
 
-    auto wred_port_stats = generateCounterStats(WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    auto wred_port_stats = generateCounterStats(wred_port_stat_ids, sai_serialize_port_stat);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -8375,7 +8338,7 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
 
     for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
-        string queueType;
+        sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
@@ -8383,7 +8346,7 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
             {
                 continue;
             }
-            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
         }
     }
 }
@@ -8394,7 +8357,7 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
 *  Description: Sets the Stats list to be polled by the flexcounter 
 **/
 
-void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq)
+void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq, sai_queue_type_t queueType)
 {
     std::unordered_set<string> counter_stats;
     std::vector<sai_object_id_t> queue_ids;
@@ -8412,7 +8375,15 @@ void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, s
         queue_ids = port.m_queue_ids;
     }
 
-    wred_queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
+    wred_queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats, queueType);
+}
+
+void PortsOrch::flushCounters()
+{
+    for (auto counter_manager : counter_managers)
+    {
+        counter_manager.get().flush();
+    }
 }
 
 uint32_t PortsOrch::getNumberOfPortSupportedPgCounters(string port)
@@ -9849,31 +9820,16 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
     m_tableVoqSystemLagMemberTable->del(key);
 }
 
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type, bool gearbox)
+template <typename T>
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> &counterIds, std::string (*serializer)(const T))
 {
     std::unordered_set<std::string> counter_stats;
-    if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
+
+    for (const auto& it:counterIds)
     {
-        auto& stat_ids = gearbox ? gbport_stat_ids : port_stat_ids;
-        for (const auto& it: stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
+        counter_stats.emplace(serializer(it));
     }
-    else if (type == PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it: port_buffer_drop_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-    }
-    else if (type == WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it: wred_port_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-    }
+
     return counter_stats;
 }
 
