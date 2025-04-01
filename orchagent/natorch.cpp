@@ -80,12 +80,12 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
 
     /* Add NAT notifications support from APPL_DB */
     SWSS_LOG_INFO("Add NAT notifications support from APPL_DB ");
-    m_flushNotificationsConsumer = new NotificationConsumer(appDb, "FLUSHNATSTATISTICS");
+    m_flushNotificationsConsumer = new OrchNotificationConsumer(appDb, "FLUSHNATSTATISTICS");
     auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHNATSTATISTICS");
     Orch::addExecutor(flushNotifier);
 
     SWSS_LOG_INFO("Add REDIS DB cleanup notification support");
-    m_cleanupNotificationConsumer = new NotificationConsumer(appDb, "NAT_DB_CLEANUP_NOTIFICATION");
+    m_cleanupNotificationConsumer = new OrchNotificationConsumer(appDb, "NAT_DB_CLEANUP_NOTIFICATION");
     auto cleanupNotifier = new Notifier(m_cleanupNotificationConsumer, this, "NAT_DB_CLEANUP_NOTIFICATION");
     Orch::addExecutor(cleanupNotifier);
 
@@ -4446,17 +4446,18 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
     return 0;
 }
 
-void NatOrch::doTask(NotificationConsumer& consumer)
+void NatOrch::doTask(OrchNotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
-
     unique_lock<mutex> lock(m_natMutex);
 
-    consumer.pop(op, data, values);
+    auto kofv = consumer.getSyncFront();
+    std::string op = kfvOp(kofv);
+    std::string data =  kfvKey(kofv);
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kofv);
+
+    consumer.popSyncFront();
 
     if (&consumer == m_flushNotificationsConsumer)
     {

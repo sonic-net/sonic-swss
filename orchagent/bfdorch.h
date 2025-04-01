@@ -2,6 +2,7 @@
 #define SWSS_BFDORCH_H
 
 #include "orch.h"
+#include "orchnotificationconsumer.h"
 #include "observer.h"
 
 struct BfdUpdate
@@ -14,7 +15,7 @@ class BfdOrch: public Orch, public Subject
 {
 public:
     void doTask(Consumer &consumer);
-    void doTask(swss::NotificationConsumer &consumer);
+    void doTask(OrchNotificationConsumer &consumer);
     BfdOrch(swss::DBConnector *db, std::string tableName, TableConnector stateDbBfdSessionTable);
     virtual ~BfdOrch(void);
     void handleTsaStateChange(bool tsaState);
@@ -41,7 +42,7 @@ private:
     std::unique_ptr<swss::DBConnector> m_stateDbConnector;
     std::unique_ptr<swss::Table> m_stateSoftBfdSessionTable;
 
-    swss::NotificationConsumer* m_bfdStateNotificationConsumer;
+    OrchNotificationConsumer* m_bfdStateNotificationConsumer;
     bool register_state_change_notif;
     std::map<std::string, vector<FieldValueTuple>> bfd_session_cache;
 

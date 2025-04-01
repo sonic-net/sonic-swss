@@ -90,7 +90,7 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
 
     // Add port state change notification handling support
     swss::DBConnector notificationsDb("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
+    m_portStatusNotificationConsumer = new OrchNotificationConsumer(&notificationsDb, "NOTIFICATIONS");
     auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotifier);
 }
@@ -219,7 +219,7 @@ void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std
     }
 }
 
-void P4Orch::doTask(NotificationConsumer &consumer)
+void P4Orch::doTask(OrchNotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -228,10 +228,12 @@ void P4Orch::doTask(NotificationConsumer &consumer)
         return;
     }
 
-    std::string op, data;
-    std::vector<swss::FieldValueTuple> values;
+    auto kofv = consumer.getSyncFront();
+    std::string op = kfvOp(kofv);
+    std::string data =  kfvKey(kofv);
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kofv);
 
-    consumer.pop(op, data, values);
+    consumer.popSyncFront();
 
     if (&consumer == m_portStatusNotificationConsumer)
     {

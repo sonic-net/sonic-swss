@@ -7,6 +7,7 @@
 #include "acltable.h"
 #include "orch.h"
 #include "port.h"
+#include "orchnotificationconsumer.h"
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
@@ -355,8 +356,8 @@ private:
     set<sai_vlan_flood_control_type_t> bc_sup_flood_control_type;
     map<string, uint32_t> m_bridge_port_ref_count;
 
-    NotificationConsumer* m_portStatusNotificationConsumer;
-    NotificationConsumer* m_portHostTxReadyNotificationConsumer;
+    OrchNotificationConsumer* m_portStatusNotificationConsumer;
+    OrchNotificationConsumer* m_portHostTxReadyNotificationConsumer;
 
     bool fec_override_sup = false;
     bool oper_fec_sup = false;
@@ -378,7 +379,7 @@ private:
     void doLagMemberTask(Consumer &consumer);
     void doTransceiverPresenceCheck(Consumer &consumer);
 
-    void doTask(NotificationConsumer &consumer);
+    void doTask(OrchNotificationConsumer &consumer);
     void doTask(swss::SelectableTimer &timer);
 
     void removePortFromLanesMap(string alias);

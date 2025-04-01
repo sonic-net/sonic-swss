@@ -126,7 +126,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         m_stateDbForNotification(new DBConnector("STATE_DB", 0)),
         m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME))
 {
-    m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
+    m_restartCheckNotificationConsumer = new OrchNotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
 
@@ -1055,15 +1055,16 @@ void SwitchOrch::doTask(Consumer &consumer)
     }
 }
 
-void SwitchOrch::doTask(NotificationConsumer& consumer)
+void SwitchOrch::doTask(OrchNotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
+    auto kofv = consumer.getSyncFront();
+    std::string op = kfvOp(kofv);
+    std::string data =  kfvKey(kofv);
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kofv);
 
-    consumer.pop(op, data, values);
+    consumer.popSyncFront();
 
     if (&consumer != m_restartCheckNotificationConsumer)
     {
