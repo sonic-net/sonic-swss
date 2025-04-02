@@ -2,7 +2,7 @@
 
 using namespace swss;
 
-OrchNotificationConsumer::OrchNotificationConsumer(DBConnector *db, const std::string &channel, int pri = 100, size_t popBatchSize = DEFAULT_NC_POP_BATCH_SIZE)
+OrchNotificationConsumer::OrchNotificationConsumer(DBConnector *db, const std::string &channel, int pri size_t popBatchSize)
 :NotificationConsumer(db, channel, pri, popBatchSize)
 {
 }
