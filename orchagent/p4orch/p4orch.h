@@ -81,7 +81,7 @@ class P4Orch : public Orch
     std::unique_ptr<ExtTablesManager> m_extTablesManager;
 
     // Notification consumer for port state change
-    sOrchNotificationConsumer *m_portStatusNotificationConsumer;
+    OrchNotificationConsumer *m_portStatusNotificationConsumer;
 
     // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
     ResponsePublisher m_publisher{"APPL_DB", /*bool buffered=*/true, /*db_write_thread=*/true};
