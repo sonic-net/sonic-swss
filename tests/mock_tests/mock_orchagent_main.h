@@ -33,9 +33,8 @@
 #define private public
 #include "orchagent/stporch.h"
 #undef private 
-#include "directory.h"
-#include "dashvnetorch.h"
-#include "dashtunnelorch.h"
+#include "orchagent/directory.h"
+#include "orchagent/dash/dashvnetorch.h"
 
 extern int gBatchSize;
 
