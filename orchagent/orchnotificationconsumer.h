@@ -11,7 +11,7 @@ class OrchNotificationConsumer : public swss::NotificationConsumer {
         ~OrchNotificationConsumer() override;
 
         void saveToSync();
-        swss::KeyOpFieldsValuesTuple& getSyncFront();
+        swss::KeyOpFieldsValuesTuple getSyncFront();
         void popSyncFront();
         bool syncIsEmpty();
 

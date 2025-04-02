@@ -19,7 +19,7 @@ void OrchNotificationConsumer::saveToSync()
     m_toSync.insert(m_toSync.end(), tmpVkco.begin(), tmpVkco.end());
 }
 
-KeyOpFieldsValuesTuple& OrchNotificationConsumer::getSyncFront()
+KeyOpFieldsValuesTuple OrchNotificationConsumer::getSyncFront()
 {
     return m_toSync.front();
 }
