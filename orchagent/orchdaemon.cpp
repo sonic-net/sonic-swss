@@ -84,6 +84,21 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
     m_lastHeartBeat = std::chrono::high_resolution_clock::now();
 }
 
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, DBConnector *dpuApplDb, DBConnector * dpuStateDb,  ZmqServer *zmqServer, ZmqClient *zmqClient) :
+        m_applDb(applDb),
+        m_configDb(configDb),
+        m_stateDb(stateDb),
+        m_chassisAppDb(chassisAppDb),
+        m_dpuApplDb(dpuApplDb),
+        m_dpuStateDb(dpuStateDb),
+        m_zmqServer(zmqServer),
+        m_zmqClient(zmqClient)
+{
+    SWSS_LOG_ENTER();
+    m_select = new Select();
+    m_lastHeartBeat = std::chrono::high_resolution_clock::now();
+}
+
 OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
@@ -321,7 +336,7 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
-	vector<string> dash_vnet_tables = {
+    vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
@@ -338,6 +353,13 @@ bool OrchDaemon::init()
 
     DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_zmqServer);
     gDirectory.set(dash_orch);
+
+    vector<string> dash_ha_tables = {
+        APP_DASH_HA_SET_TABLE_NAME,
+        APP_DASH_HA_SCOPE_TABLE_NAME
+    };
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpuApplDb, m_dpuStateDb, dash_ha_tables, dash_orch, m_zmqServer, m_zmqClient);
+    gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
         APP_DASH_ROUTE_TABLE_NAME,
