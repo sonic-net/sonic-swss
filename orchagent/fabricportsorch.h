@@ -3,11 +3,11 @@
 
 #include <map>
 
-#include "orch.h"
-#include "observer.h"
-#include "observer.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/observer.h"
 #include "producertable.h"
-#include "flex_counter_manager.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 
 #define STATE_FABRIC_CAPACITY_TABLE_NAME "FABRIC_CAPACITY_TABLE"
 #define STATE_PORT_CAPACITY_TABLE_NAME "PORT_CAPACITY_TABLE"

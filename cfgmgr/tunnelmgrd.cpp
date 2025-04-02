@@ -10,7 +10,7 @@
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "tunnelmgr.h"
+#include "cfgmgr/tunnelmgr.h"
 #include "warm_restart.h"
 
 using namespace std;

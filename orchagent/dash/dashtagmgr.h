@@ -7,8 +7,8 @@
 #include <sai.h>
 #include <logger.h>
 
-#include "dashorch.h"
-#include "pbutils.h"
+#include "orchagent/dash/dashorch.h"
+#include "orchagent/dash/pbutils.h"
 
 #include "dash_api/prefix_tag.pb.h"
 

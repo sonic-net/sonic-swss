@@ -7,13 +7,13 @@
 #include <exception>
 #include <string>
 
-#include "pbhschema.h"
+#include "orchagent/pbh/pbhschema.h"
 #include "ipaddress.h"
 #include "converter.h"
 #include "tokenize.h"
 #include "logger.h"
 
-#include "pbhmgr.h"
+#include "orchagent/pbh/pbhmgr.h"
 
 using namespace swss;
 

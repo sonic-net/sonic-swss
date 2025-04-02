@@ -1,4 +1,4 @@
-#include "lagid.h"
+#include "orchagent/lagid.h"
 
 LagIdAllocator::LagIdAllocator(
         _In_ DBConnector* chassis_app_db)

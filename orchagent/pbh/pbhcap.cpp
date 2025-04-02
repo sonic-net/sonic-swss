@@ -7,11 +7,11 @@
 #include <map>
 #include <set>
 
-#include "pbhschema.h"
+#include "orchagent/pbh/pbhschema.h"
 #include "schema.h"
 #include "logger.h"
 
-#include "pbhcap.h"
+#include "orchagent/pbh/pbhcap.h"
 
 using namespace swss;
 

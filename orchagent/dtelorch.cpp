@@ -1,12 +1,12 @@
-#include "dtelorch.h"
+#include "orchagent/dtelorch.h"
 
 #include "logger.h"
 #include "schema.h"
 #include "converter.h"
 #include "ipprefix.h"
-#include "swssnet.h"
-#include "directory.h"
-#include "vrforch.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/directory.h"
+#include "orchagent/vrforch.h"
 
 using namespace std;
 using namespace swss;

@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+INCLUDES = -I $(top_srcdir)
 
 bin_PROGRAMS = natsyncd
 

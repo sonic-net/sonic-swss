@@ -7,8 +7,8 @@
 #include <sai.h>
 #include <logger.h>
 
-#include "dashorch.h"
-#include "dashtagmgr.h"
+#include "orchagent/dash/dashorch.h"
+#include "orchagent/dash/dashtagmgr.h"
 #include "table.h"
 
 #include "dash_api/acl_group.pb.h"
