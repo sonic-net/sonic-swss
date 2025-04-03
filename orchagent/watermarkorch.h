@@ -4,9 +4,9 @@
 #include <map>
 
 #include "orch.h"
+#include "orchnotificationconsumer.h"
 #include "port.h"
 
-#include "notificationconsumer.h"
 #include "timer.h"
 
 const uint8_t queue_wm_status_mask = 1 << 0;
@@ -25,7 +25,7 @@ public:
     virtual ~WatermarkOrch(void);
 
     void doTask(Consumer &consumer);
-    void doTask(swss::NotificationConsumer &consumer);
+    void doTask(OrchNotificationConsumer &consumer);
     void doTask(swss::SelectableTimer &timer);
 
     void init_pg_ids();
@@ -63,7 +63,7 @@ private:
     std::shared_ptr<swss::Table> m_persistentWatermarkTable = nullptr;
     std::shared_ptr<swss::Table> m_userWatermarkTable = nullptr;
 
-    swss::NotificationConsumer* m_clearNotificationConsumer = nullptr;
+    OrchNotificationConsumer* m_clearNotificationConsumer = nullptr;
     swss::SelectableTimer* m_telemetryTimer = nullptr;
 
     std::vector<sai_object_id_t> m_unicast_queue_ids;

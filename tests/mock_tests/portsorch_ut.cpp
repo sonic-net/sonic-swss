@@ -686,6 +686,7 @@ namespace portsorch_test
 
             // trigger the notification
             consumer->readData();
+            consumer->saveToSync();
             gPortsOrch->doTask(*consumer);
             mockReply = nullptr;
 
@@ -781,6 +782,7 @@ namespace portsorch_test
 
             // trigger the notification
             consumer->readData();
+            consumer->saveToSync();
             gPortsOrch->doTask(*consumer);
             mockReply = nullptr;
             gPortsOrch->getPort("Ethernet0", port);
@@ -3253,6 +3255,7 @@ namespace portsorch_test
 
         // trigger the notification
         consumer->readData();
+        consumer->saveToSync();
         gPortsOrch->doTask(*consumer);
         mockReply = nullptr;
 

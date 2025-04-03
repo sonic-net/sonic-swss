@@ -2,6 +2,7 @@
 
 #include "acltable.h"
 #include "orch.h"
+#include "orchnotificationconsumer.h"
 #include "timer.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
@@ -100,10 +101,10 @@ private:
     // Set the SAI_SWITCH_ATTR_{STAGE}_ACL with the group oid.
     ReturnCode bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const referenced_object &acl_grp);
 
-    swss::NotificationConsumer* m_restartCheckNotificationConsumer;
-    void doTask(swss::NotificationConsumer& consumer);
-    void doAsicSdkHealthEventNotificationConsumerTask(swss::NotificationConsumer& consumer);
-    void doRestartCheckNotificationConsumerTask(swss::NotificationConsumer& consumer);
+    OrchNotificationConsumer* m_restartCheckNotificationConsumer;
+    void doTask(OrchNotificationConsumer& consumer);
+    void doAsicSdkHealthEventNotificationConsumerTask(OrchNotificationConsumer& consumer);
+    void doRestartCheckNotificationConsumerTask(OrchNotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
     std::map<sai_acl_stage_t, referenced_object> m_aclGroups;

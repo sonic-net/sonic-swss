@@ -32,7 +32,7 @@ WatermarkOrch::WatermarkOrch(DBConnector *db, const vector<string> &tables):
     m_persistentWatermarkTable = make_shared<Table>(m_countersDb.get(), PERSISTENT_WATERMARKS_TABLE);
     m_userWatermarkTable = make_shared<Table>(m_countersDb.get(), USER_WATERMARKS_TABLE);
 
-    m_clearNotificationConsumer = new swss::NotificationConsumer(
+    m_clearNotificationConsumer = new OrchNotificationConsumer(
             m_appDb.get(),
             "WATERMARK_CLEAR_REQUEST");
     auto clearNotifier = new Notifier(m_clearNotificationConsumer, this, "WM_CLEAR_NOTIFIER");
@@ -141,7 +141,7 @@ void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vect
     }
 }
 
-void WatermarkOrch::doTask(NotificationConsumer &consumer)
+void WatermarkOrch::doTask(OrchNotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
     if (!gPortsOrch->allPortsReady())
@@ -159,11 +159,12 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
         init_queue_ids();
     }
 
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
+    auto kofv = consumer.getSyncFront();
+    std::string op = kfvOp(kofv);
+    std::string data =  kfvKey(kofv);
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kofv);
 
-    consumer.pop(op, data, values);
+    consumer.popSyncFront();
 
     Table * table = NULL;
 
