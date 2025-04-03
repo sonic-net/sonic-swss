@@ -672,7 +672,7 @@ class TestDropCounters(object):
             and debug counters are added each time we add ports (if debug counter is enabled)
         """
         self.setup_db(dvs)
-         
+
         # save port info
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         tbl = swsscommon.Table(cdb, PORT_TABLE_NAME)
