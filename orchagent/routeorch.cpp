@@ -742,13 +742,13 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 for (auto i : kfvFieldsValues(t))
                 {
-                    if (fvField(i) == "nexthop")
+                    if (fvField(i) == "nexthop" && fvValue(i) != "" && fvValue(i) != "na")
                         ips = fvValue(i);
 
-                    if (fvField(i) == "ifname")
+                    if (fvField(i) == "ifname" && fvValue(i) != "" && fvValue(i) != "na")
                         aliases = fvValue(i);
 
-                    if (fvField(i) == "mpls_nh")
+                    if (fvField(i) == "mpls_nh" && fvValue(i) != "" && fvValue(i) != "na")
                         mpls_nhs = fvValue(i);
 
                     if (fvField(i) == "vni_label") {
@@ -756,16 +756,16 @@ void RouteOrch::doTask(Consumer& consumer)
                         overlay_nh = true;
                     }
 
-                    if (fvField(i) == "router_mac")
+                    if (fvField(i) == "router_mac" && fvValue(i) != "" && fvValue(i) != "na")
                         remote_macs = fvValue(i);
 
                     if (fvField(i) == "blackhole")
                         blackhole = fvValue(i) == "true";
 
-                    if (fvField(i) == "weight")
+                    if (fvField(i) == "weight" && fvValue(i) != "" && fvValue(i) != "na")
                         weights = fvValue(i);
 
-                    if (fvField(i) == "nexthop_group")
+                    if (fvField(i) == "nexthop_group" && fvValue(i) != "" && fvValue(i) != "na")
                         nhg_index = fvValue(i);
 
                     if (fvField(i) == "segment") {
@@ -779,7 +779,7 @@ void RouteOrch::doTask(Consumer& consumer)
                         srv6_nh = true;
                     }
 
-                    if (fvField(i) == "protocol")
+                    if (fvField(i) == "protocol" && fvValue(i) != "" && fvValue(i) != "na")
                     {
                         ctx.protocol = fvValue(i);
                     }

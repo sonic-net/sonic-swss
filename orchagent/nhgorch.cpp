@@ -70,16 +70,16 @@ void NhgOrch::doTask(Consumer& consumer)
             /* Get group's next hop IPs and aliases */
             for (auto i : kfvFieldsValues(t))
             {
-                if (fvField(i) == "nexthop")
+                if (fvField(i) == "nexthop" && fvValue(i) != "" && fvValue(i) != "na")
                     ips = fvValue(i);
 
-                if (fvField(i) == "ifname")
+                if (fvField(i) == "ifname" && fvValue(i) != "" && fvValue(i) != "na")
                     aliases = fvValue(i);
 
-                if (fvField(i) == "weight")
+                if (fvField(i) == "weight" && fvValue(i) != "" && fvValue(i) != "na")
                     weights = fvValue(i);
 
-                if (fvField(i) == "mpls_nh")
+                if (fvField(i) == "mpls_nh" && fvValue(i) != "" && fvValue(i) != "na")
                     mpls_nhs = fvValue(i);
 
                 if (fvField(i) == "seg_src")
