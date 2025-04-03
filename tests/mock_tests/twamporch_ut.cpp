@@ -144,7 +144,7 @@ namespace twamporch_test
             auto consumer = exec->getNotificationConsumer();
             consumer->readData();
             consumer->saveToSync();
-            static_cast<Orch *>(this->twampOrch.get())->doTask(*consumer);
+           this->twampOrch->doTask(*consumer);
         }
 
         TwampOrch& get()
