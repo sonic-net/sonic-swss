@@ -8,6 +8,7 @@ namespace mock_orch_test
 void MockOrchTest::ApplyInitialConfigs() {}
 void MockOrchTest::PostSetUp() {}
 void MockOrchTest::PreTearDown() {}
+void MockOrchTest::ApplySaiMock() {}
 
 void MockOrchTest::PrepareSai()
 {
@@ -52,6 +53,10 @@ void MockOrchTest::PrepareSai()
 
     status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, (uint32_t)underlay_intf_attrs.size(), underlay_intf_attrs.data());
     ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+    // Bulkers will use the SAI implementation that exists when they are created in Orch constructors
+    // so we need to apply the mock SAI API before any Orchs are created
+    ApplySaiMock(); 
 }
 
 void MockOrchTest::SetUp()
@@ -266,6 +271,15 @@ void MockOrchTest::SetUp()
     m_vnetOrch = new VNetOrch(m_app_db.get(), APP_VNET_TABLE_NAME);
     gDirectory.set(m_vnetOrch);
     ut_orch_list.push_back((Orch **)&m_vnetOrch);
+
+    vector<string> dash_vnet_tables = {
+        APP_DASH_VNET_TABLE_NAME,
+        APP_DASH_VNET_MAPPING_TABLE_NAME
+    };
+
+    m_dashVnetOrch = new DashVnetOrch(m_app_db.get(), dash_vnet_tables, nullptr);
+    gDirectory.set(m_dashVnetOrch);
+    ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
 
     ApplyInitialConfigs();
     PostSetUp();
