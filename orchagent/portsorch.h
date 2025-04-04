@@ -393,7 +393,7 @@ private:
     void initializeSchedulerGroups(Port &port);
     void initializeVoqs(Port &port);
 
-    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
+    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
