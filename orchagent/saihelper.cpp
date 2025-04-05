@@ -373,7 +373,7 @@ void initSaiRedis()
 
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC)
     {
-
+        SWSS_LOG_NOTICE("Enable redis pipeline");
         attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
         attr.value.booldata = true;
 
@@ -383,7 +383,6 @@ void initSaiRedis()
             SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
             exit(EXIT_FAILURE);
         }
-        SWSS_LOG_NOTICE("Enable redis pipeline");
     }
 
     char *platform = getenv("platform");

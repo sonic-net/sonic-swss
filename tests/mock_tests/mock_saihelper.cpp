@@ -49,10 +49,11 @@ namespace saihelper_test
                 {
                     return SAI_STATUS_SUCCESS;
                 }
+                break;
             default:
                 break;
         }
-        return old_sai_switch_api->set_switch_attribute(switch_id, attr);
+        return SAI_STATUS_SUCCESS;
     }
 
     void _hook_sai_apis()
@@ -143,6 +144,19 @@ namespace saihelper_test
 
         // Assertions
         ASSERT_DEATH({initSaiRedis();}, "");  // Check that the function returns true (success)
+        set_comm_mode_not_supported = false;
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestSetRedisPipelineFailure) {
+        use_pipeline_not_supported = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        // Assertions
+        ASSERT_DEATH({initSaiRedis();}, "");  // Check that the function returns true (success)
+        use_pipeline_not_supported = false;
+        _unhook_sai_apis();
     }
 }
 
