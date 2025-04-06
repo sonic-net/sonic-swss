@@ -43,6 +43,8 @@ namespace mock_orch_test
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
         shared_ptr<swss::DBConnector> m_chassis_app_db;
+        shared_ptr<swss::DBConnector> m_dpu_app_db;
+        shared_ptr<swss::DBConnector> m_dpu_state_db;
         MuxOrch *m_MuxOrch;
         MuxCableOrch *m_MuxCableOrch;
         MuxCable *m_MuxCable;
@@ -53,6 +55,7 @@ namespace mock_orch_test
         VNetOrch *m_vnetOrch;
         DashOrch *m_DashOrch;
         DashVnetOrch *m_dashVnetOrch;
+        DashHaOrch *m_dashHaOrch;
 
         void PrepareSai();
         void SetUp();
