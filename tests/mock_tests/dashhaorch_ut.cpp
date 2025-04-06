@@ -25,13 +25,12 @@ namespace dashhaorch_ut
     class DashHaOrchTest : public MockOrchTest
     {
     protected:
-        DEFINE_SAI_API_MOCK(dash_ha);
-        DEFINE_SAI_API_MOCK(dash_eni);
+        DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_set);
+        DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_scope);
 
         void ApplySaiMock()
         {
             INIT_SAI_API_MOCK(dash_ha);
-            INIT_SAI_API_MOCK(dash_eni);
             MockSaiApis();
         }
 
@@ -39,7 +38,6 @@ namespace dashhaorch_ut
         {
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(dash_ha);
-            DEINIT_SAI_API_MOCK(dash_eni);
         }
 
         void CreateHaSet()
@@ -53,6 +51,7 @@ namespace dashhaorch_ut
 
             ha_set.set_ha_set_id("HA_SET_1");
             ha_set.set_version("1");
+            ha_set.set_scope(dash::ha::SCOPE_DPU);
             ha_set.mutable_vip_v4()->set_ipv4(vip_v4.getV4Addr());
             ha_set.mutable_local_npu_ip()->set_ipv4(npu_ip.getV4Addr());
             ha_set.mutable_local_ip()->set_ipv4(local_ip.getV4Addr());
