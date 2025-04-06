@@ -35,6 +35,7 @@
 #undef private 
 #include "directory.h"
 #include "dashvnetorch.h"
+#include "dashhaorch.h"
 
 extern int gBatchSize;
 
