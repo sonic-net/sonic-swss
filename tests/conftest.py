@@ -764,6 +764,12 @@ class DockerVirtualSwitch:
         self.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
         time.sleep(1)
 
+    def disable_fpmsyncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl stop fpmsyncd'])
+
+        # Let's give fpmsyncd a chance to connect to Zebra.
+        time.sleep(5)
+
     # deps: warm_reboot
     def SubscribeAppDbObject(self, objpfx):
         r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB,
