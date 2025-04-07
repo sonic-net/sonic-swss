@@ -261,7 +261,7 @@ void PortMgr::doTask(Consumer &consumer)
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                // writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
 
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();

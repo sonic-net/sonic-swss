@@ -41,10 +41,12 @@ int main(int argc, char **argv)
         {
             s.addSelectables(o->getSelectables());
         }
+
         while (true)
         {
             Selectable *sel;
             int ret;
+
             ret = s.select(&sel, SELECT_TIMEOUT);
             if (ret == Select::ERROR)
             {
