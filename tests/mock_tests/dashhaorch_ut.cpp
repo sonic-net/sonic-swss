@@ -25,8 +25,7 @@ namespace dashhaorch_ut
     class DashHaOrchTest : public MockOrchTest
     {
     protected:
-        DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_set);
-        DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_scope);
+        DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_set, ha_scope);
 
         void ApplySaiMock()
         {

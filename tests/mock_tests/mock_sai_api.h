@@ -130,52 +130,54 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
 #define DEFINE_SAI_API_MOCK(...) \
     GET_MOCK_MACRO(__VA_ARGS__, DEFINE_SAI_API_MOCK_SPECIFY_ENTRY, DEFINE_SAI_API_MOCK_MATCH_ENTRY)(__VA_ARGS__)
 
-#define DEFINE_SAI_GENERIC_API_MOCK(sai_api_name, sai_object_type)                                                           \
-    static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api;                                                         \
-    static sai_##sai_api_name##_api_t ut_sai_##sai_api_name##_api;                                                           \
-    class mock_sai_##sai_api_name##_api_t                                                                                    \
-    {                                                                                                                        \
-    public:                                                                                                                  \
-        mock_sai_##sai_api_name##_api_t()                                                                                    \
-        {                                                                                                                    \
-            ON_CALL(*this, create_##sai_object_type)                                                                         \
-                .WillByDefault(                                                                                              \
-                    [this](GENERIC_CREATE_PARAMS(sai_object_type)) {                                                         \
-                        return old_sai_##sai_api_name##_api->create_##sai_object_type(GENERIC_CREATE_ARGS(sai_object_type)); \
-                    });                                                                                                      \
-            ON_CALL(*this, remove_##sai_object_type)                                                                         \
-                .WillByDefault(                                                                                              \
-                    [this](GENERIC_REMOVE_PARAMS(sai_object_type)) {                                                         \
-                        return old_sai_##sai_api_name##_api->remove_##sai_object_type(GENERIC_REMOVE_ARGS(sai_object_type)); \
-                    });                                                                                                      \
-        }                                                                                                                    \
-        MOCK_METHOD4(create_##sai_object_type, sai_status_t(GENERIC_CREATE_PARAMS(sai_object_type)));                        \
-        MOCK_METHOD1(remove_##sai_object_type, sai_status_t(GENERIC_REMOVE_PARAMS(sai_object_type)));                        \
-    };                                                                                                                       \
-    static mock_sai_##sai_api_name##_api_t *mock_sai_##sai_api_name##_api;                                                   \
-    inline sai_status_t mock_create_##sai_object_type(GENERIC_CREATE_PARAMS(sai_object_type))                                \
-    {                                                                                                                        \
-        return mock_sai_##sai_api_name##_api->create_##sai_object_type(GENERIC_CREATE_ARGS(sai_object_type));                \
-    }                                                                                                                        \
-    inline sai_status_t mock_remove_##sai_object_type(GENERIC_REMOVE_PARAMS(sai_object_type))                                \
-    {                                                                                                                        \
-        return mock_sai_##sai_api_name##_api->remove_##sai_object_type(GENERIC_REMOVE_ARGS(sai_object_type));                \
-    }                                                                                                                        \
-    inline void apply_sai_##sai_api_name##_api_mock()                                                                        \
-    {                                                                                                                        \
-        mock_sai_##sai_api_name##_api = new NiceMock<mock_sai_##sai_api_name##_api_t>();                                     \
-                                                                                                                             \
-        old_sai_##sai_api_name##_api = sai_##sai_api_name##_api;                                                             \
-        ut_sai_##sai_api_name##_api = *sai_##sai_api_name##_api;                                                             \
-        sai_##sai_api_name##_api = &ut_sai_##sai_api_name##_api;                                                             \
-                                                                                                                             \
-        sai_##sai_api_name##_api->create_##sai_object_type = mock_create_##sai_object_type;                                  \
-        sai_##sai_api_name##_api->remove_##sai_object_type = mock_remove_##sai_object_type;                                  \
-    }                                                                                                                        \
-    inline void remove_sai_##sai_api_name##_api_mock()                                                                       \
-    {                                                                                                                        \
-        sai_##sai_api_name##_api = old_sai_##sai_api_name##_api;                                                             \
-        delete mock_sai_##sai_api_name##_api;                                                                                \
+#define FOR_EACH(action, sai_api_name) \
+#define FOR_EACH(action, sai_api_name, sai_object_type, ...) \
+    action(sai_api_name, sai_object_type) \
+    FOR_EACH(action, sai_api_name, __VA_ARGS__)
+
+#define DEFINE_ON_CALL_DEFAULTS(sai_api_name, sai_object_type) \
+    ON_CALL(*this, create_##sai_object_type).WillByDefault([this](GENERIC_CREATE_PARAMS(sai_object_type)) { \
+        return old_sai_##sai_api_name##_api->create_##sai_object_type(GENERIC_CREATE_ARGS(sai_object_type)); \
+    }); \
+    ON_CALL(*this, remove_##sai_object_type).WillByDefault([this](GENERIC_REMOVE_PARAMS(sai_object_type)) { \
+        return old_sai_##sai_api_name##_api->remove_##sai_object_type(GENERIC_REMOVE_ARGS(sai_object_type)); \
+    });
+#define DEFINE_MOCK_METHODS(sai_api_name, sai_object_type) \
+    MOCK_METHOD4(create_##sai_object_type, sai_status_t(GENERIC_CREATE_PARAMS(sai_object_type))); \
+    MOCK_METHOD1(remove_##sai_object_type, sai_status_t(GENERIC_REMOVE_PARAMS(sai_object_type)));
+#define DEFINE_WRAPPER_FUNCTIONS(sai_api_name, sai_object_type) \
+    inline sai_status_t mock_create_##sai_object_type(GENERIC_CREATE_PARAMS(sai_object_type)) { \
+        return mock_sai_##sai_api_name##_api->create_##sai_object_type(GENERIC_CREATE_ARGS(sai_object_type)); \
+    } \
+    inline sai_status_t mock_remove_##sai_object_type(GENERIC_REMOVE_PARAMS(sai_object_type)) { \
+        return mock_sai_##sai_api_name##_api->remove_##sai_object_type(GENERIC_REMOVE_ARGS(sai_object_type)); \
+    }
+#define APPLY_MOCK_FUNCTIONS(sai_api_name, sai_object_type) \
+    sai_##sai_api_name##_api->create_##sai_object_type = mock_create_##sai_object_type; \
+    sai_##sai_api_name##_api->remove_##sai_object_type = mock_remove_##sai_object_type;
+
+#define DEFINE_SAI_GENERIC_API_MOCK(sai_api_name, ...) \
+    static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api; \
+    static sai_##sai_api_name##_api_t ut_sai_##sai_api_name##_api; \
+    class mock_sai_##sai_api_name##_api_t { \
+    public: \
+        mock_sai_##sai_api_name##_api_t() { \
+            FOR_EACH(DEFINE_ON_CALL_DEFAULTS, sai_api_name, __VA_ARGS__) \
+        } \
+        FOR_EACH(DEFINE_MOCK_METHODS, sai_api_name, __VA_ARGS__) \
+    }; \
+    static mock_sai_##sai_api_name##_api_t *mock_sai_##sai_api_name##_api; \
+    FOR_EACH(DEFINE_WRAPPER_FUNCTIONS, sai_api_name, __VA_ARGS__) \
+    inline void apply_sai_##sai_api_name##_api_mock() { \
+        mock_sai_##sai_api_name##_api = new NiceMock<mock_sai_##sai_api_name##_api_t>(); \
+        old_sai_##sai_api_name##_api = sai_##sai_api_name##_api; \
+        ut_sai_##sai_api_name##_api = *sai_##sai_api_name##_api; \
+        sai_##sai_api_name##_api = &ut_sai_##sai_api_name##_api; \
+        FOR_EACH(APPLY_MOCK_FUNCTIONS, sai_api_name, __VA_ARGS__) \
+    } \
+    inline void remove_sai_##sai_api_name##_api_mock() { \
+        sai_##sai_api_name##_api = old_sai_##sai_api_name##_api; \
+        delete mock_sai_##sai_api_name##_api; \
     }
 
 #define DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(sai_api_name, sai_object_type)                                                       \
