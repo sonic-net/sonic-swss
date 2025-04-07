@@ -1,3 +1,5 @@
+#ifndef DASHHAORCH_H
+#define DASHHAORCH_H
 #include <map>
 
 #include "dbconnector.h"
@@ -59,3 +61,5 @@ private:
 
     sai_ip_address_t covertPbIpaddrToSaiIpaddr(const dash::types::IpAddress &ipaddr);
 };
+
+#endif // DASHHAORCH_H

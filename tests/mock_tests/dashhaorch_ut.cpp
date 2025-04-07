@@ -20,12 +20,12 @@ EXTERN_MOCK_FNS
 
 namespace dashhaorch_ut 
 {
+    DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_set, ha_scope);
     using namespace mock_orch_test;
 
     class DashHaOrchTest : public MockOrchTest
     {
     protected:
-        DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_set, ha_scope);
 
         void ApplySaiMock()
         {
@@ -42,7 +42,7 @@ namespace dashhaorch_ut
         void CreateHaSet()
         {
             Table ha_set_table = Table(m_app_db.get(), APP_DASH_HA_SET_TABLE_NAME);
-            dash::ha::HaSet ha_set = dash::ha::HaSet();
+            dash::ha_set::HaSet ha_set = dash::ha_set::HaSet();
             swss::IpAddress vip_v4("1.1.1.1");
             swss::IpAddress npu_ip("2.2.2.2");
             swss::IpAddress local_ip("3.3.3.3");
@@ -50,7 +50,7 @@ namespace dashhaorch_ut
 
             ha_set.set_ha_set_id("HA_SET_1");
             ha_set.set_version("1");
-            ha_set.set_scope(dash::ha::SCOPE_DPU);
+            ha_set.set_scope(dash::ha_set::SCOPE_DPU);
             ha_set.mutable_vip_v4()->set_ipv4(vip_v4.getV4Addr());
             ha_set.mutable_local_npu_ip()->set_ipv4(npu_ip.getV4Addr());
             ha_set.mutable_local_ip()->set_ipv4(local_ip.getV4Addr());
@@ -69,10 +69,10 @@ namespace dashhaorch_ut
         void CreateHaScope()
         {
             Table ha_scope_table = Table(m_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME);
-            dash::ha::HaScope ha_scope = dash::ha::HaScope();
+            dash::ha_scope::HaScope ha_scope = dash::ha_scope::HaScope();
             ha_scope.set_ha_scope_id("HA_SET_1");
             ha_scope.set_version("1");
-            ha_scope.set_ha_role(dash::ha::HA_ROLE_DEAD);
+            ha_scope.set_ha_role(dash::ha_scope::HA_SCOPE_ROLE_DEAD);
             ha_scope_table.set("HA_SET_1", { { "pb", ha_scope.SerializeAsString() } });
             m_dashHaOrch->addExistingData(&ha_scope_table);
             static_cast<Orch *>(m_dashHaOrch)->doTask();
