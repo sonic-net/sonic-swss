@@ -130,10 +130,12 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
 #define DEFINE_SAI_API_MOCK(...) \
     GET_MOCK_MACRO(__VA_ARGS__, DEFINE_SAI_API_MOCK_SPECIFY_ENTRY, DEFINE_SAI_API_MOCK_MATCH_ENTRY)(__VA_ARGS__)
 
-#define FOR_EACH(action, sai_api_name) \
-#define FOR_EACH(action, sai_api_name, sai_object_type, ...) \
-    action(sai_api_name, sai_object_type) \
-    FOR_EACH(action, sai_api_name, __VA_ARGS__)
+#define FOR_EACH_1(action, api_name, x) action(api_name, x)
+#define FOR_EACH_2(action, api_name, x, ...) action(api_name, x) FOR_EACH_1(action, api_name, __VA_ARGS__)
+
+#define GET_FOR_EACH_MACRO(_1,_2,NAME,...) NAME
+#define FOR_EACH(action, api_name, ...) \
+    GET_FOR_EACH_MACRO(__VA_ARGS__, FOR_EACH_2, FOR_EACH_1)(action, api_name, __VA_ARGS__)
 
 #define DEFINE_ON_CALL_DEFAULTS(sai_api_name, sai_object_type) \
     ON_CALL(*this, create_##sai_object_type).WillByDefault([this](GENERIC_CREATE_PARAMS(sai_object_type)) { \
@@ -156,6 +158,7 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
     sai_##sai_api_name##_api->create_##sai_object_type = mock_create_##sai_object_type; \
     sai_##sai_api_name##_api->remove_##sai_object_type = mock_remove_##sai_object_type;
 
+/* Override DEFINE_SAI_GENERIC_API_MOCK with multiple sai_object_type inputs */
 #define DEFINE_SAI_GENERIC_API_MOCK(sai_api_name, ...) \
     static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api; \
     static sai_##sai_api_name##_api_t ut_sai_##sai_api_name##_api; \
