@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
+#include "mock_sai_next_hop_group.h"
 #include "bulker.h"
 
 extern string gMySwitchType;
@@ -15,6 +16,11 @@ extern string gMySwitchType;
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
 using ::testing::_;
+using ::testing::DoAll;
+using ::testing::Return;
+using ::testing::SetArgPointee;
+using ::testing::SetArrayArgument;
+using ::testing::StrictMock;
 
 namespace routeorch_test
 {
@@ -99,6 +105,11 @@ namespace routeorch_test
         {
         }
 
+        virtual void init_sai_api(const map<string, string> &profile)
+        {
+            ut_helper::initSaiApi(profile);
+        }
+
         void SetUp() override
         {
             ASSERT_EQ(sai_route_api, nullptr);
@@ -107,7 +118,7 @@ namespace routeorch_test
                 { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
             };
 
-            ut_helper::initSaiApi(profile);
+            init_sai_api(profile);
 
             // Hack the route create function
             old_create_route_entries = sai_route_api->create_route_entries;
@@ -384,6 +395,22 @@ namespace routeorch_test
         }
     };
 
+    struct RouteOrchNHGTest : public RouteOrchTest
+    {
+        StrictMock<MockSaiNextHopGroup> mock_sai_next_hop_group_obj;
+
+        void init_sai_api(const map<string, string> &profile) override
+        {
+            RouteOrchTest::init_sai_api(profile);
+            sai_next_hop_group_api->create_next_hop_group = create_next_hop_group;
+            sai_next_hop_group_api->remove_next_hop_group = remove_next_hop_group;
+            sai_next_hop_group_api->create_next_hop_group_members = create_next_hop_group_members;
+            sai_next_hop_group_api->remove_next_hop_group_members = remove_next_hop_group_members;
+
+            mock_sai_next_hop_group = &mock_sai_next_hop_group_obj;
+        }
+    };
+
     TEST_F(RouteOrchTest, RouteOrchTestDelSetSameNexthop)
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -587,5 +614,63 @@ namespace routeorch_test
                                                         {"ifname", "Ethernet8"}}});
         routeConsumer->addToSync(entries);
         static_cast<Orch *>(gRouteOrch)->doTask();
+    }
+
+    TEST_F(RouteOrchNHGTest, RouteOrchTestRemoveNextHopGroup)
+    {
+        /*
+         * This is a combination of two test cases:
+         * 1. remove_next_hop_group fails (i.e., does not return SAI_STATUS_SUCCESS)
+         * 2. create_next_hop_group succeeds, but sets the nexthop group ID to SAI_NULL_OBJECT_ID.
+         * In the second case, remove_next_hop_group should not be called.
+         */
+        sai_object_id_t nhg_id = SAI_NULL_OBJECT_ID + 10;
+        sai_object_id_t nhg_member_ids[] = {SAI_NULL_OBJECT_ID + 100, SAI_NULL_OBJECT_ID + 101};
+        sai_status_t nhg_member_statuses[] = {SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
+        size_t nhg_member_count = sizeof(nhg_member_ids) / sizeof(sai_object_id_t);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        std::string key = "2.2.2.0/24";
+        // Since we set more than one nexthops, a nexthop group will be created by RouteOrch::addRoute.
+        std::vector<FieldValueTuple> fvs{{"ifname", "Ethernet0,Ethernet0"}, {"nexthop", "10.0.0.2,10.0.0.3"},
+                                         {"protocol", "bgp"}};
+
+        EXPECT_CALL(mock_sai_next_hop_group_obj, create_next_hop_group(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(nhg_id), Return(SAI_STATUS_SUCCESS)))
+            .WillOnce(DoAll(SetArgPointee<0>(SAI_NULL_OBJECT_ID), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(mock_sai_next_hop_group_obj, create_next_hop_group_members(_, _, _, _, _, _, _))
+            .WillRepeatedly(DoAll(SetArrayArgument<5>(nhg_member_ids, nhg_member_ids + nhg_member_count),
+                            SetArrayArgument<6>(nhg_member_statuses, nhg_member_statuses + nhg_member_count),
+                            Return(SAI_STATUS_SUCCESS)));
+        /*
+         * gRouteBulker.create_entry, which is called in RouteOrch::addRoute will create the route entry
+         * and set its status to SAI_STATUS_NOT_EXECUTED (and also returns the same value). Since the route
+         * entry is not added to m_syncdRoutes.at(vrf_id), RouteOrch::addRoutePost will call
+         * RouteOrch::removeNextHopGroup.
+         */
+        EXPECT_CALL(mock_sai_next_hop_group_obj, remove_next_hop_group_members(_, _, _, _))
+            .WillRepeatedly(DoAll(SetArrayArgument<3>(nhg_member_statuses, nhg_member_statuses + nhg_member_count),
+                            Return(SAI_STATUS_SUCCESS)));
+        /*
+         * Note: Setting the return value to SAI_STATUS_FAILURE will cause the program to be aborted.
+         * Therefore, we set the return value to SAI_STATUS_ITEM_NOT_FOUND.
+         */
+        EXPECT_CALL(mock_sai_next_hop_group_obj, remove_next_hop_group(_)).WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        for (int i = 0; i < 2; ++i)
+        {
+            // Route addition
+            entries.clear();
+            entries.push_back({key, "SET", fvs});
+            consumer->addToSync(entries);
+            static_cast<Orch*>(gRouteOrch)->doTask();
+
+            // Route deletion
+            entries.clear();
+            entries.push_back({key, "DEL", {}});
+            consumer->addToSync(entries);
+            static_cast<Orch*>(gRouteOrch)->doTask();
+        }
     }
 }
