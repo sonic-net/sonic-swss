@@ -2112,8 +2112,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
 
         auto fvs = vector<FieldValueTuple>{
             { "SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP", "true" },
-            { "SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI", "true" },
-            { "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_SET_INNER_SRC_MAC" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI", "true" }
         };
 
         ASSERT_TRUE(validateAclTable(
@@ -2129,7 +2128,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
                         aclTableName + "|" + aclRuleName,
                         SET_COMMAND,
                         {
-                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
                             { MATCH_TUNNEL_VNI, "233" },
                             { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
                         }
@@ -2148,7 +2147,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
                         aclTableName + "|" + aclRuleName,
                         SET_COMMAND,
                         {
-                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
                             { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
                         }
                     }
@@ -2157,7 +2156,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         );
 
         // Missing VNI is not supported on this table
-        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+        ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
 
         orch->doAclRuleTask(
             deque<KeyOpFieldsValuesTuple>(
@@ -2166,7 +2165,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
                         aclTableName + "|" + aclRuleName,
                         SET_COMMAND,
                         {
-                            { MATCH_INNER_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
                             { MATCH_TUNNEL_VNI, "233" },
                             { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
                         }
@@ -2204,13 +2203,12 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_FALSE(rule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
         ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
         ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
-        ASSERT_FALSE(rule->validate());
 
         ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, aclTableName));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
         // Second update, invalid action & extra match
         auto updatedRule = make_shared<AclRuleTest>(*rule);
@@ -2219,13 +2217,12 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
         ASSERT_FALSE(updatedRule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
         ASSERT_FALSE(updatedRule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD"));
-
-
+        
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.255.0");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
         // Third update, change in 2 matches and with invalid action
         auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
@@ -2237,7 +2234,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "3.3.3.3&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
         auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
         updatedRule3->setCounterEnabled(true);

@@ -111,9 +111,9 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
 };
 
-static acl_rule_attr_lookup_t aclL3InnerActionLookup = 
+static acl_rule_attr_lookup_t aclInnerActionLookup = 
 {
-    { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC},
+    { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC},
 };
 
 static acl_rule_attr_lookup_t aclMirrorStageLookup =
@@ -174,7 +174,6 @@ static const acl_capabilities_t defaultAclActionsSupported =
                 SAI_ACL_ACTION_TYPE_PACKET_ACTION,
                 SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
                 SAI_ACL_ACTION_TYPE_NO_NAT,
-                SAI_ACL_ACTION_TYPE_SET_INNER_SRC_MAC
             },
             false
         }
@@ -185,7 +184,6 @@ static const acl_capabilities_t defaultAclActionsSupported =
         {
             {
                 SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                SAI_ACL_ACTION_TYPE_SET_INNER_SRC_MAC
             },
             false
         }
@@ -815,12 +813,12 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto dtelAction = aclDTelActionLookup.find(action);
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
-        auto l3innerAction = aclL3InnerActionLookup.find(action);
+        auto l3innerAction = aclInnerActionLookup.find(action);
         if (l3Action != aclL3ActionLookup.end())
         {
             saiActionAttr = l3Action->second;
         }
-        else if (l3innerAction != aclL3InnerActionLookup.end())
+        else if (l3innerAction != aclInnerActionLookup.end())
         {
             saiActionAttr = l3innerAction->second;
         }
@@ -1782,7 +1780,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRulePacket>(acl, rule, table);
         }
-        else if (aclL3InnerActionLookup.find(action) != aclL3InnerActionLookup.cend() || action == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
+        else if (aclInnerActionLookup.find(action) != aclInnerActionLookup.cend())
         {
             return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
         }
@@ -2175,11 +2173,12 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
                 SWSS_LOG_ERROR("Mac address in the wrong format");
                 return false;
             }
-            memcpy(actionData.parameter.mac ,  MacAddress(_attr_value).getMac(), sizeof(sai_mac_t));
+            memcpy(actionData.parameter.mac, MacAddress(_attr_value).getMac(), sizeof(sai_mac_t));
             action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
             SWSS_LOG_INFO("Converting the mac address to SAI acl action parameter");
-        }    
-        else{
+        }   
+         
+        else {
             return false;
         }
     }
@@ -2189,14 +2188,14 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
     }
 
     actionData.enable = true;
-    return setAction(aclL3InnerActionLookup[action_str], actionData);
+    return setAction(aclInnerActionLookup[action_str], actionData);
  }
 
  bool AclRuleInnerSrcMacRewrite::validate()
  {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.size() != 2) || m_actions.size() != 1 )
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1 )
     {
         return false;
     }
@@ -4030,7 +4029,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     {
         metadataActionLookup = aclMetadataDscpActionLookup;
     }
-    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclL3InnerActionLookup})
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclInnerActionLookup})
     {
         for (const auto& it: action_map)
         {
