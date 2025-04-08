@@ -122,7 +122,7 @@ class TestSubPortIntf(object):
             return "PortChannel"+intf_index+VLAN_SUB_INTERFACE_SEPARATOR+sub_intf_idx
         else:
             return str(port_name)
-
+  
     def get_port_longname(self, port_name):
         if port_name is None:
            return None
@@ -1308,7 +1308,6 @@ class TestSubPortIntf(object):
         # Restore parent port mtu
         dvs.set_mtu(parent_port, DEFAULT_MTU)
 
-        #dvs.set_dhcp_rate_limit(parent_port,"300")
         # Verify that sub port router interface entry in ASIC_DB has the default mtu
         fv_dict = {
             "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
