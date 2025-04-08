@@ -12,7 +12,7 @@ using namespace std;
 void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
         int len)
 {
-    while (RTA_OK(rta, len)) 
+    while (RTA_OK(rta, len))
     {
         if (rta->rta_type <= max)
         {
@@ -32,6 +32,11 @@ void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
         }
         rta = RTA_NEXT(rta, len);
     }
+}
+void netlink_parse_rtattr_nested(struct rtattr **tb, int max,
+				 const struct rtattr *rta)
+{
+	netlink_parse_rtattr(tb, max, (struct rtattr *)RTA_DATA(rta), (int)RTA_PAYLOAD(rta));
 }
 
 bool FpmLink::isRawProcessing(struct nlmsghdr *h)
@@ -54,7 +59,7 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
     }
 
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct rtmsg)));
-    if (len < 0) 
+    if (len < 0)
     {
         return false;
     }
@@ -71,19 +76,19 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
     else
     {
         /* This is a multipath route */
-        int len;            
+        int len;
         struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
         len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
         struct rtattr *subtb[RTA_MAX + 1];
-        
-        for (;;) 
+
+        for (;;)
         {
             if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
             {
                 break;
             }
 
-            if (rtnh->rtnh_len > sizeof(*rtnh)) 
+            if (rtnh->rtnh_len > sizeof(*rtnh))
             {
                 memset(subtb, 0, sizeof(subtb));
                 netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
@@ -101,7 +106,7 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
             }
 
             len -= NLMSG_ALIGN(rtnh->rtnh_len);
-            rtnh = RTNH_NEXT(rtnh);                
+            rtnh = RTNH_NEXT(rtnh);
         }
     }
 
@@ -281,7 +286,17 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
             /* EVPN Type5 Add route processing */
             processRawMsg(nl_hdr);
         }
-	else if(nl_hdr->nlmsg_type == RTM_NEWNEXTHOP || nl_hdr->nlmsg_type == RTM_DELNEXTHOP)
+        else if(nl_hdr->nlmsg_type == RTM_NEWSRV6VPNROUTE || nl_hdr->nlmsg_type == RTM_DELSRV6VPNROUTE)
+        {
+            /* rtnl api dont support RTM_NEWNEXTHOP/RTM_DELNEXTHOP yet. Processing as raw message*/
+            processRawMsg(nl_hdr);
+        }
+	    else if(nl_hdr->nlmsg_type == RTM_NEWNEXTHOP || nl_hdr->nlmsg_type == RTM_DELNEXTHOP)
+        {
+            /* rtnl api dont support RTM_NEWNEXTHOP/RTM_DELNEXTHOP yet. Processing as raw message*/
+            processRawMsg(nl_hdr);
+        }
+        else if(nl_hdr->nlmsg_type == RTM_NEWPICCONTEXT || nl_hdr->nlmsg_type == RTM_DELPICCONTEXT)
         {
             /* rtnl api dont support RTM_NEWNEXTHOP/RTM_DELNEXTHOP yet. Processing as raw message*/
             processRawMsg(nl_hdr);

@@ -10,6 +10,7 @@
 #include <string.h>
 #include <bits/stdc++.h>
 #include <linux/version.h>
+#include <linux/seg6.h>
 
 #include <netlink/route/route.h>
 
@@ -24,6 +25,7 @@ using namespace std;
 /* Parse the Raw netlink msg */
 extern void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
                                                 int len);
+extern void netlink_parse_rtattr_nested(struct rtattr **tb, int max, const struct rtattr *rta);
 
 namespace swss {
 
@@ -33,8 +35,20 @@ struct NextHopGroup {
     string nexthop;
     string intf;
     bool installed;
+    string vni_label;
+    string vpn_sid;
+    string seg_src;
     NextHopGroup(uint32_t id, const string& nexthop, const string& interface) : installed(false), id(id), nexthop(nexthop), intf(interface) {};
     NextHopGroup(uint32_t id, const vector<pair<uint32_t,uint8_t>>& group) : installed(false), id(id), group(group) {};
+    NextHopGroup(uint32_t id, const string& nexthop, const string& interface,
+        const string& vpnsid, const string& segsrc) : id(id), nexthop(nexthop), intf(interface), vpn_sid(vpnsid), seg_src(segsrc) {};
+};
+
+
+struct seg6_iptunnel_encap_pri {
+    int mode;
+	struct in6_addr src;
+	struct ipv6_sr_hdr srh[0];
 };
 
 /* Path to protocol name database provided by iproute2 */
@@ -84,16 +98,17 @@ private:
     ProducerStateTable  m_label_routeTable;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
-    /* vnet vxlan tunnel table */  
+    /* vnet vxlan tunnel table */
     ProducerStateTable  m_vnet_tunnelTable;
     /* srv6 mySid table */
-    ProducerStateTable m_srv6MySidTable; 
+    ProducerStateTable m_srv6MySidTable;
     /* srv6 sid list table */
-    ProducerStateTable m_srv6SidListTable; 
+    ProducerStateTable m_srv6SidListTable;
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
     /* nexthop group table */
     ProducerStateTable  m_nexthop_groupTable;
+    ProducerStateTable  m_pic_context_groupTable;
     map<uint32_t,NextHopGroup> m_nh_groups;
 
     bool                m_isSuppressionEnabled{false};
@@ -108,6 +123,7 @@ private:
     void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac);
 
     void parseEncapSrv6SteerRoute(struct rtattr *tb, string &vpn_sid, string &src_addr);
+    bool parseEncapSrv6VpnRoute(struct rtattr *tb, uint32_t &pic_id, uint32_t &nhg_id);
 
     bool parseSrv6MySid(struct rtattr *tb[], string &block_len,
                            string &node_len, string &func_len,
@@ -133,6 +149,9 @@ private:
     /* Handle SRv6 MySID */
     void onSrv6MySidMsg(struct nlmsghdr *h, int len);
 
+    /* Handle vpn route */
+    void onSrv6VpnRouteMsg(struct nlmsghdr *h, int len);
+
     /* Handle vnet route */
     void onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet);
 
@@ -142,7 +161,7 @@ private:
     /* Get interface if_index based on interface name */
     rtnl_link* getLinkByName(const char *name);
 
-    void getEvpnNextHopSep(string& nexthops, string& vni_list,  
+    void getEvpnNextHopSep(string& nexthops, string& vni_list,
                        string& mac_list, string& intf_list);
 
     void getEvpnNextHopGwIf(char *gwaddr, int vni_value,
@@ -156,6 +175,8 @@ private:
 
     bool getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
                         struct rtattr *tb[], string &vpn_sid, string &src_addr);
+    bool getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
+                               struct rtattr *tb[], uint32_t &pic_id,uint32_t &nhg_id);
 
     /* Get next hop list */
     void getNextHopList(struct rtnl_route *route_obj, string& gw_list,
@@ -186,12 +207,27 @@ private:
 
     /* Handle Nexthop message */
     void onNextHopMsg(struct nlmsghdr *h, int len);
+    void onPicContextMsg(struct nlmsghdr *h, int len);
+    int parse_encap_seg6(const struct rtattr *tb, struct in6_addr *segs, struct in6_addr *src);
     /* Get next hop group key */
     const string getNextHopGroupKeyAsString(uint32_t id) const;
     void installNextHopGroup(uint32_t nh_id);
     void deleteNextHopGroup(uint32_t nh_id);
+    void deletePicContextGroup(uint32_t nh_id);
     void updateNextHopGroupDb(const NextHopGroup& nhg);
+    void updatePicContextGroupDb(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
+    void getPicContextGroupFields(const NextHopGroup& nhg, struct NextHopField& nhField, uint8_t af = AF_INET);
+
+};
+struct NextHopField {
+    string nexthops;
+    string ifnames;
+    string vni_label;
+    string vpn_sid;
+    string mpls_nh;
+    string weights;
+    string seg_srcs;
 };
 
 }
