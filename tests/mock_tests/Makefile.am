@@ -64,6 +64,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 neighorch_ut.cpp \
                 dashenifwdorch_ut.cpp \
                 dashorch_ut.cpp \
+                dashvnetorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
