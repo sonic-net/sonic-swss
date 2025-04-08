@@ -49,6 +49,21 @@ class TestDash(TestFlexCountersBase):
         self.sip = "10.0.0.1"
         self.vm_vni = "4321"
         self.local_region_id = "10"
+
+        # verify behavior when outbound_direction_lookup is specified
+        pb = Appliance()
+        pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
+        pb.vm_vni = int(self.vm_vni)
+        pb.local_region_id = int(self.local_region_id)
+        pb.outbound_direction_lookup = "dst_mac"
+        dash_db.create_appliance(self.appliance_id, {"pb": pb.SerializeToString()})
+        direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
+        dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION")
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC")
+        dash_db.remove_appliance(self.appliance_id)
+        time.sleep(2)
+
         pb = Appliance()
         pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
         pb.vm_vni = int(self.vm_vni)
@@ -62,7 +77,8 @@ class TestDash(TestFlexCountersBase):
         direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
         dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
         assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION")
-        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC")
+        # When outbound_direction_lookup is not specified, src mac is used by default
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC")
 
         vip_keys = dash_db.wait_for_asic_db_keys(ASIC_VIP_TABLE)
         vip_attrs = dash_db.get_asic_db_entry(ASIC_VIP_TABLE, vip_keys[0])
