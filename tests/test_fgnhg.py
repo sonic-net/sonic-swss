@@ -3,6 +3,7 @@ import re
 import time
 import json
 import pytest
+import random
 
 from dvslib.dvs_common import wait_for_result
 from swsscommon import swsscommon
@@ -204,10 +205,6 @@ def verify_programmed_fg_asic_db_entry(asic_db,prev_memb_dict,num_exp_changes,nh
             ret = ret and (idx == 1)
         if num_changes != num_exp_changes:
             ret = False
-        if ret != True:
-            print("Expected member count was " + str(nh_memb_exp_count) + " Received was " + str(nh_memb_count))
-            print("Indexes arr was " + str(idxs))
-            print("Expected num changes was " + str(num_exp_changes) + " Received was " + str(num_changes))
         return ret, memb_dict
 
     status, new_memb_dict = wait_for_result(_access_function)
@@ -249,6 +246,41 @@ def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_cou
     for idx,memb in memb_dict.items():
         assert memb == 0
 
+def verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, nh_ip_count):
+    def _access_function():
+        false_ret = (False, '')
+        ret = True
+        keys = state_db.get_keys("FG_ROUTE_TABLE")
+        if not keys:
+            return false_ret
+        for key in keys:
+            if key != fg_nhg_prefix:
+                continue
+            fvs = state_db.get_entry("FG_ROUTE_TABLE", key)
+            if not fvs:
+                return false_ret
+            member_count = {}
+            for key, value in fvs.items():
+                    if value not in member_count:
+                        member_count[value] = 0
+                    member_count[value] = member_count[value] + 1
+
+        # Verify that values in the member_count dictionary don't differ by more than 1
+        if member_count:
+            min_count = min(member_count.values())
+            max_count = max(member_count.values())
+            if (min_count == bucket_size//nh_ip_count) and (max_count - min_count <= 1) and (sum(member_count.values()) == bucket_size):
+                ret = True
+            else:
+                ret = False
+
+        else:
+            ret = False
+        return ret, member_count
+
+    status, member_count = wait_for_result(_access_function)
+    assert status, f"Member count distribution is uneven"
+
 def validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map, prev_memb_dict, num_exp_changes,
                                 fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size):
     state_db_entry_memb_exp_count = {}
@@ -274,10 +306,25 @@ def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_t
     ps = swsscommon.ProducerStateTable(app_db, ROUTE_TB)
     fvs = swsscommon.FieldValuePairs([("nexthop", ips), ("ifname", ifs)])
     ps.set(fg_nhg_prefix, fvs)
-    time.sleep(1)
     new_memb_dict = validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                         prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
     return new_memb_dict
+
+def program_route_and_validate_distribtution(app_db, state_db, ip_to_if_map, fg_nhg_prefix, nh_ips, bucket_size):
+    ips = ""
+    ifs = ""
+    for ip in nh_ips:
+        if ips == "":
+            ips = ip
+            ifs = ip_to_if_map[ip]
+        else:
+            ips = ips + "," + ip
+            ifs = ifs + "," + ip_to_if_map[ip]
+
+    ps = swsscommon.ProducerStateTable(app_db, ROUTE_TB)
+    fvs = swsscommon.FieldValuePairs([("nexthop", ips), ("ifname", ifs)])
+    ps.set(fg_nhg_prefix, fvs)
+    verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, len(nh_ips))
 
 def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_name):
     ip_to_if_map = {}
@@ -391,7 +438,6 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
     dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
     dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
-    time.sleep(1)
     asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + 5)
 
     asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
@@ -410,7 +456,6 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     # Resolve ARP for 10.0.0.7
     asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
     dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
-    time.sleep(1)
     asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + 1)
     nh_oid_map = get_nh_oid_map(asic_db)
 
@@ -794,7 +839,6 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
     dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:07")
     dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:08")
     dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:09")
-    time.sleep(1)
 
     asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + 3)
 
@@ -1159,6 +1203,136 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
 
+def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
+    app_db = dvs.get_app_db()
+    asic_db = dvs.get_asic_db()
+    config_db = dvs.get_config_db()
+    state_db = dvs.get_state_db()
+    fvs_nul = {"NULL": "NULL"}
+    NUM_NHs = 16
+    fg_nhg_name = "fgnhg_v4"
+    fg_nhg_prefix = "2.2.2.0/24"
+    bucket_size = 256
+    ip_to_if_map = {}
+    match_mode = 'prefix-based'
+
+    # Update log level so that we can analyze the log in case the test failed
+    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
+    old_log_level = logfvs.get("LOGLEVEL")
+    logfvs["LOGLEVEL"] = "INFO"
+    config_db.update_entry("LOGGER", "orchagent", logfvs)
+
+    fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
+           "max_next_hops": str(NUM_NHs)}
+    create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
+
+    fvs = {"FG_NHG": fg_nhg_name}
+    create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
+
+    for i in range(0,NUM_NHs):
+        if_name_key = "Ethernet" + str(i*4)
+        ip_pref_key = if_name_key + "|10.0.0." + str(i*2) + "/31"
+        create_entry(config_db, IF_TB, if_name_key, fvs_nul)
+        create_entry(config_db, IF_TB, ip_pref_key, fvs_nul)
+        dvs.port_admin_set(if_name_key, "up")
+        dvs.servers[i].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[i].runcmd("ip link set up dev eth0") == 0
+        ip_to_if_map["10.0.0." + str(1 + i*2)] = if_name_key
+
+    # Wait for the software to receive the entries
+    time.sleep(1)
+
+    # Resolve ARP for all 16 next-hops
+    asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
+    for i in range(16):
+        dvs.runcmd(f"arp -s 10.0.0.{1 + i * 2} 00:00:00:00:00:{1 + i * 2:02x}")
+    time.sleep(1)
+
+    asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)
+
+    # Add route with 16 next-hops
+    print("Add route with 16 next-hops")
+    ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
+    fvs = swsscommon.FieldValuePairs([("nexthop", ",".join([f"10.0.0.{1 + i * 2}" for i in range(16)])),
+        ("ifname", ",".join([f"Ethernet{i * 4}" for i in range(16)]))])
+    ps.set(fg_nhg_prefix, fvs)
+
+    # We just use sleep so that the sw receives this entry
+    time.sleep(1)
+
+    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    rtbl = swsscommon.Table(adb, ASIC_ROUTE_TB)
+    keys = rtbl.getKeys()
+    found_route = False
+    for k in keys:
+        rt_key = json.loads(k)
+
+        if rt_key['dest'] == fg_nhg_prefix:
+            found_route = True
+            break
+
+    assert (found_route == True)
+
+    asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
+    nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
+
+    ### Start with 16 members and verify that distribution is even
+    for _ in range(50):
+        print(f"Started test with 16 members, iteration: {_}")
+        nh_ips = [f"10.0.0.{1 + i * 2}" for i in range(16)]
+        program_route_and_validate_distribtution(app_db.db_connection, state_db, ip_to_if_map,
+                                                         fg_nhg_prefix, nh_ips, bucket_size)
+
+        ### remove 1 to 3 members in each step and verify that distribution is even
+        removed_ips = []
+        while len(nh_ips) > 1:
+            num_to_remove = random.randint(1, min(3, len(nh_ips) - 1))
+            removed_in_iteration = []
+            for _ in range(num_to_remove):
+                removed_ip = nh_ips.pop()
+                removed_ips.append(removed_ip)
+                removed_in_iteration.append(removed_ip)
+            print(f"Removed IPs: {removed_in_iteration}, No. of remaining IPs: {len(nh_ips)}")
+            program_route_and_validate_distribtution(app_db.db_connection, state_db, ip_to_if_map,
+                                                         fg_nhg_prefix, nh_ips, bucket_size)
+
+        ### add 1-3 nexthops in each step and verify that distribution stays even
+        while len(nh_ips) < 16:
+            num_to_add = random.randint(1, min(3, len(removed_ips)))
+            added_in_iteration = []
+            for _ in range(num_to_add):
+                if removed_ips:
+                    added_ip = removed_ips.pop(0)
+                    nh_ips.append(added_ip)
+                    added_in_iteration.append(added_ip)
+            print(f"Added IPs: {added_in_iteration}, Total IPs: {len(nh_ips)}")
+            program_route_and_validate_distribtution(app_db.db_connection, state_db, ip_to_if_map,
+                                                     fg_nhg_prefix, nh_ips, bucket_size)
+
+    # Remove route
+    print("Remove route")
+    asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
+    ps._del(fg_nhg_prefix)
+
+    # validate routes and nhg member in asic db, route entry in state db are removed
+    print("validate routes and nhg member in asic db, route entry in state db are removed")
+    asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
+    asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 0)
+    state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
+
+
+    # Cleanup all FG, arp and interface
+    print("Cleanup all FG, arp and interface")
+    remove_entry(config_db, "FG_NHG_PREFIX", fg_nhg_prefix)
+    remove_entry(config_db, "FG_NHG", fg_nhg_name)
+
+    for i in range(0,NUM_NHs):
+        if_name_key = "Ethernet" + str(i*4)
+        ip_pref_key = if_name_key + "|10.0.0." + str(i*2) + "/31"
+        remove_entry(config_db, IF_TB, ip_pref_key)
+        remove_entry(config_db, IF_TB, if_name_key)
+        dvs.port_admin_set(if_name_key, "down")
+        dvs.servers[i].runcmd("ip link set down dev eth0") == 0
 
 
 class TestFineGrainedNextHopGroup(object):
@@ -1185,6 +1359,12 @@ class TestFineGrainedNextHopGroup(object):
         Test for match_mode prefix-based with multiple routes
         '''
         fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs);
+
+    def test_fgnhg_matchmode_prefix_even_distribution(self, dvs, testlog):
+        '''
+        Test for match_mode prefix-based with 16 nexthops and even distribution
+        '''
+        fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs);
 
     def test_fgnhg_more_nhs_nondiv_bucket_size(self, dvs, testlog):
         '''
