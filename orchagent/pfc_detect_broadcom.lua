@@ -12,6 +12,59 @@ local rets = {}
 
 redis.call('SELECT', counters_db)
 
+local function parse_boolean(str) return str == 'true' end
+local function parse_number(str) return tonumber(str) or 0 end
+
+local function updateTimePaused(port_key, prio, time_since_last_poll)
+    -- Estimate that queue paused for entire poll duration
+    local total_pause_time_field        = 'SAI_PORT_STAT_PFC_' .. prio .. '_RX_PAUSE_DURATION_US'
+    local recent_pause_time_field       = 'EST_PORT_STAT_PFC_' .. prio .. '_RECENT_PAUSE_TIME_US'
+
+    local recent_pause_time_us = parse_number(
+        redis.call('HGET', port_key, recent_pause_time_field)
+    )
+    local total_pause_time_us = redis.call('HGET', port_key, total_pause_time_field)
+
+    -- Only estimate total time when no SAI support
+    if not total_pause_time_us then
+        total_pause_time_field = 'EST_PORT_STAT_PFC_' .. prio .. '_RX_PAUSE_DURATION_US'
+        total_pause_time_us = parse_number(
+            redis.call('HGET', port_key, total_pause_time_field)
+        )
+
+        local total_pause_time_us_new = total_pause_time_us + time_since_last_poll
+        redis.call('HSET', port_key, total_pause_time_field, total_pause_time_us_new)
+    end
+
+    local recent_pause_time_us_new = recent_pause_time_us + time_since_last_poll
+    redis.call('HSET', port_key, recent_pause_time_field, recent_pause_time_us_new)
+end
+
+local function restartRecentTime(port_key, prio, timestamp_last)
+    local recent_pause_time_field      = 'EST_PORT_STAT_PFC_' .. prio .. '_RECENT_PAUSE_TIME_US'
+    local recent_pause_timestamp_field = 'EST_PORT_STAT_PFC_' .. prio .. '_RECENT_PAUSE_TIMESTAMP'
+
+    redis.call('HSET', port_key, recent_pause_timestamp_field, timestamp_last)
+    redis.call('HSET', port_key, recent_pause_time_field, 0)
+end
+
+-- Get the time since the last poll, used to compute total and recent times
+local timestamp_field_last = 'PFCWD_POLL_TIMESTAMP_last'
+local timestamp_last = redis.call('HGET', 'TIMESTAMP', timestamp_field_last)
+local time = redis.call('TIME')
+-- convert to microseconds
+local timestamp_current = tonumber(time[1]) * 1000000 + tonumber(time[2])
+
+-- save current poll as last poll
+local timestamp_string = tostring(timestamp_current)
+redis.call('HSET', 'TIMESTAMP', timestamp_field_last, timestamp_string)
+
+local time_since_last_poll = poll_time
+-- not first poll
+if timestamp_last ~= false then
+    time_since_last_poll = (timestamp_current - tonumber(timestamp_last))
+end
+
 -- Iterate through each queue
 local n = table.getn(KEYS)
 for i = n, 1, -1 do
@@ -85,6 +138,29 @@ for i = n, 1, -1 do
                                 redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
                             end
                             time_left = detection_time
+                        end
+
+                        -- estimate history
+                        local pfc_stat_history = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_STAT_HISTORY')
+                        if pfc_stat_history and pfc_stat_history == "enable" then
+                            local port_key      = counters_table_name .. ':' .. port_id
+                            local was_paused    = parse_boolean(queue_pause_status_last)
+                            local now_paused    = parse_boolean(queue_pause_status)
+
+                            -- Activity has occured
+                            if pfc_rx_packets > pfc_rx_packets_last then
+                                -- fresh recent pause period
+                                if not was_paused then
+                                    restartRecentTime(port_key, queue_index, timestamp_last)
+                                end
+                                -- Estimate entire interval paused if there was pfc activity
+                                updateTimePaused(port_key, queue_index, time_since_last_poll)
+                            else
+                                -- queue paused entire interval without activity
+                                if now_paused and was_paused then
+                                    updateTimePaused(port_key, queue_index, time_since_last_poll)
+                                end
+                            end
                         end
                     end
 
