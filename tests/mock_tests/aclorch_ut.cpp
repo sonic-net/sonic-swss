@@ -2208,7 +2208,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
         // Second update, invalid action & extra match
         auto updatedRule = make_shared<AclRuleTest>(*rule);
@@ -2222,7 +2222,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.255.0");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
         // Third update, change in 2 matches and with invalid action
         auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
@@ -2234,7 +2234,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "3.3.3.3&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC), "60:30:34:AB:CD:EF");
 
         auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
         updatedRule3->setCounterEnabled(true);

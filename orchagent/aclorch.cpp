@@ -113,7 +113,7 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
 
 static acl_rule_attr_lookup_t aclInnerActionLookup = 
 {
-    { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC},
+    { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC},
 };
 
 static acl_rule_attr_lookup_t aclMirrorStageLookup =
