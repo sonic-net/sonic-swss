@@ -52,6 +52,7 @@ namespace mock_orch_test
         VxlanTunnelOrch *m_VxlanTunnelOrch;
         VNetOrch *m_vnetOrch;
         DashOrch *m_DashOrch;
+        DashVnetOrch *m_dashVnetOrch;
 
         void PrepareSai();
         void SetUp();
@@ -59,5 +60,6 @@ namespace mock_orch_test
         virtual void ApplyInitialConfigs();
         virtual void PostSetUp();
         virtual void PreTearDown();
+        virtual void ApplySaiMock();
     };
 }
