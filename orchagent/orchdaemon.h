@@ -60,7 +60,7 @@ using namespace swss;
 class OrchDaemon
 {
 public:
-    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
+    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *, int zmqServerPort, bool enableDashZmq, bool enableRouteZmq);
     virtual ~OrchDaemon();
 
     virtual bool init();
@@ -113,6 +113,9 @@ private:
     bool m_fabricEnabled = false;
     bool m_fabricPortStatEnabled = true;
     bool m_fabricQueueStatEnabled = true;
+    bool m_dashZmqEnabled = false;
+    bool m_routeZmqEnabled = false;
+    int m_zmqServerPort = 0;
 
     std::vector<Orch *> m_orchList;
     Select *m_select;
@@ -128,7 +131,7 @@ private:
 class FabricOrchDaemon : public OrchDaemon
 {
 public:
-    FabricOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
+    FabricOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *, int zmqServerPort, bool enableDashZmq, bool enableRouteZmq);
     bool init() override;
 private:
     DBConnector *m_applDb;
