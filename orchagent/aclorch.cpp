@@ -431,6 +431,18 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 }
             }
         }
+    },
+    {
+        // ARS
+        TABLE_TYPE_ARS,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_DISABLE_ARS_FORWARDING
+                }
+            }
+        }
     }
 };
 

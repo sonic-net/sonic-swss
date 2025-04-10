@@ -36,13 +36,12 @@ const unordered_map<bool, string> FlexCounterManager::status_lookup =
 
 const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lookup =
 {
-    { CounterType::PORT_DEBUG,       PORT_DEBUG_COUNTER_ID_LIST },
-    { CounterType::SWITCH_DEBUG,     SWITCH_DEBUG_COUNTER_ID_LIST },
-    { CounterType::PORT,             PORT_COUNTER_ID_LIST },
-    { CounterType::QUEUE,            QUEUE_COUNTER_ID_LIST },
+    { CounterType::PORT_DEBUG,      PORT_DEBUG_COUNTER_ID_LIST },
+    { CounterType::SWITCH_DEBUG,    SWITCH_DEBUG_COUNTER_ID_LIST },
+    { CounterType::PORT,            PORT_COUNTER_ID_LIST },
+    { CounterType::QUEUE,           QUEUE_COUNTER_ID_LIST },
     { CounterType::QUEUE_ATTR,      QUEUE_ATTR_ID_LIST },
     { CounterType::PRIORITY_GROUP,  PG_COUNTER_ID_LIST },
-<<<<<<< HEAD
     { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
     { CounterType::MACSEC_SA,       MACSEC_SA_COUNTER_ID_LIST },
     { CounterType::MACSEC_FLOW,     MACSEC_FLOW_COUNTER_ID_LIST },
@@ -54,27 +53,6 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::DASH_METER,      DASH_METER_COUNTER_ID_LIST },
     { CounterType::SRV6,            SRV6_COUNTER_ID_LIST },
     { CounterType::SWITCH,          SWITCH_COUNTER_ID_LIST },
-||||||| constructed merge base
-    { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
-    { CounterType::MACSEC_SA,       MACSEC_SA_COUNTER_ID_LIST },
-    { CounterType::MACSEC_FLOW,     MACSEC_FLOW_COUNTER_ID_LIST },
-    { CounterType::ACL_COUNTER,     ACL_COUNTER_ATTR_ID_LIST },
-    { CounterType::TUNNEL,          TUNNEL_COUNTER_ID_LIST },
-    { CounterType::HOSTIF_TRAP,     FLOW_COUNTER_ID_LIST },
-    { CounterType::ROUTE,           FLOW_COUNTER_ID_LIST },
-    { CounterType::ENI,             ENI_COUNTER_ID_LIST },
-=======
-    { CounterType::MACSEC_SA_ATTR,   MACSEC_SA_ATTR_ID_LIST },
-    { CounterType::MACSEC_SA,        MACSEC_SA_COUNTER_ID_LIST },
-    { CounterType::MACSEC_FLOW,      MACSEC_FLOW_COUNTER_ID_LIST },
-    { CounterType::ACL_COUNTER,      ACL_COUNTER_ATTR_ID_LIST },
-    { CounterType::TUNNEL,           TUNNEL_COUNTER_ID_LIST },
-    { CounterType::HOSTIF_TRAP,      FLOW_COUNTER_ID_LIST },
-    { CounterType::ROUTE,            FLOW_COUNTER_ID_LIST },
-    { CounterType::ENI,              ENI_COUNTER_ID_LIST },
-    { CounterType::ARS_NEXTHOP_GROUP,ARS_NEXTHOP_GROUP_COUNTER_ID_LIST },
-    { CounterType::ARS_LAG,          ARS_LAG_COUNTER_ID_LIST },
->>>>>>> Move to new branch
 };
 
 FlexManagerDirectory g_FlexManagerDirectory;

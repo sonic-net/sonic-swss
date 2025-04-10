@@ -727,12 +727,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha, portFlrSha;
+    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
     string nvdaPortTrimPluginName = "nvda_port_trim_drop.lua";
-    string portFlrPluginName = "port_flr.lua";
 
     try
     {
@@ -747,29 +746,13 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         string nvdaPortTrimLuaScript = swss::loadLuaScript(nvdaPortTrimPluginName);
         nvdaPortTrimSha = swss::loadRedisScript(m_counter_db.get(), nvdaPortTrimLuaScript);
-
-        string portFlrLuaScript = swss::loadLuaScript(portFlrPluginName);
-        portFlrSha = swss::loadRedisScript(m_counter_db.get(), portFlrLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
     }
 
-    // Build portStatPlugins string, only adding non-empty plugin SHAs
-    std::string portStatPlugins;
-    if (!portRateSha.empty())
-    {
-        portStatPlugins = portRateSha;
-    }
-    if (!portFlrSha.empty())
-    {
-        if (!portStatPlugins.empty())
-        {
-            portStatPlugins += ",";
-        }
-        portStatPlugins += portFlrSha;
-    }
+    std::string portStatPlugins = portRateSha;
 
     // Nvidia custom trim stat calculation
     if (isMlnxPlatform() && \
@@ -4331,8 +4314,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 return true;
             };
 
-            const bool portExists = m_portList.count(key) > 0;
-            if (!portExists)
+            if (m_portList.find(key) == m_portList.end())
             {
                 // Aggregate configuration while the port is not created.
                 auto &fvMap = m_portConfigMap[key];
@@ -4364,12 +4346,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
             }
 
+            // TODO:
+            // Fix the issue below
+            // After PortConfigDone, while waiting for "PortInitDone" and the first gBufferOrch->isPortReady(alias),
+            // the complete m_lanesAliasSpeedMap may be populated again, so initExistingPort() will be called more than once
+            // for the same port.
+
             /* Once all ports received, go through the each port and perform appropriate actions:
              * 1. Remove ports which don't exist anymore
              * 2. Create new ports
              * 3. Initialize all ports
              */
-            if (getPortConfigState() == PORT_CONFIG_RECEIVED)
+            if (getPortConfigState() != PORT_CONFIG_MISSING)
             {
                 std::vector<PortConfig> portsToAddList;
                 std::vector<sai_object_id_t> portsToRemoveList;
@@ -4430,25 +4418,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 setPortConfigState(PORT_CONFIG_DONE);
             }
-            else if (getPortConfigState() == PORT_CONFIG_DONE)
-            {
-                // Add and initialize the port
-                if (!portExists)
-                {
-                    std::vector<PortConfig> portsToAddList { pCfg };
-                    std::vector<Port> addedPorts;
 
-                    if (!addPortBulk(portsToAddList, addedPorts))
-                    {
-                        SWSS_LOG_ERROR("Failed to add port %s", pCfg.key.c_str());
-                        it++;
-                        continue;
-                    }
-
-                    initPortsBulk(addedPorts);
-                }
-            }
-            else
+            if (getPortConfigState() != PORT_CONFIG_DONE)
             {
                 // Not yet receive PortConfigDone. Save it for future retry
                 it++;
@@ -10657,6 +10628,7 @@ bool PortsOrch::setPortPtTam(const Port& port, sai_object_id_t tam_id)
 
 bool PortsOrch::setPortArsEnable(const Port& port, bool is_enable)
 {
+    SWSS_LOG_ENTER();
     sai_attribute_t attr;
 
     attr.id = SAI_PORT_ATTR_ARS_ENABLE;
@@ -10665,6 +10637,12 @@ bool PortsOrch::setPortArsEnable(const Port& port, bool is_enable)
 
     if (status != SAI_STATUS_SUCCESS)
     {
+        SWSS_LOG_ERROR(
+            "Failed to %s ARS on port %s (OID 0x%" PRIx64 "): SAI status = %d",
+            is_enable ? "enable" : "disable",
+            port.m_alias.c_str(),
+            port.m_port_id,
+            status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -10675,36 +10653,26 @@ bool PortsOrch::setPortArsEnable(const Port& port, bool is_enable)
     return true;
 }
 
-bool PortsOrch::setPortArsLoadScaling(const Port& port)
+bool PortsOrch::setPortArsLoadScaling(const Port& port, const uint32_t scaling_factor)
 {
+    SWSS_LOG_ENTER();
     sai_attribute_t attr;
+
+    /* Normalize port speed using SAI scaling factor if not provided
+     * 10G:1, 25G:2.5, 40G:4, 50G:5, 100G:10, 200G:20, 400G:40.*/
+    attr.value.u32 = (scaling_factor == 0) ? (port.m_speed / 10000) : scaling_factor;
 
     attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR;
-    attr.value.u32 = port.m_speed / 10000;
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    return true;
-}
-
-bool PortsOrch::setPortArsAltPath(const Port& port, bool is_enable)
-{
-    sai_attribute_t attr;
-
-    attr.id = SAI_PORT_ATTR_ARS_ALTERNATE_PATH;
-    attr.value.booldata = is_enable;
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
+        SWSS_LOG_ERROR(
+            "Failed to set ARS load scaling factor (%u) on port %s (OID 0x%" PRIx64 "): SAI status = %d",
+            attr.value.u32,
+            port.m_alias.c_str(),
+            port.m_port_id,
+            status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
