@@ -494,8 +494,6 @@ bool OrchDaemon::init()
     ArsOrch* ars_orch = new ArsOrch(m_configDb, m_applDb, m_stateDb, ars_tables, vrf_orch);
     gDirectory.set(ars_orch);
 
-    gDirectory.set(ars_orch);
-
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.

@@ -347,6 +347,48 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr, sai_object_
     }
 }
 
+void RouteOrch::attach(Observer *observer, const IpPrefix& dstPrefix, sai_object_id_t vrf_id)
+{
+    SWSS_LOG_ENTER();
+
+    Prefix prefix = std::make_pair(vrf_id, dstPrefix);
+    auto observerEntry = m_nextHopGroupObservers.find(prefix);
+
+    /* Create a new observer entry if no current observer is observing this
+     * IP address */
+    if (observerEntry == m_nextHopGroupObservers.end())
+    {
+        m_nextHopGroupObservers.emplace(prefix, NextHopGroupObserverEntry());
+        observerEntry = m_nextHopGroupObservers.find(prefix);
+
+        /* Find the prefixes that match the prefix */
+        if (m_syncdRoutes.find(vrf_id) != m_syncdRoutes.end())
+        {
+            auto routes = m_syncdRoutes.find(vrf_id);
+            auto route = routes->second.find(dstPrefix);
+            if (route != routes->second.end())
+            {
+                SWSS_LOG_INFO("Matching vrf 0x%" PRIx64 " prefix %s found", prefix.first, prefix.second.to_string().c_str());
+                observerEntry->second.nhgTable.emplace_back(route->second);
+            }
+        }
+    }
+
+    observerEntry->second.observers.push_back(observer);
+
+    // Trigger next hop change for the first time the observer is attached
+    // Note that rbegin() is pointing to the entry with longest prefix match
+    auto nhg = observerEntry->second.nhgTable.begin();
+    if (nhg != observerEntry->second.nhgTable.end())
+    {
+        SWSS_LOG_NOTICE("Attached next hop group observer of vrf 0x%" PRIx64 " prefix %s",
+            prefix.first, prefix.second.to_string().c_str());
+
+        NextHopGroupUpdate update = { prefix.first, prefix.second, nhg->nhg_key, true };
+        observer->update(SUBJECT_TYPE_NEXTHOP_GROUP_CHANGE, static_cast<void *>(&update));
+    }
+}
+
 void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr, sai_object_id_t vrf_id)
 {
     SWSS_LOG_ENTER();
@@ -377,6 +419,42 @@ void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr, sai_object_
             if (observerEntry->second.observers.empty())
             {
                 m_nextHopObservers.erase(observerEntry);
+            }
+            break;
+        }
+    }
+}
+
+void RouteOrch::detach(Observer *observer, const IpPrefix& dstPrefix, sai_object_id_t vrf_id)
+{
+    SWSS_LOG_ENTER();
+
+    auto observerEntry = m_nextHopGroupObservers.find(std::make_pair(vrf_id, dstPrefix));
+
+    if (observerEntry == m_nextHopGroupObservers.end())
+    {
+        SWSS_LOG_ERROR("Failed to locate observer for prefix %s",
+            dstPrefix.to_string().c_str());
+        assert(false);
+        return;
+    }
+
+    // Find the observer
+    for (auto iter = observerEntry->second.observers.begin();
+            iter != observerEntry->second.observers.end(); ++iter)
+    {
+        if (observer == *iter)
+        {
+            observerEntry->second.observers.erase(iter);
+
+            SWSS_LOG_NOTICE("Detached next hop observer for destination IP %s",
+                    dstPrefix.to_string().c_str());
+
+            // Remove NextHopObserverEntry if no observer is tracking this
+            // prefix.
+            if (observerEntry->second.observers.empty())
+            {
+                m_nextHopGroupObservers.erase(observerEntry);
             }
             break;
         }
@@ -1181,6 +1259,56 @@ void RouteOrch::notifyNextHopChangeObservers(sai_object_id_t vrf_id, const IpPre
             }
         }
     }
+
+    // notify nexthop group change
+    auto entry = m_nextHopGroupObservers.find(std::make_pair(vrf_id, prefix));
+    if (entry != m_nextHopGroupObservers.end())
+    {
+        NextHopGroupUpdate update = { vrf_id, prefix, nexthops, add };
+        if (add)
+        {
+            bool update_required = false;
+
+            auto nhg = entry->second.nhgTable.begin();
+            if (nhg == entry->second.nhgTable.end())
+            {
+                entry->second.nhgTable.emplace_back(RouteNhg(nexthops, ""));
+
+                update_required = true;
+            }
+            else
+            {
+                if (nhg->nhg_key != nexthops)
+                {
+                    nhg->nhg_key = nexthops;
+                    
+                    update_required = true;
+                }
+            }
+
+            if (update_required)
+            {
+                for (auto observer : entry->second.observers)
+                {
+                    observer->update(SUBJECT_TYPE_NEXTHOP_GROUP_CHANGE, static_cast<void *>(&update));
+                }
+            }
+        }
+        else
+        {
+            auto nhg = entry->second.nhgTable.begin();
+            if (nhg != entry->second.nhgTable.end())
+            {
+                entry->second.nhgTable.clear();
+            }
+
+            /* notify about prefix removal */
+            for (auto observer : entry->second.observers)
+            {
+                observer->update(SUBJECT_TYPE_NEXTHOP_GROUP_CHANGE, static_cast<void *>(&update));
+            }
+        }
+    }
 }
 
 void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
@@ -1953,6 +2081,52 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
         ++rt;
     }
 
+    return true;
+}
+
+bool RouteOrch::updateNextHopGroupRoutes(const NextHopGroupKey& nexthopGroup, sai_object_id_t next_hop_group_id)
+{
+    sai_route_entry_t route_entry;
+    sai_attribute_t route_attr;
+
+    auto routes = m_syncdRoutes.begin();
+    while (routes != m_syncdRoutes.end())
+    {
+        auto rt = routes->second.begin();
+        while(rt != routes->second.end())
+        {
+            if (rt->second.nhg_key != nexthopGroup)
+            {
+                // skip
+                ++rt;
+                continue;
+            }
+
+            SWSS_LOG_INFO("Updating route %s", rt->first.to_string().c_str());
+
+            route_entry.vr_id = routes->first;
+            route_entry.switch_id = gSwitchId;
+            copy(route_entry.destination, rt->first);
+
+            route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            route_attr.value.oid = next_hop_group_id;
+
+            sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to update route %s, rv:%d", rt->first.to_string().c_str(), status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTE, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+
+            ++rt;
+        }
+
+        ++routes;
+    }
     return true;
 }
 
@@ -3257,7 +3431,7 @@ inline void RouteOrch::removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
 }
 
 
-bool RouteOrch::reconfigureNexthopGroupWithArsState(NextHopGroupKey nexthopGroupKey, sai_object_id_t next_hop_group_id, const sai_object_id_t ars_object_id)
+bool RouteOrch::reconfigureNexthopGroupWithArsState(NextHopGroupKey nexthopGroupKey, const sai_object_id_t ars_object_id)
 {
     /* 1. crete new nexthop group with ARS object id
        2. create nexthop memebers for new nexthop group
@@ -3290,6 +3464,12 @@ bool RouteOrch::reconfigureNexthopGroupWithArsState(NextHopGroupKey nexthopGroup
 
     // use old NHG ref count
     m_syncdNextHopGroups[nexthopGroupKey].ref_count = tmp_nexthop_group.ref_count;
+
+    // point existing routes to new nexthop group id
+    if (!updateNextHopGroupRoutes(nexthopGroupKey, m_syncdNextHopGroups[nexthopGroupKey].next_hop_group_id))
+    {
+        return false;
+    }
 
     // remove stale NHG 
     if (!removeReplicatedNextHopGroup(nexthopGroupKey, tmp_nexthop_group))
