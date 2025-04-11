@@ -790,6 +790,38 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                  * other available nhs, but for cases where # hash buckets is not
                  * divisible by # of nhs, simple round robin can make the hash bucket
                  * distribution non-ideal, thereby nhs can attract unequal traffic */
+                if (map_entry->size() > exp_bucket_size + 1)
+                {
+                    SWSS_LOG_INFO("Nexthop %s has %zu, continue to remove more buckets after this.",
+                                  it->to_string().c_str(), map_entry->size());
+                    move_bkt=true;
+                }
+                else if (map_entry->size() == exp_bucket_size + 1)
+                {
+                    if (num_nhs_with_one_more == 0)
+                    {
+                        SWSS_LOG_INFO("Nexthop %s has %zu, take one bucket from it and remove it from the list.",
+                            it->to_string().c_str(), map_entry->size());
+                        remove_nh = true;
+                        move_bkt = true;
+                    }
+                    else
+                    {
+                        SWSS_LOG_INFO("Nexthop %s with %zu buckets is one of the nexthops with one more, remove it \
+                            from the list. remaining num_nhs_with_one_more = %d",
+                            it->to_string().c_str(), map_entry->size(), num_nhs_with_one_more - 1);
+                        remove_nh = true;
+                        num_nhs_with_one_more--;
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_WARN("Nexthop %s already has %zu, don't remove any buckets but remove this nexthop from the list",
+                        it->to_string().c_str(), map_entry->size());
+                    remove_nh=true;
+                }
+
+                /*
                 if (num_nhs_with_one_more == 0)
                 {
                     if (map_entry->size() == exp_bucket_size + 1)
@@ -806,12 +838,20 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     }
                     else
                     {
+                        SWSS_LOG_INFO("Nexthop %s has %zu, continue to remove more buckets after this.",
+                            it->to_string().c_str(), map_entry->size());
                         move_bkt=true;
                     }
                 }
                 else
                 {
-                    if (map_entry->size() == exp_bucket_size + 2)
+                    if (map_entry->size() > exp_bucket_size + 1)
+                    {
+                        SWSS_LOG_INFO("Nexthop %s has %zu, continue to remove more buckets after this.",
+                                      it->to_string().c_str(), map_entry->size());
+                        move_bkt=true;
+                    }
+                    else if (map_entry->size() == exp_bucket_size + 1)
                     {
                         SWSS_LOG_INFO("Nexthop %s has %zu, don't remove more buckets after this. num_nhs_with_one_more %d",
                                       it->to_string().c_str(), map_entry->size(), num_nhs_with_one_more - 1);
@@ -830,7 +870,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                         move_bkt=true;
                     }
                 }
-
+                */
                 // Replace the active nh's buckets from the end
                 if (move_bkt)
                 {

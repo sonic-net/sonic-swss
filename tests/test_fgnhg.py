@@ -760,7 +760,6 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
     dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
     dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
     dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
-    time.sleep(1)
 
     asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + 3)
 
@@ -1242,19 +1241,18 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     # Wait for the software to receive the entries
     time.sleep(1)
 
-    # Resolve ARP for all 16 next-hops
+    # Resolve ARP for all NUM_NHs next-hops
     asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
-    for i in range(16):
+    for i in range(NUM_NHs):
         dvs.runcmd(f"arp -s 10.0.0.{1 + i * 2} 00:00:00:00:00:{1 + i * 2:02x}")
-    time.sleep(1)
 
     asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)
 
-    # Add route with 16 next-hops
-    print("Add route with 16 next-hops")
+    # Add route with NUM_NHs next-hops
+    print(f"Add route with {NUM_NHs} next-hops")
     ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
-    fvs = swsscommon.FieldValuePairs([("nexthop", ",".join([f"10.0.0.{1 + i * 2}" for i in range(16)])),
-        ("ifname", ",".join([f"Ethernet{i * 4}" for i in range(16)]))])
+    fvs = swsscommon.FieldValuePairs([("nexthop", ",".join([f"10.0.0.{1 + i * 2}" for i in range(NUM_NHs)])),
+        ("ifname", ",".join([f"Ethernet{i * 4}" for i in range(NUM_NHs)]))])
     ps.set(fg_nhg_prefix, fvs)
 
     # We just use sleep so that the sw receives this entry
@@ -1276,14 +1274,15 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
     nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
 
-    ### Start with 16 members and verify that distribution is even
+    ### Start with NUM_NHs members and verify that distribution is even after a series of add/remove operations
     for _ in range(50):
-        print(f"Started test with 16 members, iteration: {_}")
-        nh_ips = [f"10.0.0.{1 + i * 2}" for i in range(16)]
+        print()
+        print(f"Iteration: {_}, started test with {NUM_NHs} members, bucket_size: {bucket_size}")
+        nh_ips = [f"10.0.0.{1 + i * 2}" for i in range(NUM_NHs)]
         program_route_and_validate_distribtution(app_db.db_connection, state_db, ip_to_if_map,
                                                          fg_nhg_prefix, nh_ips, bucket_size)
 
-        ### remove 1 to 3 members in each step and verify that distribution is even
+        ### remove 1 to 3 nexthops in each step and verify that distribution is even
         removed_ips = []
         while len(nh_ips) > 1:
             num_to_remove = random.randint(1, min(3, len(nh_ips) - 1))
@@ -1297,7 +1296,7 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
                                                          fg_nhg_prefix, nh_ips, bucket_size)
 
         ### add 1-3 nexthops in each step and verify that distribution stays even
-        while len(nh_ips) < 16:
+        while len(nh_ips) < NUM_NHs:
             num_to_add = random.randint(1, min(3, len(removed_ips)))
             added_in_iteration = []
             for _ in range(num_to_add):
@@ -1362,7 +1361,7 @@ class TestFineGrainedNextHopGroup(object):
 
     def test_fgnhg_matchmode_prefix_even_distribution(self, dvs, testlog):
         '''
-        Test for match_mode prefix-based with 16 nexthops and even distribution
+        Test for match_mode prefix-based with up to 16 nexthops and even distribution
         '''
         fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs);
 
