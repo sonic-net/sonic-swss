@@ -7,7 +7,7 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
-#include "mock_orch_test.h"
+#include "mock_dash_orch_test.h"
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"
@@ -28,7 +28,7 @@ namespace dashvnetorch_test
     using ::testing::DoAll;
     using ::testing::SetArrayArgument;
 
-    class DashVnetOrchTest : public MockOrchTest
+    class DashVnetOrchTest : public MockDashOrchTest
     {
     protected:
         int GetCrmUsedCount(CrmResourceType type)
@@ -37,44 +37,6 @@ namespace dashvnetorch_test
             gCrmOrch->getResAvailability(type, entry);
             return entry.countersMap["STATS"].usedCounter;
         }
-        void CreateApplianceEntry()
-        {
-            swss::IpAddress sip("1.1.1.1");
-            // dash::types::IpAddress sip_addr = dash::types::IpAddress();
-            // sip_addr.set_ipv4(sip.getV4Addr());
-            Table appliance_table = Table(m_app_db.get(), APP_DASH_APPLIANCE_TABLE_NAME);
-            dash::appliance::Appliance appliance = dash::appliance::Appliance();
-            appliance.mutable_sip()->set_ipv4(sip.getV4Addr());
-            appliance.set_local_region_id(100);
-            // appliance.set_allocated_sip(&sip_addr);
-            appliance.set_vm_vni(9999);
-            appliance_table.set("APPLIANCE_1", { { "pb", appliance.SerializeAsString() } });
-            m_DashOrch->addExistingData(&appliance_table);
-            static_cast<Orch *>(m_DashOrch)->doTask();
-        }
-
-        void AddRoutingType(dash::route_type::EncapType encap_type)
-        {
-            Table route_type_table = Table(m_app_db.get(), APP_DASH_ROUTING_TYPE_TABLE_NAME);
-            dash::route_type::RouteType route_type = dash::route_type::RouteType();
-            dash::route_type::RouteTypeItem *rt_item = route_type.add_items();
-            rt_item->set_action_type(dash::route_type::ACTION_TYPE_STATICENCAP);
-            rt_item->set_encap_type(encap_type);
-            route_type_table.set("VNET_ENCAP", { { "pb", route_type.SerializeAsString() } });
-            m_DashOrch->addExistingData(&route_type_table);
-            static_cast<Orch *>(m_DashOrch)->doTask();
-        }
-
-        void CreateVnet()
-        {
-            Table vnet_table = Table(m_app_db.get(), APP_DASH_VNET_TABLE_NAME);
-            dash::vnet::Vnet vnet = dash::vnet::Vnet();
-            vnet.set_vni(5555);
-            vnet_table.set("VNET_1", { { "pb", vnet.SerializeAsString() } });
-            m_dashVnetOrch->addExistingData(&vnet_table);
-            static_cast<Orch *>(m_dashVnetOrch)->doTask();
-        }
-
         void AddVnetMap()
         {
             Table vnet_map_table = Table(m_app_db.get(), APP_DASH_VNET_MAPPING_TABLE_NAME);
