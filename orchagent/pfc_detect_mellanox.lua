@@ -25,9 +25,22 @@ if timestamp_last ~= false then
     redis.call('HSET', 'TIMESTAMP', 'effective_pfcwd_poll_time_last', global_effective_poll_time)
 end
 
+-- Get timestamp from TIME_STAMP table for PFC_WD counters
+-- Use a field name without spaces to avoid issues
+local port_timestamp_current = tonumber(redis.call('HGET', 'COUNTERS:TIME_STAMP', 'PFC_WD_Port_Counter_time_stamp'))
+local port_timestamp_last = tonumber(redis.call('HGET', 'COUNTERS:TIME_STAMP', 'PFC_WD_Port_Counter_time_stamp_last'))
+
+-- Update the last timestamp for all ports at once
+if port_timestamp_current ~= nil then
+    redis.call('HSET', 'COUNTERS:TIME_STAMP', 'PFC_WD_Port_Counter_time_stamp_last', port_timestamp_current)
+end
+
 local effective_poll_time
-local effective_poll_time_lasttime
-local port_timestamp_last_cache = {}
+if port_timestamp_current ~= nil and port_timestamp_last ~= nil then
+    effective_poll_time = (port_timestamp_current - port_timestamp_last) / 1000
+else
+    effective_poll_time = global_effective_poll_time
+end
 
 local debug_storm_global = redis.call('HGET', 'DEBUG_STORM', 'enabled') == 'true'
 local debug_storm_threshold = tonumber(redis.call('HGET', 'DEBUG_STORM', 'threshold'))
@@ -62,27 +75,6 @@ for i = n, 1, -1 do
             if queue_index and port_id then
                 local pfc_rx_pkt_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PKTS'
                 local pfc_duration_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PAUSE_DURATION_US'
-
-                -- Get port specific timestamp
-                local port_timestamp_current = tonumber(redis.call('HGET', counters_table_name .. ':' .. port_id, 'PFC_WD_time_stamp'))
-                if port_timestamp_current ~= nil then
-                    local port_timestamp_lasttime = port_timestamp_last_cache[port_id]
-                    if port_timestamp_lasttime == nil then
-                        port_timestamp_lasttime = tonumber(redis.call('HGET', counters_table_name .. ':' .. port_id, 'PFC_WD_time_stamp_last'))
-                        port_timestamp_last_cache[port_id] = port_timestamp_lasttime 
-                        redis.call('HSET', counters_table_name .. ':' .. port_id, 'PFC_WD_time_stamp_last', port_timestamp_current)
-                    end
-
-                    if port_timestamp_lasttime ~= nil then
-                        effective_poll_time = (port_timestamp_current - port_timestamp_lasttime) / 1000
-                    else
-                        effective_poll_time = global_effective_poll_time
-                    end
-                    effective_poll_time_lasttime = false
-                else
-                    effective_poll_time = global_effective_poll_time
-                    effective_poll_time_lasttime = global_effective_poll_time_lasttime
-                end
 
                 -- Get all counters
                 local occupancy_bytes = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES')
@@ -132,8 +124,8 @@ for i = n, 1, -1 do
                                 local pfc_rx_packets_string = '"pfc_rx_packets","' .. tostring(pfc_rx_packets) .. '","pfc_rx_packets_last","' .. tostring(pfc_rx_packets_last) .. '",'
                                 local storm_condition_string = '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '",'
                                 local timestamps = '"timestamp","' .. timestamp_string .. '","timestamp_last","' .. timestamp_last .. '","effective_poll_time","' .. effective_poll_time .. '"'
-                                if effective_poll_time_lasttime ~= false then
-                                    timestamps = timestamps .. ',"effective_pfcwd_poll_time_last","' .. effective_poll_time_lasttime .. '"'
+                                if global_effective_poll_time_lasttime ~= false then
+                                    timestamps = timestamps .. ',"effective_pfcwd_poll_time_last","' .. global_effective_poll_time_lasttime .. '"'
                                 end
                                 redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm",' .. occupancy_string .. packets_string .. pfc_rx_packets_string .. storm_condition_string .. timestamps .. ']')
                                 is_deadlock = true
