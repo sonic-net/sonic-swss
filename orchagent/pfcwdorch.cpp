@@ -112,28 +112,30 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
                     break;
             }
         }
-
-        if (m_pfcwdFlexCounterManager != nullptr)
-        {
-            m_pfcwdFlexCounterManager->flush();
-        }
     }
 }
 
 template <typename DropHandler, typename ForwardHandler>
 template <typename T>
-unordered_set<string> PfcWdSwOrch<DropHandler, ForwardHandler>::counterIdsToStr(
-    const vector<T> ids, string (*convert)(T))
+string PfcWdSwOrch<DropHandler, ForwardHandler>::counterIdsToStr(
+        const vector<T> ids, string (*convert)(T))
 {
     SWSS_LOG_ENTER();
-    unordered_set<string> counterIdSet;
+
+    string str;
 
     for (const auto& i: ids)
     {
-        counterIdSet.emplace(convert(i));
+        str += convert(i) + ",";
     }
 
-    return counterIdSet;
+    // Remove trailing ','
+    if (!str.empty())
+    {
+        str.pop_back();
+    }
+
+    return str;
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -343,7 +345,7 @@ task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const 
 
             if (field == POLL_INTERVAL_FIELD)
             {
-                this->m_pfcwdFlexCounterManager->updateGroupPollingInterval(stoi(value));
+                setFlexCounterGroupPollInterval(PFC_WD_FLEX_COUNTER_GROUP, value);
             }
             else if (field == BIG_RED_SWITCH_FIELD)
             {
@@ -546,8 +548,11 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     if (!c_portStatIds.empty())
     {
-        auto portStatIdSet = filterPfcCounters(counterIdsToStr(c_portStatIds, &sai_serialize_port_stat), losslessTc);
-        this->m_pfcwdFlexCounterManager->setCounterIdList(port.m_port_id, CounterType::PORT, portStatIdSet, SAI_OBJECT_TYPE_PORT);
+        string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
+        string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
+        string filteredStr = filterPfcCounters(str, losslessTc);
+
+        startFlexCounterPolling(gSwitchId, key, filteredStr, PORT_COUNTER_ID_LIST);
     }
 
     for (auto i : losslessTc)
@@ -572,14 +577,14 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
         if (!c_queueStatIds.empty())
         {
-            auto queueStatIdSet = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-            this->m_pfcwdFlexCounterManager->setCounterIdList(queueId, CounterType::QUEUE, queueStatIdSet, SAI_OBJECT_TYPE_QUEUE);
+            string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
+            startFlexCounterPolling(gSwitchId, key, str, QUEUE_COUNTER_ID_LIST);
         }
 
         if (!c_queueAttrIds.empty())
         {
-            auto queueAttrIdSet = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-            (dynamic_cast<FlexCounterManager*>(this->m_pfcwdFlexCounterManager.get()))->setCounterIdList(queueId, CounterType::QUEUE_ATTR, queueAttrIdSet);
+            string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
+            startFlexCounterPolling(gSwitchId, key, str, QUEUE_ATTR_ID_LIST);
         }
 
         // Create internal entry
@@ -597,29 +602,35 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 }
 
 template <typename DropHandler, typename ForwardHandler>
-unordered_set<string> PfcWdSwOrch<DropHandler, ForwardHandler>::filterPfcCounters(const unordered_set<string> &counters, set<uint8_t>& losslessTc)
+string PfcWdSwOrch<DropHandler, ForwardHandler>::filterPfcCounters(string counters, set<uint8_t>& losslessTc)
 {
     SWSS_LOG_ENTER();
 
-    unordered_set<string> filterCounters;
+    istringstream is(counters);
+    string counter;
+    string filterCounters;
 
-    for (auto &counter : counters)
+    while (getline(is, counter, ','))
     {
-        //auto &counter = it.first;
         size_t index = 0;
         index = counter.find(SAI_PORT_STAT_PFC_PREFIX);
         if (index != 0)
         {
-            filterCounters.emplace(counter);
+            filterCounters = filterCounters + counter + ",";
         }
         else
         {
             uint8_t tc = (uint8_t)atoi(counter.substr(index + sizeof(SAI_PORT_STAT_PFC_PREFIX) - 1, 1).c_str());
             if (losslessTc.count(tc))
             {
-                filterCounters.emplace(counter);
+                filterCounters = filterCounters + counter + ",";
             }
         }
+    }
+
+    if (!filterCounters.empty())
+    {
+        filterCounters.pop_back();
     }
 
     return filterCounters;
@@ -638,12 +649,16 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
 {
     SWSS_LOG_ENTER();
 
-    this->m_pfcwdFlexCounterManager->clearCounterIdList(port.m_port_id, SAI_OBJECT_TYPE_PORT);
+    string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
+    stopFlexCounterPolling(gSwitchId, key);
 
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
-        this->m_pfcwdFlexCounterManager->clearCounterIdList(queueId, SAI_OBJECT_TYPE_QUEUE);
+        key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
+
+        // Unregister in syncd
+        stopFlexCounterPolling(gSwitchId, key);
 
         auto entry = m_entryMap.find(queueId);
         if (entry != m_entryMap.end() && entry->second.handler != nullptr)
@@ -707,8 +722,11 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         SWSS_LOG_WARN("Lua scripts and polling interval for PFC watchdog were not set successfully");
     }
 
-    this->m_pfcwdFlexCounterManager = make_shared<FlexCounterTaggedCachedManager<sai_object_type_t>>(
-        "PFC_WD", StatsMode::READ, m_pollInterval, true, make_pair(QUEUE_PLUGIN_FIELD, plugins));
+    setFlexCounterGroupParameter(PFC_WD_FLEX_COUNTER_GROUP,
+                                 pollIntervalStr,
+                                 STATS_MODE_READ,
+                                 QUEUE_PLUGIN_FIELD,
+                                 plugins);
 
     auto consumer = new swss::NotificationConsumer(
             this->getCountersDb().get(),
@@ -732,6 +750,7 @@ template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 {
     SWSS_LOG_ENTER();
+    delFlexCounterGroup(PFC_WD_FLEX_COUNTER_GROUP);
 }
 
 template <typename DropHandler, typename ForwardHandler>

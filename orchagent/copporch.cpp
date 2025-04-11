@@ -188,17 +188,13 @@ void CoppOrch::initDefaultTrapIds()
     attr.value.oid = m_trap_group_map[default_trap_group];
     trap_id_attrs.push_back(attr);
 
-    /*
-     * Use a default trap priority > 0 to avoid undesirable packet trapping
-     * behavior on some platforms that use 0 as default SAI-internal priority.
-     * Note: Mellanox and Marvell platforms don't support trap priority setting.
-     */
-
+    /* Mellanox platform doesn't support trap priority setting */
+    /* Marvell platform doesn't support trap priority. */
     char *platform = getenv("platform");
     if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PRST_PLATFORM_SUBSTRING))))
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
-        attr.value.u32 = 1;
+        attr.value.u32 = 0;
         trap_id_attrs.push_back(attr);
     }
 

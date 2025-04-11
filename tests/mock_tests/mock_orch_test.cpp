@@ -8,7 +8,6 @@ namespace mock_orch_test
 void MockOrchTest::ApplyInitialConfigs() {}
 void MockOrchTest::PostSetUp() {}
 void MockOrchTest::PreTearDown() {}
-void MockOrchTest::ApplySaiMock() {}
 
 void MockOrchTest::PrepareSai()
 {
@@ -53,10 +52,6 @@ void MockOrchTest::PrepareSai()
 
     status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, (uint32_t)underlay_intf_attrs.size(), underlay_intf_attrs.data());
     ASSERT_EQ(status, SAI_STATUS_SUCCESS);
-
-    // Bulkers will use the SAI implementation that exists when they are created in Orch constructors
-    // so we need to apply the mock SAI API before any Orchs are created
-    ApplySaiMock(); 
 }
 
 void MockOrchTest::SetUp()
@@ -190,16 +185,11 @@ void MockOrchTest::SetUp()
     gDirectory.set(gNhgOrch);
     ut_orch_list.push_back((Orch **)&gNhgOrch);
 
-    TableConnector srv6_sid_list_table(m_app_db.get(), APP_SRV6_SID_LIST_TABLE_NAME);
-    TableConnector srv6_my_sid_table(m_app_db.get(), APP_SRV6_MY_SID_TABLE_NAME);
-    TableConnector srv6_my_sid_cfg_table(m_config_db.get(), CFG_SRV6_MY_SID_TABLE_NAME);
-
-    vector<TableConnector> srv6_tables = {
-        srv6_sid_list_table,
-        srv6_my_sid_table,
-        srv6_my_sid_cfg_table
+    vector<string> srv6_tables = {
+        APP_SRV6_SID_LIST_TABLE_NAME,
+        APP_SRV6_MY_SID_TABLE_NAME
     };
-    gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
+    gSrv6Orch = new Srv6Orch(m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
     ut_orch_list.push_back((Orch **)&gSrv6Orch);
     gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
@@ -267,19 +257,6 @@ void MockOrchTest::SetUp()
     m_VxlanTunnelOrch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(m_VxlanTunnelOrch);
     ut_orch_list.push_back((Orch **)&m_VxlanTunnelOrch);
-
-    m_vnetOrch = new VNetOrch(m_app_db.get(), APP_VNET_TABLE_NAME);
-    gDirectory.set(m_vnetOrch);
-    ut_orch_list.push_back((Orch **)&m_vnetOrch);
-
-    vector<string> dash_vnet_tables = {
-        APP_DASH_VNET_TABLE_NAME,
-        APP_DASH_VNET_MAPPING_TABLE_NAME
-    };
-
-    m_dashVnetOrch = new DashVnetOrch(m_app_db.get(), dash_vnet_tables, nullptr);
-    gDirectory.set(m_dashVnetOrch);
-    ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
 
     ApplyInitialConfigs();
     PostSetUp();
