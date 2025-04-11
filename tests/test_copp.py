@@ -232,6 +232,8 @@ class TestCopp(object):
         queue = ""
         trap_action = ""
         trap_priority = ""
+        default_trap_queue = "0"
+        default_trap_prio = "1"
 
         for fv in trap_fvs:
             if fv[0] == "SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION":
@@ -262,6 +264,11 @@ class TestCopp(object):
                 assert trap_group_oid != "oid:0x0"
                 if keys == "queue":
                     assert queue == trap_group[keys]
+                    # default trap in copp config doesn't specify a trap priority
+                    # this is instead set internally in swss
+                    # confirm that default trap uses a priority 1
+                    if queue == default_trap_queue:
+                        assert trap_priority == default_trap_prio
                 else:
                     assert 0
 

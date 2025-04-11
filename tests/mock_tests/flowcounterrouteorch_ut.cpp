@@ -201,11 +201,16 @@ namespace flowcounterrouteorch_test
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             ASSERT_EQ(gSrv6Orch, nullptr);
-            vector<string> srv6_tables = {
-                APP_SRV6_SID_LIST_TABLE_NAME,
-                APP_SRV6_MY_SID_TABLE_NAME
+            TableConnector srv6_sid_list_table(m_app_db.get(), APP_SRV6_SID_LIST_TABLE_NAME);
+            TableConnector srv6_my_sid_table(m_app_db.get(), APP_SRV6_MY_SID_TABLE_NAME);
+            TableConnector srv6_my_sid_cfg_table(m_config_db.get(), CFG_SRV6_MY_SID_TABLE_NAME);
+
+            vector<TableConnector> srv6_tables = {
+                srv6_sid_list_table,
+                srv6_my_sid_table,
+                srv6_my_sid_cfg_table
             };
-            gSrv6Orch = new Srv6Orch(m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
+            gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
 
             // Start FlowCounterRouteOrch
             static const  vector<string> route_pattern_tables = {
@@ -241,6 +246,7 @@ namespace flowcounterrouteorch_test
             for (const auto &it : ports)
             {
                 portTable.set(it.first, it.second);
+                portTable.set(it.first, {{ "oper_status", "up" }});
             }
 
             // Set PortConfigDone

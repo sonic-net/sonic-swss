@@ -588,6 +588,99 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.check_lag_removal(parent_port_oid)
 
+    def _test_sub_port_intf_creation_add_lag_member(self, dvs, sub_port_intf_name, vrf_name=None):
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = self.get_parent_port(sub_port_intf_name)
+        vlan_id = substrs[1]
+
+        assert parent_port.startswith(SUBINTF_LAG_PREFIX)
+        state_tbl_name = STATE_LAG_TABLE_NAME
+        phy_ports = self.LAG_MEMBERS_UNDER_TEST
+        old_lag_oids = self.get_oids(ASIC_LAG_TABLE)
+
+        vrf_oid = self.default_vrf_oid
+        old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
+
+        self.set_parent_port_admin_status(dvs, parent_port, "up")
+
+        parent_port_oid = self.get_newly_created_oid(ASIC_LAG_TABLE, old_lag_oids)
+        # Add lag members to test physical port host interface vlan tag attribute
+        self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[1:])
+        self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, len(self.LAG_MEMBERS_UNDER_TEST[1:]))
+        if vrf_name:
+            self.create_vrf(vrf_name)
+            vrf_oid = self.get_newly_created_oid(ASIC_VIRTUAL_ROUTER_TABLE, [vrf_oid])
+        self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
+        self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[:1])
+        self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, len(self.LAG_MEMBERS_UNDER_TEST))
+
+        # Verify that sub port interface state ok is pushed to STATE_DB by Intfmgrd
+        fv_dict = {
+            "state": "ok",
+        }
+        self.check_sub_port_intf_fvs(self.state_db, state_tbl_name, sub_port_intf_name, fv_dict)
+
+        # Verify vrf name sub port interface bound to in STATE_DB INTERFACE_TABLE
+        fv_dict = {
+            "vrf": vrf_name if vrf_name else "",
+        }
+        self.check_sub_port_intf_fvs(self.state_db, STATE_INTERFACE_TABLE_NAME, sub_port_intf_name, fv_dict)
+
+        # If bound to non-default vrf, verify sub port interface vrf binding in linux kernel,
+        # and parent port not bound to vrf
+        if vrf_name:
+            self.check_sub_port_intf_vrf_bind_kernel(dvs, sub_port_intf_name, vrf_name)
+            self.check_sub_port_intf_vrf_nobind_kernel(dvs, parent_port, vrf_name)
+
+        # Verify that sub port interface configuration is synced to APPL_DB INTF_TABLE by Intfmgrd
+        fv_dict = {
+            ADMIN_STATUS: "up",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+
+        # Verify that a sub port router interface entry is created in ASIC_DB
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_TYPE": "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT",
+            "SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID": "{}".format(vlan_id),
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+            "SAI_ROUTER_INTERFACE_ATTR_PORT_ID": parent_port_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Verify physical port host interface vlan tag attribute
+        fv_dict = {
+            "SAI_HOSTIF_ATTR_VLAN_TAG": "SAI_HOSTIF_VLAN_TAG_KEEP",
+        }
+        for phy_port in phy_ports:
+            hostif_oid = dvs.asicdb.hostifnamemap[phy_port]
+            self.check_sub_port_intf_fvs(self.asic_db, ASIC_HOSTIF_TABLE, hostif_oid, fv_dict)
+
+        # Remove a sub port interface
+        self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.check_sub_port_intf_profile_removal(rif_oid)
+
+        # Remove vrf if created
+        if vrf_name:
+            self.remove_vrf(vrf_name)
+            self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
+
+        # Remove lag members from lag parent port
+        self.remove_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
+        self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
+
+        # Remove lag
+        self.remove_lag(parent_port)
+        self.check_lag_removal(parent_port_oid)
+
     def test_sub_port_intf_creation(self, dvs):
         self.connect_dbs(dvs)
 
@@ -599,6 +692,8 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_creation(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
         self._test_sub_port_intf_creation(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+
+        self._test_sub_port_intf_creation_add_lag_member(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
 
     def _test_sub_port_intf_add_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)

@@ -31,11 +31,15 @@ private:
     bool register_bfd_state_change_notification(void);
     void update_port_number(std::vector<sai_attribute_t> &attrs);
     sai_status_t retry_create_bfd_session(sai_object_id_t &bfd_session_id, vector<sai_attribute_t> attrs);
+    std::string createStateDBKey(const std::string &input);
 
     std::map<std::string, sai_object_id_t> bfd_session_map;
     std::map<sai_object_id_t, BfdUpdate> bfd_session_lookup;
 
     swss::Table m_stateBfdSessionTable;
+
+    std::unique_ptr<swss::DBConnector> m_stateDbConnector;
+    std::unique_ptr<swss::Table> m_stateSoftBfdSessionTable;
 
     swss::NotificationConsumer* m_bfdStateNotificationConsumer;
     bool register_state_change_notif;
@@ -50,9 +54,12 @@ public:
     BgpGlobalStateOrch(swss::DBConnector *db, std::string tableName);
     virtual ~BgpGlobalStateOrch(void);
     bool getTsaState();
+    bool getSoftwareBfd();
 
 private:
     bool tsa_enabled;
+    bool bfd_offload;
+    bool offload_supported(bool get_ipv6);
 
 };
 #endif /* SWSS_BFDORCH_H */
