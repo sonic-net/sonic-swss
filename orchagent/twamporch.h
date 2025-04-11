@@ -2,6 +2,7 @@
 #define SWSS_TWAMPORCH_H
 
 #include "orch.h"
+#include "orchnotificationconsumer.h"
 #include "observer.h"
 #include "switchorch.h"
 #include "portsorch.h"
@@ -89,7 +90,7 @@ private:
     SwitchOrch *m_switchOrch;
     PortsOrch  *m_portsOrch;
     VRFOrch    *m_vrfOrch;
-    NotificationConsumer* m_twampNotificationConsumer;
+    OrchNotificationConsumer* m_twampNotificationConsumer;
     bool register_event_notif;
 
     unsigned int m_twampSessionCount;
@@ -130,7 +131,7 @@ private:
     void saveSessionStatsLatest(const sai_object_id_t session_id, const uint32_t index, const vector<uint64_t>& stats);
     void calculateCounters(const string&, const uint32_t index, const vector<uint64_t>& stats);
     void saveCountersTotal(const string&, const sai_object_id_t session_id);
-    void doTask(NotificationConsumer& consumer);
+    void doTask(OrchNotificationConsumer& consumer);
 };
 
 #endif /* SWSS_TWAMPORCH_H */

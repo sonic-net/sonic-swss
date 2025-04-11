@@ -31,6 +31,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/port/port_capabilities.cpp \
 		       $(ORCHAGENT_DIR)/port/porthlpr.cpp \
 		       $(ORCHAGENT_DIR)/notifications.cpp \
+		       $(ORCHAGENT_DIR)/orchnotificationconsumer.cpp \
 		       $(P4ORCH_DIR)/p4oidmapper.cpp \
 		       $(P4ORCH_DIR)/p4orch.cpp \
 		       $(P4ORCH_DIR)/p4orch_util.cpp \

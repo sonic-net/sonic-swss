@@ -146,7 +146,7 @@ TwampOrch::TwampOrch(TableConnector confDbConnector, TableConnector stateDbConne
 
     /* Add TWAMP session event notification support */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_twampNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_twampNotificationConsumer = new OrchNotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto twampNotifier = new Notifier(m_twampNotificationConsumer, this, "TWAMP_NOTIFICATIONS");
     Orch::addExecutor(twampNotifier);
     register_event_notif = false;
@@ -969,7 +969,7 @@ void TwampOrch::saveCountersTotal(const string& name, const sai_object_id_t sess
     m_countersTable->set(sai_serialize_object_id(session_id), values);
 }
 
-void TwampOrch::doTask(NotificationConsumer& consumer)
+void TwampOrch::doTask(OrchNotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -978,11 +978,12 @@ void TwampOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
+    auto kofv = consumer.getSyncFront();
+    std::string op = kfvOp(kofv);
+    std::string data =  kfvKey(kofv);
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kofv);
 
-    consumer.pop(op, data, values);
+    consumer.popSyncFront();
 
     if (&consumer != m_twampNotificationConsumer)
     {

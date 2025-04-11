@@ -710,7 +710,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     this->m_pfcwdFlexCounterManager = make_shared<FlexCounterTaggedCachedManager<sai_object_type_t>>(
         "PFC_WD", StatsMode::READ, m_pollInterval, true, make_pair(QUEUE_PLUGIN_FIELD, plugins));
 
-    auto consumer = new swss::NotificationConsumer(
+    auto consumer = new OrchNotificationConsumer(
             this->getCountersDb().get(),
             "PFC_WD_ACTION");
     auto wdNotification = new Notifier(consumer, this, "PFC_WD_ACTION");
@@ -876,7 +876,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask()
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer& wdNotification)
+void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(OrchNotificationConsumer& wdNotification)
 {
     SWSS_LOG_ENTER();
 

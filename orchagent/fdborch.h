@@ -2,6 +2,7 @@
 #define SWSS_FDBORCH_H
 
 #include "orch.h"
+#include "orchnotificationconsumer.h"
 #include "observer.h"
 #include "portsorch.h"
 
@@ -113,12 +114,12 @@ private:
     vector<Table*> m_appTables;
     Table m_fdbStateTable;
     Table m_mclagFdbStateTable;
-    NotificationConsumer* m_flushNotificationsConsumer;
-    NotificationConsumer* m_fdbNotificationConsumer;
+    OrchNotificationConsumer* m_flushNotificationsConsumer;
+    OrchNotificationConsumer* m_fdbNotificationConsumer;
     shared_ptr<DBConnector> m_notificationsDb;
 
     void doTask(Consumer& consumer);
-    void doTask(NotificationConsumer& consumer);
+    void doTask(OrchNotificationConsumer& consumer);
 
     void updateVlanMember(const VlanMemberUpdate&);
     void updatePortOperState(const PortOperStateUpdate&);

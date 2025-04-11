@@ -37,13 +37,13 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
     }
 
     m_portsOrch->attach(this);
-    m_flushNotificationsConsumer = new NotificationConsumer(applDbConnector, "FLUSHFDBREQUEST");
+    m_flushNotificationsConsumer = new OrchNotificationConsumer(applDbConnector, "FLUSHFDBREQUEST");
     auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
     Orch::addExecutor(flushNotifier);
 
     /* Add FDB notifications support from ASIC */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_fdbNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+    m_fdbNotificationConsumer = new OrchNotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
 }
@@ -918,7 +918,7 @@ void FdbOrch::doTask(Consumer& consumer)
     }
 }
 
-void FdbOrch::doTask(NotificationConsumer& consumer)
+void FdbOrch::doTask(OrchNotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -927,16 +927,17 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
+    auto kofv = consumer.getSyncFront();
     sai_status_t status;
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
+    std::string op = kfvOp(kofv);
+    std::string data =  kfvKey(kofv);
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kofv);
     string alias;
     string vlan;
     Port port;
     Port vlanPort;
 
-    consumer.pop(op, data, values);
+    consumer.popSyncFront();
 
     if (&consumer == m_flushNotificationsConsumer)
     {

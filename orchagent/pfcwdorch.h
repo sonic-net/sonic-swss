@@ -123,7 +123,7 @@ private:
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     void unregisterFromWdDb(const Port& port);
-    void doTask(swss::NotificationConsumer &wdNotification);
+    void doTask(OrchNotificationConsumer &wdNotification);
 
     unordered_set<string> filterPfcCounters(const unordered_set<string> &counters, set<uint8_t>& losslessTc);
     string getFlexCounterTableKey(string s);

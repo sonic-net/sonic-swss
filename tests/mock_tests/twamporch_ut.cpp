@@ -143,7 +143,8 @@ namespace twamporch_test
             auto exec = static_cast<Notifier *>((this->twampOrch.get())->getExecutor("TWAMP_NOTIFICATIONS"));
             auto consumer = exec->getNotificationConsumer();
             consumer->readData();
-            static_cast<Orch *>(this->twampOrch.get())->doTask(*consumer);
+            consumer->saveToSync();
+           this->twampOrch->doTask(*consumer);
         }
 
         TwampOrch& get()

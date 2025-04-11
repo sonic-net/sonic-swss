@@ -407,7 +407,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
 {
 }
 
-void PortsOrch::doTask(NotificationConsumer &consumer)
+void PortsOrch::doTask(OrchNotificationConsumer &consumer)
 {
 }
 

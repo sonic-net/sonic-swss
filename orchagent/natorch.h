@@ -18,6 +18,7 @@
 #define SWSS_NATORCH_H
 
 #include "orch.h"
+#include "orchnotificationconsumer.h"
 #include "observer.h"
 #include "portsorch.h"
 #include "intfsorch.h"
@@ -212,8 +213,8 @@ private:
     Table                   m_naptQueryTable;
     Table                   m_twiceNatQueryTable;
     Table                   m_twiceNaptQueryTable;
-    NotificationConsumer   *m_flushNotificationsConsumer;
-    NotificationConsumer   *m_cleanupNotificationConsumer;
+    OrchNotificationConsumer   *m_flushNotificationsConsumer;
+    OrchNotificationConsumer   *m_cleanupNotificationConsumer;
     mutex                   m_natMutex;
     string                  m_dbgCompName;
     IpAddress               nullIpv4Addr;
@@ -244,7 +245,7 @@ private:
 
     void doTask(Consumer& consumer);
     void doTask(SelectableTimer &timer);
-    void doTask(NotificationConsumer& consumer);
+    void doTask(OrchNotificationConsumer& consumer);
     void doNatTableTask(Consumer& consumer);
     void doNaptTableTask(Consumer& consumer);
     void doTwiceNatTableTask(Consumer& consumer);

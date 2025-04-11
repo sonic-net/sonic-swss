@@ -61,7 +61,7 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     SWSS_LOG_ENTER();
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_bfdStateNotificationConsumer = new OrchNotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
 
     m_stateDbConnector = std::make_unique<swss::DBConnector>("STATE_DB", 0);
@@ -217,15 +217,16 @@ void BfdOrch::doTask(Consumer &consumer)
     }
 }
 
-void BfdOrch::doTask(NotificationConsumer &consumer)
+void BfdOrch::doTask(OrchNotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
+    auto kofv = consumer.getSyncFront();
+    std::string op = kfvOp(kofv);
+    std::string data =  kfvKey(kofv);
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kofv);
 
-    consumer.pop(op, data, values);
+    consumer.popSyncFront();
 
     if (&consumer != m_bfdStateNotificationConsumer)
     {

@@ -117,7 +117,8 @@ orchagent_SOURCES = \
             dash/dashtagmgr.cpp \
             dash/pbutils.cpp \
             twamporch.cpp \
-            stporch.cpp
+            stporch.cpp \
+            orchnotificationconsumer.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
