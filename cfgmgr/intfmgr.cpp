@@ -864,7 +864,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
             else if (adminStatus != "up" && adminStatus != "down")
             {
-                SWSS_LOG_ERROR("Got incorrect value for admin_status as %s for intf %s, defaulting as up", adminStatus.c_str(), alias.c_str());
+                SWSS_LOG_WARN("Got incorrect value for admin_status as %s for intf %s, defaulting as up", adminStatus.c_str(), alias.c_str());
                 adminStatus = "up";
             }
 
@@ -878,7 +878,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
             catch (const std::runtime_error &e)
             {
-                SWSS_LOG_NOTICE("Lo interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                SWSS_LOG_WARN("Lo interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
                 return false;
             }
         }
