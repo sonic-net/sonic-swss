@@ -117,16 +117,31 @@ class TestIcmpEcho(object):
         expected_sdb_values["state"] = "Up"
         self.check_state_icmp_echo_session_value("default|default|5000|NORMAL", expected_sdb_values)
 
-        # Update rx_interval in ICMP ECHO session
+        # Update tx/rx_interval in ICMP ECHO session
         update_fieldValues = {"session_guid": "5000", "session_cookie": "12345",
                        "src_ip": "10.0.0.1", "dst_ip":"10.0.0.2", "tx_interval":
-                       "10", "rx_interval": "50"}
-        self.create_icmp_echo_session("default:default:5000:NORMAL", fieldValues)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", len(icmpEchoSessions) + 1)
+                       "100", "rx_interval": "50"}
+        self.create_icmp_echo_session("default:default:5000:NORMAL", update_fieldValues)
+        # wait after update
+        time.sleep(2)
 
-        # Confirm rx_interval does not get updated
-        expected_sdb_values["rx_interval"] = "10"
+        # Confirm tx/rx_interval does get updated
+        expected_sdb_values["tx_interval"] = "100"
+        expected_sdb_values["rx_interval"] = "50"
         self.check_state_icmp_echo_session_value("default|default|5000|NORMAL", expected_sdb_values)
+
+        # Verify the ASIC_DB gets the updated value
+        expected_adb_values = {
+            "SAI_ICMP_ECHO_SESSION_ATTR_GUID": "5000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_COOKIE": "12345",
+            "SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL": "100000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_RX_INTERVAL": "50000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_ICMP_ECHO_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_ICMP_ECHO_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_ICMP_ECHO_SESSION_ATTR_HW_LOOKUP_VALID": "true",
+        }
+        self.check_asic_icmp_echo_session_value(session, expected_adb_values)
 
         # remove the session
         self.remove_icmp_echo_session("default:default:5000:NORMAL")
@@ -159,6 +174,35 @@ class TestIcmpEcho(object):
         expected_sdb_values = {"session_guid": "5000", "session_cookie": "12345",
                                "state": "Down", "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
                                "rx_interval": "10", "hw_lookup": "true"}
+        self.check_state_icmp_echo_session_value("default|default|5000|RX", expected_sdb_values)
+
+        # Confirm tx_interval does not get updated
+        peer_update_fieldValues = {"session_cookie": "12345",
+                       "src_ip": "10.0.0.1", "dst_ip":"10.0.0.2", "tx_interval":
+                       "100", "rx_interval": "100"}
+        self.create_icmp_echo_session("default:default:5000:RX", peer_update_fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", len(icmpEchoSessions)+1)
+
+        # Checked ICMP ECHO session in ASIC_DB post update
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        assert len(createdSessions) == 1
+
+        session = createdSessions.pop()
+        expected_adb_values = {
+            "SAI_ICMP_ECHO_SESSION_ATTR_GUID": "5000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_COOKIE": "12345",
+            "SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL": "0",
+            "SAI_ICMP_ECHO_SESSION_ATTR_RX_INTERVAL": "100000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_ICMP_ECHO_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_ICMP_ECHO_SESSION_ATTR_IPHDR_VERSION": "4",
+        }
+        self.check_asic_icmp_echo_session_value(session, expected_adb_values)
+
+        # Check STATE_DB entry related to the ICMP ECHO session post update
+        expected_sdb_values = {"session_guid": "5000", "session_cookie": "12345",
+                               "state": "Down", "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
+                               "rx_interval": "100", "hw_lookup": "true"}
         self.check_state_icmp_echo_session_value("default|default|5000|RX", expected_sdb_values)
 
         # Send ICMP ECHO session state notification to update ICMP ECHO session state

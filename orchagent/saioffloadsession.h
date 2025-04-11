@@ -19,6 +19,8 @@ using namespace swss;
 
 using sai_attr_id_val_map_t = std::unordered_map<sai_attr_id_t, sai_attribute_value_t>;
 using fv_vector_t = std::vector<FieldValueTuple>;
+using fv_map_t = std::map<std::string, std::string>;
+using session_fv_map_t = std::map<std::string, fv_map_t>;
 // handler type for setting sai attr map and FieldValues
 using sai_attr_handler_map_t = std::unordered_map<string,
           std::tuple<sai_attr_id_t,
@@ -146,6 +148,22 @@ struct SaiOffloadSessionHandler {
     SaiOffloadHandlerStatus remove(sai_object_id_t id);
 
     /**
+     *@method update
+     *
+     *@brief Update SAI offload session
+     *
+     *@param id(in)  sai session object id to update
+     *       fv_data(in)  session parameters as Field Value tuples
+     *       fv_map(in)   existing map of session parameters Field Value
+     *
+     *@return SUCCESS_VALID_ENTRY session parameters valid and updated with success
+     *        FAILED_INVALID_ENTRY session parameters are invalid
+     *        FAILED_VALID_ENTRY session update fails for valid key
+     *        RETRY_VALID_ENTRY retry session update for valid key
+     */
+    SaiOffloadHandlerStatus update(sai_object_id_t session_id, const fv_vector_t& fv_data, const fv_map_t& fv_map);
+
+    /**
      *@method register_state_change_notification
      *
      *@brief Registers function pointer to SAI state change notification
@@ -165,6 +183,16 @@ struct SaiOffloadSessionHandler {
         return m_fv_vector;
     }
 
+    /**
+     *@method get_fv_map
+     *
+     *@brief Return the map of field value of a session
+     *
+     *@return map of field value
+     */
+    inline fv_map_t& get_fv_map() {
+        return m_fv_map;
+    }
     /**
      *@method get_state_db_key
      *
@@ -200,6 +228,8 @@ protected:
     fv_vector_t m_data;
     // field value vector for state db
     fv_vector_t m_fv_vector;
+    // field value map for session cache 
+    fv_map_t m_fv_map;
     string m_alias;
     string m_vrf_name;
     string m_state_db_key;
@@ -235,6 +265,7 @@ SaiOffloadHandlerStatus SaiOffloadSessionHandler<SaiOrchHandlerClass, T>::create
     {
         auto field = fvField(data);
         auto value = fvValue(data);
+        m_fv_map[field] = value;
         auto hsearch = handler_map.find(field);
         if (hsearch != handler_map.end())
         {
@@ -404,6 +435,91 @@ SaiOffloadHandlerStatus SaiOffloadSessionHandler<SaiOrchHandlerClass, T>::remove
             {
                 return SaiOffloadHandlerStatus::RETRY_VALID_ENTRY;
             }
+        }
+    }
+
+    return SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY;
+}
+
+template <class SaiOrchHandlerClass, typename T>
+SaiOffloadHandlerStatus SaiOffloadSessionHandler<SaiOrchHandlerClass, T>::update(sai_object_id_t session_id, const fv_vector_t& fv_data, const fv_map_t& fv_map)
+{
+    constexpr auto& name = static_cast<SaiOrchHandlerClass *>(this)->m_name;
+    auto& handler_map = static_cast<SaiOrchHandlerClass *>(this)->m_handler_map;
+    auto& update_fields = static_cast<SaiOrchHandlerClass *>(this)->m_update_fields;
+
+    m_data = fv_data;
+    m_session_id = session_id;
+
+    // call the handler for field if updatable and
+    // fill the m_attr_val_map and m_fv_vector
+    for (auto& data : m_data)
+    {
+        auto field = fvField(data);
+        auto value = fvValue(data);
+        m_fv_map[field] = value;
+
+        // check for new update field
+        if (fv_map.find(field) == fv_map.end())
+        {
+            SWSS_LOG_ERROR("%s, Unsupported new field update %s:%s for %s",
+                    name.c_str(), field.c_str(), value.c_str(), m_key.c_str());
+            return SaiOffloadHandlerStatus::FAILED_INVALID_ENTRY;
+        }
+
+        // check if field needs update
+        if (fv_map.at(field) == value)
+        {
+            continue;
+        }
+
+        // check if this field update supported
+        if (update_fields.find(field) == update_fields.end())
+        {
+            SWSS_LOG_ERROR("%s, Unsupported field update %s:%s for %s",
+                    name.c_str(), field.c_str(), value.c_str(), m_key.c_str());
+            return SaiOffloadHandlerStatus::FAILED_INVALID_ENTRY;
+        }
+
+        SWSS_LOG_INFO("%s, field update %s:%s for %s", name.c_str(),
+                field.c_str(), value.c_str(), m_key.c_str());
+
+        auto hsearch = handler_map.find(field);
+        if (hsearch != handler_map.end())
+        {
+            auto& htuple = hsearch->second;
+            auto& handler = std::get<1>(htuple);
+            handler(value, m_attr_val_map, m_fv_vector);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("%s, Unsupported sai attribute handler field %s for %s",
+                    name.c_str(), field.c_str(), m_key.c_str());
+        }
+    }
+
+    // call the derived orch's update
+    auto do_update_status = static_cast<SaiOrchHandlerClass *>(this)->do_update();
+    if (do_update_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
+    {
+        return do_update_status;
+    }
+
+    // update the session attributes
+    // for the sai attribute vector for create
+    sai_attribute_t attr;
+    for (auto it = m_attr_val_map.begin(); it != m_attr_val_map.end(); it++)
+    {
+        attr.id = it->first;
+        attr.value = it->second;
+
+        sai_status_t status = sai_set_session_attrib(m_session_id, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("%s, SAI offload session attrib id %u set failed %s, rv:%d",
+                    name.c_str(), attr.id, m_key.c_str(), status);
+            return SaiOffloadHandlerStatus::FAILED_VALID_ENTRY;
         }
     }
 

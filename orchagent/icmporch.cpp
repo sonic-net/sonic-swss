@@ -73,10 +73,19 @@ void IcmpOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (!create_icmp_session(key, data))
+            if (m_icmp_session_map.find(key) != m_icmp_session_map.end())
             {
-                it++;
-                continue;
+                if (!update_icmp_session(key, data))
+                {
+                    it++;
+                    continue;
+                }
+            } else {
+                if (!create_icmp_session(key, data))
+                {
+                    it++;
+                    continue;
+                }
             }
         }
         else if (op == DEL_COMMAND)
@@ -176,13 +185,6 @@ bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTup
         m_register_state_change_notif = true;
     }
 
-    // TODO: support session update timer value changes
-    if (m_icmp_session_map.find(key) != m_icmp_session_map.end())
-    {
-        SWSS_LOG_WARN("ICMP session create request for %s already exists", key.c_str());
-        return true;
-    }
-
     auto create_status = sai_session_handler.create(data);
     if (create_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
     {
@@ -201,10 +203,50 @@ bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTup
 
     m_stateIcmpSessionTable.set(state_db_key, fvVector);
     auto session_id = sai_session_handler.get_session_id();
-    m_icmp_session_map[key] = session_id;
+    IcmpSessionDataCache session_cache{session_id, sai_session_handler.get_fv_map()};
+    m_icmp_session_map[key] = session_cache;
     m_icmp_session_lookup[session_id] = {state_db_key, SAI_ICMP_ECHO_SESSION_STATE_DOWN};
 
     SWSS_LOG_NOTICE("Created ICMP offload session key(%s)", key.c_str());
+    return true;
+}
+
+bool IcmpOrch::update_icmp_session(const string& key, const fv_vector_t& data)
+{
+    IcmpSaiSessionHandler sai_session_handler(*this);
+
+    // initialize the sai session handler
+    auto init_status = sai_session_handler.init(sai_icmp_echo_api, key);
+    if (init_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
+    {
+        SWSS_LOG_INFO("ICMP session update failed key(%s), init_status(%s)", key.c_str(),
+                SaiOffloadStatusStrMap.at(init_status).c_str());
+        return true;
+    }
+
+    auto session_id = m_icmp_session_map[key].session_id;
+    auto& fv_map = m_icmp_session_map[key].fv_map;
+    auto update_status = sai_session_handler.update(session_id, data, fv_map);
+    if (update_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
+    {
+        SWSS_LOG_INFO("ICMP session update failed key(%s), update_status(%s)", key.c_str(),
+                SaiOffloadStatusStrMap.at(update_status).c_str());
+        // do not consume the entry for retries
+        bool skip_entry = update_status != SaiOffloadHandlerStatus::RETRY_VALID_ENTRY;
+        return skip_entry;
+    }
+
+    // update the STATE DB and local session maps
+    auto& fvVector = sai_session_handler.get_fv_vector();
+    if (fvVector.size()) {
+        auto& state_db_key = sai_session_handler.get_state_db_key();
+        auto& fv_map_upd = sai_session_handler.get_fv_map();
+        m_stateIcmpSessionTable.set(state_db_key, fvVector);
+        IcmpSessionDataCache session_cache{session_id, fv_map_upd};
+        m_icmp_session_map[key] = session_cache;
+
+        SWSS_LOG_NOTICE("Updated ICMP offload session key(%s)", key.c_str());
+    }
     return true;
 }
 
@@ -227,7 +269,7 @@ bool IcmpOrch::remove_icmp_session(const string& key)
         return true;
     }
 
-    sai_object_id_t icmp_session_id = m_icmp_session_map[key];
+    sai_object_id_t icmp_session_id = m_icmp_session_map[key].session_id;
     auto remove_status = sai_session_handler.remove(icmp_session_id);
     if ( remove_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
     {
@@ -265,6 +307,12 @@ const std::string IcmpSaiSessionHandler::m_hw_lookup_fname          = "hw_lookup
 const std::string IcmpSaiSessionHandler::m_nexthop_switchover_fname = "nexthop_switchover";
 const std::string IcmpSaiSessionHandler::m_session_type_normal      = "NORMAL";
 const std::string IcmpSaiSessionHandler::m_session_type_rx          = "RX";
+
+const std::unordered_set<std::string> IcmpSaiSessionHandler::m_update_fields = {
+    m_tx_interval_fname,
+    m_rx_interval_fname,
+    m_tos_fname,
+};
 
 void IcmpSaiSessionHandler::handle_tx_interval_field(std::string& sval, sai_attr_id_val_map_t& id_val_map,
         fv_vector_t& fvVector)
@@ -438,7 +486,7 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_init(sai_icmp_echo_api_t *api)
 
 SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
 {
-    // updating the tx_interval to 0 for PEER sessions makes sure 
+    // updating the tx_interval to 0 for PEER sessions makes sure
     // that hardware will not send echo requests for the PEER session
     if (m_session_type == m_session_type_rx)
     {
@@ -447,6 +495,7 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
         val.u32 = 0;
         m_attr_val_map[SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL] = val;
         m_fv_vector.push_back({m_tx_interval_fname, "0"});
+        m_fv_map[m_tx_interval_fname] = "0";
     }
 
     // update the hw_lookup parameter in fv_vector
@@ -467,11 +516,12 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
         auto& htuple = hsearch->second;
         auto& handler = std::get<1>(htuple);
         handler(m_guid, m_attr_val_map, m_fv_vector);
+        m_fv_map[m_session_guid_fname] = m_guid;
     }
     else
     {
         // this should not never happen
-        SWSS_LOG_ERROR("%s, GUID handler not found", m_name.c_str());
+        SWSS_LOG_ERROR("%s, GUID handler not found, %s", m_name.c_str(), m_key.c_str());
         return SaiOffloadHandlerStatus::FAILED_VALID_ENTRY;
     }
 
@@ -481,6 +531,31 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
 SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_remove()
 {
     // no special handling required
+    return SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY;
+}
+
+SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_update()
+{
+    // do not update tx_interval for RX sessions
+    if ((m_fv_map.find(m_tx_interval_fname) != m_fv_map.end()) &&
+       (m_session_type == m_session_type_rx))
+    {
+        SWSS_LOG_NOTICE("%s, Not updating Tx interval for RX session, %s", m_name.c_str(), m_key.c_str());
+        m_attr_val_map.erase(SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL);
+
+        for (auto it = m_fv_vector.begin(); it != m_fv_vector.end();)
+        {
+            if (fvField(*it) == m_tx_interval_fname)
+            {
+                it = m_fv_vector.erase(it);
+            } else {
+                it++;
+            }
+        }
+
+        m_fv_map.erase(m_tx_interval_fname);
+    }
+
     return SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY;
 }
 

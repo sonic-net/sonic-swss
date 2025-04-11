@@ -37,6 +37,17 @@ struct IcmpUpdate
     sai_icmp_echo_session_state_t state;
 };
 
+/**
+ *@struct IcmpSessionDataCache
+ *
+ *@brief structure used for mapping icmp session key and session data
+ */
+struct IcmpSessionDataCache
+{
+    sai_object_id_t session_id;
+    fv_map_t fv_map;
+};
+
 // forward declaration of icmp sai handler
 struct IcmpSaiSessionHandler;
 
@@ -122,8 +133,22 @@ private:
      */
     bool remove_icmp_session(const string& key);
 
-    // map of session key to session object id
-    std::map<std::string, sai_object_id_t> m_icmp_session_map;
+    /**
+     *@method update_icmp_session
+     *
+     *@brief updates icmp echo sessions in hardware
+     *
+     *@param key(in)  reference to session key
+     *@param data(in) vector of session parameters from APP_DB
+     *                table as field value tuples
+     *
+     *@return false for retries
+     *        true for all other cases where session entry is consumed
+     */
+    bool update_icmp_session(const string& key, const vector<FieldValueTuple>& data);
+
+    // map of session key to session data cache
+    std::map<std::string, IcmpSessionDataCache> m_icmp_session_map;
     // map of session object id to update data for handling notification from asic db 
     std::map<sai_object_id_t, IcmpUpdate> m_icmp_session_lookup;
 
@@ -244,6 +269,18 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
      */
     SaiOffloadHandlerStatus do_remove();
 
+    /**
+     *@method do_update
+     *
+     *@brief auxilary update method for icmp echo session
+     *
+     *@return SUCCESS_VALID_ENTRY session parameters valid and updated with success
+     *        FAILED_INVALID_ENTRY session parameters are invalid
+     *        FAILED_VALID_ENTRY session update fails for valid key
+     *        RETRY_VALID_ENTRY retry session update for valid key
+     */
+    SaiOffloadHandlerStatus do_update();
+
     // stored reference to the IcmpOrch
     IcmpOrch& m_orch;
     // icmp echo session type, NORMAL/RX
@@ -256,6 +293,9 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
 
     // map of sai attributes and its handlers
     static sai_attr_handler_map_t m_handler_map;
+
+    // unordered set of fields that are updatable
+    static const std::unordered_set<std::string> m_update_fields; 
     // name of the icmp orch
     static const std::string m_name;
 
