@@ -1687,16 +1687,21 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
-    status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (next_hop_group_id != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
-        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
-        if (handle_status != task_success)
+        status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
+    else
+        SWSS_LOG_WARN("Next hop group ID is NULL.");
 
     m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
@@ -2432,6 +2437,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     else if (it_route == m_syncdRoutes.at(vrf_id).end())
     {
         sai_status_t status = *it_status++;
+        bool nhg_removed = false;
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
@@ -2442,6 +2448,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             {
                 /* Clean up the newly created next hop group entry */
                 removeNextHopGroup(nextHops);
+                nhg_removed = true;
             }
             task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
@@ -2462,7 +2469,8 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         /* Increase the ref_count for the next hop group. */
         if (ctx.nhg_index.empty())
         {
-            increaseNextHopRefCount(nextHops);
+            if (!nhg_removed)
+                increaseNextHopRefCount(nextHops);
         }
         else
         {
@@ -2820,7 +2828,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         /*
          * Decrease the reference count only when the route is pointing to a next hop.
          */
-        decreaseNextHopRefCount(it_route->second.nhg_key);
+        auto syncd_nhg_iter = m_syncdNextHopGroups.find(it_route->second.nhg_key);
+        if (syncd_nhg_iter != m_syncdNextHopGroups.end())
+            decreaseNextHopRefCount(it_route->second.nhg_key);
 
         auto ol_nextHops = it_route->second.nhg_key;
 
@@ -2832,7 +2842,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
         if (it_route->second.nhg_key.getSize() > 1)
         {
-            if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+            if (syncd_nhg_iter != m_syncdNextHopGroups.end() && syncd_nhg_iter->second.ref_count == 0)
             {
                 SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
                 m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
