@@ -957,7 +957,7 @@ class TestRouterInterface(object):
 
         # configure MTU to interface
         self.set_mtu("PortChannel002", "8888")
-
+        
         # check ASIC router interface database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         intf_entries = tbl.getKeys()
