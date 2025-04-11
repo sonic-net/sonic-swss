@@ -652,111 +652,82 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
         uint32_t exp_bucket_size = num_buckets_in_bank / (uint32_t)bank_member_change.active_nhs.size();
         uint32_t num_nhs_with_one_more = (num_buckets_in_bank % (uint32_t)bank_member_change.active_nhs.size());
         auto active_nh_list = bank_member_change.active_nhs;
-        size_t act_nh_exp_size = exp_bucket_size;
-
-        if (num_nhs_with_one_more > 0)
-        {
-            act_nh_exp_size++;
-        }
-
-        // arrange the active nhs in increasing order of size of their hash bucket map
-        // so that we add buckets to the nhs which have lower bucket size first
-        auto compare_active_buckets = [&](NextHopKey e1, NextHopKey e2) {
-            return bank_fgnhg_map->at(e1).size() < bank_fgnhg_map->at(e2).size();
-        };
-        std::sort(active_nh_list.begin(), active_nh_list.end(), compare_active_buckets);
+        bool move_bkt = false;
+        bool remove_nh = false;
 
         auto it = active_nh_list.begin();
-        while(del_idx < bank_member_change.nhs_to_del.size())
+        while (del_idx < bank_member_change.nhs_to_del.size())
         {
             HashBuckets *hash_buckets = &(bank_fgnhg_map->at(bank_member_change.nhs_to_del[del_idx]));
-            for (uint32_t bkt_idx = 0; bkt_idx < hash_buckets->size(); bkt_idx++)
+
+            uint32_t bkt_idx = 0;
+            while(bkt_idx < hash_buckets->size())
             {
+                move_bkt = false; remove_nh = false;
+                // wraparound the active_nh_list if needed
                 if (it == active_nh_list.end())
                 {
                     it = active_nh_list.begin();
                     if (it == active_nh_list.end())
                     {
                         // this can neven happen
-                        SWSS_LOG_ERROR("%s Unexpected no more active NHs before adding the %zu buckets, del(%d), exp(%zu)",
-                                ipPrefix.to_string().c_str(),
-                                hash_buckets->size(), del_idx, act_nh_exp_size);
+                        SWSS_LOG_ERROR("%s Unexpected no more active NHs before adding the %zu buckets, exp_bucket_size(%d)",
+                                       ipPrefix.to_string().c_str(),
+                                       hash_buckets->size(), exp_bucket_size);
                         return false;
                     }
                 }
-
-                // remove the active nhs that have reached their expected bucket size
-                while (bank_fgnhg_map->at(*it).size() == act_nh_exp_size)
-                {
-                    SWSS_LOG_INFO("%s Already reached expected bucket size %zu, don't add more buckets, del(%d)",
-                            (*it).to_string().c_str(), act_nh_exp_size, del_idx);
-                    it = active_nh_list.erase(it);
-
-                    // if last element is erased reset the pos to begining
-                    if (it ==  active_nh_list.end())
-                    {
-                        it = active_nh_list.begin();
-                    }
-                    // if list is empty
-                    if (it == active_nh_list.end())
-                    {
-                        // this can neven happen
-                        SWSS_LOG_ERROR("%s All active NHs at expected size %zu, before adding the %zu buckets , del(%d)",
-                                ipPrefix.to_string().c_str(), act_nh_exp_size,
-                                hash_buckets->size(), del_idx);
-                        return false;
-                    }
-                }
-
-                // replace the nh in the deleted nh's bucket with active nh
-                if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(bkt_idx),
-                        nhopgroup_members_set[*it], ipPrefix, *it))
-
-                {
-                    return false;
-                }
-                bank_fgnhg_map->at(*it).push_back(hash_buckets->at(bkt_idx));
 
                 /* Logic below ensure that # hash buckets assigned to a nh is equalized,
                  * we could have used simple round robin to reassign hash buckets to
                  * other available nhs, but for cases where # hash buckets is not
                  * divisible by # of nhs, simple round robin can make the hash bucket
                  * distribution non-ideal, thereby nhs can attract unequal traffic */
-                if (num_nhs_with_one_more == 0)
+                if (bank_fgnhg_map->at(*it).size() == exp_bucket_size)
                 {
-                    if (bank_fgnhg_map->at(*it).size() == exp_bucket_size)
+                    if (num_nhs_with_one_more == 0)
                     {
-                        SWSS_LOG_INFO("%s reached %d, don't add more buckets del(%d)",
-                                (*it).to_string().c_str(), exp_bucket_size, del_idx);
-                        it = active_nh_list.erase(it);
-                        continue;
+
+                        SWSS_LOG_INFO("%s already reached expected bucket size %d, don't add more buckets, bkt_idx(%d)",
+                                      (*it).to_string().c_str(), exp_bucket_size, bkt_idx);
+                        //it = active_nh_list.erase(it);
+                        remove_nh = true;
                     }
-                    else if (bank_fgnhg_map->at((*it)).size() > exp_bucket_size)
+                    else
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d, del(%d)",
-                                (*it).to_string().c_str(), bank_fgnhg_map->at((*it)).size(),
-                                exp_bucket_size, del_idx);
+                        num_nhs_with_one_more--;
+                        SWSS_LOG_INFO("%s reached %d, don't add more buckets after this one, num_nhs_with_one_more remaining=%d, bkt_idx(%d)",
+                                      (*it).to_string().c_str(), exp_bucket_size + 1, num_nhs_with_one_more, bkt_idx);
+                        move_bkt = true;
+                        remove_nh = true;
                     }
                 }
                 else
                 {
-                    if (bank_fgnhg_map->at((*it)).size() == exp_bucket_size +1)
-                    {
-                        SWSS_LOG_INFO("%s reached %d, don't add more buckets num_nhs_with_one_more %d, del(%d)",
-                                (*it).to_string().c_str(),
-                                exp_bucket_size +1, num_nhs_with_one_more -1, del_idx);
-                        it = active_nh_list.erase(it);
-                        num_nhs_with_one_more--;
-                        continue;
-                    }
-                    else if (bank_fgnhg_map->at((*it)).size() > exp_bucket_size +1)
-                    {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d, del(%d)",
-                                (*it).to_string().c_str(), bank_fgnhg_map->at((*it)).size(),
-                                exp_bucket_size + 1, del_idx);
-                    }
+                    SWSS_LOG_INFO("%s has not reached min expected size of %d, keep adding to this nexthop, bkt_idx(%d)",
+                                  (*it).to_string().c_str(), exp_bucket_size, bkt_idx);
+                    move_bkt = true;
                 }
-                it++;
+
+                if (move_bkt)
+                {
+                  if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(bkt_idx),
+                                             nhopgroup_members_set[*it], ipPrefix, *it))
+                  {
+                      return false;
+                  }
+                  bank_fgnhg_map->at(*it).push_back(hash_buckets->at(bkt_idx));
+                  bkt_idx++;
+                }
+                if (remove_nh)
+                {
+                    // remove the nh from the active list
+                    active_nh_list.erase(it);
+                }
+                else
+                {
+                    it++;
+                }
             }
 
             bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
@@ -775,17 +746,13 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
         uint32_t num_nhs_with_one_more = (num_buckets_in_bank % total_nhs);
         uint32_t num_nhs_with_eq_to_exp = total_nhs - num_nhs_with_one_more;
         uint32_t add_nh_exp_bucket_size = exp_bucket_size;
-        uint32_t exp_size_before_bkt_rem = exp_bucket_size;
+
 
         auto active_nh_list = bank_member_change.active_nhs;
-        auto compare_active_buckets = [&](NextHopKey e1, NextHopKey e2) {
-            return bank_fgnhg_map->at(e1).size() > bank_fgnhg_map->at(e2).size();
-        };
-        // arrange the active nhs in decreasing order of size of their hash bucket map
-        // so that we replace buckets of the active nhs which have higher bucket size first
-        std::sort(active_nh_list.begin(), active_nh_list.end(), compare_active_buckets);
+        bool move_bkt;
+        bool remove_nh;
 
-        while(add_idx < bank_member_change.nhs_to_add.size())
+        while (add_idx < bank_member_change.nhs_to_add.size())
         {
             (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]] =
                 HashBuckets();
@@ -799,44 +766,25 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                 add_nh_exp_bucket_size = exp_bucket_size + 1;
                 num_nhs_with_one_more--;
             }
-
-            // add buckets to this nh until HashBuckets size has reached the expected size
-            while(bank_fgnhg_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
+            // Print the values of total_nhs, exp_bucket_size, num_nhs_with_one_more, and add_nh_exp_bucket_size
+            SWSS_LOG_INFO("total_nhs: %u, exp_bucket_size: %u, num_nhs_with_one_more: %u, add_nh_exp_bucket_size: %u",
+                          total_nhs, exp_bucket_size, num_nhs_with_one_more, add_nh_exp_bucket_size);
+            for (const auto &nh : active_nh_list)
             {
+                SWSS_LOG_INFO("Active next-hop %s has %zu buckets assigned",
+                              nh.to_string().c_str(), bank_fgnhg_map->at(nh).size());
+            }
+            // add buckets to this nh until HashBuckets size has reached the expected size
+            while (bank_fgnhg_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
+            {
+                move_bkt=false;
+                remove_nh = false;
                 if (it == active_nh_list.end())
                 {
                     it = active_nh_list.begin();
                 }
                 // get the active nh's hashbuckets
                 HashBuckets *map_entry = &(bank_fgnhg_map->at(*it));
-                if ((*map_entry).size() <= 1)
-                {
-                    /* Case where the number of hash buckets for the nh is <= 1 */
-                    SWSS_LOG_WARN("Next-hop %s has %d entries, either number of buckets were less or we hit a bug",
-                            (*it).to_string().c_str(), ((int)(*map_entry).size()));
-                    return false;
-                }
-                else
-                {
-                    if ((*map_entry).size() == exp_size_before_bkt_rem)
-                    {
-                        SWSS_LOG_INFO("%s Buckets size already at %d, don't remove more",
-                                it->to_string().c_str(), exp_size_before_bkt_rem);
-                        it = active_nh_list.erase(it);
-                    }
-
-                    // start replacing the active nh's buckets from the end
-                    HashBucketIdx last_elem = map_entry->at((*map_entry).size() - 1);
-                    if (!writeHashBucketChange(syncd_fg_route_entry, last_elem,
-                        nhopgroup_members_set[bank_member_change.nhs_to_add[add_idx]],
-                        ipPrefix, bank_member_change.nhs_to_add[add_idx]))
-                    {
-                        return false;
-                    }
-
-                    (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
-                    (*map_entry).erase((*map_entry).end() - 1);
-                }
                 /* Logic below ensure that # hash buckets assigned to a nh is equalized,
                  * we could have used simple round robin to reassign hash buckets to
                  * other available nhs, but for cases where # hash buckets is not
@@ -844,42 +792,67 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                  * distribution non-ideal, thereby nhs can attract unequal traffic */
                 if (num_nhs_with_one_more == 0)
                 {
-                    if (map_entry->size() == exp_bucket_size)
+                    if (map_entry->size() == exp_bucket_size + 1)
                     {
-                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets", it->to_string().c_str(), exp_bucket_size);
-                        it = active_nh_list.erase(it);
+                        SWSS_LOG_INFO("Nexthop %s has %zu, don't remove more buckets after this", it->to_string().c_str(), map_entry->size());
+                        move_bkt = true;
+                        remove_nh = true;
                     }
-                    else if (map_entry->size() < exp_bucket_size)
+                    else if (map_entry->size() == exp_bucket_size)
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
-                                it->to_string().c_str(), map_entry->size(), exp_bucket_size);
-                        it++;
+                        SWSS_LOG_INFO("Nexthop %s is already at exp_size %d",
+                                      it->to_string().c_str(), exp_bucket_size);
+                        remove_nh=true;
                     }
                     else
                     {
-                        it++;
+                        move_bkt=true;
                     }
                 }
                 else
                 {
-                    if (map_entry->size() == exp_bucket_size +1)
+                    if (map_entry->size() == exp_bucket_size + 2)
                     {
-                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets num_nhs_with_one_more %d",
-                                it->to_string().c_str(), exp_bucket_size + 1, num_nhs_with_one_more -1);
-                        // remove the current active nh from the round-robin list
-                        it = active_nh_list.erase(it);
+                        SWSS_LOG_INFO("Nexthop %s has %zu, don't remove more buckets after this. num_nhs_with_one_more %d",
+                                      it->to_string().c_str(), map_entry->size(), num_nhs_with_one_more - 1);
+                        move_bkt=true;
+                        remove_nh = true;
                         num_nhs_with_one_more--;
                     }
-                    else if (map_entry->size() < exp_bucket_size)
+                    else if (map_entry->size() == exp_bucket_size)
                     {
                         SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
-                                it->to_string().c_str(), map_entry->size(), exp_bucket_size + 1);
-                        it++;
+                                      it->to_string().c_str(), map_entry->size(), exp_bucket_size + 1);
+                        remove_nh=true;
                     }
                     else
                     {
-                        it++;
+                        move_bkt=true;
                     }
+                }
+
+                // Replace the active nh's buckets from the end
+                if (move_bkt)
+                {
+                    HashBucketIdx last_elem = map_entry->at((*map_entry).size() - 1);
+                    if (!writeHashBucketChange(syncd_fg_route_entry, last_elem,
+                                               nhopgroup_members_set[bank_member_change.nhs_to_add[add_idx]],
+                                               ipPrefix, bank_member_change.nhs_to_add[add_idx]))
+                    {
+                        return false;
+                    }
+
+                    (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
+                    (*map_entry).erase((*map_entry).end() - 1);
+                }
+
+                // If done with current nexthop from the active_nh_list, then remove it. Else simply move to next nexthop
+                // in the active_nh_list
+                if (remove_nh)
+                {
+                    active_nh_list.erase(it);
+                } else {
+                    it++;
                 }
             }
             syncd_fg_route_entry->active_nexthops.insert(bank_member_change.nhs_to_add[add_idx]);
