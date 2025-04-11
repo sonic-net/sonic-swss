@@ -819,7 +819,7 @@ namespace portsorch_test
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }
-            else if (fvField(valueTuple) == "high ber_error_count")
+            else if (fvField(valueTuple) == "high_ber_error_count")
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }

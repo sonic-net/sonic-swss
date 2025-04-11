@@ -345,7 +345,7 @@ const std::unordered_map<sai_port_error_status_t, std::string> PortOperErrorEven
     { SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS, "fec_sync_loss"},
     { SAI_PORT_ERROR_STATUS_FEC_LOSS_ALIGNMENT_MARKER, "fec_alignment_loss"},
     { SAI_PORT_ERROR_STATUS_HIGH_SER,  "high_ser_error"},
-    { SAI_PORT_ERROR_STATUS_HIGH_BER, "high ber_error"},
+    { SAI_PORT_ERROR_STATUS_HIGH_BER, "high_ber_error"},
     { SAI_PORT_ERROR_STATUS_CRC_RATE, "crc_rate"},
     { SAI_PORT_ERROR_STATUS_DATA_UNIT_CRC_ERROR, "data_unit_crc_error"},
     { SAI_PORT_ERROR_STATUS_DATA_UNIT_SIZE, "data_unit_size"},
