@@ -22,13 +22,13 @@ extern "C" {
 #include <sairedis.h>
 #include <logger.h>
 
-#include "orchdaemon.h"
+#include "orchagent/orchdaemon.h"
 #include "sai_serialize.h"
-#include "saihelper.h"
-#include "notifications.h"
+#include "orchagent/saihelper.h"
+#include "orchagent/notifications.h"
 #include <signal.h>
 #include "warm_restart.h"
-#include "gearboxutils.h"
+#include "lib/gearboxutils.h"
 
 using namespace std;
 using namespace swss;

@@ -17,17 +17,17 @@
 #ifndef SWSS_NATORCH_H
 #define SWSS_NATORCH_H
 
-#include "orch.h"
-#include "observer.h"
-#include "portsorch.h"
-#include "intfsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/intfsorch.h"
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nfnetlink.h"
-#include "timer.h"
-#include "routeorch.h"
-#include "nexthopgroupkey.h"
+#include "orchagent/timer.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/nexthopgroupkey.h"
 #include "notificationproducer.h"
 #ifdef DEBUG_FRAMEWORK
 #include "debugdumporch.h"

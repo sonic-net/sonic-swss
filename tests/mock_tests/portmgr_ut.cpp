@@ -1,6 +1,6 @@
-#include "portmgr.h"
+#include "cfgmgr/portmgr.h"
 #include "gtest/gtest.h"
-#include "mock_table.h"
+#include "tests/mock_tests/mock_table.h"
 #include "redisutility.h"
 
 extern std::vector<std::string> mockCallArgs;

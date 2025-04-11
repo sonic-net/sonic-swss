@@ -3,9 +3,9 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "sflowmgr.h"
+#include "cfgmgr/sflowmgr.h"
 #include "exec.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 
 using namespace std;
 using namespace swss;

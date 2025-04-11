@@ -1,5 +1,5 @@
-#include "ut_helper.h"
-#include "bulker.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "orchagent/bulker.h"
 
 extern sai_route_api_t *sai_route_api;
 extern sai_neighbor_api_t *sai_neighbor_api;

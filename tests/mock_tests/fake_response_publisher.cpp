@@ -1,8 +1,8 @@
 #include <string>
 #include <vector>
 
-#include "response_publisher.h"
-#include "mock_response_publisher.h"
+#include "orchagent/response_publisher.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
 
 /* This mock plugs into this fake response publisher implementation
  * when needed to test code that uses response publisher. */

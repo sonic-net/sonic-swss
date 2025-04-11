@@ -3,7 +3,7 @@ extern "C" {
 #include <saistatus.h>
 }
 
-#include "orchdaemon.h"
+#include "orchagent/orchdaemon.h"
 
 /* Global variables */
 sai_object_id_t gVirtualRouterId;

@@ -1,6 +1,6 @@
 #include "tokenize.h"
-#include "bufferorch.h"
-#include "directory.h"
+#include "orchagent/bufferorch.h"
+#include "orchagent/directory.h"
 #include "logger.h"
 #include "sai_serialize.h"
 #include "warm_restart.h"

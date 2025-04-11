@@ -11,7 +11,7 @@
 #include "linkcache.h"
 #include "macaddress.h"
 
-#include "neighsync.h"
+#include "neighsyncd/neighsync.h"
 #include "warm_restart.h"
 #include <algorithm>
 #include <linux/neighbour.h>

@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "macaddress.h"
-#include "orch.h"
-#include "request_parser.h"
+#include "orchagent/orch.h"
+#include "orchagent/request_parser.h"
 
 using namespace swss;
 

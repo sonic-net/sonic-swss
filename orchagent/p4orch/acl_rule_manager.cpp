@@ -1,4 +1,4 @@
-#include "p4orch/acl_rule_manager.h"
+#include "orchagent/p4orch/acl_rule_manager.h"
 
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -7,14 +7,14 @@
 
 #include "SaiAttributeList.h"
 #include "converter.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "dbconnector.h"
-#include "intfsorch.h"
+#include "orchagent/intfsorch.h"
 #include "logger.h"
-#include "orch.h"
-#include "p4orch.h"
-#include "p4orch/p4orch_util.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
 #include "sai_serialize.h"
 #include "table.h"
 #include "tokenize.h"

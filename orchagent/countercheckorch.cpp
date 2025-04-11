@@ -1,7 +1,7 @@
-#include "countercheckorch.h"
-#include "portsorch.h"
+#include "orchagent/countercheckorch.h"
+#include "orchagent/portsorch.h"
 #include "select.h"
-#include "notifier.h"
+#include "orchagent/notifier.h"
 #include "sai_serialize.h"
 #include <inttypes.h>
 

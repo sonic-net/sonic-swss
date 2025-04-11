@@ -1,4 +1,4 @@
-#include "route_manager.h"
+#include "orchagent/p4orch/route_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -10,13 +10,13 @@
 #include <vector>
 
 #include "ipprefix.h"
-#include "mock_response_publisher.h"
-#include "mock_sai_route.h"
-#include "p4orch.h"
-#include "p4orch/p4orch_util.h"
-#include "return_code.h"
-#include "swssnet.h"
-#include "vrforch.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_route.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/return_code.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/vrforch.h"
 
 using ::p4orch::kTableKeyDelimiter;
 

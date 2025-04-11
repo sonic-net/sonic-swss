@@ -3,13 +3,13 @@
 #include <set>
 #include <map>
 #include "producerstatetable.h"
-#include "orch.h"
-#include "portsorch.h"
-#include "aclorch.h"
-#include "neighorch.h"
-#include "vnetorch.h"
-#include "observer.h"
-#include "request_parser.h"
+#include "orchagent/orch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/aclorch.h"
+#include "orchagent/neighorch.h"
+#include "orchagent/vnetorch.h"
+#include "orchagent/observer.h"
+#include "orchagent/request_parser.h"
 #include <exception>
 #include <functional>
 

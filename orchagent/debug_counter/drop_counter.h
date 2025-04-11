@@ -4,8 +4,8 @@
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
-#include "debug_counter.h"
-#include "drop_reasons.h"
+#include "orchagent/debug_counter/debug_counter.h"
+#include "orchagent/debug_counter/drop_reasons.h"
 
 extern "C" {
 #include "sai.h"

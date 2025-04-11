@@ -10,7 +10,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "warm_restart.h"
-#include "teamsync.h"
+#include "teamsyncd/teamsync.h"
 
 #include <unistd.h>
 

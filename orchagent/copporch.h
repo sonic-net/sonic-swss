@@ -5,8 +5,8 @@
 #include <set>
 #include <memory>
 #include "dbconnector.h"
-#include "orch.h"
-#include "flex_counter_manager.h"
+#include "orchagent/orch.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 #include "producertable.h"
 #include "table.h"
 #include "selectabletimer.h"

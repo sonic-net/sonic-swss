@@ -3,8 +3,8 @@
 #include <map>
 #include <string>
 
-#include "orch.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/portsorch.h"
 
 using namespace std;
 

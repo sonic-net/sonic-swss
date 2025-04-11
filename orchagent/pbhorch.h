@@ -2,13 +2,13 @@
 
 #include <vector>
 
-#include "orch.h"
-#include "aclorch.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/aclorch.h"
+#include "orchagent/portsorch.h"
 
-#include "pbh/pbhrule.h"
-#include "pbh/pbhmgr.h"
-#include "pbh/pbhcap.h"
+#include "orchagent/pbh/pbhrule.h"
+#include "orchagent/pbh/pbhmgr.h"
+#include "orchagent/pbh/pbhcap.h"
 
 class PbhOrch final : public Orch
 {
