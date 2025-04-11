@@ -22,7 +22,6 @@ struct NextHopKey
     uint32_t            weight;         // NH weight for NHGs
     string              srv6_segment;   // SRV6 segment string
     string              srv6_source;    // SRV6 source address
-    string              srv6_vpn_sid;   // SRV6 vpn sid
 
     NextHopKey() : weight(0) {}
     NextHopKey(const std::string &str, const std::string &alias) :
@@ -77,7 +76,7 @@ struct NextHopKey
             vni = 0;
             weight = 0;
             auto keys = tokenize(str, NH_DELIMITER);
-            if (keys.size() != 4)
+            if (keys.size() != 3)
             {
                 std::string err = "Error converting " + str + " to Nexthop";
                 throw std::invalid_argument(err);
@@ -85,7 +84,6 @@ struct NextHopKey
             ip_address = keys[0];
             srv6_segment = keys[1];
             srv6_source = keys[2];
-            srv6_vpn_sid = keys[3];
         }
         else
         {
@@ -117,8 +115,7 @@ struct NextHopKey
     {
         if (srv6_nh)
         {
-            return ip_address.to_string() + NH_DELIMITER + srv6_segment + NH_DELIMITER + srv6_source + NH_DELIMITER 
-                   + srv6_vpn_sid + NH_DELIMITER;
+            return ip_address.to_string() + NH_DELIMITER + srv6_segment + NH_DELIMITER + srv6_source;
         }
         std::string str = formatMplsNextHop();
         str += (ip_address.to_string() + NH_DELIMITER + alias + NH_DELIMITER +
@@ -128,8 +125,8 @@ struct NextHopKey
 
     bool operator<(const NextHopKey &o) const
     {
-        return tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source, srv6_vpn_sid) <
-            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source, o.srv6_vpn_sid);
+        return tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source) <
+            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source);
     }
 
     bool operator==(const NextHopKey &o) const
@@ -137,8 +134,7 @@ struct NextHopKey
         return (ip_address == o.ip_address) && (alias == o.alias) &&
             (label_stack == o.label_stack) &&
             (vni == o.vni) && (mac_address == o.mac_address) &&
-            (srv6_segment == o.srv6_segment) && (srv6_source == o.srv6_source) &&
-            (srv6_vpn_sid == o.srv6_vpn_sid);
+            (srv6_segment == o.srv6_segment) && (srv6_source == o.srv6_source);
     }
 
     bool operator!=(const NextHopKey &o) const
@@ -158,12 +154,7 @@ struct NextHopKey
 
     bool isSrv6NextHop() const
     {
-        return ((srv6_segment != "") || (srv6_vpn_sid != "") || (srv6_source != ""));
-    }
-
-    bool isSrv6Vpn() const
-    {
-        return (srv6_vpn_sid != "");
+        return (srv6_segment != "");
     }
 
     std::string parseMplsNextHop(const std::string& str)

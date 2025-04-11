@@ -46,7 +46,6 @@ typedef enum
 #define MAX_VLAN_ID 4095
 
 #define MAX_VNI_ID 16777215
-#define DEFAULT_TUNNEL_ENCAP_TTL 255
 
 typedef enum
 {
@@ -197,7 +196,7 @@ public:
 
     bool deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
     bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
-    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
+    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=0);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
@@ -300,7 +299,7 @@ public:
 
 
     bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
-                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
+                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=0);
 
     bool removeVxlanTunnelMap(string tunnelName, uint32_t vni);
 

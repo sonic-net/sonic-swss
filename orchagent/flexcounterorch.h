@@ -4,7 +4,6 @@
 #include "orch.h"
 #include "port.h"
 #include "producertable.h"
-#include "selectabletimer.h"
 #include "table.h"
 
 extern "C" {
@@ -41,7 +40,6 @@ class FlexCounterOrch: public Orch
 {
 public:
     void doTask(Consumer &consumer);
-    void doTask(SelectableTimer &timer);
     FlexCounterOrch(swss::DBConnector *db, std::vector<std::string> &tableNames);
     virtual ~FlexCounterOrch(void);
     bool getPortCountersState() const;
@@ -54,8 +52,6 @@ public:
     std::map<std::string, FlexCounterPgStates> getPgConfigurations();
     bool getHostIfTrapCounterState() const {return m_hostif_trap_counter_enabled;}
     bool getRouteFlowCountersState() const {return m_route_flow_counter_enabled;}
-    bool getWredQueueCountersState() const;
-    bool getWredPortCountersState() const;
     bool bake() override;
 
 private:
@@ -67,15 +63,10 @@ private:
     bool m_pg_watermark_enabled = false;
     bool m_hostif_trap_counter_enabled = false;
     bool m_route_flow_counter_enabled = false;
-    bool m_delayTimerExpired = false;
-    bool m_wred_queue_counter_enabled = false;
-    bool m_wred_port_counter_enabled = false;
+    Table m_flexCounterConfigTable;
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
     Table m_deviceMetadataConfigTable;
-    std::unique_ptr<SelectableTimer> m_delayTimer;
-    std::unique_ptr<Executor> m_delayExecutor;
-    std::unordered_set<std::string> m_groupsWithBulkChunkSize;
 };
 
 #endif
