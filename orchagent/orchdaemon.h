@@ -5,6 +5,7 @@
 #include "producerstatetable.h"
 #include "consumertable.h"
 #include "zmqserver.h"
+#include "zmqclient.h"
 #include "select.h"
 
 #include "portsorch.h"
@@ -53,6 +54,7 @@
 #include "dash/dashorch.h"
 #include "dash/dashrouteorch.h"
 #include "dash/dashvnetorch.h"
+#include "dash/dashhaorch.h"
 #include <sairedis.h>
 
 using namespace swss;
@@ -61,6 +63,7 @@ class OrchDaemon
 {
 public:
     OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
+    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *, ZmqClient *);
     virtual ~OrchDaemon();
 
     virtual bool init();
@@ -108,7 +111,10 @@ private:
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
     DBConnector *m_chassisAppDb;
+    DBConnector *m_dpuApplDb;
+    DBConnector *m_dpuStateDb;
     ZmqServer *m_zmqServer;
+    ZmqClient *m_zmqClient;
 
     bool m_fabricEnabled = false;
     bool m_fabricPortStatEnabled = true;

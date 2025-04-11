@@ -1,0 +1,65 @@
+#ifndef DASHHAORCH_H
+#define DASHHAORCH_H
+#include <map>
+
+#include "dbconnector.h"
+#include "dashorch.h"
+#include "zmqorch.h"
+#include "zmqserver.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
+#include "saitypes.h"
+
+#include "dash_api/ha_set.pb.h"
+#include "dash_api/ha_scope.pb.h"
+
+struct HaSetEntry
+{
+    sai_object_id_t ha_set_id;
+    dash::ha_set::HaSet metadata;
+};
+
+struct HaScopeEntry
+{
+    sai_object_id_t ha_scope_id;
+    dash::ha_scope::HaScope metadata;
+};
+
+typedef std::map<std::string, HaSetEntry> HaSetTable;
+typedef std::map<std::string, HaScopeEntry> HaScopeTable;
+
+class DashHaOrch : public ZmqOrch
+{
+public:
+
+    DashHaOrch(swss::DBConnector *dpu_appl_db, swss::DBConnector *dpu_state_db, std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer, swss::ZmqClient *zmqClient);
+
+private:
+    HaSetTable m_ha_set_entries;
+    HaScopeTable m_ha_scope_entries;
+
+    DashOrch *m_dash_orch;
+
+    swss::DBConnector *m_dpu_state_db;
+    swss::ZmqClient *m_zmqClient;
+    swss::ZmqProducerStateTable dash_ha_set_state_table;
+    swss::ZmqProducerStateTable dash_ha_scope_state_table;
+
+    void doTask(ConsumerBase &consumer);
+    void doTaskEniTable(ConsumerBase &consumer);
+    void doTaskHaSetTable(ConsumerBase &consumer);
+    void doTaskHaScopeTable(ConsumerBase &consumer);
+
+    bool addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry);
+    bool removeHaSetEntry(const std::string &key);
+    bool addHaScopeEntry(const std::string &key, const dash::ha_scope::HaScope &entry);
+    bool removeHaScopeEntry(const std::string &key);
+    bool setHaScopeHaRole(const std::string &key, const dash::ha_scope::HaScope &entry);
+    bool setHaScopeFlowReconcileRequest(const  std::string &key);
+    bool setHaScopeActivateRoleRequest(const std::string &key);
+    bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
+
+    sai_ip_address_t covertPbIpaddrToSaiIpaddr(const dash::types::IpAddress &ipaddr);
+};
+
+#endif // DASHHAORCH_H
