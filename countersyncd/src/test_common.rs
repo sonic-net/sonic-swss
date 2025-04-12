@@ -37,7 +37,6 @@ pub fn clear_logs() {
 
 pub fn assert_logs(expected: Vec<&str>) {
     let logs_string = capture_logs();
-    println!("logs: {}", logs_string);
     let mut logs = logs_string.lines().collect::<Vec<_>>();
     let mut reverse_expected = expected.clone();
     reverse_expected.reverse();
@@ -51,6 +50,10 @@ pub fn assert_logs(expected: Vec<&str>) {
         if line.contains(reverse_expected[match_count]) {
             match_count += 1;
         }
+
+        if match_count == reverse_expected.len() {
+            break;
+        }
     }
-    assert_eq!(match_count, expected.len(), "\nexpected logs {}\n, got logs {}\n", expected.join("\n"), logs_string);
+    assert_eq!(match_count, expected.len(), "\nexpected logs \n{}\n, got logs \n{}\n", expected.join("\n"), logs_string);
 }
