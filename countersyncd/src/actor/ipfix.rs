@@ -112,7 +112,7 @@ impl IpfixActor {
             self.insert_temporary_template(&msg_key, new_templates);
             read_size += len as usize;
         }
-        debug!("Template {:?} consumed", templates);
+        debug!("Template handle {:?}", templates);
     }
 
     fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<SAIStatsMessage> {
@@ -174,7 +174,7 @@ impl IpfixActor {
                     }
                 }
                 messages.push(saistats.clone());
-                debug!("Record parsed");
+                debug!("Record parsed {:?}", saistats);
             }
             read_size += len as usize;
         }
@@ -247,6 +247,7 @@ mod test {
 
     #[tokio::test]
     async fn test_ipfix() {
+        capture_logs();
         let (buffer_sender, buffer_reciver) = channel(1);
         let (template_sender, template_reciver) = channel(1);
         let (saistats_sender, mut saistats_reciver) = channel(100);
@@ -279,6 +280,44 @@ mod test {
             0x80, 0x02, 0x00, 0x08, // line 9 Field ID 129, 8 bytes
             0x80, 0x03, 0x80, 0x04, // line 10 Enterprise Number 128, Field ID 2
         ];
+
+        template_sender
+            .send((String::from(""), Arc::new(Vec::from(template_bytes))))
+            .await
+            .unwrap();
+
+        // Wait for the template to be processed
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let invalid_len_record: [u8; 20] = [
+            0x00, 0x0A, 0x00, 0x48, // line 0 Packet 1
+            0x00, 0x00, 0x00, 0x00, // line 1
+            0x00, 0x00, 0x00, 0x02, // line 2
+            0x00, 0x00, 0x00, 0x00, // line 3
+            0x01, 0x00, 0x00, 0x1C, // line 4 Record 1
+        ];
+        buffer_sender
+            .send(Arc::new(Vec::from(invalid_len_record)))
+            .await
+            .unwrap();
+
+        let unknown_record: [u8; 44] = [
+            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
+            0x00, 0x00, 0x00, 0x00, // line 1
+            0x00, 0x00, 0x00, 0x02, // line 2
+            0x00, 0x00, 0x00, 0x00, // line 3
+            0x03, 0x00, 0x00, 0x1C, // line 4 Record 1
+            0x00, 0x00, 0x00, 0x00, // line 5
+            0x00, 0x00, 0x00, 0x01, // line 6
+            0x00, 0x00, 0x00, 0x00, // line 7
+            0x00, 0x00, 0x00, 0x01, // line 8
+            0x00, 0x00, 0x00, 0x00, // line 9
+            0x00, 0x00, 0x00, 0x01, // line 10
+        ];
+        buffer_sender
+            .send(Arc::new(Vec::from(unknown_record)))
+            .await
+            .unwrap();
 
         // contains data sets for templates 999, 500, 999
         let valid_records_bytes: [u8; 144] = [
@@ -320,46 +359,8 @@ mod test {
             0x00, 0x00, 0x00, 0x07, // line 35
         ];
 
-        template_sender
-            .send((String::from(""), Arc::new(Vec::from(template_bytes))))
-            .await
-            .unwrap();
-
-        // Wait for the template to be processed
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
         buffer_sender
             .send(Arc::new(Vec::from(valid_records_bytes)))
-            .await
-            .unwrap();
-
-        let invalid_len_record: [u8; 20] = [
-            0x00, 0x0A, 0x00, 0x48, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x01, 0x00, 0x00, 0x1C, // line 4 Record 1
-        ];
-        buffer_sender
-            .send(Arc::new(Vec::from(invalid_len_record)))
-            .await
-            .unwrap();
-
-        let unknown_record: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x03, 0x00, 0x00, 0x1C, // line 4 Record 1
-            0x00, 0x00, 0x00, 0x00, // line 5
-            0x00, 0x00, 0x00, 0x01, // line 6
-            0x00, 0x00, 0x00, 0x00, // line 7
-            0x00, 0x00, 0x00, 0x01, // line 8
-            0x00, 0x00, 0x00, 0x00, // line 9
-            0x00, 0x00, 0x00, 0x01, // line 10
-        ];
-        buffer_sender
-            .send(Arc::new(Vec::from(unknown_record)))
             .await
             .unwrap();
 
@@ -449,15 +450,14 @@ mod test {
         drop(saistats_reciver);
 
         actor_handle.await.unwrap();
-        let logs = capture_logs();
-        println!("Logs: {}", logs);
-        // assert_logs(vec![
-        //     "[DEBUG] Record parsed",
-        //     "[DEBUG] Record parsed",
-        //     "[DEBUG] Record parsed",
-        //     "[DEBUG] Record parsed",
-        //     "[WARN] Wrong length in the records [0, 10, 0, 72]",
-        //     "[WARN] Not support data message [0, 10, 0, 44]",
-        // ]);
+        assert_logs(vec![
+            "[DEBUG] Template handle",
+            "[WARN] Wrong length in the records",
+            "[WARN] Not support data message",
+            "[DEBUG] Record parsed",
+            "[DEBUG] Record parsed",
+            "[DEBUG] Record parsed",
+            "[DEBUG] Record parsed",
+        ]);
     }
 }
