@@ -37,18 +37,8 @@ namespace dashvnetorch_test
             gCrmOrch->getResAvailability(type, entry);
             return entry.countersMap["STATS"].usedCounter;
         }
-        void AddVnetMap()
-        {
-            Table vnet_map_table = Table(m_app_db.get(), APP_DASH_VNET_MAPPING_TABLE_NAME);
-            dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
-            vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
-            vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
-            vnet_map_table.set("VNET_1:2.2.2.2", { { "pb", vnet_map.SerializeAsString() } });
-            m_dashVnetOrch->addExistingData(&vnet_map_table);
-            static_cast<Orch *>(m_dashVnetOrch)->doTask();
-        }
 
-        void ApplySaiMock()
+        void ApplySaiMock() override
         {
             INIT_SAI_API_MOCK(dash_outbound_ca_to_pa);
             INIT_SAI_API_MOCK(dash_pa_validation);

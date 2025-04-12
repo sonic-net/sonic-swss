@@ -281,6 +281,23 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_dashVnetOrch);
     ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
 
+    vector<string> dash_route_tables = {
+        APP_DASH_ROUTE_TABLE_NAME,
+        APP_DASH_ROUTE_RULE_TABLE_NAME,
+        APP_DASH_ROUTE_GROUP_TABLE_NAME
+    };
+
+    m_DashRouteOrch = new DashRouteOrch(m_app_db.get(), dash_route_tables, m_DashOrch, nullptr);
+    gDirectory.set(m_DashRouteOrch);
+    ut_orch_list.push_back((Orch **)&m_DashRouteOrch);
+
+    vector<string> dash_tunnel_tables = {
+        APP_DASH_TUNNEL_TABLE_NAME
+    };
+    m_DashTunnelOrch= new DashTunnelOrch(m_app_db.get(), dash_tunnel_tables, nullptr);
+    gDirectory.set(m_DashTunnelOrch);
+    ut_orch_list.push_back((Orch **)&m_DashTunnelOrch);
+
     ApplyInitialConfigs();
     PostSetUp();
 }
@@ -292,7 +309,6 @@ void MockOrchTest::TearDown()
     {
         Orch **orch = *rit;
         delete *orch;
-        *orch = nullptr;
     }
 
     gDirectory.m_values.clear();
