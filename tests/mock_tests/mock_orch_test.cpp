@@ -71,6 +71,8 @@ void MockOrchTest::SetUp()
     m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
     m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
     m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
+    m_dpu_app_db = make_shared<swss::DBConnector>("DPU_APPL_DB", 0);
+    m_dpu_state_db = make_shared<swss::DBConnector>("DPU_STATE_DB", 0);
 
     PrepareSai();
 
@@ -280,6 +282,14 @@ void MockOrchTest::SetUp()
     m_dashVnetOrch = new DashVnetOrch(m_app_db.get(), dash_vnet_tables, nullptr);
     gDirectory.set(m_dashVnetOrch);
     ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
+
+    vector<string> dash_ha_tables = {
+        APP_DASH_HA_SET_TABLE_NAME,
+        APP_DASH_HA_SCOPE_TABLE_NAME
+    };
+    m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), m_dpu_state_db.get(), dash_ha_tables, m_DashOrch, nullptr, nullptr);
+    gDirectory.set(m_dashHaOrch);
+    ut_orch_list.push_back((Orch **)&m_dashHaOrch);
 
     ApplyInitialConfigs();
     PostSetUp();
