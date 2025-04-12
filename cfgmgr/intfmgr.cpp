@@ -879,7 +879,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             catch (const std::runtime_error &e)
             {
                 SWSS_LOG_WARN("Lo interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
-                return false;
             }
         }
         else
