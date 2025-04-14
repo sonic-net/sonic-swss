@@ -412,8 +412,8 @@ bool PortHelper::parsePortUnreliableLos(PortConfig &port, const std::string &fie
         return false;
     }
 
-    port.unreliable_los.value = cit->second;
-    port.unreliable_los.is_set = true;
+    port.serdes.unreliable_los.value = cit->second;
+    port.serdes.unreliable_los.is_set = true;
 
     return true;
 }

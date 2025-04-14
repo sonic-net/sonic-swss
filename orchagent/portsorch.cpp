@@ -4439,17 +4439,17 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
 
 
-                if (pCfg.unreliable_los.is_set)
+                if (pCfg.serdes.unreliable_los.is_set)
 		{
 			auto status = setPortUnreliableLOS(p, pCfg.unreliable_los.value);
 			if (status != task_success)
 			{
 			    SWSS_LOG_ERROR(
 				"Failed to set port %s AN from %d to %d",
-				p.m_alias.c_str(), p.m_unreliable_los, pCfg.unreliable_los.value
+				p.m_alias.c_str(), p.m_unreliable_los, pCfg.serdes.unreliable_los.value
                             );
 			} else {
-                        p.m_unreliable_los = pCfg.unreliable_los.value;
+                            p.m_unreliable_los = pCfg.serdes.unreliable_los.value;
 			}
                 }
 

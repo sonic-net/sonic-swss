@@ -53,12 +53,6 @@ public:
     } autoneg; // Port autoneg
 
     struct {
-        bool value;
-        bool is_set = false;
-    } unreliable_los; // Port unreliable_los
-
-
-    struct {
         std::set<std::uint32_t> value;
         bool is_set = false;
     } adv_speeds; // Port advertised speeds
@@ -190,6 +184,11 @@ public:
             std::vector<std::uint32_t> value;
             bool is_set = false;
         } regn_bfm1n; // Port serdes regn_bfm1n
+
+        struct {
+            bool value;
+            bool is_set = false;
+        } unreliable_los; // Port unreliable_los
 
     } serdes; // Port serdes
 
