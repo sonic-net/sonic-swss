@@ -21,8 +21,6 @@ class TestInnerSrcMacRewriteAclTable:
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-
-
         self.ctdb = swsscommon.DBConnector(2, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
