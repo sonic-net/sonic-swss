@@ -215,46 +215,10 @@ void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, N
 {
     SWSS_LOG_ENTER();
 
-    string key = ipPrefix.to_string();
-    // Write to StateDb
-    std::vector<FieldValueTuple> fvs;
+    SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
+        ipPrefix.to_string().c_str(), nextHop.to_string().c_str(), index);
 
-    // get the existing buckets from warm restart state table
-    m_stateWarmRestartRouteTable.get(key, fvs);
-    auto stateTblBucketMapSearch = m_stateTblPrefixMap.find(key);
-    if (stateTblBucketMapSearch == m_stateTblPrefixMap.end())
-    {
-        m_stateTblPrefixMap[key] = StateTblBucketMap();
-    }
-    auto &stateTblBucketMap = m_stateTblPrefixMap[key];
-
-    // search for the index to retrieve warm restart state table index
-    auto tbl_idx_search = stateTblBucketMap.find(index);
-    if (tbl_idx_search != stateTblBucketMap.end())
-    {
-        // replace this
-        FieldValueTuple fv(std::to_string(index), nextHop.to_string());
-        // make sure this tbl index is present
-        if (fvs.size() <= tbl_idx_search->second)
-        {
-            SWSS_LOG_ERROR("State table map ip prefix %s inconsistent tbl size %zu found idx %zu",
-                    key.c_str(), fvs.size(), tbl_idx_search->second);
-            return;
-        }
-        fvs[tbl_idx_search->second] = fv;
-        SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
-                        key.c_str(), nextHop.to_string().c_str(), index);
-    }
-    else
-    {
-        // add this
-        fvs.push_back(FieldValueTuple(std::to_string(index), nextHop.to_string()));
-        SWSS_LOG_INFO("Add new next hop entry %s with index %d for ip prefix %s",
-                nextHop.to_string().c_str(), index, key.c_str());
-        stateTblBucketMap[index] = fvs.size() - 1;
-    }
-
-    m_stateWarmRestartRouteTable.set(key, fvs);
+    m_stateWarmRestartRouteTable.hset(ipPrefix.to_string(), std::to_string(index), nextHop.to_string());
 }
 
 bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, HashBucketIdx index, sai_object_id_t nh_oid,
@@ -929,12 +893,6 @@ bool FgNhgOrch::setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *sy
 
             // remove state_db entry
             m_stateWarmRestartRouteTable.del(ipPrefix.to_string());
-            auto found = m_stateTblPrefixMap.find(ipPrefix.to_string());
-            if (found != m_stateTblPrefixMap.end())
-            {
-                m_stateTblPrefixMap[ipPrefix.to_string()].clear();
-                m_stateTblPrefixMap.erase(ipPrefix.to_string());
-            }
             // Clear data structures
             syncd_fg_route_entry->syncd_fgnhg_map.clear();
             syncd_fg_route_entry->active_nexthops.clear();
@@ -1243,7 +1201,6 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
 {
     SWSS_LOG_ENTER();
 
-    bool static_fgnhg = false;
     if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
     {
         SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " NOT fine grained ECMP",
@@ -1272,7 +1229,6 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
             if (!fgNhgEntry)
             {
                 fgNhgEntry = member_entry->second;
-                static_fgnhg = true;
             }
             else
             {
@@ -1286,18 +1242,6 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
                     return false;
                 }
             }
-        }
-        if (static_fgnhg)
-        {
-            SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " IS fine grained static ECMP",
-                            ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id, gVirtualRouterId);
-            return true;
-        }
-        else
-        {
-            SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " Static FGNHG ECMP NOT found",
-                            ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id, gVirtualRouterId);
-            return false;
         }
     }
     SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " IS fine grained ECMP",
@@ -1658,12 +1602,6 @@ bool FgNhgOrch::removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 
         // remove state_db entry
         m_stateWarmRestartRouteTable.del(ipPrefix.to_string());
-        auto found = m_stateTblPrefixMap.find(ipPrefix.to_string());
-        if (found != m_stateTblPrefixMap.end())
-        {
-            m_stateTblPrefixMap[ipPrefix.to_string()].clear();
-            m_stateTblPrefixMap.erase(ipPrefix.to_string());
-        }
     }
 
     it_route_table->second.erase(it_route);
