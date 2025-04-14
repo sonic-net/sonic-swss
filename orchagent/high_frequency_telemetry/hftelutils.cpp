@@ -1,4 +1,4 @@
-#include "stelutils.h"
+#include "hftelutils.h"
 
 #include <saihelper.h>
 #include <swss/logger.h>
@@ -10,7 +10,7 @@ using namespace std;
 
 #define OBJECT_TYPE_PREFIX "SAI_OBJECT_TYPE_"
 
-vector<sai_object_id_t> STelUtils::get_sai_object_list(
+vector<sai_object_id_t> HFTelUtils::get_sai_object_list(
     sai_object_id_t obj,
     sai_attr_id_t attr_id,
     sai_api_t api,
@@ -40,7 +40,7 @@ vector<sai_object_id_t> STelUtils::get_sai_object_list(
     return obj_list;
 }
 
-sai_object_type_t STelUtils::group_name_to_sai_type(const string &group_name)
+sai_object_type_t HFTelUtils::group_name_to_sai_type(const string &group_name)
 {
     SWSS_LOG_ENTER();
 
@@ -50,7 +50,7 @@ sai_object_type_t STelUtils::group_name_to_sai_type(const string &group_name)
     return sai_object_type;
 }
 
-std::string STelUtils::sai_type_to_group_name(sai_object_type_t object_type)
+std::string HFTelUtils::sai_type_to_group_name(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
@@ -61,12 +61,12 @@ std::string STelUtils::sai_type_to_group_name(sai_object_type_t object_type)
     return group_name;
 }
 
-set<sai_stat_id_t> STelUtils::object_counters_to_stats_ids(
+set<sai_stat_id_t> HFTelUtils::object_counters_to_stats_ids(
     const string &group_name,
     const set<string> &object_counters)
 {
     SWSS_LOG_ENTER();
-    sai_object_type_t sai_object_type = STelUtils::group_name_to_sai_type(group_name);
+    sai_object_type_t sai_object_type = HFTelUtils::group_name_to_sai_type(group_name);
     set<sai_stat_id_t> stats_ids_set;
 
     auto info = sai_metadata_get_object_type_info(sai_object_type);
@@ -101,7 +101,7 @@ set<sai_stat_id_t> STelUtils::object_counters_to_stats_ids(
     return stats_ids_set;
 }
 
-sai_stats_mode_t STelUtils::get_stats_mode(sai_object_type_t object_type, sai_stat_id_t stat_id)
+sai_stats_mode_t HFTelUtils::get_stats_mode(sai_object_type_t object_type, sai_stat_id_t stat_id)
 {
     SWSS_LOG_ENTER();
 
@@ -136,7 +136,7 @@ sai_stats_mode_t STelUtils::get_stats_mode(sai_object_type_t object_type, sai_st
 }
 
 
-uint16_t STelUtils::get_sai_label(const string &object_name)
+uint16_t HFTelUtils::get_sai_label(const string &object_name)
 {
     SWSS_LOG_ENTER();
     uint16_t label = 0;

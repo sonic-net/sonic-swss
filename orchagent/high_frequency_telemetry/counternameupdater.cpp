@@ -1,10 +1,10 @@
 #include "counternameupdater.h"
-#include "stelorch.h"
+#include "hftelorch.h"
 
 #include <swss/logger.h>
 #include <sai_serialize.h>
 
-extern STelOrch *gSTelOrch;
+extern HFTelOrch *gSTelOrch;
 
 CounterNameMapUpdater::CounterNameMapUpdater(const std::string &db_name, const std::string &table_name)
     : m_db_name(db_name),

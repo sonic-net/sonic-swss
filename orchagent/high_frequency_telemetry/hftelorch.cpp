@@ -1,5 +1,5 @@
-#include "stelorch.h"
-#include "stelutils.h"
+#include "hftelorch.h"
+#include "hftelutils.h"
 
 #include <swss/schema.h>
 #include <swss/redisutility.h>
@@ -9,6 +9,9 @@
 #include <notifier.h>
 
 #include <yaml-cpp/yaml.h>
+#include <boost/algorithm/string/join.hpp>
+#include <boost/range/adaptor/transformed.hpp>
+#include <boost/lexical_cast.hpp>
 
 #include <algorithm>
 
@@ -17,7 +20,7 @@ using namespace swss;
 
 #define CONSTANTS_FILE "/et/sonic/constants.yml"
 
-const unordered_map<string, sai_object_type_t> STelOrch::SUPPORT_COUNTER_TABLES = {
+const unordered_map<string, sai_object_type_t> HFTelOrch::SUPPORT_COUNTER_TABLES = {
     {COUNTERS_PORT_NAME_MAP, SAI_OBJECT_TYPE_PORT},
     {COUNTERS_BUFFER_POOL_NAME_MAP, SAI_OBJECT_TYPE_BUFFER_POOL},
     {COUNTERS_QUEUE_NAME_MAP, SAI_OBJECT_TYPE_QUEUE},
@@ -53,12 +56,12 @@ namespace swss
 
 }
 
-STelOrch::STelOrch(
+HFTelOrch::HFTelOrch(
     DBConnector *cfg_db,
     DBConnector *state_db,
     const vector<string> &tables)
     : Orch(cfg_db, tables),
-      m_state_telemetry_session(state_db, STREAM_TELEMETRY_SESSION),
+      m_state_telemetry_session(state_db, STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE_NAME),
       m_asic_db("ASIC_DB", 0),
       m_sai_hostif_obj(SAI_NULL_OBJECT_ID),
       m_sai_hostif_trap_group_obj(SAI_NULL_OBJECT_ID),
@@ -77,7 +80,7 @@ STelOrch::STelOrch(
     Orch::addExecutor(notifier);
 }
 
-STelOrch::~STelOrch()
+HFTelOrch::~HFTelOrch()
 {
     SWSS_LOG_ENTER();
 
@@ -88,12 +91,12 @@ STelOrch::~STelOrch()
     deleteNetlinkChannel();
 }
 
-void STelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
+void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
 {
     SWSS_LOG_ENTER();
 
-    auto itr = STelOrch::SUPPORT_COUNTER_TABLES.find(msg.m_table_name);
-    if (itr == STelOrch::SUPPORT_COUNTER_TABLES.end())
+    auto counter_itr = HFTelOrch::SUPPORT_COUNTER_TABLES.find(msg.m_table_name);
+    if (counter_itr == HFTelOrch::SUPPORT_COUNTER_TABLES.end())
     {
         SWSS_LOG_WARN("The counter table %s is not supported by stream telemetry", msg.m_table_name);
         return;
@@ -102,47 +105,50 @@ void STelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     // Update the local cache
     if (msg.m_operation == CounterNameMapUpdater::SET)
     {
-        m_counter_name_cache[itr->second][msg.m_set.m_counter_name] = msg.m_set.m_oid;
+        m_counter_name_cache[counter_itr->second][msg.m_set.m_counter_name] = msg.m_set.m_oid;
     }
     else if (msg.m_operation == CounterNameMapUpdater::DEL)
     {
-        m_counter_name_cache[itr->second].erase(msg.m_del.m_counter_name);
+        m_counter_name_cache[counter_itr->second].erase(msg.m_del.m_counter_name);
     }
 
     // Update the profile
-    auto itr2 = m_type_profile_mapping.find(itr->second);
-    if (itr2 == m_type_profile_mapping.end())
+    auto type_itr = m_type_profile_mapping.find(counter_itr->second);
+    if (type_itr == m_type_profile_mapping.end())
     {
         return;
     }
-    for (auto itr3 = itr2->second.begin(); itr3 != itr2->second.end(); itr3++)
+    for (auto profile_itr = type_itr->second.begin(); profile_itr != type_itr->second.end(); profile_itr++)
     {
-        auto profile = *itr3;
+        auto profile = *profile_itr;
         const char *counter_name = msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name;
 
-        if (!profile->canBeUpdated(itr->second))
+        if (!profile->canBeUpdated(counter_itr->second))
         {
             // TODO: Here is a potential issue, we may need to retry the task.
+            // Because the Syncd is generating the configuration(template),
+            // we cannot update the monitor objects at this time.
             SWSS_LOG_WARN("The profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name);
             continue;
         }
 
         if (msg.m_operation == CounterNameMapUpdater::SET)
         {
-            profile->setObjectSAIID(itr->second, counter_name, msg.m_set.m_oid);
+            profile->setObjectSAIID(counter_itr->second, counter_name, msg.m_set.m_oid);
         }
         else if (msg.m_operation == CounterNameMapUpdater::DEL)
         {
-            profile->delObjectSAIID(itr->second, counter_name);
+            profile->delObjectSAIID(counter_itr->second, counter_name);
         }
         else
         {
             SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
         }
+        profile->tryCommitConfig(counter_itr->second);
     }
 }
 
-task_process_status STelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)
+task_process_status HFTelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)
 {
     SWSS_LOG_ENTER();
     auto profile = getProfile(profile_name);
@@ -168,50 +174,61 @@ task_process_status STelOrch::profileTableSet(const string &profile_name, const 
         profile->setPollInterval(poll_interval);
     }
 
-    // Map the profile to types
-    // This profile may be inserted by group table
-    for (auto type : profile->getObjectTypes())
-    {
-        m_type_profile_mapping[type].insert(profile);
-        profile->tryCommitConfig(type);
-    }
+    // // Map the profile to types
+    // // This profile may be inserted by group table
+    // for (auto type : profile->getObjectTypes())
+    // {
+    //     m_type_profile_mapping[type].insert(profile);
+    //     profile->tryCommitConfig(type);
+    // }
 
     return task_process_status::task_success;
 }
 
-task_process_status STelOrch::profileTableDel(const std::string &profile_name)
+task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
 {
     SWSS_LOG_ENTER();
 
-    auto itr = m_name_profile_mapping.find(profile_name);
-    if (itr == m_name_profile_mapping.end())
+    auto profile_itr = m_name_profile_mapping.find(profile_name);
+    if (profile_itr == m_name_profile_mapping.end())
     {
         return task_process_status::task_success;
     }
 
-    if (!itr->second->canBeUpdated())
+    if (!profile_itr->second->canBeUpdated())
     {
         return task_process_status::task_need_retry;
     }
 
-    auto profile = itr->second;
-    for (auto type : profile->getObjectTypes())
+    if (!profile_itr->second->isEmpty())
     {
-        profile->tryCommitConfig(type);
-        m_type_profile_mapping[type].erase(profile);
-        m_state_telemetry_session.del(profile_name + "|" + STelUtils::sai_type_to_group_name(type));
+        return task_process_status::task_need_retry;
     }
-    m_name_profile_mapping.erase(itr);
+
+    // auto profile = profile_itr->second;
+    // for (auto type : profile->getObjectTypes())
+    // {
+    //     // TODO: Assume the group table has been deleted, Don't need to commit the config again
+    //     // profile->tryCommitConfig(type);
+    //     m_type_profile_mapping[type].erase(profile);
+    //     m_state_telemetry_session.del(profile_name + "|" + HFTelUtils::sai_type_to_group_name(type));
+    // }
+    m_name_profile_mapping.erase(profile_itr);
 
     return task_process_status::task_success;
 }
 
-task_process_status STelOrch::groupTableSet(const std::string &profile_name, const std::string &group_name, const std::vector<swss::FieldValueTuple> &values)
+task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, const std::string &group_name, const std::vector<swss::FieldValueTuple> &values)
 {
     SWSS_LOG_ENTER();
 
-    auto profile = getProfile(profile_name);
-    auto type = STelUtils::group_name_to_sai_type(group_name);
+    auto profile = tryGetProfile(profile_name);
+    if (!profile)
+    {
+        return task_process_status::task_need_retry;
+    }
+
+    auto type = HFTelUtils::group_name_to_sai_type(group_name);
 
     if (!profile->canBeUpdated(type))
     {
@@ -243,20 +260,27 @@ task_process_status STelOrch::groupTableSet(const std::string &profile_name, con
     return task_process_status::task_success;
 }
 
-task_process_status STelOrch::groupTableDel(const std::string &profile_name, const std::string &group_name)
+task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, const std::string &group_name)
 {
     SWSS_LOG_ENTER();
 
-    auto profile = getProfile(profile_name);
-    auto type = STelUtils::group_name_to_sai_type(group_name);
+    auto profile = tryGetProfile(profile_name);
+
+    if (!profile)
+    {
+        SWSS_LOG_WARN("The profile %s is not found", profile_name.c_str());
+        return task_process_status::task_success;
+    }
+
+    auto type = HFTelUtils::group_name_to_sai_type(group_name);
 
     if (!profile->canBeUpdated(type))
     {
         return task_process_status::task_need_retry;
     }
 
-    profile->setObjectSAIID(type, group_name.c_str(), SAI_NULL_OBJECT_ID);
-    profile->tryCommitConfig(type);
+    // Assumption: We don't need to update the config if the group is being deleted
+    // profile->tryCommitConfig(type);
 
     m_type_profile_mapping[type].erase(profile);
     m_state_telemetry_session.del(profile_name + "|" + group_name);
@@ -264,7 +288,7 @@ task_process_status STelOrch::groupTableDel(const std::string &profile_name, con
     return task_process_status::task_success;
 }
 
-shared_ptr<STelProfile> STelOrch::getProfile(const string &profile_name)
+shared_ptr<HFTelProfile> HFTelOrch::getProfile(const string &profile_name)
 {
     SWSS_LOG_ENTER();
 
@@ -272,7 +296,7 @@ shared_ptr<STelProfile> STelOrch::getProfile(const string &profile_name)
     {
         m_name_profile_mapping.emplace(
             profile_name,
-            make_shared<STelProfile>(
+            make_shared<HFTelProfile>(
                 profile_name,
                 m_sai_tam_obj,
                 m_sai_tam_collector_obj,
@@ -282,7 +306,20 @@ shared_ptr<STelProfile> STelOrch::getProfile(const string &profile_name)
     return m_name_profile_mapping.at(profile_name);
 }
 
-void STelOrch::doTask(swss::NotificationConsumer &consumer)
+std::shared_ptr<HFTelProfile> HFTelOrch::tryGetProfile(const std::string &profile_name)
+{
+    SWSS_LOG_ENTER();
+
+    auto itr = m_name_profile_mapping.find(profile_name);
+    if (itr != m_name_profile_mapping.end())
+    {
+        return itr->second;
+    }
+
+    return std::shared_ptr<HFTelProfile>();
+}
+
+void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -306,7 +343,7 @@ void STelOrch::doTask(swss::NotificationConsumer &consumer)
 
     sai_object_id_t tam_tel_type_obj = SAI_NULL_OBJECT_ID;
 
-    // sai_deserialize_tam_tel_type_config_ntf(data, tam_tel_type_obj);
+    sai_deserialize_object_id(data, tam_tel_type_obj);
 
     if (tam_tel_type_obj == SAI_NULL_OBJECT_ID)
     {
@@ -317,39 +354,50 @@ void STelOrch::doTask(swss::NotificationConsumer &consumer)
     for (auto &profile : m_name_profile_mapping)
     {
         auto type = profile.second->getObjectType(tam_tel_type_obj);
-        if (type != SAI_OBJECT_TYPE_NULL)
+        if (type == SAI_OBJECT_TYPE_NULL)
         {
-            profile.second->notifyConfigReady(type);
-            // TODO: TryCommitConfig once the template has been applied by CounterSyncd in the phase2
-            profile.second->tryCommitConfig(type);
-            // Update state db
-            vector<FieldValueTuple> values;
-            auto state = profile.second->getTelemetryTypeState(type);
-            if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
-            {
-                values.emplace_back("stream_status", "enable");
-            }
-            else if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
-            {
-                values.emplace_back("stream_status", "disable");
-            }
-            else
-            {
-                SWSS_LOG_THROW("Unexpected state %d", state);
-            }
-
-            values.emplace_back("session_type", "ipfix");
-
-            auto templates = profile.second->getTemplates(type);
-            values.emplace_back("session_config", string(templates.begin(), templates.end()));
-
-            m_state_telemetry_session.set(profile.first + "|" + STelUtils::sai_type_to_group_name(type), values);
-            break;
+            continue;
         }
+
+        // TODO: A potential optimization
+        // We need to notify Config Ready only when the message of State DB is delivered to the CounterSyncd
+        profile.second->notifyConfigReady(type);
+
+        // Update state db
+        vector<FieldValueTuple> values;
+        auto state = profile.second->getTelemetryTypeState(type);
+        if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
+        {
+            values.emplace_back("stream_status", "enable");
+        }
+        else if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
+        {
+            values.emplace_back("stream_status", "disable");
+        }
+        else
+        {
+            SWSS_LOG_THROW("Unexpected state %d", state);
+        }
+
+        values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
+        auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
+                                                        { return boost::lexical_cast<std::string>(n); });
+        values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
+
+        values.emplace_back("session_type", "ipfix");
+
+        auto templates = profile.second->getTemplates(type);
+        values.emplace_back("session_config", string(templates.begin(), templates.end()));
+
+        m_state_telemetry_session.set(profile.first + "|" + HFTelUtils::sai_type_to_group_name(type), values);
+
+        return;
     }
+
+    SWSS_LOG_ERROR("The TAM tel type object %s is not found in the profile", sai_serialize_object_id(tam_tel_type_obj).c_str());
 }
 
-void STelOrch::doTask(Consumer &consumer)
+void HFTelOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -364,7 +412,7 @@ void STelOrch::doTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        if (table_name == CFG_STREAM_TELEMETRY_PROFILE_TABLE_NAME)
+        if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME)
         {
             if (op == SET_COMMAND)
             {
@@ -379,7 +427,7 @@ void STelOrch::doTask(Consumer &consumer)
                 SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
             }
         }
-        else if (table_name == CFG_STREAM_TELEMETRY_GROUP_TABLE_NAME)
+        else if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME)
         {
             auto tokens = tokenize(key, '|');
             if (tokens.size() != 2)
@@ -415,7 +463,7 @@ void STelOrch::doTask(Consumer &consumer)
     }
 }
 
-void STelOrch::createNetlinkChannel(const string &genl_family, const string &genl_group)
+void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &genl_group)
 {
     SWSS_LOG_ENTER();
 
@@ -482,7 +530,7 @@ void STelOrch::createNetlinkChannel(const string &genl_family, const string &gen
     sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 }
 
-void STelOrch::deleteNetlinkChannel()
+void HFTelOrch::deleteNetlinkChannel()
 {
     SWSS_LOG_ENTER();
 
@@ -508,7 +556,7 @@ void STelOrch::deleteNetlinkChannel()
     }
 }
 
-void STelOrch::createTAM()
+void HFTelOrch::createTAM()
 {
     SWSS_LOG_ENTER();
 
@@ -533,6 +581,16 @@ void STelOrch::createTAM()
 
     // Create TAM collector object
     attrs.clear();
+
+    attr.id = SAI_TAM_COLLECTOR_ATTR_SRC_IP;
+    attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    attr.value.ipaddr.addr.ip4 = 0;
+    attrs.push_back(attr);
+
+    attr.id = SAI_TAM_COLLECTOR_ATTR_DST_IP;
+    attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    attr.value.ipaddr.addr.ip4 = 0;
+    attrs.push_back(attr);
 
     attr.id = SAI_TAM_COLLECTOR_ATTR_TRANSPORT;
     attr.value.oid = m_sai_tam_transport_obj;
@@ -579,7 +637,7 @@ void STelOrch::createTAM()
 
     // Bind the TAM object to switch
 
-    STELUTILS_ADD_SAI_OBJECT_LIST(
+    HFTELUTILS_ADD_SAI_OBJECT_LIST(
         gSwitchId,
         SAI_SWITCH_ATTR_TAM_OBJECT_ID,
         m_sai_tam_obj,
@@ -588,14 +646,14 @@ void STelOrch::createTAM()
         switch);
 }
 
-void STelOrch::deleteTAM()
+void HFTelOrch::deleteTAM()
 {
     SWSS_LOG_ENTER();
 
     if (m_sai_tam_obj != SAI_NULL_OBJECT_ID)
     {
         // Unbind the TAM object from switch
-        STELUTILS_DEL_SAI_OBJECT_LIST(
+        HFTELUTILS_DEL_SAI_OBJECT_LIST(
             gSwitchId,
             SAI_SWITCH_ATTR_TAM_OBJECT_ID,
             m_sai_tam_obj,

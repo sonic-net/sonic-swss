@@ -1,4 +1,4 @@
 constants:
-    stream_telemetry:
+    high_frequency_telemetry:
         genl_family: "sonic_stel"
         genl_multicast_group: "ipfix"

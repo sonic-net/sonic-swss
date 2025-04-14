@@ -5,7 +5,7 @@ use tokio::sync::mpsc::Sender;
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 const STATE_DB_ID: i32 = 6;
-const STATE_STREAM_TELEMETRY_SESSION_TABLE: &str = "STREAM_TELEMETRY_SESSION";
+const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION";
 
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
@@ -15,7 +15,7 @@ pub struct SwssActor {
 impl SwssActor {
     pub fn new(template_recipient: Sender<IPFixTemplates>) -> Self {
         let connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0);
-        let session_table = SubscriberStateTable::new(connect, STATE_STREAM_TELEMETRY_SESSION_TABLE, None, None);
+        let session_table = SubscriberStateTable::new(connect, STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE, None, None);
         SwssActor {
             session_table,
             template_recipient,
