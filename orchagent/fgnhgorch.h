@@ -17,7 +17,7 @@
 typedef uint32_t Bank;
 typedef uint32_t HashBucketIdx;
 typedef std::set<NextHopKey> ActiveNextHops;
-typedef std::map<HashBucketIdx, sai_object_id_t> FGNextHopGroupMembers;
+typedef std::vector<sai_object_id_t> FGNextHopGroupMembers;
 typedef std::vector<HashBucketIdx> HashBuckets;
 typedef std::map<NextHopKey, HashBuckets> FGNextHopGroupMap;
 typedef std::vector<FGNextHopGroupMap> BankFGNextHopGroupMap;

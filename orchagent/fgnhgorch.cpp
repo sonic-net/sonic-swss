@@ -337,7 +337,8 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
         }
         fgNhgEntry->real_bucket_size = nhg_attr.value.u32;
     }
-
+    // Initialize the vector to store sai next hop group members
+    syncd_fg_route_entry.nhopgroup_members.resize(fgNhgEntry->real_bucket_size, SAI_NULL_OBJECT_ID);
     calculateBankHashBucketStartIndices(fgNhgEntry);
 
     SWSS_LOG_NOTICE("fgnhgorch created next hop group %s of size %d", nextHops.to_string().c_str(), fgNhgEntry->real_bucket_size);
@@ -353,11 +354,11 @@ bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_rout
 
     for (auto &nhgm : syncd_fg_route_entry->nhopgroup_members)
     {
-        status = sai_next_hop_group_api->remove_next_hop_group_member(nhgm.second);
+        status = sai_next_hop_group_api->remove_next_hop_group_member(nhgm);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
-                nhgm.second, status);
+                nhgm, status);
             task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
             if (handle_status != task_success)
             {
@@ -821,56 +822,6 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     remove_nh=true;
                 }
 
-                /*
-                if (num_nhs_with_one_more == 0)
-                {
-                    if (map_entry->size() == exp_bucket_size + 1)
-                    {
-                        SWSS_LOG_INFO("Nexthop %s has %zu, don't remove more buckets after this", it->to_string().c_str(), map_entry->size());
-                        move_bkt = true;
-                        remove_nh = true;
-                    }
-                    else if (map_entry->size() == exp_bucket_size)
-                    {
-                        SWSS_LOG_INFO("Nexthop %s is already at exp_size %d",
-                                      it->to_string().c_str(), exp_bucket_size);
-                        remove_nh=true;
-                    }
-                    else
-                    {
-                        SWSS_LOG_INFO("Nexthop %s has %zu, continue to remove more buckets after this.",
-                            it->to_string().c_str(), map_entry->size());
-                        move_bkt=true;
-                    }
-                }
-                else
-                {
-                    if (map_entry->size() > exp_bucket_size + 1)
-                    {
-                        SWSS_LOG_INFO("Nexthop %s has %zu, continue to remove more buckets after this.",
-                                      it->to_string().c_str(), map_entry->size());
-                        move_bkt=true;
-                    }
-                    else if (map_entry->size() == exp_bucket_size + 1)
-                    {
-                        SWSS_LOG_INFO("Nexthop %s has %zu, don't remove more buckets after this. num_nhs_with_one_more %d",
-                                      it->to_string().c_str(), map_entry->size(), num_nhs_with_one_more - 1);
-                        move_bkt=true;
-                        remove_nh = true;
-                        num_nhs_with_one_more--;
-                    }
-                    else if (map_entry->size() == exp_bucket_size)
-                    {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
-                                      it->to_string().c_str(), map_entry->size(), exp_bucket_size + 1);
-                        remove_nh=true;
-                    }
-                    else
-                    {
-                        move_bkt=true;
-                    }
-                }
-                */
                 // Replace the active nh's buckets from the end
                 if (move_bkt)
                 {
@@ -1067,7 +1018,6 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
             if (!setInactiveBankToNextAvailableActiveBank(syncd_fg_route_entry, fgNhgEntry,
                         bank, bank_member_changes, nhopgroup_members_set, ipPrefix))
             {
-                SWSS_LOG_INFO("Failed to map to active_bank and set nh in SAI");
                 return false;
             }
         }
@@ -1076,7 +1026,6 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
             if (!setActiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry,
                 bank, bank_member_changes[active_bank], nhopgroup_members_set, ipPrefix))
             {
-                SWSS_LOG_INFO("Failed setActiveBankHashBucketChanges");
                 return false;
             }
         }
