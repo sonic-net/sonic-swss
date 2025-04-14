@@ -23,9 +23,14 @@ const int el_count = 2;
 
 const string SWSS_CONFIG_DIR    = "/etc/swss/config.d/";
 
+/*
+ * swssconfig will only connect to local orchagent ZMQ endpoint.
+ */
+const char* ZMQ_LOCAL_ADDRESS = "tcp://localhost";
+
 void usage()
 {
-    cout << "Usage: swssconfig [FILE...]" << endl;
+    cout << "Usage: swssconfig [-p zmq port] [FILE...]" << endl;
     cout << "       (default config folder is /etc/swss/config.d/)" << endl;
 }
 
@@ -41,15 +46,17 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
-bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
+bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, int zmq_port)
 {
     DBConnector db("APPL_DB", 0, false);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
     unordered_map<string, ProducerStateTable*> table_map;
 
-    // [Hua] test code, need improve to a parameter
-    ZmqClient zmqClient("tcp://localhost:8100");
-    SWSS_LOG_WARN("[Hua] write_db_data start.");
+    std::unique_ptr<ZmqClient> zmq_client = nullptr;
+    if (zmq_port)
+    {
+        zmq_client = std::make_unique<ZmqClient>(string(ZMQ_LOCAL_ADDRESS) + ":" + std::to_string(zmq_port));
+    }
 
     for (auto &db_item : db_items)
     {
@@ -69,8 +76,9 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         ProducerStateTable* p_table= nullptr;
         if (findResult == table_map.end())
         {
-            if (table_name == APP_ROUTE_TABLE_NAME) {
-                p_table = new ZmqProducerStateTable(&pipeline, table_name, zmqClient, true);
+            if ((table_name == APP_ROUTE_TABLE_NAME ||table_name == APP_LABEL_ROUTE_TABLE_NAME)
+                && (zmq_client != nullptr)) {
+                p_table = new ZmqProducerStateTable(&pipeline, table_name, *zmq_client, true);
             }
             else {
                 p_table = new ProducerStateTable(&pipeline, table_name, true);
@@ -95,9 +103,6 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         }
     }
 
-    
-    SWSS_LOG_WARN("[Hua] write_db_data end.");
-    // [Hua] test code, need improve to a parameter
     // release tables
     for (const auto& table_item : table_map)
     {
@@ -198,6 +203,7 @@ vector<string> read_directory(const string &path)
 int main(int argc, char **argv)
 {
     vector<string> files;
+    int zmq_port = 0;
     if (argc == 1)
     {
         files = read_directory(SWSS_CONFIG_DIR);
@@ -209,7 +215,14 @@ int main(int argc, char **argv)
     }
     else
     {
-        for (auto i = 1; i < argc; i++)
+        int start = 1;
+        if (!strcmp(argv[1], "-p"))
+        {
+            start = 3;
+            zmq_port = atoi(argv[2]);
+        }
+
+        for (auto i = start; i < argc; i++)
         {
             files.push_back(string(argv[i]));
         }
@@ -236,7 +249,7 @@ int main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
 
-            if (!write_db_data(db_items))
+            if (!write_db_data(db_items, zmq_port))
             {
                 SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;
