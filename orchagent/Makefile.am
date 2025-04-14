@@ -8,9 +8,7 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I pbh \
            -I nhg
 
-if GCOV_ENABLED
 SUBDIRS = p4orch/tests
-endif
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -19,9 +17,10 @@ swssdir = $(datadir)/swss
 dist_swss_DATA = \
 		 eliminate_events.lua \
 		 rif_rates.lua \
-		 pfc_detect_innovium.lua  \
+		 pfc_detect_marvell_teralynx.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
+		 pfc_detect_marvell_prestera.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
@@ -108,6 +107,8 @@ orchagent_SOURCES = \
             response_publisher.cpp \
             nvgreorch.cpp \
             zmqorch.cpp \
+            dash/dashenifwdorch.cpp \
+            dash/dashenifwdinfo.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
@@ -115,7 +116,8 @@ orchagent_SOURCES = \
             dash/dashaclgroupmgr.cpp \
             dash/dashtagmgr.cpp \
             dash/pbutils.cpp \
-            twamporch.cpp
+            twamporch.cpp \
+            stporch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
@@ -138,7 +140,7 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi
+orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
 
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)

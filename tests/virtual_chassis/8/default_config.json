@@ -5,6 +5,7 @@
             "chassis_db_address" : "10.8.1.200",
             "inband_address" : "10.8.1.200/24",
             "switch_type": "fabric",
+            "switch_id": "0",
             "sub_role" : "BackEnd",
             "start_chassis_db" : "1",
             "comment" : "default_config for a vs that runs chassis_db"

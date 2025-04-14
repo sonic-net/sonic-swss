@@ -26,6 +26,8 @@ public:
     std::string getLearnModeStr(const PortConfig &port) const;
     std::string getLinkTrainingStr(const PortConfig &port) const;
     std::string getAdminStatusStr(const PortConfig &port) const;
+    std::string getPtTimestampTemplateStr(const PortConfig &port) const;
+    std::string getDampingAlgorithm(const PortConfig &port) const;
 
     bool parsePortConfig(PortConfig &port) const;
     bool validatePortConfig(PortConfig &port) const;
@@ -35,6 +37,10 @@ private:
 
     template<typename T>
     bool parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const;
+
+    bool parsePortLinkEventDampingAlgorithm(PortConfig &port, const std::string &field, const std::string &value) const;
+    template<typename T>
+    bool parsePortLinkEventDampingConfig(T &damping_config_attr, const std::string &field, const std::string &value) const;
 
     bool parsePortAlias(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortIndex(PortConfig &port, const std::string &field, const std::string &value) const;
@@ -53,4 +59,7 @@ private:
     bool parsePortRole(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdminStatus(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortDescription(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortSubport(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortPtIntfId(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortPtTimestampTemplate(PortConfig &port, const std::string &field, const std::string &value) const;
 };

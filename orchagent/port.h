@@ -10,9 +10,12 @@ extern "C" {
 #include <vector>
 #include <map>
 #include <bitset>
+#include <chrono>
 #include <unordered_set>
-
+#include <iomanip>
+#include <sstream>
 #include <macaddress.h>
+#include <sairedis.h>
 
 #define DEFAULT_PORT_VLAN_ID    1
 /*
@@ -71,6 +74,43 @@ struct SystemLagInfo
     std::string alias = "";
     int32_t switch_id = -1;
     int32_t spa_id = 0;
+};
+
+typedef std::map<sai_uint16_t, sai_object_id_t> stp_port_ids_t;
+class PortOperErrorEvent
+{
+public:
+    PortOperErrorEvent() = default;
+    PortOperErrorEvent(const sai_port_error_status_t error, std::string key) : m_errorFlag(error), m_dbKeyError(key){}
+    ~PortOperErrorEvent() = default;
+
+    inline void incrementErrorCount(void) { m_errorCount++; }
+    
+    inline size_t getErrorCount(void) const { return m_errorCount; }
+    
+    void recordEventTime(void) {
+        auto now = std::chrono::system_clock::now();
+        m_eventTime = std::chrono::system_clock::to_time_t(now);
+    }
+    
+    std::string getEventTime(void) {
+        std::ostringstream oss;
+        oss << std::put_time(std::gmtime(&m_eventTime), "%Y-%m-%d %H:%M:%S");
+        return oss.str();
+    }
+
+    inline std::string getDbKey(void) const { return m_dbKeyError; }
+    
+    // Returns true if port oper error flag in sai_port_error_status_t is set
+    bool isErrorSet(sai_port_error_status_t errstatus) const { return (m_errorFlag & errstatus);}
+
+    static const std::unordered_map<sai_port_error_status_t, std::string> db_key_errors;
+
+private:
+    sai_port_error_status_t m_errorFlag = SAI_PORT_ERROR_STATUS_CLEAR;
+    size_t m_errorCount = 0;
+    std::string m_dbKeyError; // DB key for this port error
+    std::time_t m_eventTime = 0;
 };
 
 class Port
@@ -154,6 +194,7 @@ public:
     sai_object_id_t     m_parent_port_id = 0;
     uint32_t            m_dependency_bitmap = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
+    sai_port_error_status_t m_oper_error_status = SAI_PORT_ERROR_STATUS_CLEAR; //Bitmap of last port oper error status
     std::set<std::string> m_members;
     std::set<std::string> m_child_ports;
     std::vector<sai_object_id_t> m_queue_ids;
@@ -161,6 +202,8 @@ public:
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
     uint8_t   m_pfc_bitmask = 0;        // PFC enable bit mask
     uint8_t   m_pfcwd_sw_bitmask = 0;   // PFC software watchdog enable
+    uint8_t   m_host_tx_queue = 0;
+    bool      m_host_tx_queue_configured = false;
     uint16_t  m_tpid = DEFAULT_TPID;
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
@@ -192,6 +235,11 @@ public:
     sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
+    stp_port_ids_t m_stp_port_ids; //STP Port object ids for each STP instance
+    sai_int16_t m_stp_id = -1; //STP instance for the VLAN
+    /* Port oper error status to event map*/
+    std::unordered_map<sai_port_error_status_t, PortOperErrorEvent> m_portOperErrorToEvent;
+
     /* pre-emphasis */
     std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
 
@@ -208,6 +256,18 @@ public:
 
     int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
     int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
+
+    /* Path Tracing */
+    uint16_t m_pt_intf_id = 0;
+    sai_port_path_tracing_timestamp_type_t m_pt_timestamp_template = SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23;
+
+    /* link event damping */
+    sai_redis_link_event_damping_algorithm_t m_link_event_damping_algorithm = SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED;
+    uint32_t m_max_suppress_time = 0;
+    uint32_t m_decay_half_life = 0;
+    uint32_t m_suppress_threshold = 0;
+    uint32_t m_reuse_threshold = 0;
+    uint32_t m_flap_penalty = 0;
 };
 
 }

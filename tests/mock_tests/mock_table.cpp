@@ -1,6 +1,8 @@
 #include "table.h"
 #include "producerstatetable.h"
+#include "producertable.h"
 #include <set>
+#include <memory>
 
 using TableDataT = std::map<std::string, std::vector<swss::FieldValueTuple>>;
 using TablesT = std::map<std::string, TableDataT>;
@@ -43,21 +45,9 @@ namespace swss
         existing_values.swap(new_values);
     }
 
-    bool Table::get(const std::string &key, std::vector<FieldValueTuple> &ovalues)
+    bool _hget(int dbId, const std::string &tableName, const std::string &key, const std::string &field, std::string &value)
     {
-        auto table = gDB[m_pipe->getDbId()][getTableName()];
-        if (table.find(key) == table.end())
-        {
-            return false;
-        }
-
-        ovalues = table[key];
-        return true;
-    }
-
-    bool Table::hget(const std::string &key, const std::string &field, std::string &value)
-    {
-        auto table = gDB[m_pipe->getDbId()][getTableName()];
+        auto table = gDB[dbId][tableName];
         if (table.find(key) == table.end())
         {
             return false;
@@ -73,6 +63,23 @@ namespace swss
         }
 
         return false;
+    }
+
+    bool Table::get(const std::string &key, std::vector<FieldValueTuple> &ovalues)
+    {
+        auto table = gDB[m_pipe->getDbId()][getTableName()];
+        if (table.find(key) == table.end())
+        {
+            return false;
+        }
+
+        ovalues = table[key];
+        return true;
+    }
+
+    bool Table::hget(const std::string &key, const std::string &field, std::string &value)
+    {
+        return _hget(m_pipe->getDbId(), getTableName(), key, field, value);
     }
 
     void Table::set(const std::string &key,
@@ -130,6 +137,45 @@ namespace swss
     void ProducerStateTable::del(const std::string &key,
                                  const std::string &op,
                                  const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        table.erase(key);
+    }
+
+    std::shared_ptr<std::string> DBConnector::hget(const std::string &key, const std::string &field)
+    {
+        std::string value;
+        if (_hget(getDbId(), key, "", field, value))
+        {
+            std::shared_ptr<std::string> ptr(new std::string(value));
+            return ptr;
+        }
+        else
+        {
+            return std::shared_ptr<std::string>(NULL);
+        }
+    }
+
+    void ProducerTable::set(const std::string &key,
+                            const std::vector<FieldValueTuple> &values,
+                            const std::string &op,
+                            const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        auto iter = table.find(key);
+        if (iter == table.end())
+        {
+            table[key] = values;
+        }
+        else
+        {
+            merge_values(iter->second, values);
+        }
+    }
+
+    void ProducerTable::del(const std::string &key,
+                            const std::string &op,
+                            const std::string &prefix)
     {
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table.erase(key);

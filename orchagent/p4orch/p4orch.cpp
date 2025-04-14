@@ -154,6 +154,8 @@ void P4Orch::doTask(Consumer &consumer)
     {
         manager->drain();
     }
+
+    m_publisher.flush();
 }
 
 void P4Orch::doTask(swss::SelectableTimer &timer)

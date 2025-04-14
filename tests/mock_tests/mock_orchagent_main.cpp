@@ -13,9 +13,11 @@ MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
 string gMySwitchType = "switch";
+string gMySwitchSubType = "SmartSwitch";
 int32_t gVoqMySwitchId = 0;
 string gMyHostName = "Linecard1";
 string gMyAsicName = "Asic0";
+bool gTraditionalFlexCounter = false;
 
 VRFOrch *gVrfOrch;
 

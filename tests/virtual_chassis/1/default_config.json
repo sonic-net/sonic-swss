@@ -15,14 +15,19 @@
     "INTERFACE": {
         "Ethernet0": {},
         "Ethernet4": {},
+        "Ethernet8": {},
         "Ethernet0|10.8.101.1/24": {},
-        "Ethernet4|10.8.104.1/24": {}
+        "Ethernet4|10.8.104.1/24": {},
+        "Ethernet8|10.8.108.1/24": {}
     },
     "PORT": {
         "Ethernet0": {
             "admin_status": "up"
         },
         "Ethernet4": {
+            "admin_status": "up"
+        },
+        "Ethernet8": {
             "admin_status": "up"
         }
     },

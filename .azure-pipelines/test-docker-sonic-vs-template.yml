@@ -50,7 +50,7 @@ jobs:
       DIFF_COVER_ENABLE: 'true'
       DIFF_COVER_COVERAGE_FILES: Cobertura.xml
 
-  pool: sonic-common-test
+  pool: sonictest
 
   steps:
   - script: |
@@ -90,8 +90,9 @@ jobs:
         curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
         sudo apt-add-repository https://packages.microsoft.com/ubuntu/20.04/prod
         sudo apt-get update
-        sudo apt-get install -y dotnet-sdk-7.0
-        sudo dotnet tool install dotnet-reportgenerator-globaltool  --tool-path /usr/bin
+        sudo apt-get install -y dotnet-sdk-8.0
+        sudo dotnet tool install dotnet-reportgenerator-globaltool --tool-path /usr/bin 2>&1 | tee log.log || grep 'already installed' log.log
+        rm log.log
     displayName: "Install .NET CORE"
 
   - script: |
@@ -107,7 +108,7 @@ jobs:
       # install packages for vs test
       sudo apt-get install -y net-tools bridge-utils vlan
       sudo apt-get install -y python3-pip
-      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0
+      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0 requests==2.31.0
       sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
 
@@ -135,7 +136,7 @@ jobs:
       fi
 
       all_tests=$(ls test_*.py | xargs)
-      all_tests="${all_tests} p4rt"
+      all_tests="${all_tests} p4rt dash"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then
         all_tests=" $(ls ${{ parameters.run_tests_pattern }} | xargs) "

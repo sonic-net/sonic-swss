@@ -29,11 +29,6 @@ class TestP4RTL3Admit(object):
                 "%s:%s"
                 % (self._p4rt_l3_admit_obj.APP_DB_TBL_NAME, self._p4rt_l3_admit_obj.TBL_NAME),
             ),
-            (
-                self._p4rt_l3_admit_obj.appl_state_db,
-                "%s:%s"
-                % (self._p4rt_l3_admit_obj.APP_DB_TBL_NAME, self._p4rt_l3_admit_obj.TBL_NAME),
-            ),
             (self._p4rt_l3_admit_obj.asic_db,
              self._p4rt_l3_admit_obj.ASIC_DB_TBL_NAME),
         )
@@ -80,25 +75,6 @@ class TestP4RTL3Admit(object):
         # Query application database for newly created l3 admit key.
         (status, fvs) = util.get_key(
             self._p4rt_l3_admit_obj.appl_db,
-            self._p4rt_l3_admit_obj.APP_DB_TBL_NAME,
-            l3_admit_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # Query application state database for l3 admit entries.
-        state_l3_admit_entries = util.get_keys(
-            self._p4rt_l3_admit_obj.appl_state_db,
-            self._p4rt_l3_admit_obj.APP_DB_TBL_NAME +
-            ":" + self._p4rt_l3_admit_obj.TBL_NAME,
-        )
-        assert len(state_l3_admit_entries) == (
-            self._p4rt_l3_admit_obj.get_original_appl_state_db_entries_count() + 1
-        )
-
-        # Query application state database for newly created l3 admit key.
-        (status, fvs) = util.get_key(
-            self._p4rt_l3_admit_obj.appl_state_db,
             self._p4rt_l3_admit_obj.APP_DB_TBL_NAME,
             l3_admit_key,
         )
@@ -170,24 +146,6 @@ class TestP4RTL3Admit(object):
         )
         assert status == False
 
-        # Query application database for route entries.
-        state_l3_admit_entries = util.get_keys(
-            self._p4rt_l3_admit_obj.appl_state_db,
-            self._p4rt_l3_admit_obj.APP_DB_TBL_NAME +
-            ":" + self._p4rt_l3_admit_obj.TBL_NAME,
-        )
-        assert len(state_l3_admit_entries) == (
-            self._p4rt_l3_admit_obj.get_original_appl_state_db_entries_count()
-        )
-
-        # Verify that the route_key no longer exists in application database.
-        (status, fsv) = util.get_key(
-            self._p4rt_l3_admit_obj.appl_state_db,
-            self._p4rt_l3_admit_obj.APP_DB_TBL_NAME,
-            l3_admit_key,
-        )
-        assert status == False
-
         # Query ASIC database for my mac entries.
         my_mac_entries = util.get_keys(
             self._p4rt_l3_admit_obj.asic_db, self._p4rt_l3_admit_obj.ASIC_DB_TBL_NAME
@@ -213,11 +171,6 @@ class TestP4RTL3Admit(object):
         db_list = (
             (
                 self._p4rt_l3_admit_obj.appl_db,
-                "%s:%s"
-                % (self._p4rt_l3_admit_obj.APP_DB_TBL_NAME, self._p4rt_l3_admit_obj.TBL_NAME),
-            ),
-            (
-                self._p4rt_l3_admit_obj.appl_state_db,
                 "%s:%s"
                 % (self._p4rt_l3_admit_obj.APP_DB_TBL_NAME, self._p4rt_l3_admit_obj.TBL_NAME),
             ),

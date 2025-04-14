@@ -107,9 +107,12 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         // class shared dict: ACL table name -> ACL table
         static std::map<std::string, AclTable> m_aclTables;
 
+        bool shared_egress_acl_table = false;
+
         string m_strIngressTable;
         string m_strEgressTable;
         string m_strRule;
+        string m_strEgressRule;
         void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
         void createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t port);
         void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);

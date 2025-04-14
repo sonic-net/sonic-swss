@@ -21,6 +21,9 @@ parameters:
   type: string
   default: '$(BUILD_BRANCH)'
 
+- name: debian_version
+  type: string
+
 - name: artifact_name
   type: string
 
@@ -90,6 +93,7 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
       patterns: |
         ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
@@ -131,6 +135,18 @@ jobs:
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: ${{ parameters.buildimage_artifact_project }}
+      pipeline: ${{ parameters.buildimage_artifact_pipeline }}
+      artifact: ${{ parameters.buildimage_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
+      path: $(Build.ArtifactStagingDirectory)/download
+      patterns: '**/target/debs/${{ parameters.debian_version }}/framework_*.deb'
+    displayName: "Download sonic-buildimage sonic-framework package"
+
   - script: |
       set -ex
       echo $(Build.DefinitionName).$(Build.BuildNumber)
@@ -147,6 +163,7 @@ jobs:
       fi
 
       pushd .azure-pipelines
+      ls -l docker-sonic-vs/debs
 
       build_dir=$(grep BUILD_DIR $(Build.ArtifactStagingDirectory)/download/build.info | cut -d= -f2)
       build_args="--build-arg build_dir=$build_dir"

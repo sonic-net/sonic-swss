@@ -10,7 +10,7 @@ parameters:
 - name: pool
   type: string
   values:
-  - sonicbld
+  - sonicbld-1es
   - sonicbld-armhf
   - sonicbld-arm64
   - default
@@ -150,18 +150,15 @@ jobs:
       runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download/common
       patterns: |
-        target/debs/bullseye/libnl-3-200_*.deb
-        target/debs/bullseye/libnl-3-dev_*.deb
-        target/debs/bullseye/libnl-genl-3-200_*.deb
-        target/debs/bullseye/libnl-genl-3-dev_*.deb
-        target/debs/bullseye/libnl-route-3-200_*.deb
-        target/debs/bullseye/libnl-route-3-dev_*.deb
-        target/debs/bullseye/libnl-nf-3-200_*.deb
-        target/debs/bullseye/libnl-nf-3-dev_*.deb
-        target/debs/bullseye/libyang_*.deb
-        target/debs/bullseye/libprotobuf*.deb
-        target/debs/bullseye/libprotoc*.deb
-        target/debs/bullseye/protobuf-compiler*.deb
+        target/debs/bookworm/libnl-3-200_*.deb
+        target/debs/bookworm/libnl-3-dev_*.deb
+        target/debs/bookworm/libnl-genl-3-200_*.deb
+        target/debs/bookworm/libnl-genl-3-dev_*.deb
+        target/debs/bookworm/libnl-route-3-200_*.deb
+        target/debs/bookworm/libnl-route-3-dev_*.deb
+        target/debs/bookworm/libnl-nf-3-200_*.deb
+        target/debs/bookworm/libnl-nf-3-dev_*.deb
+        target/debs/bookworm/libyang_*.deb
     displayName: "Download common libs"
   - task: DownloadPipelineArtifact@2
     inputs:

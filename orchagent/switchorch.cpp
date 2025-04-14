@@ -37,7 +37,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME},
     {"debug_shell_enable",                  SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE},
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
-    {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC}
+    {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC},
+    {"ecmp_hash_offset",                    SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
+    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET}
 };
 
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
@@ -118,10 +120,10 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
         m_db(db),
-        m_stateDb(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+        m_stateDb(new DBConnector("STATE_DB", 0)),
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
         m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
-        m_stateDbForNotification(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+        m_stateDbForNotification(new DBConnector("STATE_DB", 0)),
         m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME))
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
@@ -541,6 +543,8 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                 MacAddress mac_addr;
                 bool invalid_attr = false;
+                bool ret = false;
+                bool unsupported_attr = false;
                 switch (attr.id)
                 {
                     case SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION:
@@ -578,6 +582,29 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
                         break;
 
+                    case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET:
+                        ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+                    case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET:
+                        ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+
                     default:
                         invalid_attr = true;
                         break;
@@ -585,7 +612,14 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 if (invalid_attr)
                 {
                     /* break from kfvFieldsValues for loop */
+                    SWSS_LOG_ERROR("Invalid Attribute %s", attribute.c_str());
+                    // Will not continue to set the rest of the attributes
                     break;
+                }
+                if (unsupported_attr){
+                    SWSS_LOG_ERROR("Unsupported Attribute %s", attribute.c_str());
+                    // Continue to set the rest of the attributes, even if current attribute is unsupported
+                    continue;
                 }
 
                 sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
@@ -1081,8 +1115,22 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     const string &severity_str = switch_asic_sdk_health_event_severity_reverse_map.at(severity);
     const string &category_str = switch_asic_sdk_health_event_category_reverse_map.at(category);
     string description_str;
-    const std::time_t &t = (std::time_t)timestamp.tv_sec;
+    std::time_t t = (std::time_t)timestamp.tv_sec;
+    const std::time_t now = std::time(0);
+    const double year_in_seconds = 86400 * 365;
     stringstream time_ss;
+
+    /*
+     * In case vendor SAI passed a very large timestamp, put_time can cause segment fault which can not be caught by try/catch infra
+     * We check the difference between the timestamp from SAI and the current time and force to use current time if the gap is too large
+     * By doing so, we can avoid the segment fault
+     */
+    if (difftime(t, now) > year_in_seconds)
+    {
+        SWSS_LOG_ERROR("Invalid timestamp second %" PRIx64 " in received ASIC/SDK health event, reset to current time", timestamp.tv_sec);
+        t = now;
+    }
+
     time_ss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
 
     switch (data.data_type)
@@ -1486,5 +1534,53 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
         {
             return false;
         }
+    }
+}
+
+// Bind ACL table (with bind type switch) to switch
+bool SwitchOrch::bindAclTableToSwitch(acl_stage_type_t stage, sai_object_id_t table_id)
+{
+    sai_attribute_t attr;
+    if ( stage == ACL_STAGE_INGRESS ) {
+        attr.id = SAI_SWITCH_ATTR_INGRESS_ACL;
+    } else {
+        attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    }
+    attr.value.oid = table_id;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    string stage_str = (stage == ACL_STAGE_INGRESS) ? "ingress" : "egress";
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Bind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to bind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return false;
+    }
+}
+
+// Unbind ACL table from swtich
+bool SwitchOrch::unbindAclTableFromSwitch(acl_stage_type_t stage,sai_object_id_t table_id)
+{
+    sai_attribute_t attr;
+    if ( stage == ACL_STAGE_INGRESS ) {
+        attr.id = SAI_SWITCH_ATTR_INGRESS_ACL;
+    } else {
+        attr.id = SAI_SWITCH_ATTR_EGRESS_ACL;
+    }
+    attr.value.oid = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    string stage_str = (stage == ACL_STAGE_INGRESS) ? "ingress" : "egress";
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Unbind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to unbind %s acl table %" PRIx64" to switch", stage_str.c_str(), table_id);
+        return false;
     }
 }

@@ -166,7 +166,11 @@ local function fetch_buffer_pool_size_from_appldb(shp_enabled)
                 -- In case the orchagent starts handling buffer configuration between 2 and 3,
                 -- It is inconsistent between buffer pools and profiles, which fails Mellanox SAI sanity check
                 -- To avoid it, it indicates the shared headroom pool is enabled by setting a very small buffer pool and shared headroom pool sizes
-                table.insert(result, buffer_pools[i] .. ':2048:1024')
+                if size == "0" then
+                    table.insert(result, buffer_pools[i] .. ':2048:1024')
+                else
+                    table.insert(result, buffer_pools[i] .. ":" .. size .. ':1024')
+                end
             else
                 table.insert(result, buffer_pools[i] .. ':' .. size)
             end
@@ -417,10 +421,12 @@ local pool_size
 if shp_size then
     accumulative_occupied_buffer = accumulative_occupied_buffer + shp_size
 end
+
+local available_buffer = mmu_size - accumulative_occupied_buffer
 if ingress_pool_count == 1 then
-    pool_size = mmu_size - accumulative_occupied_buffer
+    pool_size = available_buffer
 else
-    pool_size = (mmu_size - accumulative_occupied_buffer) / 2
+    pool_size = available_buffer / 2
 end
 
 if pool_size > ceiling_mmu_size then
@@ -429,12 +435,19 @@ end
 
 local shp_deployed = false
 for i = 1, #pools_need_update, 1 do
+    local percentage = tonumber(redis.call('HGET', pools_need_update[i], 'percentage'))
+    local effective_pool_size
+    if percentage ~= nil and percentage >= 0 then
+        effective_pool_size = available_buffer * percentage / 100
+    else
+        effective_pool_size = pool_size
+    end
     local pool_name = string.match(pools_need_update[i], "BUFFER_POOL|([^%s]+)$")
     if shp_size ~= 0 and pool_name == "ingress_lossless_pool" then
-        table.insert(result, pool_name .. ":" .. math.ceil(pool_size) .. ":" .. math.ceil(shp_size))
+        table.insert(result, pool_name .. ":" .. math.ceil(effective_pool_size) .. ":" .. math.ceil(shp_size))
         shp_deployed = true
     else
-        table.insert(result, pool_name .. ":" .. math.ceil(pool_size))
+        table.insert(result, pool_name .. ":" .. math.ceil(effective_pool_size))
     end
 end
 

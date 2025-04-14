@@ -47,6 +47,8 @@
 #include "srv6orch.h"
 #include "nvgreorch.h"
 #include "twamporch.h"
+#include "stporch.h"
+#include "dash/dashenifwdorch.h"
 #include "dash/dashaclorch.h"
 #include "dash/dashorch.h"
 #include "dash/dashrouteorch.h"
@@ -59,10 +61,10 @@ class OrchDaemon
 {
 public:
     OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
-    ~OrchDaemon();
+    virtual ~OrchDaemon();
 
     virtual bool init();
-    void start();
+    void start(long heartBeatInterval);
     bool warmRestoreAndSyncUp();
     void getTaskToSync(vector<string> &ts);
     bool warmRestoreValidation();
@@ -83,6 +85,24 @@ public:
         m_fabricQueueStatEnabled = enabled;
     }
     void logRotate();
+
+    // Two required API to support ring buffer feature
+    /**
+     * This method is used by a ring buffer consumer [Orchdaemon] to initialzie its ring,
+     * and populate this ring's pointer to the producers [Orch, Consumer], to make sure that
+     * they are connected to the same ring.
+     */
+    void enableRingBuffer();
+    void disableRingBuffer();
+    /**
+     * This method describes how the ring consumer consumes this ring.
+     */
+    void popRingBuffer();
+
+    std::shared_ptr<RingBuffer> gRingBuffer = nullptr;
+
+    std::thread ring_thread;
+
 private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
@@ -96,14 +116,13 @@ private:
 
     std::vector<Orch *> m_orchList;
     Select *m_select;
-    
     std::chrono::time_point<std::chrono::high_resolution_clock> m_lastHeartBeat;
 
     void flush();
 
-    void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent);
+    void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval);
 
-    void freezeAndHeartBeat(unsigned int duration);
+    void freezeAndHeartBeat(unsigned int duration, long interval);
 };
 
 class FabricOrchDaemon : public OrchDaemon

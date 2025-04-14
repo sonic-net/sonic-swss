@@ -77,7 +77,20 @@ namespace fdb_syncd_flush_test
             m_asic_db = std::make_shared<swss::DBConnector>("ASIC_DB", 0);
 
             // Construct dependencies
-            // 1) Portsorch
+            // 1) SwitchOrch
+            TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
+            TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
+            TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+
+            vector<TableConnector> switch_tables = {
+                conf_asic_sensors,
+                app_switch_table
+            };
+
+            ASSERT_EQ(gSwitchOrch, nullptr);
+            gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
+
+            // 2) Portsorch
             const int portsorch_base_pri = 40;
 
             vector<table_name_with_pri_t> ports_tables = {
@@ -90,7 +103,7 @@ namespace fdb_syncd_flush_test
 
             m_portsOrch = std::make_shared<PortsOrch>(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
 
-            // 2) Crmorch
+            // 3) Crmorch
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
             VxlanTunnelOrch *vxlan_tunnel_orch_1 = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
@@ -114,6 +127,8 @@ namespace fdb_syncd_flush_test
         }
 
         virtual void TearDown() override {
+            delete gSwitchOrch;
+            gSwitchOrch = nullptr;
             delete gCrmOrch;
             gCrmOrch = nullptr;
             gDirectory.m_values.clear();

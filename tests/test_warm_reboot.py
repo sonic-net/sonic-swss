@@ -2431,30 +2431,41 @@ class TestWarmReboot(object):
     def test_TunnelMgrdWarmRestart(self, dvs):
         tunnel_name = "MuxTunnel0"
         tunnel_table = "TUNNEL_DECAP_TABLE"
+        tunnel_decap_term_table = "TUNNEL_DECAP_TERM_TABLE"
         tunnel_params = {
             "tunnel_type": "IPINIP",
+            "src_ip": "10.1.0.33",
             "dst_ip": "10.1.0.32",
             "dscp_mode": "uniform",
             "ecn_mode": "standard",
             "ttl_mode": "pipe"
         }
 
-        pubsub = dvs.SubscribeAppDbObject(tunnel_table)
+        pubsub_tunnel = dvs.SubscribeAppDbObject(tunnel_table)
+        pubsub_decap_term = dvs.SubscribeAppDbObject(tunnel_decap_term_table)
 
         dvs.runcmd("config warm_restart enable swss")
         config_db = dvs.get_config_db()
         config_db.create_entry("TUNNEL", tunnel_name, tunnel_params)
 
         app_db = dvs.get_app_db()
+        dst_ip = tunnel_params.pop("dst_ip")
         app_db.wait_for_matching_keys(tunnel_table, [tunnel_name])
+        app_db.wait_for_matching_keys(tunnel_decap_term_table, [tunnel_name + ":" + dst_ip])
 
-        nadd, ndel = dvs.CountSubscribedObjects(pubsub)
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_tunnel)
         assert nadd == len(tunnel_params)
         assert ndel == 1  # Expect 1 deletion as part of table creation
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_decap_term)
+        assert nadd == 2
+        assert ndel == 1
 
         dvs.runcmd("supervisorctl restart tunnelmgrd")
         dvs.check_services_ready()
-        nadd, ndel = dvs.CountSubscribedObjects(pubsub)
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_tunnel)
+        assert nadd == 0
+        assert ndel == 0
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_decap_term)
         assert nadd == 0
         assert ndel == 0
 

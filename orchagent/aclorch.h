@@ -15,6 +15,7 @@
 #include "mirrororch.h"
 #include "dtelorch.h"
 #include "observer.h"
+#include "vxlanorch.h"
 #include "flex_counter_manager.h"
 
 #include "acltable.h"
@@ -23,6 +24,7 @@
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
+#define MATCH_OUT_PORT          "OUT_PORT"
 #define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
@@ -49,8 +51,12 @@
 #define MATCH_INNER_IP_PROTOCOL "INNER_IP_PROTOCOL"
 #define MATCH_INNER_L4_SRC_PORT "INNER_L4_SRC_PORT"
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
+#define MATCH_INNER_SRC_MAC     "INNER_SRC_MAC"
+#define MATCH_INNER_DST_MAC     "INNER_DST_MAC"
 #define MATCH_BTH_OPCODE        "BTH_OPCODE"
 #define MATCH_AETH_SYNDROME     "AETH_SYNDROME"
+#define MATCH_TUNNEL_TERM       "TUNNEL_TERM"
+#define MATCH_METADATA          "META_DATA"
 
 #define BIND_POINT_TYPE_PORT "PORT"
 #define BIND_POINT_TYPE_PORTCHANNEL "PORTCHANNEL"
@@ -68,9 +74,12 @@
 #define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
 #define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
 #define ACTION_COUNTER                      "COUNTER"
+#define ACTION_META_DATA                    "META_DATA_ACTION"
+#define ACTION_DSCP                         "DSCP_ACTION"
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
+#define PACKET_ACTION_COPY        "COPY"
 #define PACKET_ACTION_REDIRECT    "REDIRECT"
 #define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
 
@@ -101,12 +110,26 @@
 
 #define ACL_COUNTER_FLEX_COUNTER_GROUP "ACL_STAT_COUNTER"
 
+#define TABLE_ACL_USER_META_DATA_RANGE_CAPABLE       "ACL_USER_META_DATA_RANGE_CAPABLE"
+#define TABLE_ACL_USER_META_DATA_MIN                 "ACL_USER_META_DATA_MIN"
+#define TABLE_ACL_USER_META_DATA_MAX                 "ACL_USER_META_DATA_MAX"
+#define TABLE_ACL_ENTRY_ATTR_META_CAPABLE            "ACL_ENTRY_ATTR_META_CAPABLE"
+#define TABLE_ACL_ENTRY_ACTION_META_CAPABLE          "ACL_ENTRY_ACTION_META_CAPABLE"
+
 enum AclObjectStatus
 {
     ACTIVE = 0,
     INACTIVE,
     PENDING_CREATION,
     PENDING_REMOVAL
+};
+
+enum EgressSetDscpTableStatus
+{
+    EGRESS_SET_DSCP_TABLE_FAILED = 0,
+    EGRESS_SET_DSCP_TABLE_SUCCESS,
+    EGRESS_SET_DSCP_TABLE_NOT_REQUIRED,
+    EGRESS_SET_DSCP_TABLE_NOT_SUPPORTED
 };
 
 struct AclActionCapabilities
@@ -165,6 +188,24 @@ public:
 private:
     vector<int32_t> m_rangeList;
 };
+
+class MetaDataMgr
+{
+public:
+    void populateRange(uint16_t min, uint16_t max);
+    uint16_t getFreeMetaData(uint8_t dscp);
+    void recycleMetaData(uint16_t metadata);
+    bool isValidMetaData(uint16_t metadata);
+
+private:
+    bool initComplete = false;
+    uint16_t metaMin = 0;
+    uint16_t metaMax = 0;
+    list<uint16_t> m_freeMetadata;
+    map<uint8_t, uint16_t> m_dscpMetadata;
+    map<uint16_t, uint16_t> m_MetadataRef;
+};
+
 class AclTableType
 {
 public:
@@ -248,6 +289,22 @@ class AclTable;
 class AclRule
 {
 public:
+    struct TunnelNH
+    {
+        TunnelNH() = default;
+        ~TunnelNH() = default;
+
+        void load(const std::string& target);
+        void parse(const std::string& target);
+        void clear();
+
+        std::string tunnel_name;
+        swss::IpAddress endpoint_ip;
+        swss::MacAddress mac;
+        uint32_t vni = 0;
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+    };
+
     AclRule(AclOrch *pAclOrch, string rule, string table, bool createCounter = true);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
@@ -278,7 +335,13 @@ public:
     bool getCreateCounter() const;
 
     const vector<AclRangeConfig>& getRangeConfig() const;
-    static shared_ptr<AclRule> makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
+    static shared_ptr<AclRule> makeShared(AclOrch *acl,
+                                        MirrorOrch *mirror,
+                                        DTelOrch *dtel,
+                                        const string& rule,
+                                        const string& table,
+                                        const KeyOpFieldsValuesTuple&,
+                                        MetaDataMgr * m_metadataMgr);
     virtual ~AclRule() {}
 
 protected:
@@ -315,6 +378,7 @@ protected:
     map <sai_acl_entry_attr_t, SaiAttrWrapper> m_matches;
     string m_redirect_target_next_hop;
     string m_redirect_target_next_hop_group;
+    AclRule::TunnelNH m_redirect_target_tun_nh;
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
@@ -342,6 +406,7 @@ public:
     AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool createCounter();
     bool createRule();
     bool removeRule();
     void onUpdate(SubjectType, void *) override;
@@ -375,6 +440,23 @@ protected:
     string m_intSessionId;
     bool INT_enabled;
     bool INT_session_valid;
+};
+
+class AclRuleUnderlaySetDscp: public AclRule
+{
+public:
+    AclRuleUnderlaySetDscp(AclOrch *m_pAclOrch, string rule, string table,  MetaDataMgr* m_metaDataMgr, bool createCounter = true);
+
+    bool validateAddAction(string attr_name, string attr_value);
+    bool validate();
+    void onUpdate(SubjectType, void *) override;
+    uint32_t getDscpValue() const;
+    uint32_t getMetadata() const;
+protected:
+    uint32_t cachedDscpValue;
+    uint32_t cachedMetadata;
+    string table_id;
+    MetaDataMgr* m_metaDataMgr;
 };
 
 class AclTable
@@ -451,6 +533,9 @@ public:
     // Set to store the not configured ACL table port alias
     set<string> pendingPortSet;
 
+    // Is the ACL table bound to switch?
+    bool bindToSwitch = false;
+
 private:
     sai_object_id_t m_oid = SAI_NULL_OBJECT_ID;
     AclOrch *m_pAclOrch = nullptr;
@@ -487,6 +572,14 @@ public:
 
     bool addAclTable(AclTable &aclTable);
     bool removeAclTable(string table_id);
+    bool addAclTable(string table_id, AclTable &aclTable, string orignalTableTypeName);
+    bool updateAclTable(string table_id, AclTable &table, string orignalTableTypeName);
+    EgressSetDscpTableStatus addEgrSetDscpTable(string table_id, AclTable &table, string orignalTableTypeName);
+
+    bool removeEgrSetDscpTable(string table_id);
+    bool addEgrSetDscpRule(string key, string dscpAction);
+    bool removeEgrSetDscpRule(string key);
+
     bool addAclTableType(const AclTableType& tableType);
     bool removeAclTableType(const string& tableTypeName);
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
@@ -506,11 +599,22 @@ public:
     bool isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const;
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
     bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
+    bool isUsingEgrSetDscp(const string& table) const;
+    string translateUnderlaySetDscpTableTypeName(const string& tableTypeName) const;
+    bool isAclMetaDataSupported() const;
+    uint16_t getAclMetaDataMin() const;
+    uint16_t getAclMetaDataMax() const;
+
+    void addMetaDataRef(string key, uint16_t metadata);
+    void removeMetaDataRef(string key, uint16_t metadata);
+    uint32_t getMetaDataRefCount(uint16_t metadata);
+    uint32_t hasMetaDataRefCount(string key);
 
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
     map<acl_stage_type_t, bool> m_L3V4V6Capability;
-
+    map<string, string> m_switchMetaDataCapabilities;
+    
     void registerFlexCounter(const AclRule& rule);
     void deregisterFlexCounter(const AclRule& rule);
 
@@ -530,7 +634,7 @@ private:
     void doAclRuleTask(Consumer &consumer);
     void doAclTableTypeTask(Consumer &consumer);
     void init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
-    void initDefaultTableTypes();
+    void initDefaultTableTypes(const string& platform, const string& sub_platform);
 
     void queryMirrorTableCapability();
     void queryAclActionCapability();
@@ -586,8 +690,12 @@ private:
     Table m_aclTableStateTable;
     Table m_aclRuleStateTable;
 
+    MetaDataMgr m_metaDataMgr;
     map<acl_stage_type_t, string> m_mirrorTableId;
     map<acl_stage_type_t, string> m_mirrorV6TableId;
+    set<string> m_egrSetDscpRef;
+    map<uint16_t, set<string>> m_metadataEgrDscpRule;
+    map<string, uint16_t> m_egrDscpRuleMetadata;
 
     acl_capabilities_t m_aclCapabilities;
     acl_action_enum_values_capabilities_t m_aclEnumActionCapabilities;

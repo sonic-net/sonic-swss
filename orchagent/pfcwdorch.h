@@ -15,6 +15,8 @@ extern "C" {
 
 #define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
 
+const string pfc_wd_flex_counter_group = PFC_WD_FLEX_COUNTER_GROUP;
+
 enum class PfcWdAction
 {
     PFC_WD_ACTION_UNKNOWN,
@@ -62,6 +64,8 @@ public:
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
     string m_platform = "";
+    shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;
+
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -115,13 +119,13 @@ private:
     };
 
     template <typename T>
-    static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
+    static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T));
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);
 
-    string filterPfcCounters(string counters, set<uint8_t>& losslessTc);
+    unordered_set<string> filterPfcCounters(const unordered_set<string> &counters, set<uint8_t>& losslessTc);
     string getFlexCounterTableKey(string s);
 
     void disableBigRedSwitchMode();
@@ -136,10 +140,6 @@ private:
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-
-    shared_ptr<DBConnector> m_flexCounterDb = nullptr;
-    shared_ptr<ProducerTable> m_flexCounterTable = nullptr;
-    shared_ptr<ProducerTable> m_flexCounterGroupTable = nullptr;
 
     bool m_bigRedSwitchFlag = false;
     int m_pollInterval;

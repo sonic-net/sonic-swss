@@ -11,6 +11,7 @@
 #include "fdborch.h"
 #include "mirrororch.h"
 #define private public
+#include "dashorch.h"
 #include "bufferorch.h"
 #include "qosorch.h"
 #define protected public
@@ -28,7 +29,12 @@
 #include "nhgorch.h"
 #include "copporch.h"
 #include "twamporch.h"
+#include "mlagorch.h"
+#define private public
+#include "stporch.h"
+#undef private 
 #include "directory.h"
+#include "dashvnetorch.h"
 
 extern int gBatchSize;
 
@@ -58,6 +64,9 @@ extern Srv6Orch  *gSrv6Orch;
 extern BfdOrch *gBfdOrch;
 extern AclOrch *gAclOrch;
 extern PolicerOrch *gPolicerOrch;
+extern TunnelDecapOrch *gTunneldecapOrch;
+extern StpOrch *gStpOrch;
+extern MlagOrch *gMlagOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -88,3 +97,12 @@ extern sai_counter_api_t* sai_counter_api;
 extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_fdb_api_t* sai_fdb_api;
 extern sai_twamp_api_t* sai_twamp_api;
+extern sai_tam_api_t* sai_tam_api;
+extern sai_dash_vip_api_t* sai_dash_vip_api;
+extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
+extern sai_dash_eni_api_t* sai_dash_eni_api;
+extern sai_stp_api_t* sai_stp_api;
+extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
+extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
+extern sai_dash_vnet_api_t* sai_dash_vnet_api;
+extern sai_dash_appliance_api_t* sai_dash_appliance_api;

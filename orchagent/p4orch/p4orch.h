@@ -83,5 +83,8 @@ class P4Orch : public Orch
     // Notification consumer for port state change
     swss::NotificationConsumer *m_portStatusNotificationConsumer;
 
+    // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
+    ResponsePublisher m_publisher{"APPL_DB", /*bool buffered=*/true, /*db_write_thread=*/true};
+
     friend class p4orch::test::WcmpManagerTest;
 };

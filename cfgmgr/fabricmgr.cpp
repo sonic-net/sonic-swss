@@ -41,6 +41,7 @@ void FabricMgr::doTask(Consumer &consumer)
             string monPollThreshRecovery, monPollThreshIsolation;
             string isolateStatus;
             string alias, lanes;
+            string enable;
             std::vector<FieldValueTuple> field_values;
             string value;
 
@@ -65,6 +66,12 @@ void FabricMgr::doTask(Consumer &consumer)
                 {
                     monPollThreshIsolation = fvValue(i);
                     writeConfigToAppDb(key, "monPollThreshIsolation", monPollThreshIsolation);
+                }
+                else if (fvField(i) == "monState")
+                {
+                    SWSS_LOG_INFO("Enable fabric monitoring setting in appl_db.");
+                    enable = fvValue(i);
+                    writeConfigToAppDb(key, "monState", enable);
                 }
                 else if (fvField(i) == "alias")
                 {

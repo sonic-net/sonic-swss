@@ -56,9 +56,6 @@ class TestP4RTMirror(object):
         original_appl_mirror_entries = util.get_keys(
             self._p4rt_mirror_session_wrapper.appl_db,
             self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME + ":" + self._p4rt_mirror_session_wrapper.TBL_NAME)
-        original_appl_state_mirror_entries = util.get_keys(
-            self._p4rt_mirror_session_wrapper.appl_state_db,
-            self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME + ":" + self._p4rt_mirror_session_wrapper.TBL_NAME)
         original_asic_mirror_entries = util.get_keys(
             self._p4rt_mirror_session_wrapper.asic_db, self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME)
 
@@ -103,20 +100,6 @@ class TestP4RTMirror(object):
 
         # Query application database for newly created mirror key
         (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_db,
-                                     self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
-                                     mirror_session_key)
-        assert status == True
-        util.verify_attr(fvs, attr_list_in_app_db)
-
-        # Query application state database for mirror entries
-        appl_state_mirror_entries = util.get_keys(
-            self._p4rt_mirror_session_wrapper.appl_state_db,
-            self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME + ":" + self._p4rt_mirror_session_wrapper.TBL_NAME)
-        assert len(appl_state_mirror_entries) == len(
-            original_appl_state_mirror_entries) + 1
-
-        # Query application state database for newly created mirror key
-        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_state_db,
                                      self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
                                      mirror_session_key)
         assert status == True
@@ -180,13 +163,6 @@ class TestP4RTMirror(object):
         assert status == True
         util.verify_attr(fvs, attr_list_in_app_db)
 
-        # Query application state database for the modified mirror key
-        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_state_db,
-                                     self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
-                                     mirror_session_key)
-        assert status == True
-        util.verify_attr(fvs, attr_list_in_app_db)
-
         # Query ASIC DB about the modified mirror session.
         expected_attr_list_in_asic_db[9] = (
             self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS, new_dst_mac)
@@ -210,19 +186,6 @@ class TestP4RTMirror(object):
 
         # Query application database for the deleted mirror key
         (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_db,
-                                     self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
-                                     mirror_session_key)
-        assert status == False
-
-        # Query application state database for mirror entries
-        appl_state_mirror_entries = util.get_keys(
-            self._p4rt_mirror_session_wrapper.appl_state_db,
-            self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME + ":" + self._p4rt_mirror_session_wrapper.TBL_NAME)
-        assert len(appl_state_mirror_entries) == len(
-            original_appl_state_mirror_entries)
-
-        # Query application state database for the deleted mirror key
-        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_state_db,
                                      self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
                                      mirror_session_key)
         assert status == False

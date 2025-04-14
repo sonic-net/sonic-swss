@@ -37,10 +37,10 @@ extern bool gIsNatSupported;
 extern NeighOrch *gNeighOrch;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
+extern bool gTraditionalFlexCounter;
 
 const int intfsorch_pri = 35;
 
-#define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
 
 #define MGMT_VRF            "mgmt"
@@ -64,43 +64,39 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
 
     /* Initialize DB connectors */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
     m_asic_db = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     /* Initialize COUNTER_DB tables */
     m_rifNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_NAME_MAP));
     m_rifTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_TYPE_MAP));
 
-    m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+    if (gTraditionalFlexCounter)
+    {
+        m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+    }
+
     auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
     m_updateMapsTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_updateMapsTimer, this, "UPDATE_MAPS_TIMER");
     Orch::addExecutor(executorT);
-    /* Initialize FLEX_COUNTER_DB tables */
-    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
-    m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
-
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
-    fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-    m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
 
     string rifRatePluginName = "rif_rates.lua";
+    string rifRateSha;
 
     try
     {
         string rifRateLuaScript = swss::loadLuaScript(rifRatePluginName);
-        string rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_WARN("RIF flex counter group plugins was not set successfully: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 RIF_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ,
+                                 RIF_PLUGIN_FIELD,
+                                 rifRateSha);
 
     if(gMySwitchType == "voq")
     {
@@ -719,7 +715,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         bool mpls = false;
         string vlan = "";
         string loopbackAction = "";
-
+        string oper_status ="";
         for (auto idx : data)
         {
             const auto &field = fvField(idx);
@@ -811,6 +807,10 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 loopbackAction = value;
             }
+            else if (field == "oper_status")
+            {
+                oper_status = value;
+            }
         }
 
         if (alias == "eth0" || alias == "docker0")
@@ -846,6 +846,19 @@ void IntfsOrch::doTask(Consumer &consumer)
                         m_syncdIntfses[alias] = intfs_entry;
                         m_vrfOrch->increaseVrfRefCount(vrf_id);
                     }
+                    else if (m_syncdIntfses[alias].vrf_id != vrf_id)
+                    {
+                        if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                        {
+                            m_vrfOrch->decreaseVrfRefCount(m_syncdIntfses[alias].vrf_id);
+                            m_vrfOrch->increaseVrfRefCount(vrf_id);
+                            m_syncdIntfses[alias].vrf_id = vrf_id;
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%d' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                        }
+                    }
                 }
                 else
                 {
@@ -864,7 +877,19 @@ void IntfsOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-
+            if(table_name == CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME)
+            {
+                if(isRemoteSystemPortIntf(alias))
+                {
+                    SWSS_LOG_INFO("Handle remote systemport intf %s, oper status %s", alias.c_str(), oper_status.c_str());
+                    bool isUp = (oper_status == "up") ? true : false;
+                    if (!gNeighOrch->ifChangeInformRemoteNextHop(alias, isUp))
+                    {
+                        SWSS_LOG_WARN("Unable to update the nexthop for port  %s, oper status %s", alias.c_str(), oper_status.c_str());
+                    }
+                    
+                }
+            }
             //Voq Inband interface config processing
             if(inband_type.size() && !ip_prefix_in_key)
             {
@@ -1304,8 +1329,21 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
         return false;
     }
 
-    const auto id = sai_serialize_object_id(port.m_rif_id);
-    removeRifFromFlexCounter(id, port.m_alias);
+    bool port_found = false;
+    for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); ++it)
+    {
+        if (it->m_rif_id == port.m_rif_id)
+        {
+            m_rifsToAdd.erase(it);
+            port_found = true;
+            break;
+        }
+    }
+    if (!port_found)
+    {
+        const auto id = sai_serialize_object_id(port.m_rif_id);
+        removeRifFromFlexCounter(id, port.m_alias);
+    }
 
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -1506,11 +1544,11 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     {
         counters_stream << sai_serialize_router_interface_stat(it) << comma;
     }
+    auto &&counters_str = counters_stream.str();
 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    startFlexCounterPolling(gSwitchId, key, counters_str.c_str(), RIF_COUNTER_ID_LIST);
+
     SWSS_LOG_DEBUG("Registered interface %s to Flex counter", name.c_str());
 }
 
@@ -1524,7 +1562,8 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     /* remove it from FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-    m_flexCounterTable->del(key);
+    stopFlexCounterPolling(gSwitchId, key);
+
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
@@ -1584,7 +1623,7 @@ void IntfsOrch::doTask(SelectableTimer &timer)
                 type = "";
                 break;
         }
-        if (m_vidToRidTable->hget("", id, value))
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering %s it is ready", it->m_alias.c_str());
             addRifToFlexCounter(id, it->m_alias, type);
@@ -1659,7 +1698,10 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
         return;
     }
 
-    FieldValueTuple nullFv ("NULL", "NULL");
+
+    string oper_status = port.m_oper_status == SAI_PORT_OPER_STATUS_UP ? "up" : "down";
+
+    FieldValueTuple nullFv ("oper_status", oper_status);
     vector<FieldValueTuple> attrs;
     attrs.push_back(nullFv);
 
@@ -1697,5 +1739,38 @@ void IntfsOrch::voqSyncDelIntf(string &alias)
     }
 
     m_tableVoqSystemInterfaceTable->del(alias);
+}
+
+void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
+{
+    Port port;
+    string port_alias;
+    if(gPortsOrch->getPort(alias, port))
+    {
+        //if route interface is not created no need sync the state
+        if(port.m_rif_id == 0)
+        {
+            return;
+        }
+        if (port.m_type == Port::LAG)
+        {
+            if (port.m_system_lag_info.switch_id != gVoqMySwitchId)
+            {
+                return;
+            }
+            port_alias = port.m_system_lag_info.alias;
+        }
+        else
+        {
+            if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+            {
+                return;
+            }
+            port_alias = port.m_system_port_info.alias;
+        }
+        SWSS_LOG_NOTICE("Syncing system interface state %s for port %s", isUp ? "up" : "down", port_alias.c_str());
+        m_tableVoqSystemInterfaceTable->hset(port_alias, "oper_status", isUp ? "up" : "down");
+    }
+
 }
 

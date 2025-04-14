@@ -67,6 +67,7 @@ class TestMuxTunnelBase():
     DEFAULT_TUNNEL_PARAMS = {
         "tunnel_type": "IPINIP",
         "dst_ip": SELF_IPV4,
+        "src_ip": PEER_IPV4,
         "dscp_mode": "pipe",
         "ecn_mode": "standard",
         "ttl_mode": "pipe",
@@ -99,6 +100,8 @@ class TestMuxTunnelBase():
     TC_TO_QUEUE_MAP = {str(i):str(i) for i in range(0, 8)}
     DSCP_TO_TC_MAP = {str(i):str(1) for i in range(0, 64)}
     TC_TO_PRIORITY_GROUP_MAP = {str(i):str(i) for i in range(0, 8)}
+
+    BULK_NEIGHBOR_COUNT = 254
 
     def check_syslog(self, dvs, marker, err_log, expected_cnt):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
@@ -336,8 +339,66 @@ class TestMuxTunnelBase():
         ps = swsscommon.ProducerStateTable(apdb.db_connection, self.APP_ROUTE_TABLE)
         ps._del(route)
 
+    def wait_for_mux_state(self, dvs, interface, expected_state):
+        """
+        Waits until state change completes - expected state is in state_db
+        """
+
+        apdb = dvs.get_app_db()
+        expected_field = {"state": expected_state}
+        apdb.wait_for_field_match(self.APP_MUX_CABLE, interface, expected_field)
+
+    def bulk_neighbor_test(self, confdb, appdb, asicdb, dvs, dvs_route):
+        dvs.runcmd("ip neigh flush all")
+        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-11-11")
+        self.set_mux_state(appdb, "Ethernet0", "active")
+
+        class neighbor_info:
+            ipv4_key = ""
+            ipv6_key = ""
+            ipv4 = ""
+            ipv6 = ""
+
+            def __init__(self, i):
+                self.ipv4 = "192.168.1." + str(i)
+                self.ipv6 = "fc02:1001::" + str(i)
+
+        neighbor_list = [neighbor_info(i) for i in range(100, self.BULK_NEIGHBOR_COUNT)]
+        for neigh_info in neighbor_list:
+            self.add_neighbor(dvs, neigh_info.ipv4, "00:00:00:00:11:11")
+            self.add_neighbor(dvs, neigh_info.ipv6, "00:00:00:00:11:11")
+            neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+            neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+
+        try:
+            self.set_mux_state(appdb, "Ethernet0", "standby")
+            self.wait_for_mux_state(dvs, "Ethernet0", "standby")
+
+            for neigh_info in neighbor_list:
+                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv4_key)
+                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv6_key)
+                dvs_route.check_asicdb_route_entries(
+                    [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
+                )
+
+            self.set_mux_state(appdb, "Ethernet0", "active")
+            self.wait_for_mux_state(dvs, "Ethernet0", "active")
+
+            for neigh_info in neighbor_list:
+                dvs_route.check_asicdb_deleted_route_entries(
+                    [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
+                )
+                neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+                neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+
+        finally:
+            for neigh_info in neighbor_list:
+                self.del_neighbor(dvs, neigh_info.ipv4)
+                self.del_neighbor(dvs, neigh_info.ipv6)
+
     def create_and_test_neighbor(self, confdb, appdb, asicdb, dvs, dvs_route):
 
+        self.bulk_neighbor_test(confdb, appdb, asicdb, dvs, dvs_route)
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "standby")
 
@@ -733,6 +794,8 @@ class TestMuxTunnelBase():
         new_ipv6_nexthop = self.SERV3_IPV6
         non_mux_ipv4 = "11.11.11.11"
         non_mux_ipv6 = "2222::100"
+        mux_neighbor_ipv4 = "192.170.0.100"
+        mux_neighbor_ipv6 = "fc02:1000:100::100"
         non_mux_mac = "00:aa:aa:aa:aa:aa"
         mux_ports = ["Ethernet0", "Ethernet4"]
         new_mux_port = "Ethernet8"
@@ -745,6 +808,8 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, new_ipv6_nexthop, new_mac)
         self.add_neighbor(dvs, non_mux_ipv4, non_mux_mac)
         self.add_neighbor(dvs, non_mux_ipv6, non_mux_mac)
+        self.add_neighbor(dvs, mux_neighbor_ipv4, macs[1])
+        self.add_neighbor(dvs, mux_neighbor_ipv6, macs[1])
 
         for port in mux_ports:
             self.set_mux_state(appdb, port, ACTIVE)
@@ -764,6 +829,14 @@ class TestMuxTunnelBase():
             self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_nexthop=non_mux_ipv4)
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
+
+            # Testing mux neighbors that do not match mux configured ip
+            self.add_route(dvs, route_ipv4, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            self.add_route(dvs, route_ipv6, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            self.del_route(dvs,route_ipv4)
+            self.del_route(dvs,route_ipv6)
 
             # # These tests do not create route, so create beforehand:
             self.add_route(dvs, route_ipv4, ipv4_nexthops)
@@ -789,6 +862,8 @@ class TestMuxTunnelBase():
                 self.del_neighbor(dvs, neighbor)
             self.del_neighbor(dvs, new_ipv4_nexthop)
             self.del_neighbor(dvs, new_ipv6_nexthop)
+            self.del_neighbor(dvs, mux_neighbor_ipv4)
+            self.del_neighbor(dvs, mux_neighbor_ipv6)
 
     def create_and_test_NH_routes(self, appdb, asicdb, dvs, dvs_route, mac):
         '''
@@ -1124,31 +1199,28 @@ class TestMuxTunnelBase():
         src_ip = tunnel_params['src_ip'] if 'src_ip' in tunnel_params else None
         self.check_tunnel_termination_entry_exists_in_asicdb(asicdb, tunnel_sai_obj, tunnel_params["dst_ip"].split(","), src_ip)
 
-    def remove_and_test_tunnel(self, db, asicdb, tunnel_name):
+    def remove_and_test_tunnel(self, configdb, asicdb, tunnel_name):
         """ Removes tunnel and checks that ASIC db is clear"""
-
-        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
-        tunnel_term_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TERM_ENTRIES)
-        tunnel_app_table = swsscommon.Table(asicdb, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        tunnel_table = swsscommon.Table(asicdb.db_connection, self.ASIC_TUNNEL_TABLE)
+        tunnel_term_table = swsscommon.Table(asicdb.db_connection, self.ASIC_TUNNEL_TERM_ENTRIES)
 
         tunnels = tunnel_table.getKeys()
         tunnel_sai_obj = tunnels[0]
 
-        status, fvs = tunnel_table.get(tunnel_sai_obj)
+        _, fvs = tunnel_table.get(tunnel_sai_obj)
 
         # get overlay loopback interface oid to check if it is deleted with the tunnel
         overlay_infs_id = {f:v for f, v in fvs}["SAI_TUNNEL_ATTR_OVERLAY_INTERFACE"]
 
-        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        ps.set(tunnel_name, create_fvs(), 'DEL')
+        configdb.delete_entry(self.CONFIG_TUNNEL_TABLE_NAME, tunnel_name)
 
         # wait till config will be applied
-        time.sleep(1)
+        time.sleep(5)
 
         assert len(tunnel_table.getKeys()) == 0
         assert len(tunnel_term_table.getKeys()) == 0
-        assert len(tunnel_app_table.getKeys()) == 0
-        assert not self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
+        with pytest.raises(AssertionError):
+            self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
 
     def check_app_db_neigh_table(
             self, appdb, intf, neigh_ip,
@@ -1166,6 +1238,7 @@ class TestMuxTunnelBase():
             appdb.wait_for_field_match(self.APP_NEIGH_TABLE, key, {'neigh': mac})
         else:
             appdb.wait_for_deleted_keys(self.APP_NEIGH_TABLE, key)
+
     def add_qos_map(self, configdb, asicdb, qos_map_type_name, qos_map_name, qos_map):
         current_oids = asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)
         # Apply QoS map to config db
@@ -1251,10 +1324,22 @@ class TestMuxTunnelBase():
 
     @pytest.fixture(scope='module')
     def setup_tunnel(self, dvs):
-        app_db_connector = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        ps = swsscommon.ProducerStateTable(app_db_connector, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        fvs = create_fvs(**self.DEFAULT_TUNNEL_PARAMS)
-        ps.set(self.MUX_TUNNEL_0, fvs)
+        config_db = dvs.get_config_db()
+        config_db.create_entry(
+            self.CONFIG_TUNNEL_TABLE_NAME,
+            self.MUX_TUNNEL_0,
+            self.DEFAULT_TUNNEL_PARAMS
+        )
+
+    @pytest.fixture
+    def restore_tunnel(self, dvs):
+        yield
+        config_db = dvs.get_config_db()
+        config_db.create_entry(
+            self.CONFIG_TUNNEL_TABLE_NAME,
+            self.MUX_TUNNEL_0,
+            self.DEFAULT_TUNNEL_PARAMS
+        )
 
     @pytest.fixture
     def setup_peer_switch(self, dvs):
@@ -1265,8 +1350,8 @@ class TestMuxTunnelBase():
             self.DEFAULT_PEER_SWITCH_PARAMS
         )
 
-    @pytest.fixture
-    def remove_peer_switch(self, dvs):
+        yield
+
         config_db = dvs.get_config_db()
         config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
 
@@ -1377,10 +1462,11 @@ class TestMuxTunnel(TestMuxTunnelBase):
         self.remove_qos_map(db, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, tc_to_pg_map_oid)
 
 
-    def test_Tunnel(self, dvs, setup_tunnel, testlog, setup):
+    def test_Tunnel(self, dvs, setup_tunnel, restore_tunnel, testlog, setup):
         """ test IPv4 Mux tunnel creation """
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
+        configdb = dvs.get_config_db()
 
         #self.cleanup_left_over(db, asicdb)
         _, _, dscp_to_tc_map_oid, tc_to_pg_map_oid = setup
@@ -1390,6 +1476,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         # create tunnel IPv4 tunnel
         self.create_and_test_tunnel(db, asicdb, self.MUX_TUNNEL_0, tunnel_params)
+        # remove tunnel IPv4 tunnel
+        self.remove_and_test_tunnel(configdb, asicdb, self.MUX_TUNNEL_0)
 
     def test_Peer(self, dvs, setup_peer_switch, setup_tunnel, setup, testlog):
 
@@ -1524,7 +1612,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_neighbor_miss_no_peer(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            remove_peer_switch, neighbor_cleanup, testlog
+            neighbor_cleanup, testlog
     ):
         """
         test neighbor miss with no peer switch configured
@@ -1546,7 +1634,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_warm_boot_mux_state(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            remove_peer_switch, neighbor_cleanup, testlog
+            setup_peer_switch, neighbor_cleanup, testlog
     ):
         """
         test mux initialization during warm boot.
@@ -1560,6 +1648,77 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         # Execute the warm reboot
         dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+
+        time.sleep(5)
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
+
+    def test_warm_boot_neighbor_restore(
+        self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
+        setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """Test neighbors could be restored to correct state based on mux state after warm boot."""
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        apdb = dvs.get_app_db()
+        asicdb = dvs.get_asic_db()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.set_mux_state(appdb, "Ethernet8", "standby")
+
+        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-00-01")
+        self.add_fdb(dvs, "Ethernet4", "00-00-00-00-00-02")
+        self.add_fdb(dvs, "Ethernet8", "00-00-00-00-00-03")
+
+        self.add_neighbor(dvs, self.SERV1_IPV4, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.NEIGH1_IPV4, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.NEIGH1_IPV6, "00:00:00:00:00:01")
+        self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.SERV2_IPV6, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.NEIGH2_IPV4, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.NEIGH2_IPV6, "00:00:00:00:00:02")
+        self.add_neighbor(dvs, self.SERV3_IPV4, "00:00:00:00:00:03")
+        self.add_neighbor(dvs, self.SERV3_IPV6, "00:00:00:00:00:03")
+        self.add_neighbor(dvs, self.NEIGH3_IPV4, "00:00:00:00:00:03")
+        self.add_neighbor(dvs, self.NEIGH3_IPV6, "00:00:00:00:00:03")
+
+        time.sleep(5)
+
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV6)
+        dvs_route.check_asicdb_route_entries(
+            [
+                self.SERV3_IPV4 + self.IPV4_MASK,
+                self.SERV3_IPV6 + self.IPV6_MASK,
+                self.NEIGH3_IPV4 + self.IPV4_MASK,
+                self.NEIGH3_IPV6 + self.IPV6_MASK
+            ]
+        )
+        # Execute the warm reboot
+        dvs.runcmd("config warm_restart enable system")
         dvs.stop_swss()
         dvs.start_swss()
 
@@ -1580,6 +1739,22 @@ class TestMuxTunnel(TestMuxTunnelBase):
             if key == "state":
                 assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
 
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV6)
+        dvs_route.check_asicdb_route_entries(
+            [
+                self.SERV3_IPV4 + self.IPV4_MASK,
+                self.SERV3_IPV6 + self.IPV6_MASK,
+                self.NEIGH3_IPV4 + self.IPV4_MASK,
+                self.NEIGH3_IPV6 + self.IPV6_MASK
+            ]
+        )
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

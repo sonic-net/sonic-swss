@@ -30,6 +30,7 @@ extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gUnderlayIfId;
 extern FlexManagerDirectory g_FlexManagerDirectory;
+extern bool gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
@@ -1219,7 +1220,10 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
     m_tunnelNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_NAME_MAP));
     m_tunnelTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_TYPE_MAP));
 
-    m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+    if (gTraditionalFlexCounter)
+    {
+        m_vidToRidTable = make_unique<Table>(m_asic_db.get(), "VIDTORID");
+    }
 
     auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
     m_FlexCounterUpdTimer = new SelectableTimer(intervT);
@@ -1237,7 +1241,7 @@ void VxlanTunnelOrch::doTask(SelectableTimer &timer)
         string value;
         const auto id = sai_serialize_object_id(it->first);
 
-        if (m_vidToRidTable->hget("", id, value))
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
             vector<FieldValueTuple> tunnelNameFvs;
@@ -1325,10 +1329,6 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
         return SAI_NULL_OBJECT_ID;
     }
 
-    SWSS_LOG_NOTICE("NH tunnel create for %s, ip %s, mac %s, vni %d",
-                     tunnelName.c_str(), ipAddr.to_string().c_str(), 
-                     macAddress.to_string().c_str(), vni);
-
     auto tunnel_obj = getVxlanTunnel(tunnelName);
     sai_object_id_t nh_id, tunnel_id = tunnel_obj->getTunnelId();
 
@@ -1337,6 +1337,10 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
         tunnel_obj->incNextHopRefCount(ipAddr, macAddress, vni);
         return nh_id;
     }
+
+    SWSS_LOG_NOTICE("NH tunnel create for %s, ip %s, mac %s, vni %d",
+                    tunnelName.c_str(), ipAddr.to_string().c_str(), 
+                    macAddress.to_string().c_str(), vni);
 
     sai_ip_address_t host_ip;
     swss::copy(host_ip, ipAddr);
@@ -2405,8 +2409,8 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     }
 
     // SAI Call to add tunnel to the VLAN flood domain
-
-    string tagging_mode = "untagged"; 
+    // NOTE: does 'untagged' make the most sense here?
+    string tagging_mode = "untagged";
     gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode);
 
     SWSS_LOG_INFO("remote_vtep=%s vni=%d vlanid=%d ",
@@ -2565,7 +2569,7 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     }
 
     // SAI Call to add tunnel to the VLAN flood domain
-
+    // NOTE: does 'untagged' make the most sense here?
     string tagging_mode = "untagged";
     gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode, end_point_ip);
 

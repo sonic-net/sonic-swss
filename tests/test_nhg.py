@@ -84,6 +84,8 @@ class TestNextHopGroupBase(object):
 
         # Create a NHG
         fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+        nhg_ps.set('_testnhg', fvs)
+        fvs = swsscommon.FieldValuePairs([('nexthop_group', '_testnhg')])
         nhg_ps.set('testnhg', fvs)
 
         # Add a CBF NHG pointing to the given map
@@ -98,6 +100,7 @@ class TestNextHopGroupBase(object):
             # Remove the added NHGs
             cbf_nhg_ps._del('testcbfnhg')
             nhg_ps._del('testnhg')
+            nhg_ps._del('_testnhg')
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
             return None
 
@@ -111,6 +114,7 @@ class TestNextHopGroupBase(object):
         # Remove the added NHGs
         cbf_nhg_ps._del('testcbfnhg')
         nhg_ps._del('testnhg')
+        nhg_ps._del('_testnhg')
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count)
 
         return nhg_map_id
@@ -121,22 +125,38 @@ class TestNextHopGroupBase(object):
     def port_ip(self, i):
         return "10.0.0." + str(i * 2)
 
+    def port_ipv6(self, i):
+        return "fc00::" + str(hex((i * 2)))[2:]
+    
     def port_ipprefix(self, i):
         return self.port_ip(i) + "/31"
+
+    def port_ipv6prefix(self, i):
+        return self.port_ipv6(i) + "/126"
 
     def peer_ip(self, i):
         return "10.0.0." + str(i * 2 + 1)
 
+    def peer_ipv6(self, i):
+        return "fc00::" + str(hex((i * 2 + 1)))[2:]
+
     def port_mac(self, i):
         return "00:00:00:00:00:0" + str(i + 1)
 
-    def config_intf(self, i):
+    def config_intf(self, i, is_ipv6_needed=False):
         fvs = {'NULL': 'NULL'}
 
         self.config_db.create_entry("INTERFACE", self.port_name(i), fvs)
         self.config_db.create_entry("INTERFACE", "{}|{}".format(self.port_name(i), self.port_ipprefix(i)), fvs)
+        if is_ipv6_needed:
+            self.config_db.create_entry("INTERFACE", "{}|{}".format(self.port_name(i), self.port_ipv6prefix(i)), fvs)
+
         self.dvs.port_admin_set(self.port_name(i), "up")
         self.dvs.runcmd("arp -s {} {}".format(self.peer_ip(i), self.port_mac(i)))
+        if is_ipv6_needed:
+            command = "ip -6 neighbor replace {} lladdr {} dev {}".format(self.peer_ipv6(i), 
+                                                                      self.port_mac(i), self.port_name(i))
+            self.dvs.runcmd(command)
         assert self.dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         assert self.dvs.servers[i].runcmd("ip link set up dev eth0") == 0
 
@@ -184,7 +204,7 @@ class TestNextHopGroupBase(object):
         ntf.send("bfd_session_state_change", ntf_data, fvp)
     # BFD utilities for static route BFD and ecmp acceleration -- end
 
-    def init_test(self, dvs, num_intfs):
+    def init_test(self, dvs, num_intfs, is_ipv6_needed=False):
         self.dvs = dvs
         self.app_db = self.dvs.get_app_db()
         self.asic_db = self.dvs.get_asic_db()
@@ -201,7 +221,7 @@ class TestNextHopGroupBase(object):
         self.dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_MAX_NUMBER_OF_FORWARDING_CLASSES', '63')
 
         for i in range(num_intfs):
-            self.config_intf(i)
+            self.config_intf(i, is_ipv6_needed)
 
         self.asic_nhgs_count = len(self.asic_db.get_keys(self.ASIC_NHG_STR))
         self.asic_nhgms_count = len(self.asic_db.get_keys(self.ASIC_NHGM_STR))
@@ -1547,6 +1567,67 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
     def test_nhgorch_nh_group(self, dvs, testlog):
         # Test scenario:
+        # - create recursive nhg - rec_grp1 with two members - grp1 and grp2 only one of which exists
+        # - create singleton nhg grp2 and check if the rec_grp1 is updated with both the members
+        # - create a recursive nhg - rec_grp2 with another recursive nhg - rec_grp1 as member. Assert that the nhg is not created.
+        def create_recursive_nhg_test():
+            # create next hop group in APPL DB
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("grp1", fvs)
+
+            # create a recursive nexthop group with two members
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if group was propagated to ASIC DB with the existing member
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert self.nhg_exists('rec_grp1')
+
+            # check if the existing member was propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 1
+
+            # add another singleton nexthop group - grp2
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3'), ('ifname', 'Ethernet4')])
+            self.nhg_ps.set("grp2", fvs)
+
+            # check if both the members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # update the recursive nexthop group with another member not yet existing
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'grp1,grp2,grp3')])
+            self.nhg_ps.set("rec_grp1", fvs)
+
+            # check if only two members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 2
+
+            # add another singleton nexthop group - grp3
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.5'), ('ifname', 'Ethernet8')])
+            self.nhg_ps.set("grp3", fvs)
+
+            # check if all members were propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
+            assert len(self.get_nhgm_ids('rec_grp1')) == 3
+
+            # create a recursive nhg with another recursive nhg as member
+            fvs = swsscommon.FieldValuePairs([('nexthop_group', 'rec_grp1')])
+            self.nhg_ps.set("rec_grp2", fvs)
+
+            # check that the group was not propagated to ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+            assert not self.nhg_exists('rec_grp2')
+
+            self.nhg_ps._del("rec_grp2")
+            self.nhg_ps._del("rec_grp1")
+            self.nhg_ps._del("grp1")
+            self.nhg_ps._del("grp2")
+            self.nhg_ps._del("grp3")
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
+        # Test scenario:
         # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
         def create_nhg_test():
             # create next hop group in APPL DB
@@ -1705,8 +1786,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
             # Update the group to one NH only
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
             self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
-            assert len(self.get_nhgm_ids('group1')) == 1
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+            assert len(self.get_nhgm_ids('group1')) == 0
 
             # Update the group to 2 NHs
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])
@@ -1716,6 +1797,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         self.init_test(dvs, 4)
 
+        create_recursive_nhg_test()
         create_nhg_test()
         create_route_nhg_test()
         link_flap_test()
@@ -1758,6 +1840,252 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # Remove group1
         self.nhg_ps._del("group1")
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+
+    def test_route_fallback_to_default_bothv4v6(self, dvs, dvs_route, testlog):
+        self.init_test(dvs, 6, True)
+        rtprefix_v6 = "2603:10b0::1/120"
+        defaultprefix_v6 = "::/0"
+        nexthop_str_v6 = "fc00::1,fc00::3,fc00::5"
+        default_nexthop_str_v6 = "fc00::7,fc00::9,fc00::b"
+        rtprefix = "3.3.3.0/24"
+        defaultprefix = "0.0.0.0/0"
+        nexthop_str = "10.0.0.1,10.0.0.3,10.0.0.5"
+        default_nexthop_str = "10.0.0.7,10.0.0.9,10.0.0.11"
+
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix, rtprefix_v6])
+
+        try:
+            dvs.disable_fpmsyncd()
+            # Program Regular Rouute with fallback to default 
+            fvs = swsscommon.FieldValuePairs([("nexthop",nexthop_str),
+                                              ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
+                                              ("fallback_to_default_route", "true")])
+            self.rt_ps.set(rtprefix, fvs)
+            time.sleep(1)
+
+            fvs = swsscommon.FieldValuePairs([("nexthop",nexthop_str_v6),
+                                              ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
+                                              ("fallback_to_default_route", "true")])
+            self.rt_ps.set(rtprefix_v6, fvs)
+            time.sleep(1)
+
+            # Program default route
+            fvs = swsscommon.FieldValuePairs([("nexthop", default_nexthop_str),
+                                              ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
+
+            self.rt_ps.set(defaultprefix, fvs)
+            time.sleep(1)
+
+            fvs = swsscommon.FieldValuePairs([("nexthop", default_nexthop_str_v6),
+                                              ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
+
+            self.rt_ps.set(defaultprefix_v6, fvs)
+            time.sleep(1)
+
+            # check if route was propagated to ASIC DB
+            rtkeys = dvs_route.check_asicdb_route_entries([rtprefix, rtprefix_v6])
+
+            # check if default route was propagated to ASIC DB
+            defaultrtkeys = dvs_route.check_asicdb_route_entries([defaultprefix, defaultprefix_v6])
+
+            default_nhgid = []
+            default_nhops = set()
+            default_nhgmids = set()
+            default_nhopsids = set()
+            default_parentnhgid = set()
+
+            rt_nhgid = []
+            rt_nhops = set()
+            rt_nhopsids = set()
+            rt_nhgmids = set()
+            rt_parentnhgid = set()
+
+            # assert the route points to next hop group
+            flat_list = []
+            for x in rtkeys:
+                flat_list.append(x)
+            for x in defaultrtkeys:
+                flat_list.append(x)
+            for idx, rtkey in enumerate(flat_list):
+                fvs = self.asic_db.get_entry(self.ASIC_RT_STR, rtkey)
+                if idx in [0,1]:
+                    rt_nhgid.append(fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"])
+                else:
+                    default_nhgid.append(fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"])
+
+                nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+
+                fvs = self.asic_db.get_entry(self.ASIC_NHG_STR, nhgid)
+
+                assert bool(fvs)
+
+            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+            assert len(keys) == 12
+
+            for k in keys:
+                fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+                nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+
+                if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] in rt_nhgid:
+                    rt_nhopsids.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"])
+                    rt_nhops.add(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+                    rt_nhgmids.add(k)
+                    rt_parentnhgid.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"])
+                elif fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] in default_nhgid:
+                    default_nhopsids.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"])
+                    default_nhops.add(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+                    default_nhgmids.add(k)
+                    default_parentnhgid.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"])
+
+            assert len(rt_parentnhgid) == 2
+            assert len(rt_nhopsids) == 6
+            assert len(rt_nhops) == 6
+            assert len(rt_nhgmids) == 6
+
+            assert len(default_parentnhgid) == 2
+            assert len(default_nhopsids) == 6
+            assert len(default_nhops) == 6
+            assert len(default_nhgmids) == 6
+
+            assert rt_nhops != default_nhops
+            assert rt_nhopsids != default_nhopsids
+            assert rt_parentnhgid != default_parentnhgid
+            assert rt_nhgmids != default_nhgmids
+
+            # bring links down one-by-one
+            for i in [0, 1, 2]:
+                self.flap_intf(i, 'down')
+                time.sleep(1)
+
+                keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+                if i != 2:
+                    assert len(keys) == 10 - (i * 2)
+                else:
+                    # Last Link down so we will fallback to default eoute 3 members
+                    assert len(keys) == 12
+                    rt_nhops.clear()
+                    rt_nhgmids.clear()
+                    rt_nhopsids.clear()
+                    for k in keys:
+                        fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+                        nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                        nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+
+                        if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] in rt_nhgid:
+                            rt_nhopsids.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"])
+                            rt_nhops.add(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+                            rt_nhgmids.add(k)
+                            rt_parentnhgid.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"])
+                        elif fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] in default_nhgid:
+                            default_nhopsids.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"])
+                            default_nhops.add(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+                            default_nhgmids.add(k)
+                            default_parentnhgid.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"])
+
+                    assert len(rt_parentnhgid) == 2
+                    assert len(rt_nhopsids) == 6
+                    assert len(rt_nhops) == 6
+                    assert len(rt_nhgmids) == 6
+
+                    assert len(default_parentnhgid) == 2
+                    assert len(default_nhopsids) == 6
+                    assert len(default_nhops) == 6
+                    assert len(default_nhgmids) == 6
+
+                    assert rt_nhops == default_nhops
+                    assert rt_nhopsids == default_nhopsids
+                    assert rt_nhgmids != default_nhgmids
+
+            # bring links up one-by-one
+            # Bring link up in random order to verify sequence id is as per order
+            for i, val in enumerate([2,1,0]):
+                self.flap_intf(i, 'up')
+                time.sleep(1)
+
+                keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+                assert len(keys) == 12
+
+            for k in keys:
+                fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+                nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+
+                if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] in rt_nhgid:
+                    rt_nhopsids.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"])
+                    rt_nhops.add(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+                    rt_nhgmids.add(k)
+                    rt_parentnhgid.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"])
+                elif fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] in default_nhgid:
+                    default_nhopsids.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"])
+                    default_nhops.add(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+                    default_nhgmids.add(k)
+                    default_parentnhgid.add(fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"])
+
+            assert len(rt_parentnhgid) == 2
+            assert len(rt_nhopsids) == 6
+            assert len(rt_nhops) == 6
+            assert len(rt_nhgmids) == 6
+
+            assert len(default_parentnhgid) == 2
+            assert len(default_nhopsids) == 6
+            assert len(default_nhops) == 6
+            assert len(default_nhgmids) == 6
+
+            assert rt_nhops == default_nhops
+            assert rt_nhopsids == default_nhopsids
+            assert rt_nhgmids != default_nhgmids
+
+            # bring links up one-by-one
+            # Bring link up in random order to verify sequence id is as per order
+            for i, val in enumerate([2,1,0]):
+                self.flap_intf(i, 'down')
+                time.sleep(1)
+
+                keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+                assert len(keys) == 12
+
+            # bring links up one-by-one
+            # Bring link up in random order to verify sequence id is as per order
+            for i, val in enumerate([2,1,0]):
+                self.flap_intf(i, 'up')
+                time.sleep(1)
+
+                keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+                assert len(keys) == 12
+
+            # Remove route 2.2.2.0/24
+            self.rt_ps._del(rtprefix)
+            time.sleep(1)
+
+            self.rt_ps._del(rtprefix_v6)
+            time.sleep(1)
+
+            # Wait for route 2.2.2.0/24 to be removed
+            dvs_route.check_asicdb_deleted_route_entries([rtprefix, rtprefix_v6])
+
+            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+            assert len(keys) == 6
+
+            # Remove route 0.0.0.0/0
+            self.rt_ps._del(defaultprefix)
+            time.sleep(1)
+
+            self.rt_ps._del(defaultprefix_v6)
+            time.sleep(1)
+
+            keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+            assert len(keys) == 0
+
+        finally:
+            dvs.start_fpmsyncd()
 
 class TestCbfNextHopGroup(TestNextHopGroupBase):
     MAX_NHG_MAP_COUNT = 512
@@ -1838,9 +2166,11 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         # - update the CBF NHG reordering the members and assert the new details match
         def update_cbf_nhg_members_test():
             # Create a NHG with a single next hop
-            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'),
-                                            ("ifname", "Ethernet0")])
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ('ifname', 'Ethernet0')])
+            self.nhg_ps.set("_group3", fvs)
+            fvs = swsscommon.FieldValuePairs([('nexthop_group','_group3')])
             self.nhg_ps.set("group3", fvs)
+
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 3)
 
             # Create a CBF NHG
@@ -2035,6 +2365,8 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         self.cbf_nhg_ps._del('cbfgroup1')
         self.nhg_ps._del('group2')
         self.nhg_ps._del('group3')
+        self.nhg_ps._del('_group3')
+
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
         self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
 

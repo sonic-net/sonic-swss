@@ -26,6 +26,7 @@ extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
+extern bool                 gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
@@ -126,11 +127,9 @@ const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     Orch(db, tableName),
     m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
-    m_flex_db(std::shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0))),
     m_asic_db(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
     m_counter_table(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TRAP_NAME_MAP))),
     m_vidToRidTable(std::unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"))),
-    m_flex_counter_group_table(std::unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE))),
     m_trap_counter_manager(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
@@ -189,13 +188,17 @@ void CoppOrch::initDefaultTrapIds()
     attr.value.oid = m_trap_group_map[default_trap_group];
     trap_id_attrs.push_back(attr);
 
-    /* Mellanox platform doesn't support trap priority setting */
-    /* Marvell platform doesn't support trap priority. */
+    /*
+     * Use a default trap priority > 0 to avoid undesirable packet trapping
+     * behavior on some platforms that use 0 as default SAI-internal priority.
+     * Note: Mellanox and Marvell platforms don't support trap priority setting.
+     */
+
     char *platform = getenv("platform");
-    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
+    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PRST_PLATFORM_SUBSTRING))))
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
-        attr.value.u32 = 0;
+        attr.value.u32 = 1;
         trap_id_attrs.push_back(attr);
     }
 
@@ -633,7 +636,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         if (!trap_id_attribs.empty())
         {
             vector<sai_hostif_trap_type_t> group_trap_ids;
-            TrapIdAttribs trap_attr;
+            TrapIdAttribs trap_attr = m_trap_group_trap_id_attrs[trap_group_name];
             getTrapIdsFromTrapGroup(m_trap_group_map[trap_group_name],
                                     group_trap_ids);
             for (auto trap_id : group_trap_ids)
@@ -772,7 +775,7 @@ void CoppOrch::doTask(SelectableTimer &timer)
     for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
     {
         const auto id = sai_serialize_object_id(it->first);
-        if (m_vidToRidTable->hget("", id, value))
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
 
@@ -1015,8 +1018,8 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
         {
             /* Mellanox platform doesn't support trap priority setting */
             /* Marvell platform doesn't support trap priority. */
-            char *platform = getenv("platform");
-            if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
+	    char *platform = getenv("platform");
+	    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PRST_PLATFORM_SUBSTRING))))
             {
                 attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
                     attr.value.u32 = (uint32_t)stoul(fvValue(*i));
@@ -1205,20 +1208,22 @@ void CoppOrch::initTrapRatePlugin()
     }
 
     std::string trapRatePluginName = "trap_rates.lua";
+    std::string trapSha;
     try
     {
         std::string trapLuaScript = swss::loadLuaScript(trapRatePluginName);
-        std::string trapSha = swss::loadRedisScript(m_counter_db.get(), trapLuaScript);
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(FLOW_COUNTER_PLUGIN_FIELD, trapSha);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flex_counter_group_table->set(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        trapSha = swss::loadRedisScript(m_counter_db.get(), trapLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Trap flex counter groups were not set successfully: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP,
+                                 "", // Do not touch poll interval
+                                 STATS_MODE_READ,
+                                 FLOW_COUNTER_PLUGIN_FIELD,
+                                 trapSha);
     m_trap_rate_plugin_loaded = true;
 }
 

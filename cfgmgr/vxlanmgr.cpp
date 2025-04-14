@@ -139,6 +139,15 @@ static int cmdDeleteVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & 
     return swss::exec(cmd.str(), res);
 }
 
+static int cmdVxlanLearningOff(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
+{
+    // bridge link set dev {{VXLAN}} learning off
+    ostringstream cmd;
+    cmd << BRIDGE_CMD << " link set dev "
+        << shellquote(info.m_vxlan) << " learning off";
+    return swss::exec(cmd.str(), res);
+}
+
 static int cmdDeleteVxlanFromVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // brctl delif {{VXLAN_IF}} {{VXLAN}}
@@ -683,6 +692,7 @@ bool VxlanMgr::doVxlanEvpnNvoCreateTask(const KeyOpFieldsValuesTuple & t)
         }
         if (field == SOURCE_VTEP)
         {
+            disableLearningForAllVxlanNetdevices();
             m_EvpnNvoCache[EvpnNvoName] = value;
         }
     }
@@ -946,8 +956,9 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
 {
     std::string res, cmds;
     std::string link_add_cmd, link_set_master_cmd, link_up_cmd;
-    std::string bridge_add_cmd, bridge_untagged_add_cmd, bridge_del_vid_cmd;
+    std::string bridge_add_cmd, bridge_untagged_add_cmd, bridge_del_vid_cmd, bridge_learn_off_cmd;
     std::string vxlan_dev_name;
+    bool evpn_nvo = false;
 
     vxlan_dev_name = std::string("") + std::string(vxlanTunnelName) + "-" +
                      std::string(vlan_id);
@@ -981,11 +992,20 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
         SWSS_LOG_INFO("Creating VxlanNetDevice %s", vxlan_dev_name.c_str());
     }
 
+    std::map<std::string, std::string>::iterator it = m_EvpnNvoCache.begin();
+    if ((it != m_EvpnNvoCache.end()) && (it->second == vxlanTunnelName))
+    {
+        SWSS_LOG_INFO("EVPN NVO exists. Disabling learning on VxlanNetDevice %s",
+                        vxlan_dev_name.c_str());
+        evpn_nvo = true;
+    }
+
     // ip link add <vxlan_dev_name> type vxlan id <vni> local <src_ip> remote <dst_ip> 
     // dstport 4789
     // ip link set <vxlan_dev_name> master DOT1Q_BRIDGE_NAME
     // bridge vlan add vid <vlan_id> dev <vxlan_dev_name>
     // bridge vlan add vid <vlan_id> untagged pvid dev <vxlan_dev_name>
+    // bridge link set dev <vxlan_dev_name> learning off
     // ip link set <vxlan_dev_name> up
 
     link_add_cmd = std::string("") + IP_CMD + " link add " + vxlan_dev_name + 
@@ -1007,6 +1027,9 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
 
     bridge_del_vid_cmd = std::string("") + BRIDGE_CMD + " vlan del vid 1 dev " + 
                          vxlan_dev_name;
+
+    bridge_learn_off_cmd = std::string("") + BRIDGE_CMD + " link set dev " +
+                           vxlan_dev_name + " learning off ";
     
     
     cmds = std::string("") + BASH_CMD + " -c \"" + 
@@ -1018,6 +1041,11 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
     if ( vlan_id != "1")
     {
         cmds += bridge_del_vid_cmd + " && ";
+    }
+
+    if (evpn_nvo)
+    {
+        cmds += bridge_learn_off_cmd + " && ";
     }
 
     cmds += link_up_cmd + "\"";
@@ -1207,6 +1235,22 @@ void VxlanMgr::clearAllVxlanDevices()
             cmdDeleteVxlanIf(info, res);
         }
         it = m_vxlanNetDevices.erase(it);
+    }
+}
+
+void VxlanMgr::disableLearningForAllVxlanNetdevices()
+{
+    for (auto it = m_vxlanTunnelMapCache.begin(); it != m_vxlanTunnelMapCache.end(); it++)
+    {
+        std::string netdev_name = it->second.vxlan_dev_name;
+        VxlanInfo info;
+        std::string res;
+        if (!netdev_name.empty())
+        {
+            SWSS_LOG_INFO("Disable learning for NetDevice %s\n", netdev_name.c_str());
+            info.m_vxlan = netdev_name;
+            cmdVxlanLearningOff(info, res);
+        }
     }
 }
 

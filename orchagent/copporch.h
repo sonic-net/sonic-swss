@@ -98,11 +98,9 @@ protected:
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
 
     std::shared_ptr<DBConnector> m_counter_db;
-    std::shared_ptr<DBConnector> m_flex_db;
     std::shared_ptr<DBConnector> m_asic_db;
     std::unique_ptr<Table> m_counter_table;
     std::unique_ptr<Table> m_vidToRidTable;
-    std::unique_ptr<ProducerTable> m_flex_counter_group_table;
 
     FlexCounterManager m_trap_counter_manager;
 

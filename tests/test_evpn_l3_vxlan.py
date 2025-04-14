@@ -17,6 +17,7 @@ class TestL3Vxlan(object):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
 #    Test 1 - Create and Delete SIP Tunnel and VRF VNI Map entries
 #    @pytest.mark.skip(reason="Starting Route Orch, VRF Orch to be merged")
@@ -596,6 +597,34 @@ class TestL3Vxlan(object):
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
         vxlan_obj.remove_vlan(dvs, "100")
 
+
+    def test_vrf_state_db_update(self, dvs, testlog):
+        vxlan_obj = self.get_vxlan_obj()
+        helper = self.get_vxlan_helper()
+
+        self.setup_db(dvs)
+        tunnel_name = 'tunnel_2'
+        map_name = 'map_1000_100'
+        vrf_map_name = 'evpn_map_1000_Vrf-RED'
+
+        vxlan_obj.fetch_exist_entries(dvs)
+
+
+        vxlan_obj.create_vrf(dvs, "Vrf-RED")
+        vxlan_obj.create_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED', '1000')
+
+        time.sleep(2)
+        #adding nvo after
+        vxlan_obj.create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
+        vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
+        exp_attr = [
+                ("state", "ok"),
+        ]
+        helper.check_object(self.sdb, "VRF_OBJECT_TABLE", 'Vrf-RED', exp_attr)
+        vxlan_obj.remove_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED')
+        vxlan_obj.remove_vrf(dvs, "Vrf-RED")
+        vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
+        vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
