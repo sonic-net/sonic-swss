@@ -2196,7 +2196,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
             }
         };
 
-        // First Update, 2 matches and 1 action
+        // First Update, 2 matches and 1 action added to the rule
         auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, aclRuleName, aclTableName);
         ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
         ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2/24"));
@@ -2210,32 +2210,40 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
 
-        // Second update, invalid action & extra match
+        // Second update, Inner src ip and tunnel vni correctly updated
         auto updatedRule = make_shared<AclRuleTest>(*rule);
         ASSERT_TRUE(updatedRule->validateAddPriority(RULE_PRIORITY, "900"));
-        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_INNER_SRC_IP, "2.3.2.2/24"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_INNER_SRC_IP, "2.3.2.2/21"));
         ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
+
+        // Invalid action & extra match src ip are invalidated
         ASSERT_FALSE(updatedRule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
         ASSERT_FALSE(updatedRule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD"));
         
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.13.12.12&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.248.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
 
-        // Third update, change in 2 matches and with invalid action
+        // Third update, change in 2 matches and with invalid action and disable counter
         auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
+        updatedRule2->setCounterEnabled(false);
         ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_INNER_SRC_IP, "3.3.3.3/24"));
         ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
         ASSERT_FALSE(updatedRule2->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, ""));
-
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
+
+        // Verify if the match type is not disabled
+        updatedRule2->disableMatch(SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP);
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(aclTableName, aclRuleName), false));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "3.3.3.3&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
-
+        
+        // Re-enable counter
         auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
         updatedRule3->setCounterEnabled(true);
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule3));

@@ -813,14 +813,14 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto dtelAction = aclDTelActionLookup.find(action);
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
-        auto l3innerAction = aclInnerActionLookup.find(action);
+        auto innerAction = aclInnerActionLookup.find(action);
         if (l3Action != aclL3ActionLookup.end())
         {
             saiActionAttr = l3Action->second;
         }
-        else if (l3innerAction != aclInnerActionLookup.end())
+        else if (innerAction != aclInnerActionLookup.end())
         {
-            saiActionAttr = l3innerAction->second;
+            saiActionAttr = innerAction->second;
         }
         else if (mirrorAction != aclMirrorStageLookup.end())
         {
