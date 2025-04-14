@@ -12,6 +12,7 @@
 #include "mirrororch.h"
 #define private public
 #include "dashorch.h"
+#include "dashrouteorch.h"
 #include "bufferorch.h"
 #include "qosorch.h"
 #define protected public
@@ -35,6 +36,7 @@
 #undef private 
 #include "directory.h"
 #include "dashvnetorch.h"
+#include "dashtunnelorch.h"
 
 extern int gBatchSize;
 
@@ -106,3 +108,6 @@ extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
 extern sai_dash_vnet_api_t* sai_dash_vnet_api;
 extern sai_dash_appliance_api_t* sai_dash_appliance_api;
+extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
+extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
+extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
