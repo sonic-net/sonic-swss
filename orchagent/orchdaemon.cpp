@@ -65,7 +65,7 @@ MonitorOrch *gMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
-STelOrch *gSTelOrch = nullptr;
+HFTelOrch *gSTelOrch = nullptr;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -851,10 +851,10 @@ bool OrchDaemon::init()
 
 
     const vector<string> stel_tables = {
-        CFG_STREAM_TELEMETRY_PROFILE_TABLE_NAME,
-        CFG_STREAM_TELEMETRY_GROUP_TABLE_NAME
+        CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+        CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
     };
-    gSTelOrch = new STelOrch(m_configDb, m_stateDb, stel_tables);
+    gSTelOrch = new HFTelOrch(m_configDb, m_stateDb, stel_tables);
     m_orchList.push_back(gSTelOrch);
 
     if (WarmStart::isWarmStart())

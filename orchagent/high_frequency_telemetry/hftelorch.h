@@ -10,26 +10,21 @@
 #include <memory>
 
 #include "counternameupdater.h"
-#include "stelmgr.h"
+#include "hftelprofile.h"
 
-#define CFG_STREAM_TELEMETRY_PROFILE_TABLE_NAME "STREAM_TELEMETRY_PROFILE"
-#define CFG_STREAM_TELEMETRY_GROUP_TABLE_NAME "STREAM_TELEMETRY_GROUP"
-#define STREAM_TELEMETRY_SESSION "STREAM_TELEMETRY_SESSION"
 
-#define SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE "tam_tel_type_config_change"
-
-class STelOrch : public Orch
+class HFTelOrch : public Orch
 {
 public:
-    STelOrch(
+    HFTelOrch(
         swss::DBConnector *cfg_db,
         swss::DBConnector *state_db,
         const std::vector<std::string> &tables);
-    ~STelOrch();
-    STelOrch(const STelOrch &) = delete;
-    STelOrch &operator=(const STelOrch &) = delete;
-    STelOrch(STelOrch &&) = delete;
-    STelOrch &operator=(STelOrch &&) = delete;
+    ~HFTelOrch();
+    HFTelOrch(const HFTelOrch &) = delete;
+    HFTelOrch &operator=(const HFTelOrch &) = delete;
+    HFTelOrch(HFTelOrch &&) = delete;
+    HFTelOrch &operator=(HFTelOrch &&) = delete;
 
     static const std::unordered_map<std::string, sai_object_type_t> SUPPORT_COUNTER_TABLES;
 
@@ -40,15 +35,16 @@ private:
     swss::DBConnector m_asic_db;
     std::shared_ptr<swss::NotificationConsumer> m_asic_notification_consumer;
 
-    std::unordered_map<std::string, std::shared_ptr<STelProfile>> m_name_profile_mapping;
-    std::unordered_map<sai_object_type_t, std::unordered_set<std::shared_ptr<STelProfile>>> m_type_profile_mapping;
+    std::unordered_map<std::string, std::shared_ptr<HFTelProfile>> m_name_profile_mapping;
+    std::unordered_map<sai_object_type_t, std::unordered_set<std::shared_ptr<HFTelProfile>>> m_type_profile_mapping;
     CounterNameCache m_counter_name_cache;
 
     task_process_status profileTableSet(const std::string &profile_name, const std::vector<swss::FieldValueTuple> &values);
     task_process_status profileTableDel(const std::string &profile_name);
     task_process_status groupTableSet(const std::string &profile_name, const std::string &group_name, const std::vector<swss::FieldValueTuple> &values);
     task_process_status groupTableDel(const std::string &profile_name, const std::string &group_name);
-    std::shared_ptr<STelProfile> getProfile(const std::string &profile_name);
+    std::shared_ptr<HFTelProfile> getProfile(const std::string &profile_name);
+    std::shared_ptr<HFTelProfile> tryGetProfile(const std::string &profile_name);
 
     void doTask(swss::NotificationConsumer &consumer);
     void doTask(Consumer &consumer);

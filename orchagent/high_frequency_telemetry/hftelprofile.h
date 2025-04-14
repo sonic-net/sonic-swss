@@ -1,6 +1,7 @@
 #pragma once
 
 #include <saitypes.h>
+#include <saitam.h>
 #include <swss/table.h>
 
 #include <string>
@@ -12,58 +13,31 @@
 #include <string>
 #include <memory>
 
-/**
- * @brief TAM telemetry type state of state machine
- */
-typedef enum _sai_tam_tel_type_state_t
-{
-    /**
-     * @brief Telemetry type is stopped
-     *
-     * In this stage, the recording stream should be stopped,
-     * and the configuration should be cleared.
-     */
-    SAI_TAM_TEL_TYPE_STATE_STOP_STREAM,
+#include "hftelgroup.h"
 
-    /**
-     * @brief Telemetry type is started
-     *
-     * In this stage, the recording stream should be started,
-     * and the latest configuration should be applied.
-     */
-    SAI_TAM_TEL_TYPE_STATE_START_STREAM,
-
-    /**
-     * @brief Telemetry type configuration is prepared,
-     *
-     * We expect the configuration to be generated in the feature,
-     * And notify the user by sai_tam_tel_type_config_change_notification_fn
-     */
-    SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG,
-
-} sai_tam_tel_type_state_t;
 
 using CounterNameCache = std::unordered_map<sai_object_type_t, std::unordered_map<std::string, sai_object_id_t>>;
 
-struct STelGroup
-{
-    std::set<std::string> m_object_names;
-    std::set<sai_stat_id_t> m_stats_ids;
-};
+// struct HFTelGroup
+// {
+//     // Object names and label IDs
+//     std::unordered_map<std::string, std::uint16_t> m_objects;
+//     std::set<sai_stat_id_t> m_stats_ids;
+// };
 
-class STelProfile
+class HFTelProfile
 {
 public:
-    STelProfile(
+    HFTelProfile(
         const std::string &profile_name,
         sai_object_id_t sai_tam_obj,
         sai_object_id_t sai_tam_collector_obj,
         const CounterNameCache &cache);
-    ~STelProfile();
-    STelProfile(const STelProfile &) = delete;
-    STelProfile &operator=(const STelProfile &) = delete;
-    STelProfile(STelProfile &&) = delete;
-    STelProfile &operator=(STelProfile &&) = delete;
+    ~HFTelProfile();
+    HFTelProfile(const HFTelProfile &) = delete;
+    HFTelProfile &operator=(const HFTelProfile &) = delete;
+    HFTelProfile(HFTelProfile &&) = delete;
+    HFTelProfile &operator=(HFTelProfile &&) = delete;
 
     using sai_guard_t = std::shared_ptr<sai_object_id_t>;
 
@@ -82,20 +56,23 @@ public:
     void delObjectSAIID(sai_object_type_t object_type, const char *object_name);
     bool canBeUpdated() const;
     bool canBeUpdated(sai_object_type_t object_type) const;
+    bool isEmpty() const;
 
     const std::vector<std::uint8_t> &getTemplates(sai_object_type_t object_type) const;
+    const std::vector<std::string> getObjectNames(sai_object_type_t object_type) const;
+    const std::vector<std::uint16_t> getObjectLabels(sai_object_type_t object_type) const;
     std::vector<sai_object_type_t> getObjectTypes() const;
 
-    void loadGroupFromCfgDB(swss::Table &group_tbl);
+    // void loadGroupFromCfgDB(swss::Table &group_tbl);
     void loadCounterNameCache(sai_object_type_t object_type);
-    void tryCommitConfig(sai_object_type_t object_type);
+    bool tryCommitConfig(sai_object_type_t object_type);
 
 private:
     // Configuration parameters
     const std::string m_profile_name;
     sai_tam_tel_type_state_t m_setting_state;
     std::uint32_t m_poll_interval;
-    std::map<sai_object_type_t, STelGroup> m_groups;
+    std::map<sai_object_type_t, HFTelGroup> m_groups;
 
     // Runtime parameters
     const CounterNameCache &m_counter_name_cache;

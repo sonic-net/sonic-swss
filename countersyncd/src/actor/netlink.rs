@@ -226,10 +226,10 @@ pub fn get_genl_family_group() -> (String, String) {
     fd.read_to_string(&mut yaml_str).unwrap();
     let constants = &YamlLoader::load_from_str(&yaml_str).unwrap()[0];
 
-    let stream_telemetry = &constants["constants"]["stream_telemetry"];
+    let high_frequency_telemetry = &constants["constants"]["high_frequency_telemetry"];
     (
-        stream_telemetry["genl_family"].as_str().unwrap().to_string(),
-        stream_telemetry["genl_multicast_group"].as_str().unwrap().to_string()
+        high_frequency_telemetry["genl_family"].as_str().unwrap().to_string(),
+        high_frequency_telemetry["genl_multicast_group"].as_str().unwrap().to_string()
     )
 }
 
