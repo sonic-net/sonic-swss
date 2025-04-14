@@ -166,7 +166,11 @@ local function fetch_buffer_pool_size_from_appldb(shp_enabled)
                 -- In case the orchagent starts handling buffer configuration between 2 and 3,
                 -- It is inconsistent between buffer pools and profiles, which fails Mellanox SAI sanity check
                 -- To avoid it, it indicates the shared headroom pool is enabled by setting a very small buffer pool and shared headroom pool sizes
-                table.insert(result, buffer_pools[i] .. ':2048:1024')
+                if size == "0" then
+                    table.insert(result, buffer_pools[i] .. ':2048:1024')
+                else
+                    table.insert(result, buffer_pools[i] .. ":" .. size .. ':1024')
+                end
             else
                 table.insert(result, buffer_pools[i] .. ':' .. size)
             end

@@ -28,6 +28,7 @@ const int neighorch_pri = 30;
 
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
         gNeighBulker(sai_neighbor_api, gMaxBulkSize),
+        gNextHopBulker(sai_next_hop_api, gSwitchId, gMaxBulkSize),
         Orch(appDb, tableName, neighorch_pri),
         m_intfsOrch(intfsOrch),
         m_fdbOrch(fdbOrch),
@@ -196,9 +197,10 @@ bool NeighOrch::isNeighborResolved(const NextHopKey &nexthop)
     return hasNextHop(base_nexthop);
 }
 
-bool NeighOrch::addNextHop(const NextHopKey &nh)
+bool NeighOrch::addNextHop(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
+    const NextHopKey nh = ctx.neighborEntry;
 
     Port p;
     if (!gPortsOrch->getPort(nh.alias, p))
@@ -267,6 +269,13 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     next_hop_attrs.push_back(next_hop_attr);
 
     sai_object_id_t next_hop_id;
+
+    if (ctx.bulk_op)
+    {
+        gNextHopBulker.create_entry(&ctx.next_hop_id , (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
+        return true;
+    }
+
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -296,6 +305,98 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
 
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
+    next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    m_syncdNextHops[nexthop] = next_hop_entry;
+
+    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
+
+    if (nexthop.isMplsNextHop())
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_MPLS_NEXTHOP);
+    }
+    else
+    {
+        if (nexthop.ip_address.isV4())
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
+    }
+
+    gFgNhgOrch->validNextHopInNextHopGroup(nexthop);
+
+    // For nexthop with incoming port which has down oper status, NHFLAGS_IFDOWN
+    // flag should be set on it.
+    // This scenario may happen under race condition where buffered neighbor event
+    // is processed after incoming port is down.
+    if (p.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+    {
+        if (setNextHopFlag(nexthop, NHFLAGS_IFDOWN) == false)
+        {
+            SWSS_LOG_WARN("Failed to set NHFLAGS_IFDOWN on nexthop %s for interface %s",
+                nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+        }
+    }
+    return true;
+}
+
+bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
+{
+    SWSS_LOG_ENTER();
+
+    const NextHopKey nh = ctx.neighborEntry;
+
+    Port p;
+    if (!gPortsOrch->getPort(nh.alias, p))
+    {
+        SWSS_LOG_ERROR("Neighbor %s seen on port %s which doesn't exist",
+                        nh.ip_address.to_string().c_str(), nh.alias.c_str());
+        return false;
+    }
+    if (p.m_type == Port::SUBPORT)
+    {
+        if (!gPortsOrch->getPort(p.m_parent_port_id, p))
+        {
+            SWSS_LOG_ERROR("Neighbor %s seen on sub interface %s whose parent port doesn't exist",
+                            nh.ip_address.to_string().c_str(), nh.alias.c_str());
+            return false;
+        }
+    }
+
+    NextHopKey nexthop(nh);
+    if (ctx.next_hop_id == SAI_NULL_OBJECT_ID)
+    {
+        sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
+        if (bulker_status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
+                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return true;
+        }
+        SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
+                       nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Created next hop %s on %s",
+                    nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+    if (m_neighborToResolve.find(nexthop) != m_neighborToResolve.end())
+    {
+        clearResolvedNeighborEntry(nexthop);
+        m_neighborToResolve.erase(nexthop);
+        SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
+    }
+
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = ctx.next_hop_id;
     next_hop_entry.ref_count = 0;
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
@@ -1013,6 +1114,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
             object_statuses.emplace_back();
             gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
+            addNextHop(ctx);
             return true;
         }
 
@@ -1051,7 +1153,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
         }
 
-        if (!addNextHop(NextHopKey(ip_address, alias)))
+        if (!addNextHop(ctx))
         {
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
             if (status != SAI_STATUS_SUCCESS)
@@ -1157,6 +1259,15 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         copy(neighbor_entry.ip_address, ip_address);
 
         sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
+
+        if (bulk_op)
+        {
+            object_statuses.emplace_back();
+            gNextHopBulker.remove_entry(&ctx.nexthop_status, next_hop_id);
+            gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry);
+            return true;
+        }
+
         status = sai_next_hop_api->remove_next_hop(next_hop_id);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -1192,13 +1303,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
         SWSS_LOG_NOTICE("Removed next hop %s on %s",
                         ip_address.to_string().c_str(), alias.c_str());
-
-        if (bulk_op)
-        {
-            object_statuses.emplace_back();
-            gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry);
-            return true;
-        }
 
         status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
         if (status != SAI_STATUS_SUCCESS)
@@ -1331,7 +1435,7 @@ bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
             gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
         }
 
-        if (!addNextHop(NextHopKey(ip_address, alias)))
+        if (!processBulkAddNextHop(ctx))
         {
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
             if (status != SAI_STATUS_SUCCESS)
@@ -1395,6 +1499,40 @@ bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
         neighbor_entry.rif_id = rif_id;
         neighbor_entry.switch_id = gSwitchId;
         copy(neighbor_entry.ip_address, ip_address);
+
+        if (ctx.nexthop_status != SAI_STATUS_SUCCESS)
+        {
+            /* When next hop is not found, we continue to remove neighbor entry. */
+            if (ctx.nexthop_status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), ctx.nexthop_status);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), ctx.nexthop_status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, ctx.nexthop_status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+        }
+
+        if (ctx.nexthop_status != SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+            }
+        }
+
+        SWSS_LOG_NOTICE("Bulk removed next hop %s on %s", ip_address.to_string().c_str(), alias.c_str());
 
         status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
@@ -1524,6 +1662,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     }
 
     gNeighBulker.flush();
+    gNextHopBulker.flush();
 
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
@@ -1569,6 +1708,7 @@ bool NeighOrch::disableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         }
     }
 
+    gNextHopBulker.flush();
     gNeighBulker.flush();
 
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
@@ -1749,6 +1889,15 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 //Encap index is made available either by dynamic syncing or by static config
                 it++;
                 continue;
+            }
+            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
+            {
+                NextHopKey nexthop = { ip_address, ibif.m_alias};
+                if (hasNextHop(nexthop))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end() ||

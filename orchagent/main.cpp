@@ -52,6 +52,7 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_BATCH_SIZE  128
 extern int gBatchSize;
 
+bool gRingMode = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
@@ -62,17 +63,22 @@ extern bool gIsNatSupported;
 #define SWSS_RECORD_ENABLE (0x1 << 1)
 #define RESPONSE_PUBLISHER_RECORD_ENABLE (0x1 << 2)
 
+/* orchagent heart beat message interval */
+#define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
+
 string gMySwitchType = "";
+string gMySwitchSubType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
+uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -92,6 +98,10 @@ void usage()
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
+    cout << "    -t Override create switch timeout, in sec" << endl;
+    cout << "    -v vrf: VRF name (default empty)" << endl;
+    cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
+    cout << "    -R enable the ring thread feature" << endl;
 }
 
 void sighup_handler(int signo)
@@ -157,7 +167,7 @@ void init_gearbox_phys(DBConnector *applDb)
     delete tmpGearboxTable;
 }
 
-void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
+void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_sub_type)
 {
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
 
@@ -181,6 +191,16 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
     	//If configured switch type is none of the supported, assume regular switch
         switch_type = "switch";
     }
+
+    try
+    {
+        cfgDeviceMetaDataTable.hget("localhost", "subtype", switch_sub_type);
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
+    }
+
 }
 
 bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
@@ -342,11 +362,13 @@ int main(int argc, char **argv)
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
     string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
+    string vrf;
     bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
+    long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R")) != -1)
     {
         switch (opt)
         {
@@ -437,6 +459,34 @@ int main(int argc, char **argv)
                 enable_zmq = true;
             }
             break;
+        case 't':
+            create_switch_timeout = atoi(optarg);
+            break;
+        case 'v':
+            if (optarg)
+            {
+                vrf = optarg;
+            }
+            break;
+        case 'I':
+            if (optarg)
+            {
+                auto interval = atoi(optarg);
+                if (interval >= 0)
+                {
+                    heartBeatInterval = interval;
+                    SWSS_LOG_NOTICE("Setting heartbeat interval as %ld", heartBeatInterval);
+                }
+                else
+                {
+                    heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
+                    SWSS_LOG_ERROR("Invalid input for heartbeat interval: %d. use default interval: %ld", interval, heartBeatInterval);
+                }
+            }
+            break;
+        case 'R':
+            gRingMode = true;
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -481,8 +531,8 @@ int main(int argc, char **argv)
     shared_ptr<ZmqServer> zmq_server = nullptr;
     if (enable_zmq)
     {
-        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s", zmq_server_address.c_str());
-        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str());
+        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
     }
     else
     {
@@ -490,7 +540,7 @@ int main(int argc, char **argv)
     }
 
     // Get switch_type
-    getCfgSwitchType(&config_db, gMySwitchType);
+    getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -629,7 +679,7 @@ int main(int argc, char **argv)
         delay_factor = 2;
     }
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu" || asan_enabled)
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu" || asan_enabled || create_switch_timeout)
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -637,7 +687,12 @@ int main(int argc, char **argv)
          * and systems ports to initialize
          */
 
-        if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
+        if (create_switch_timeout)
+        {
+            /* Convert timeout to milliseconds from seconds */
+            attr.value.u64 = (create_switch_timeout * 1000);
+        }
+        else if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
         {
             attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
@@ -672,7 +727,7 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu" || create_switch_timeout)
     {
         /* Set syncd response timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
@@ -782,6 +837,11 @@ int main(int argc, char **argv)
         orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
     }
 
+    if (gRingMode) {
+        /* Initialize the ring before OrchDaemon initializing Orchs */
+        orchDaemon->enableRingBuffer();
+    }
+
     if (!orchDaemon->init())
     {
         SWSS_LOG_ERROR("Failed to initialize orchestration daemon");
@@ -797,7 +857,7 @@ int main(int argc, char **argv)
         syncd_apply_view();
     }
 
-    orchDaemon->start();
+    orchDaemon->start(heartBeatInterval);
 
     return 0;
 }

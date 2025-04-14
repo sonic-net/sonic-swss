@@ -1625,7 +1625,14 @@ void MuxOrch::update(SubjectType type, void *cntx)
         case SUBJECT_TYPE_NEIGH_CHANGE:
         {
             NeighborUpdate *update = static_cast<NeighborUpdate *>(cntx);
-            updateNeighbor(*update);
+            if (enable_cache_neigh_updates_)
+            {
+                cached_neigh_updates_.push_back(*update);
+            }
+            else
+            {
+                updateNeighbor(*update);
+            }
             break;
         }
         case SUBJECT_TYPE_FDB_CHANGE:
@@ -1860,6 +1867,30 @@ void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp)
 bool MuxOrch::isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp)
 {
     return standalone_tunnel_neighbors_.find(neighborIp) != standalone_tunnel_neighbors_.end();
+}
+
+void MuxOrch::updateCachedNeighbors()
+{
+    if (!enable_cache_neigh_updates_)
+    {
+        SWSS_LOG_NOTICE("Skip process cached neighbor updates");
+        return;
+    }
+    if (mux_peer_switch_.isZero())
+    {
+        SWSS_LOG_NOTICE("Skip process cached neighbor updates, no peer switch addr is configured");
+        return;
+    }
+
+    while (!cached_neigh_updates_.empty())
+    {
+        const NeighborUpdate &update = cached_neigh_updates_.back();
+        SWSS_LOG_NOTICE("Update cached neighbor %s, add %d",
+                        update.entry.ip_address.to_string().c_str(),
+                        update.add);
+        updateNeighbor(update);
+        cached_neigh_updates_.pop_back();
+    }
 }
 
 MuxCableOrch::MuxCableOrch(DBConnector *db, DBConnector *sdb, const std::string& tableName):

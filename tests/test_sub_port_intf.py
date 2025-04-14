@@ -393,7 +393,7 @@ class TestSubPortIntf(object):
         assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
         return oids[0]
 
-    def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None):
+    def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None, prefix_present=True):
         if vrf_oid is None:
             vrf_oid = self.default_vrf_oid
 
@@ -407,18 +407,24 @@ class TestSubPortIntf(object):
                     route_entry_found = True
                     assert route_entry_key["vr"] == vrf_oid
                     break
-
-            return (route_entry_found, raw_route_entry_key)
+            if prefix_present:
+                return (route_entry_found, raw_route_entry_key)
+            else:
+                return (not route_entry_found, None)
 
         (route_entry_found, raw_route_entry_key) = wait_for_result(_access_function)
 
-        fvs = self.asic_db.get_entry(ASIC_ROUTE_ENTRY_TABLE, raw_route_entry_key)
+        if not prefix_present:
+            assert raw_route_entry_key == None
+            return None
+        else:
+            fvs = self.asic_db.get_entry(ASIC_ROUTE_ENTRY_TABLE, raw_route_entry_key)
 
-        nhg_oid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "")
-        assert nhg_oid != ""
-        assert nhg_oid != "oid:0x0"
+            nhg_oid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "")
+            assert nhg_oid != ""
+            assert nhg_oid != "oid:0x0"
 
-        return nhg_oid
+            return nhg_oid
 
     def check_sub_port_intf_key_existence(self, db, table_name, key):
         db.wait_for_matching_keys(table_name, [key])
@@ -582,6 +588,99 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.check_lag_removal(parent_port_oid)
 
+    def _test_sub_port_intf_creation_add_lag_member(self, dvs, sub_port_intf_name, vrf_name=None):
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = self.get_parent_port(sub_port_intf_name)
+        vlan_id = substrs[1]
+
+        assert parent_port.startswith(SUBINTF_LAG_PREFIX)
+        state_tbl_name = STATE_LAG_TABLE_NAME
+        phy_ports = self.LAG_MEMBERS_UNDER_TEST
+        old_lag_oids = self.get_oids(ASIC_LAG_TABLE)
+
+        vrf_oid = self.default_vrf_oid
+        old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
+
+        self.set_parent_port_admin_status(dvs, parent_port, "up")
+
+        parent_port_oid = self.get_newly_created_oid(ASIC_LAG_TABLE, old_lag_oids)
+        # Add lag members to test physical port host interface vlan tag attribute
+        self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[1:])
+        self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, len(self.LAG_MEMBERS_UNDER_TEST[1:]))
+        if vrf_name:
+            self.create_vrf(vrf_name)
+            vrf_oid = self.get_newly_created_oid(ASIC_VIRTUAL_ROUTER_TABLE, [vrf_oid])
+        self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
+        self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[:1])
+        self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, len(self.LAG_MEMBERS_UNDER_TEST))
+
+        # Verify that sub port interface state ok is pushed to STATE_DB by Intfmgrd
+        fv_dict = {
+            "state": "ok",
+        }
+        self.check_sub_port_intf_fvs(self.state_db, state_tbl_name, sub_port_intf_name, fv_dict)
+
+        # Verify vrf name sub port interface bound to in STATE_DB INTERFACE_TABLE
+        fv_dict = {
+            "vrf": vrf_name if vrf_name else "",
+        }
+        self.check_sub_port_intf_fvs(self.state_db, STATE_INTERFACE_TABLE_NAME, sub_port_intf_name, fv_dict)
+
+        # If bound to non-default vrf, verify sub port interface vrf binding in linux kernel,
+        # and parent port not bound to vrf
+        if vrf_name:
+            self.check_sub_port_intf_vrf_bind_kernel(dvs, sub_port_intf_name, vrf_name)
+            self.check_sub_port_intf_vrf_nobind_kernel(dvs, parent_port, vrf_name)
+
+        # Verify that sub port interface configuration is synced to APPL_DB INTF_TABLE by Intfmgrd
+        fv_dict = {
+            ADMIN_STATUS: "up",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+
+        # Verify that a sub port router interface entry is created in ASIC_DB
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_TYPE": "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT",
+            "SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID": "{}".format(vlan_id),
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+            "SAI_ROUTER_INTERFACE_ATTR_PORT_ID": parent_port_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Verify physical port host interface vlan tag attribute
+        fv_dict = {
+            "SAI_HOSTIF_ATTR_VLAN_TAG": "SAI_HOSTIF_VLAN_TAG_KEEP",
+        }
+        for phy_port in phy_ports:
+            hostif_oid = dvs.asicdb.hostifnamemap[phy_port]
+            self.check_sub_port_intf_fvs(self.asic_db, ASIC_HOSTIF_TABLE, hostif_oid, fv_dict)
+
+        # Remove a sub port interface
+        self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.check_sub_port_intf_profile_removal(rif_oid)
+
+        # Remove vrf if created
+        if vrf_name:
+            self.remove_vrf(vrf_name)
+            self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
+
+        # Remove lag members from lag parent port
+        self.remove_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
+        self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
+
+        # Remove lag
+        self.remove_lag(parent_port)
+        self.check_lag_removal(parent_port_oid)
+
     def test_sub_port_intf_creation(self, dvs):
         self.connect_dbs(dvs)
 
@@ -593,6 +692,8 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_creation(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
         self._test_sub_port_intf_creation(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+
+        self._test_sub_port_intf_creation_add_lag_member(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
 
     def _test_sub_port_intf_add_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
@@ -1543,21 +1644,26 @@ class TestSubPortIntf(object):
             self.add_route_appl_db(ip_prefix, nhop_ips, ifnames, vrf_name)
 
             # Verify route entry created in ASIC_DB and get next hop group oid
-            nhg_oid = self.get_ip_prefix_nhg_oid(ip_prefix, vrf_oid)
+            nhg_oid = self.get_ip_prefix_nhg_oid(ip_prefix, vrf_oid, prefix_present = i < (nhop_num - 1))
 
-            # Verify next hop group of the specified oid created in ASIC_DB
-            self.check_sub_port_intf_key_existence(self.asic_db, ASIC_NEXT_HOP_GROUP_TABLE, nhg_oid)
+            if i < (nhop_num - 1):
+                # Verify next hop group of the specified oid created in ASIC_DB
+                self.check_sub_port_intf_key_existence(self.asic_db, ASIC_NEXT_HOP_GROUP_TABLE, nhg_oid)
 
-            # Verify next hop group member # created in ASIC_DB
-            nhg_member_oids = self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_GROUP_MEMBER_TABLE,
-                                                           (nhop_num - 1) - i if create_intf_on_parent_port == False else ((nhop_num - 1) - i) * 2)
+                # Verify next hop group member # created in ASIC_DB
+                nhg_member_oids = self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_GROUP_MEMBER_TABLE,
+                                                               (nhop_num - 1) - i if create_intf_on_parent_port == False \
+                                                               else ((nhop_num - 1) - i) * 2)
 
-            # Verify that next hop group members all belong to the next hop group of the specified oid
-            fv_dict = {
-                "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID": nhg_oid,
-            }
-            for nhg_member_oid in nhg_member_oids:
-                self.check_sub_port_intf_fvs(self.asic_db, ASIC_NEXT_HOP_GROUP_MEMBER_TABLE, nhg_member_oid, fv_dict)
+                # Verify that next hop group members all belong to the next hop group of the specified oid
+                fv_dict = {
+                    "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID": nhg_oid,
+                }
+                for nhg_member_oid in nhg_member_oids:
+                    self.check_sub_port_intf_fvs(self.asic_db, ASIC_NEXT_HOP_GROUP_MEMBER_TABLE, nhg_member_oid, fv_dict)
+            else:
+                assert nhg_oid == None
+                self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_GROUP_MEMBER_TABLE, 0)
 
             nhop_cnt = len(self.asic_db.get_keys(ASIC_NEXT_HOP_TABLE))
             # Remove next hop objects on sub port interfaces
