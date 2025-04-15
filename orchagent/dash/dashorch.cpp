@@ -1108,3 +1108,15 @@ void DashOrch::doTask(SelectableTimer &timer)
         m_fc_update_timer->stop();
     }
 }
+
+dash::types::IpAddress DashOrch::getApplianceVip()
+{
+    SWSS_LOG_ENTER();
+
+    if (appliance_entries_.empty())
+    {
+        return dash::types::IpAddress();
+    }
+    // we only expect one appliance per DPU, so always take the first entry in the cache
+    return appliance_entries_.begin()->second.metadata.sip();
+}

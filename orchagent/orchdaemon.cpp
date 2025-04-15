@@ -1253,10 +1253,17 @@ bool DpuOrchDaemon::init()
     DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
     gDirectory.set(dash_acl_orch);
 
+    vector<string> dash_tunnel_tables = {
+        APP_DASH_TUNNEL_TABLE_NAME
+    };
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_zmqServer);
+    gDirectory.set(dash_tunnel_orch);
+
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
     addOrchList(dash_orch);
+    addOrchList(dash_tunnel_orch);
 
     return true;
 }

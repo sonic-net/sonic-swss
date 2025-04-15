@@ -19,10 +19,12 @@
 #include "dashorch.h"
 #include "crmorch.h"
 #include "saihelper.h"
+#include "dashtunnelorch.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
 #include "dash_api/route_type.pb.h"
+#include "directory.h"
 
 using namespace std;
 using namespace swss;
@@ -33,6 +35,7 @@ extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
+extern Directory<Orch*> gDirectory;
 
 static std::unordered_map<dash::route_type::RoutingType, sai_outbound_routing_entry_action_t> sOutboundAction =
 {
@@ -144,6 +147,20 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         {
             return false;
         }
+        outbound_routing_attrs.push_back(outbound_routing_attr);
+    }
+
+    if (ctxt.metadata.has_tunnel())
+    {
+        auto dash_tunnel_orch = gDirectory.get<DashTunnelOrch*>();
+        sai_object_id_t tunnel_oid = dash_tunnel_orch->getTunnelOid(ctxt.metadata.tunnel());
+        if (tunnel_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Retry as tunnel %s not found", ctxt.metadata.tunnel().c_str());
+            return false;
+        }
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DASH_TUNNEL_ID;
+        outbound_routing_attr.value.oid = tunnel_oid;
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 

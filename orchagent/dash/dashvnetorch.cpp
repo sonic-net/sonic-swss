@@ -21,6 +21,7 @@
 #include "crmorch.h"
 #include "saihelper.h"
 #include "directory.h"
+#include "dashtunnelorch.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -335,6 +336,19 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
 
         }
+    }
+
+    if (ctxt.metadata.has_tunnel())
+    {
+        auto tunnel_oid = gDirectory.get<DashTunnelOrch*>()->getTunnelOid(ctxt.metadata.tunnel());
+        if (tunnel_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Tunnel %s for VnetMap %s does not exist yet", ctxt.metadata.tunnel().c_str(), key.c_str());
+            return false;
+        }
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_TUNNEL_ID;
+        outbound_ca_to_pa_attr.value.oid = tunnel_oid;
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 
     if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
