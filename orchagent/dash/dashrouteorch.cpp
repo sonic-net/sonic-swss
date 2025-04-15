@@ -52,9 +52,9 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrc
     dash_orch_(dash_orch)
 {
     SWSS_LOG_ENTER();
-    dash_route_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ROUTE_TABLE_NAME));
-    dash_route_rule_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ROUTE_RULE_TABLE_NAME));
-    dash_route_group_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME));
+    dash_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_TABLE_NAME);
+    dash_route_rule_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_RULE_TABLE_NAME);
+    dash_route_group_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME);
 }
 
 bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)

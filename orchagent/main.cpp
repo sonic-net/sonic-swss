@@ -824,7 +824,8 @@ int main(int argc, char **argv)
     shared_ptr<OrchDaemon> orchDaemon;
 
     /*
-     * Declare shared pointers for dpu specific databases
+     * Declare shared pointers for dpu specific databases.
+     * These dpu databases exist on the npu for smartswitch.
      */
     shared_ptr<DBConnector> dpu_app_db;
     shared_ptr<DBConnector> dpu_app_state_db;

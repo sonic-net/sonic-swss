@@ -45,8 +45,8 @@ DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, DBConnector 
     ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
-    dash_vnet_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_VNET_TABLE_NAME));
-    dash_vnet_map_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_VNET_MAPPING_TABLE_NAME));
+    dash_vnet_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_TABLE_NAME);
+    dash_vnet_map_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_MAPPING_TABLE_NAME);
 }
 
 bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)

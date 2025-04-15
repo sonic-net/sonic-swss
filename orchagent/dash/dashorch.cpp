@@ -54,12 +54,12 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_
 
     m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_ENI_NAME_MAP));
-    dash_eni_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ENI_TABLE_NAME));
-    dash_eni_route_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ENI_ROUTE_TABLE_NAME));
-    dash_qos_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_QOS_TABLE_NAME));
-    dash_appliance_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_APPLIANCE_TABLE_NAME));
-    dash_routing_type_result_table_ = unique_ptr<Table>(new Table(app_state_db, APP_DASH_ROUTING_TYPE_TABLE_NAME));
+    m_eni_name_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_NAME_MAP);
+    dash_eni_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_TABLE_NAME);
+    dash_eni_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_ROUTE_TABLE_NAME);
+    dash_qos_result_table_ = make_unique<Table>(app_state_db, APP_DASH_QOS_TABLE_NAME);
+    dash_appliance_result_table_ = make_unique<Table>(app_state_db, APP_DASH_APPLIANCE_TABLE_NAME);
+    dash_routing_type_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTING_TYPE_TABLE_NAME);
 
     if (gTraditionalFlexCounter)
     {
