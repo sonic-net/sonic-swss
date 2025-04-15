@@ -1,0 +1,18 @@
+services:
+  sonicdev:
+    container_name: sonicdev
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.yml
+      args:
+        - DEBIAN_VERSION
+        - UID
+        - GID
+        - BRANCH_NAME
+        - PLATFORM
+    volumes:
+      - ..:/workspace/sonic-swss
+    init: true
+    privileged: true
+    working_dir: /workspace/sonic-swss
+

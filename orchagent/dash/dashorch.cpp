@@ -40,6 +40,12 @@ extern bool gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
+static std::unordered_map<string, sai_dash_eni_mac_override_type_t> sMacOverride =
+{
+    { "src_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC},
+    { "dst_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC}
+};
+
 DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) :
     ZmqOrch(db, tableName, zmqServer),
     m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
@@ -85,6 +91,11 @@ bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, d
     return true;
 }
 
+bool DashOrch::hasApplianceEntry()
+{
+    return !appliance_entries_.empty();
+}
+
 bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
@@ -93,6 +104,11 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     {
         SWSS_LOG_WARN("Appliance Entry already exists for %s", appliance_id.c_str());
         return true;
+    }
+    if (!appliance_entries_.empty())
+    {
+        SWSS_LOG_ERROR("Appliance entry is a singleton and already exists");
+        return false;
     }
 
     uint32_t attr_count = 1;
@@ -105,14 +121,19 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     appliance_attr.value.u32 = entry.local_region_id();
     status = sai_dash_appliance_api->create_dash_appliance(&sai_appliance_id, gSwitchId,
                                                            attr_count, &appliance_attr);
-    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_IMPLEMENTED)
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
-        if (handle_status != task_success)
+        if (status != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
+        // ignore if not implemented in SAI
+        sai_appliance_id = 0;
     }
 
     sai_vip_entry_t vip_entry;
@@ -135,11 +156,26 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     }
 
     sai_direction_lookup_entry_t direction_lookup_entry;
+    vector<sai_attribute_t> direction_lookup_attrs;
     direction_lookup_entry.switch_id = gSwitchId;
     direction_lookup_entry.vni = entry.vm_vni();
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION;
     appliance_attr.value.u32 = SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION;
-    status = sai_dash_direction_lookup_api->create_direction_lookup_entry(&direction_lookup_entry, attr_count, &appliance_attr);
+    direction_lookup_attrs.push_back(appliance_attr);
+
+    appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE;
+    if (entry.has_outbound_direction_lookup())
+    {
+        appliance_attr.value.u32 = sMacOverride[entry.outbound_direction_lookup()];
+    }
+    else
+    {
+        appliance_attr.value.u32 = SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC;
+    }
+    direction_lookup_attrs.push_back(appliance_attr);
+
+    status = sai_dash_direction_lookup_api->create_direction_lookup_entry(&direction_lookup_entry,
+                (uint32_t)direction_lookup_attrs.size(), direction_lookup_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create direction lookup entry for %s", appliance_id.c_str());
@@ -1048,4 +1084,16 @@ void DashOrch::doTask(SelectableTimer &timer)
     {
         m_fc_update_timer->stop();
     }
+}
+
+dash::types::IpAddress DashOrch::getApplianceVip()
+{
+    SWSS_LOG_ENTER();
+
+    if (appliance_entries_.empty())
+    {
+        return dash::types::IpAddress();
+    }
+    // we only expect one appliance per DPU, so always take the first entry in the cache
+    return appliance_entries_.begin()->second.metadata.sip();
 }

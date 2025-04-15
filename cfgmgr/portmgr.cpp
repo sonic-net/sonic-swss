@@ -46,7 +46,14 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
     }
     else
     {
-        throw runtime_error(cmd_str + " : " + res);
+        // This failure can happen on PortChannels during system startup.  A PortChannel enslaves
+        // members before a default MTU is set on the port (set in this file, not via the config!).
+        // Therefore this error is always emitted on startup for portchannel members.
+        // In theory we shouldn't log in this case, the correct fix is to detect the
+        // port is part of a portchannel and not even try this but that is rejected for
+        // possible performance implications.
+        SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed (isPortStateOk=true) with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
     }
     return true;
 }
