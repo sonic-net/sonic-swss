@@ -360,6 +360,12 @@ bool OrchDaemon::init()
     DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_zmqServer);
     gDirectory.set(dash_acl_orch);
 
+    vector<string> dash_tunnel_tables = {
+        APP_DASH_TUNNEL_TABLE_NAME
+    };
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_zmqServer);
+    gDirectory.set(dash_tunnel_orch);
+    
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
@@ -597,6 +603,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(dash_vnet_orch);
     m_orchList.push_back(dash_route_orch);
     m_orchList.push_back(dash_orch);
+    m_orchList.push_back(dash_tunnel_orch);
 
     if (m_fabricEnabled)
     {

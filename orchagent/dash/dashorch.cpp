@@ -40,6 +40,12 @@ extern bool gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
+static std::unordered_map<string, sai_dash_eni_mac_override_type_t> sMacOverride =
+{
+    { "src_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC},
+    { "dst_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC}
+};
+
 DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) :
     ZmqOrch(db, tableName, zmqServer),
     m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
@@ -158,7 +164,14 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     direction_lookup_attrs.push_back(appliance_attr);
 
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE;
-    appliance_attr.value.u32 = SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC;
+    if (entry.has_outbound_direction_lookup())
+    {
+        appliance_attr.value.u32 = sMacOverride[entry.outbound_direction_lookup()];
+    }
+    else
+    {
+        appliance_attr.value.u32 = SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC;
+    }
     direction_lookup_attrs.push_back(appliance_attr);
 
     status = sai_dash_direction_lookup_api->create_direction_lookup_entry(&direction_lookup_entry,
@@ -1071,4 +1084,16 @@ void DashOrch::doTask(SelectableTimer &timer)
     {
         m_fc_update_timer->stop();
     }
+}
+
+dash::types::IpAddress DashOrch::getApplianceVip()
+{
+    SWSS_LOG_ENTER();
+
+    if (appliance_entries_.empty())
+    {
+        return dash::types::IpAddress();
+    }
+    // we only expect one appliance per DPU, so always take the first entry in the cache
+    return appliance_entries_.begin()->second.metadata.sip();
 }
