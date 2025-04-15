@@ -386,6 +386,8 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
+
+    addPaValidation(key, ctxt);
     return false;
 }
 
@@ -446,11 +448,6 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
         }
 
         remove_from_consumer = addOutboundCaToPa(key, ctxt);
-        // If addOutboundCaToPa fails, skip addPaValidation
-        if (!remove_from_consumer)
-        {
-            addPaValidation(key, ctxt);
-        }
     }
     /*
      * If the VNET map is already added, don't add it to the bulker and
