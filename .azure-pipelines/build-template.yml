@@ -175,6 +175,13 @@ jobs:
       patterns: |
         libdashapi*.deb
     displayName: "Download dash api"
+  - script: |
+      set -ex
+      cd download
+      sudo dpkg -i $(find common -type f -name '*.deb')
+      cd ..
+    workingDirectory: $(Build.ArtifactStagingDirectory)
+    displayName: "Install libnl3"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -205,13 +212,12 @@ jobs:
   - script: |
       set -ex
       cd download
-      sudo dpkg -i $(find common -type f -name '*.deb')
       sudo dpkg -i $(find swsscommon -type f -name '*.deb')
       sudo dpkg -i $(find sairedis -type f -name '*.deb')
       cd ..
       rm -rf download
     workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install libnl3, sonic swss common and sairedis"
+    displayName: "Install sonic swss common and sairedis"
   - script: |
       set -ex
       tar czf pytest.tgz tests
