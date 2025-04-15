@@ -94,7 +94,10 @@ void parseArguments(
        // The last element of the array has to be filled with zeros.
        {0,          0,       0,  0 }
     };
-    
+
+    // ZMQ disabled by default
+    options.m_zmq_port = 0;
+
     // prevent getopt_long print "invalid option" message.
     opterr = 0;
     while(optind < argc)
@@ -110,12 +113,8 @@ void parseArguments(
                 if (optind < argc)
                 {
                     options.m_zmq_port = atoi(argv[optind]);
-                    optind++;
                 }
-                else
-                {
-                    throw invalid_argument("zmq port value is missing.");
-                }
+                optind++;
                 break;
 
             default:
