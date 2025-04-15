@@ -162,6 +162,10 @@ namespace mux_rollback_test
         void PreTearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(next_hop);
+            DEINIT_SAI_API_MOCK(acl);
+            DEINIT_SAI_API_MOCK(route);
+            DEINIT_SAI_API_MOCK(neighbor);
             gNeighOrch->gNeighBulker.create_entries = old_create_neighbor_entries;
             gNeighOrch->gNeighBulker.remove_entries = old_remove_neighbor_entries;
             gNeighOrch->gNextHopBulker.create_entries = old_object_create;

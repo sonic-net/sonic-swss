@@ -78,6 +78,16 @@ counter_group_meta = {
         'name_map': 'COUNTERS_ROUTE_NAME_MAP',
         'pre_test': 'pre_route_flow_counter_test',
         'post_test':  'post_route_flow_counter_test',
+    },
+    'wred_queue_counter': {
+        'key': 'WRED_ECN_QUEUE',
+        'group_name': 'WRED_ECN_QUEUE_STAT_COUNTER',
+        'name_map': 'COUNTERS_QUEUE_NAME_MAP',
+    },
+    'wred_port_counter': {
+        'key': 'WRED_ECN_PORT',
+        'group_name': 'WRED_ECN_PORT_STAT_COUNTER',
+        'name_map': 'COUNTERS_PORT_NAME_MAP',
     }
 }
 
@@ -609,7 +619,7 @@ class TestFlexCounters(TestFlexCountersBase):
     def set_admin_status(self, interface, status):
         self.config_db.update_entry("PORT", interface, {"admin_status": status})
 
-    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7')])
+    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7'), ('wred_queue_counter', '6')])
     def test_create_only_config_db_buffers_false(self, dvs, counter_type_id):
         """
         Test steps:
@@ -659,7 +669,7 @@ class TestFlexCounters(TestFlexCountersBase):
         self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '1', False)
         self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
 
-    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7')])
+    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7'), ('wred_queue_counter', '6')])
     def test_create_only_config_db_buffers_true(self, dvs, counter_type_id):
         """
         Test steps:
@@ -679,6 +689,25 @@ class TestFlexCounters(TestFlexCountersBase):
 
         counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:' + index)
         assert counter_oid is None, "Counter OID should be None when create_only_config_db_value is 'true'"
+
+    def test_wred_port_stats_status(self, dvs):
+        """
+        Test steps:
+            1. This test tests the counter status for the wred port stats.
+
+        Args:
+            dvs (object): virtual switch object
+        """
+        counter_type = 'wred_port_counter'
+        self.setup_dbs(dvs)
+        meta_data = counter_group_meta[counter_type]
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0')
+        stats_entry_disable = {"FLEX_COUNTER_STATUS": "disable"}
+        self.config_db.set_entry("FLEX_COUNTER_TABLE", meta_data['key'], stats_entry_disable)
+        stats_entry_enable = {"FLEX_COUNTER_STATUS": "enable"}
+        self.config_db.set_entry("FLEX_COUNTER_TABLE", meta_data['key'], stats_entry_enable)
+        assert(counter_oid)
 
     def test_create_remove_buffer_queue_counter(self, dvs):
         """

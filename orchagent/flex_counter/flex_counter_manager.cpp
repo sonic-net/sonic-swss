@@ -5,7 +5,6 @@
 #include "schema.h"
 #include "rediscommand.h"
 #include "logger.h"
-#include "sai_serialize.h"
 
 #include <macsecorch.h>
 
@@ -20,14 +19,13 @@ using swss::ProducerTable;
 
 extern sai_switch_api_t *sai_switch_api;
 
-extern sai_object_id_t gSwitchId;
-
 const string FLEX_COUNTER_ENABLE("enable");
 const string FLEX_COUNTER_DISABLE("disable");
 
 const unordered_map<StatsMode, string> FlexCounterManager::stats_mode_lookup =
 {
     { StatsMode::READ, STATS_MODE_READ },
+    { StatsMode::READ_AND_CLEAR, STATS_MODE_READ_AND_CLEAR },
 };
 
 const unordered_map<bool, string> FlexCounterManager::status_lookup =
@@ -42,6 +40,8 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::SWITCH_DEBUG,    SWITCH_DEBUG_COUNTER_ID_LIST },
     { CounterType::PORT,            PORT_COUNTER_ID_LIST },
     { CounterType::QUEUE,           QUEUE_COUNTER_ID_LIST },
+    { CounterType::QUEUE_ATTR,      QUEUE_ATTR_ID_LIST },
+    { CounterType::PRIORITY_GROUP,  PG_COUNTER_ID_LIST },
     { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
     { CounterType::MACSEC_SA,       MACSEC_SA_COUNTER_ID_LIST },
     { CounterType::MACSEC_FLOW,     MACSEC_FLOW_COUNTER_ID_LIST },
@@ -259,7 +259,7 @@ string FlexCounterManager::getFlexCounterTableKey(
 
 // serializeCounterStats turns a set of stats into a format suitable for FLEX_COUNTER_DB.
 string FlexCounterManager::serializeCounterStats(
-        const unordered_set<string>& counter_stats) const
+        const unordered_set<string>& counter_stats)
 {
     SWSS_LOG_ENTER();
 

@@ -98,6 +98,7 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
     rtnl_route_read_protocol_names(DefaultRtProtoPath);
+    nlmsg_set_default_size(FPM_MAX_MSG_LEN);
 
     std::string suppressionEnabledStr;
     deviceMetadataTable.hget("localhost", "suppress-fib-pending", suppressionEnabledStr);
