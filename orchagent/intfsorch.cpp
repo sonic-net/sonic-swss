@@ -1329,8 +1329,21 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
         return false;
     }
 
-    const auto id = sai_serialize_object_id(port.m_rif_id);
-    removeRifFromFlexCounter(id, port.m_alias);
+    bool port_found = false;
+    for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); ++it)
+    {
+        if (it->m_rif_id == port.m_rif_id)
+        {
+            m_rifsToAdd.erase(it);
+            port_found = true;
+            break;
+        }
+    }
+    if (!port_found)
+    {
+        const auto id = sai_serialize_object_id(port.m_rif_id);
+        removeRifFromFlexCounter(id, port.m_alias);
+    }
 
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -1760,3 +1773,4 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
+

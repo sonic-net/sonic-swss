@@ -535,6 +535,14 @@ namespace portsorch_test
             ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>), nullptr);
             gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler> = new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(m_config_db.get(), pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
 
+            vector<string> mlag_tables = {
+                { CFG_MCLAG_TABLE_NAME },
+                { CFG_MCLAG_INTF_TABLE_NAME }
+            };
+
+            ASSERT_EQ(gMlagOrch, nullptr);
+            gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
+ 
         }
 
         virtual void TearDown() override
@@ -563,7 +571,8 @@ namespace portsorch_test
             gQosOrch = nullptr;
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
-
+            delete gMlagOrch;
+            gMlagOrch = nullptr;
             // clear orchs saved in directory
             gDirectory.m_values.clear();
         }
@@ -808,7 +817,7 @@ namespace portsorch_test
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }
-            else if (fvField(valueTuple) == "high ber_error_count")
+            else if (fvField(valueTuple) == "high_ber_error_count")
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }
@@ -1311,17 +1320,16 @@ namespace portsorch_test
         ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
 
         // Get queue info
-        string type;
+        sai_queue_type_t type;
         uint8_t index;
         auto queue_id = port.m_queue_ids[0];
         auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
-        type = "";
         index = 255;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
         ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
 

@@ -39,6 +39,11 @@ void setFlexCounterGroupStatsMode(const std::string &group,
                                   const std::string &stats_mode,
                                   bool is_gearbox=false);
 
+void setFlexCounterGroupBulkChunkSize(const std::string &group,
+                                      const std::string &bulk_size,
+                                      const std::string &bulk_chunk_size_per_prefix,
+                                      bool is_gearbox=false);
+
 void delFlexCounterGroup(const std::string &group,
                          bool is_gearbox=false);
 

@@ -435,6 +435,13 @@ class TestMirror(object):
         # add route
         dvs.add_route("13.13.13.0/24", "200.0.0.1")
         self.dvs_mirror.verify_session_status(session)
+      
+        # As the Route pointing to Down NH Interface it will not get installed and Mirror State should not be changed.
+        self.dvs_mirror.verify_session(dvs, session, asic_db=expected_asic_db, src_ports=src_asic_ports, direction="RX")
+
+        # Now Make Port Channel oper up so route pointing to this gets installed
+        (exitcode, _) = dvs.runcmd("ip link set dev PortChannel080 carrier on")
+        assert exitcode == 0, "ip link set failed"
 
         expected_asic_db = {"SAI_MIRROR_SESSION_ATTR_MONITOR_PORT": pmap.get("Ethernet32"),
                             "SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS": "12:10:08:06:04:02"}

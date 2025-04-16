@@ -247,11 +247,16 @@ namespace routeorch_test
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             ASSERT_EQ(gSrv6Orch, nullptr);
-            vector<string> srv6_tables = {
-                APP_SRV6_SID_LIST_TABLE_NAME,
-                APP_SRV6_MY_SID_TABLE_NAME
+            TableConnector srv6_sid_list_table(m_app_db.get(), APP_SRV6_SID_LIST_TABLE_NAME);
+            TableConnector srv6_my_sid_table(m_app_db.get(), APP_SRV6_MY_SID_TABLE_NAME);
+            TableConnector srv6_my_sid_cfg_table(m_config_db.get(), CFG_SRV6_MY_SID_TABLE_NAME);
+
+            vector<TableConnector> srv6_tables = {
+                srv6_sid_list_table,
+                srv6_my_sid_table,
+                srv6_my_sid_cfg_table
             };
-            gSrv6Orch = new Srv6Orch(m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
+            gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
             const int routeorch_pri = 5;
@@ -305,6 +310,11 @@ namespace routeorch_test
             intfTable.set("Ethernet4", { {"NULL", "NULL" },
                                          {"mac_addr", "00:00:00:00:00:00" }});
             intfTable.set("Ethernet4:11.0.0.1/32", { { "scope", "global" },
+                                                     { "family", "IPv4" }});
+            intfTable.set("Ethernet8", { {"NULL", "NULL" },
+                                         {"vrf_name", "Vrf1"},
+                                         {"mac_addr", "00:00:00:00:00:00" }});
+            intfTable.set("Ethernet8:20.0.0.1/24", { { "scope", "global" },
                                                      { "family", "IPv4" }});
             gIntfsOrch->addExistingData(&intfTable);
             static_cast<Orch *>(gIntfsOrch)->doTask();
@@ -551,5 +561,31 @@ namespace routeorch_test
         static_cast<Orch *>(gRouteOrch)->doTask();
         ASSERT_EQ(current_create_count, create_route_count);
         ASSERT_EQ(current_set_count, set_route_count);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestVrfRoute)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf2", "SET", { {"vni", "500200"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        entries.clear();
+        entries.push_back({"Ethernet8", "SET", { {"vrf_name", "Vrf2"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        auto routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        entries.clear();
+        entries.push_back({"Vrf2:fe80::/64", "DEL", {}});
+        entries.push_back({"Vrf2:20.0.0.0/24", "DEL", {}});
+        entries.push_back({"Vrf2:fe80::/64", "SET", { {"protocol", "kernel"},
+                                                      {"nexthop", "::"},
+                                                      {"ifname", "Ethernet8"}}});
+        entries.push_back({"Vrf2:20.0.0.0/24", "SET", { {"protocol", "kernel"},
+                                                        {"nexthop", "0.0.0.0"},
+                                                        {"ifname", "Ethernet8"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
     }
 }

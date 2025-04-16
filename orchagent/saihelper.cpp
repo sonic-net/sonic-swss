@@ -84,6 +84,7 @@ sai_dash_inbound_routing_api_t*     sai_dash_inbound_routing_api;
 sai_dash_eni_api_t*                 sai_dash_eni_api;
 sai_dash_vip_api_t*                 sai_dash_vip_api;
 sai_dash_direction_lookup_api_t*    sai_dash_direction_lookup_api;
+sai_dash_tunnel_api_t*              sai_dash_tunnel_api;
 sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
@@ -233,6 +234,7 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_ENI,                  (void**)&sai_dash_eni_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL,               (void**)&sai_dash_tunnel_api);
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
@@ -854,6 +856,8 @@ static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_grou
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugin_name);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugins);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size_per_prefix);
 }
 
 static inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, const std::string &str)
@@ -938,6 +942,8 @@ void setFlexCounterGroupParameter(const string &group,
     attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
     attr.value.ptr = &flex_counter_group_param;
 
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size_per_prefix);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.poll_interval, poll_interval);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.operation, operation);
@@ -1013,6 +1019,25 @@ void setFlexCounterGroupStatsMode(const std::string &group,
     initSaiRedisCounterEmptyParameter(flex_counter_group_param);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.stats_mode, stats_mode);
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
+void setFlexCounterGroupBulkChunkSize(const std::string &group,
+                                      const std::string &bulk_chunk_size,
+                                      const std::string &bulk_chunk_size_per_prefix,
+                                      bool is_gearbox)
+{
+    sai_attribute_t attr;
+    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &flex_counter_group_param;
+
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_chunk_size, bulk_chunk_size);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_chunk_size_per_prefix, bulk_chunk_size_per_prefix);
 
     notifySyncdCounterOperation(is_gearbox, attr);
 }
