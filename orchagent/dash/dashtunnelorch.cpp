@@ -1,11 +1,11 @@
-#include "dashtunnelorch.h"
-#include "dashorch.h"
-#include "orch.h"
+#include "orchagent/dash/dashtunnelorch.h"
+#include "orchagent/dash/dashorch.h"
+#include "orchagent/orch.h"
 #include "sai.h"
-#include "taskworker.h"
-#include "pbutils.h"
-#include "directory.h"
-#include "saihelper.h"
+#include "orchagent/dash/taskworker.h"
+#include "orchagent/dash/pbutils.h"
+#include "orchagent/directory.h"
+#include "orchagent/saihelper.h"
 
 extern size_t gMaxBulkSize;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;

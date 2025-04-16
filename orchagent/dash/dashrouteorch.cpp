@@ -23,7 +23,7 @@
 #include "orchagent/dash/taskworker.h"
 #include "orchagent/dash/pbutils.h"
 #include "dash_api/route_type.pb.h"
-#include "directory.h"
+#include "orchagent/directory.h"
 
 using namespace std;
 using namespace swss;
