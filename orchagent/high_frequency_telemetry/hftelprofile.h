@@ -59,8 +59,9 @@ public:
     bool isEmpty() const;
 
     const std::vector<std::uint8_t> &getTemplates(sai_object_type_t object_type) const;
-    const std::vector<std::string> getObjectNames(sai_object_type_t object_type) const;
-    const std::vector<std::uint16_t> getObjectLabels(sai_object_type_t object_type) const;
+    // const std::vector<std::string> getObjectNames(sai_object_type_t object_type) const;
+    // const std::vector<std::uint16_t> getObjectLabels(sai_object_type_t object_type) const;
+    std::pair<std::vector<std::string>, std::vector<std::string>> getObjectNamesAndLabels(sai_object_type_t object_type) const;
     std::vector<sai_object_type_t> getObjectTypes() const;
 
     // void loadGroupFromCfgDB(swss::Table &group_tbl);

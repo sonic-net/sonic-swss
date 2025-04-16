@@ -5,10 +5,9 @@
 
 using namespace std;
 
-HFTelGroup::HFTelGroup(const string &group_name) : m_group_name(group_name),
-                                                        m_objects_ref(m_objects),
-                                                        m_stats_ids_ref(m_stats_ids)
+HFTelGroup::HFTelGroup(const string &group_name) : m_group_name(group_name)
 {
+    SWSS_LOG_ENTER();
 }
 
 void HFTelGroup::updateObjects(const set<string> &object_names)

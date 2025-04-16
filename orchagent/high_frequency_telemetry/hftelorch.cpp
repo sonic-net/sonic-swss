@@ -102,6 +102,11 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
         return;
     }
 
+    SWSS_LOG_NOTICE("The counter table %s is updated, operation %d, object %s",
+                    msg.m_table_name,
+                    msg.m_operation,
+                    msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name);
+
     // Update the local cache
     if (msg.m_operation == CounterNameMapUpdater::SET)
     {
@@ -159,17 +164,19 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
     }
 
     auto value_opt = fvsGetValue(values, "stream_state", true);
+    string stream_state = "disable";
+    sai_tam_tel_type_state_t state = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
     if (value_opt)
     {
-        sai_tam_tel_type_state_t state;
         lexical_convert(*value_opt, state);
         profile->setStreamState(state);
+        stream_state = *value_opt;
     }
 
     value_opt = fvsGetValue(values, "poll_interval", true);
+    uint32_t poll_interval = 0;
     if (value_opt)
     {
-        uint32_t poll_interval;
         lexical_convert(*value_opt, poll_interval);
         profile->setPollInterval(poll_interval);
     }
@@ -181,6 +188,11 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
     //     m_type_profile_mapping[type].insert(profile);
     //     profile->tryCommitConfig(type);
     // }
+
+    SWSS_LOG_NOTICE("The profile %s is set (stream_state: %s, poll_interval: %u)",
+                    profile_name.c_str(),
+                    state == SAI_TAM_TEL_TYPE_STATE_START_STREAM ? "enable" : "disable",
+                    poll_interval);
 
     return task_process_status::task_success;
 }
@@ -215,6 +227,8 @@ task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
     // }
     m_name_profile_mapping.erase(profile_itr);
 
+    SWSS_LOG_NOTICE("The profile %s is deleted", profile_name.c_str());
+
     return task_process_status::task_success;
 }
 
@@ -235,20 +249,20 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
         return task_process_status::task_need_retry;
     }
 
-    auto value_opt = fvsGetValue(values, "object_names", true);
-    if (value_opt)
+    auto arg_object_names = fvsGetValue(values, "object_names", true);
+    if (arg_object_names)
     {
         vector<string> buffer;
-        boost::split(buffer, *value_opt, boost::is_any_of(","));
+        boost::split(buffer, *arg_object_names, boost::is_any_of(","));
         set<string> object_names(buffer.begin(), buffer.end());
         profile->setObjectNames(group_name, move(object_names));
     }
 
-    value_opt = fvsGetValue(values, "object_counters", true);
-    if (value_opt)
+    auto arg_object_counters = fvsGetValue(values, "object_counters", true);
+    if (arg_object_counters)
     {
         vector<string> buffer;
-        boost::split(buffer, *value_opt, boost::is_any_of(","));
+        boost::split(buffer, *arg_object_counters, boost::is_any_of(","));
         set<string> object_counters(buffer.begin(), buffer.end());
         profile->setStatsIDs(group_name, object_counters);
     }
@@ -256,6 +270,12 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
     profile->tryCommitConfig(type);
 
     m_type_profile_mapping[type].insert(profile);
+
+    SWSS_LOG_NOTICE("The group %s with profile %s is set (object_names: %s, object_counters: %s)",
+                    group_name.c_str(),
+                    profile_name.c_str(),
+                    arg_object_names ? arg_object_names->c_str() : "",
+                    arg_object_counters ? arg_object_counters->c_str() : "");
 
     return task_process_status::task_success;
 }
@@ -284,6 +304,8 @@ task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, co
 
     m_type_profile_mapping[type].erase(profile);
     m_state_telemetry_session.del(profile_name + "|" + group_name);
+
+    SWSS_LOG_NOTICE("The group %s with profile %s is deleted", group_name.c_str(), profile_name.c_str());
 
     return task_process_status::task_success;
 }
@@ -326,6 +348,12 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
     std::string op;
     std::string data;
     std::vector<swss::FieldValueTuple> values;
+
+    if (&consumer != m_asic_notification_consumer.get())
+    {
+        SWSS_LOG_DEBUG("Is not TAM notification");
+        return;
+    }
 
     consumer.pop(op, data, values);
 
@@ -379,10 +407,12 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
             SWSS_LOG_THROW("Unexpected state %d", state);
         }
 
-        values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
-        auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
-                                                        { return boost::lexical_cast<std::string>(n); });
-        values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
+
+        // values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
+        // auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
+        //                                                 { return boost::lexical_cast<std::string>(n); });
+        // values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
+
 
         values.emplace_back("session_type", "ipfix");
 
@@ -390,6 +420,10 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
         values.emplace_back("session_config", string(templates.begin(), templates.end()));
 
         m_state_telemetry_session.set(profile.first + "|" + HFTelUtils::sai_type_to_group_name(type), values);
+
+        SWSS_LOG_NOTICE("The group %s with profile %s is ready", 
+                        HFTelUtils::sai_type_to_group_name(type).c_str(),
+                        profile.first.c_str());
 
         return;
     }
