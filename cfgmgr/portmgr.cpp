@@ -110,6 +110,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
             // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
             SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
             return false;
+
         }
     }
     else
@@ -289,7 +290,7 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
-            }            
+            }
             if (!dhcp_rate_limit.empty())
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
