@@ -42,13 +42,12 @@ public:
     CounterNameMapUpdater(const std::string &db_name, const std::string &table_name);
     ~CounterNameMapUpdater() = default;
 
+    void setCounterNameMap(const std::string &counter_name, sai_object_id_t oid);
+    void delCounterNameMap(const std::string &counter_name);
 
 private:
     std::string m_db_name;
     std::string m_table_name;
     swss::DBConnector m_connector;
     swss::Table m_counters_table;
-
-    void setCounterNameMap(const std::string &counter_name, sai_object_id_t oid);
-    void delCounterNameMap(const std::string &counter_name);
 };

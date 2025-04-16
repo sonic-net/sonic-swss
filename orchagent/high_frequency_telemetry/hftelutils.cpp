@@ -25,12 +25,25 @@ vector<sai_object_id_t> HFTelUtils::get_sai_object_list(
     attr.value.objlist.count = static_cast<uint32_t>(obj_list.size());
     attr.value.objlist.list = obj_list.data();
 
-    handleSaiGetStatus(
-        api,
-        get_attribute_handler(
-            obj,
-            1,
-            &attr));
+    auto status = get_attribute_handler(
+        obj,
+        1,
+        &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        // TODO: If it's not implemented, we should disable this feature
+        if (status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            attr.value.objlist.count = 0;
+        }
+        else
+        {
+            SWSS_LOG_THROW("Failed to get the object list for %s: %d", sai_serialize_object_id(obj).c_str(), status);
+        }
+    }
+    // handleSaiGetStatus(
+    //     api,
+    //     status));
     assert(attr.value.objlist.count < obj_list.size());
 
     obj_list.erase(
@@ -85,10 +98,9 @@ set<sai_stat_id_t> HFTelUtils::object_counters_to_stats_ids(
 
     for (size_t i = 0; i < state_enum->valuescount; i++)
     {
-        string state_name = type_prefix + state_enum->valuesnames[i];
-        if (object_counters.find(state_name) != object_counters.end())
+        if (object_counters.find(state_enum->valuesshortnames[i]) != object_counters.end())
         {
-            SWSS_LOG_DEBUG("Found the object counter %s", state_name.c_str());
+            SWSS_LOG_DEBUG("Found the object counter %s", state_enum->valuesshortnames[i]);
             stats_ids_set.insert(state_enum->values[i]);
         }
     }
@@ -136,28 +148,28 @@ sai_stats_mode_t HFTelUtils::get_stats_mode(sai_object_type_t object_type, sai_s
 }
 
 
-uint16_t HFTelUtils::get_sai_label(const string &object_name)
-{
-    SWSS_LOG_ENTER();
-    uint16_t label = 0;
+// uint16_t HFTelUtils::get_sai_label(const string &object_name)
+// {
+//     SWSS_LOG_ENTER();
+//     uint16_t label = 0;
 
-    if (object_name.rfind("Ethernet", 0) == 0)
-    {
-        const static regex re("Ethernet(\\d+)(?:\\|(\\d+))?");
-        smatch match;
-        if (regex_match(object_name, match, re))
-        {
-            label = static_cast<uint16_t>(stoi(match[1]));
-            if (match.size() == 3)
-            {
-                label = static_cast<uint16_t>(label * 100 + stoi(match[2]));
-            }
-        }
-    }
-    else
-    {
-        SWSS_LOG_THROW("The object %s is not supported", object_name.c_str());
-    }
+//     if (object_name.rfind("Ethernet", 0) == 0)
+//     {
+//         const static regex re("Ethernet(\\d+)(?:\\|(\\d+))?");
+//         smatch match;
+//         if (regex_match(object_name, match, re))
+//         {
+//             label = static_cast<uint16_t>(stoi(match[1]));
+//             if (match.size() == 3)
+//             {
+//                 label = static_cast<uint16_t>(label * 100 + stoi(match[2]));
+//             }
+//         }
+//     }
+//     else
+//     {
+//         SWSS_LOG_THROW("The object %s is not supported", object_name.c_str());
+//     }
 
-    return label;
-}
+//     return label;
+// }

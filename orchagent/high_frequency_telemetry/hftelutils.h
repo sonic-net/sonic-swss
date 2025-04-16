@@ -25,7 +25,7 @@ public:
         const std::string &group_name,
         const std::set<std::string> &object_counters);
     static sai_stats_mode_t get_stats_mode(sai_object_type_t object_type, sai_stat_id_t stat_id);
-    static std::uint16_t get_sai_label(const std::string &object_name);
+    // static std::uint16_t get_sai_label(const std::string &object_name);
 };
 
 #define HFTELUTILS_ADD_SAI_OBJECT_LIST(obj, attr_id, inserted_obj, api_type_name, api_name, obj_type_name) \

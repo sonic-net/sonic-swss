@@ -183,7 +183,16 @@ sai_tam_tel_type_state_t HFTelProfile::getTelemetryTypeState(sai_object_type_t o
     SWSS_LOG_ENTER();
 
     auto itr = m_sai_tam_tel_type_objs.find(object_type);
-    return m_sai_tam_tel_type_states.at(itr->second);
+    if (itr == m_sai_tam_tel_type_objs.end())
+    {
+        return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+    }
+    auto state_itr = m_sai_tam_tel_type_states.find(itr->second);
+    if (state_itr == m_sai_tam_tel_type_states.end())
+    {
+        return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+    }
+    return state_itr->second;
 }
 
 HFTelProfile::sai_guard_t HFTelProfile::getTAMTelTypeGuard(sai_object_id_t tam_tel_type_obj) const
@@ -260,7 +269,7 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
         {
             return;
         }
-        for (const auto &obj : itr->second.m_objects_ref)
+        for (const auto &obj : itr->second.getObjects())
         {
             delObjectSAIID(sai_object_type, obj.first.c_str());
         }
@@ -271,7 +280,7 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
     // TODO: In the phase 2, we don't need to stop the stream before update the object names
     setStreamState(sai_object_type, SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
 
-    undeployCounterSubscriptions(sai_object_type);
+    // undeployCounterSubscriptions(sai_object_type);
 }
 
 void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &object_counters)
@@ -290,7 +299,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     }
     else
     {
-        if (itr->second.m_stats_ids_ref == stats_ids_set)
+        if (itr->second.getStatsIDs() == stats_ids_set)
         {
             return;
         }
@@ -300,7 +309,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     // TODO: In the phase 2, we don't need to stop the stream before update the stats
     setStreamState(sai_object_type, SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
 
-    undeployCounterSubscriptions(sai_object_type);
+    deployCounterSubscriptions(sai_object_type);
 }
 
 void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id)
@@ -323,11 +332,13 @@ void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *obj
     }
     objs[object_name] = object_id;
 
+    SWSS_LOG_DEBUG("Set object %s with ID %s in the name sai map", object_name, sai_serialize_object_id(object_id).c_str());
+
     // TODO: In the phase 2, we don't need to stop the stream before update the object
     setStreamState(object_type, SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
 
     // Update the counter subscription
-    deployCounterSubscriptions(object_type, object_id, HFTelUtils::get_sai_label(object_name));
+    deployCounterSubscriptions(object_type, object_id, m_groups.at(object_type).getObjects().at(object_name));
 }
 
 void HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *object_name)
@@ -364,6 +375,7 @@ void HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *obj
     if (objs.empty())
     {
         m_name_sai_map.erase(object_type);
+        SWSS_LOG_DEBUG("Delete object %s from the name sai map", object_name);
     }
 }
 
@@ -385,6 +397,7 @@ bool HFTelProfile::canBeUpdated() const
 bool HFTelProfile::canBeUpdated(sai_object_type_t object_type) const
 {
     SWSS_LOG_ENTER();
+
 
     if (getTelemetryTypeState(object_type) == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
     {
@@ -408,37 +421,50 @@ const vector<uint8_t> &HFTelProfile::getTemplates(sai_object_type_t object_type)
     return m_sai_tam_tel_type_templates.at(object_type);
 }
 
-const vector<string> HFTelProfile::getObjectNames(sai_object_type_t object_type) const
+// const vector<string> HFTelProfile::getObjectNames(sai_object_type_t object_type) const
+// {
+//     SWSS_LOG_ENTER();
+
+//     vector<string> object_names;
+//     auto group = m_groups.find(object_type);
+//     if (group != m_groups.end())
+//     {
+//         object_names.reserve(group->second.getObjects().size());
+//         transform(group->second.getObjects().begin(), group->second.getObjects().end(), object_names.begin(),
+//                   [](const auto &pair)
+//                   { return pair.first; });
+//     }
+
+//     return object_names;
+// }
+
+// const vector<uint16_t> HFTelProfile::getObjectLabels(sai_object_type_t object_type) const
+// {
+//     SWSS_LOG_ENTER();
+
+//     vector<uint16_t> object_labels;
+//     auto group = m_groups.find(object_type);
+//     if (group != m_groups.end())
+//     {
+//         object_labels.reserve(group->second.getObjects().size());
+//         transform(group->second.getObjects().begin(), group->second.getObjects().end(), object_labels.begin(),
+//                   [](const auto &pair)
+//                   { return pair.second; });
+//     }
+//     return object_labels;
+// }
+
+pair<vector<string>, vector<string>> HFTelProfile::getObjectNamesAndLabels(sai_object_type_t object_type) const
 {
     SWSS_LOG_ENTER();
 
-    vector<string> object_names;
     auto group = m_groups.find(object_type);
-    if (group != m_groups.end())
+    if (group == m_groups.end())
     {
-        object_names.reserve(group->second.m_objects_ref.size());
-        transform(group->second.m_objects_ref.begin(), group->second.m_objects_ref.end(), object_names.begin(),
-                  [](const auto &pair)
-                  { return pair.first; });
+        return {vector<string>(), vector<string>()};
     }
 
-    return object_names;
-}
-
-const vector<uint16_t> HFTelProfile::getObjectLabels(sai_object_type_t object_type) const
-{
-    SWSS_LOG_ENTER();
-
-    vector<uint16_t> object_labels;
-    auto group = m_groups.find(object_type);
-    if (group != m_groups.end())
-    {
-        object_labels.reserve(group->second.m_objects_ref.size());
-        transform(group->second.m_objects_ref.begin(), group->second.m_objects_ref.end(), object_labels.begin(),
-                  [](const auto &pair)
-                  { return pair.second; });
-    }
-    return object_labels;
+    return group->second.getObjectNamesAndLabels();
 }
 
 vector<sai_object_type_t> HFTelProfile::getObjectTypes() const
@@ -532,7 +558,7 @@ void HFTelProfile::loadCounterNameCache(sai_object_type_t object_type)
         return;
     }
     const auto &sai_objs = itr->second;
-    for (const auto &obj : group->second.m_objects_ref)
+    for (const auto &obj : group->second.getObjects())
     {
         auto sai_obj = sai_objs.find(obj.first);
         if (sai_obj != sai_objs.end())
@@ -561,7 +587,7 @@ bool HFTelProfile::tryCommitConfig(sai_object_type_t object_type)
     {
         return false;
     }
-    if (group->second.m_objects_ref.empty())
+    if (group->second.getObjects().empty())
     {
         // TODO: If the object names are empty, implicitly select all objects of the group
         return true;
@@ -593,7 +619,7 @@ bool HFTelProfile::isObjectTypeInProfile(sai_object_type_t object_type, const st
         return false;
     }
 
-    return false;
+    return true;
 }
 
 bool HFTelProfile::isMonitoringObjectReady(sai_object_type_t object_type) const
@@ -608,7 +634,7 @@ bool HFTelProfile::isMonitoringObjectReady(sai_object_type_t object_type) const
 
     auto counters = m_sai_tam_counter_subscription_objs.find(object_type);
 
-    if (counters == m_sai_tam_counter_subscription_objs.end() || group->second.m_objects_ref.size() != counters->second.size())
+    if (counters == m_sai_tam_counter_subscription_objs.end() || group->second.getObjects().size() != counters->second.size())
     {
         // The monitoring counters are not ready
         return false;
@@ -676,7 +702,6 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     {
         return *itr->second;
     }
-    return sai_object_id_t();
 
     sai_object_id_t sai_object;
     vector<sai_attribute_t> attrs;
@@ -704,9 +729,9 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     attr.value.booldata = true;
     attrs.push_back(attr);
 
-    // attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE ;
-    // attr.value.boolean = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
-    // attrs.push_back(attr);
+    attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE ;
+    attr.value.s32 = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+    attrs.push_back(attr);
 
     attr.id = SAI_TAM_TEL_TYPE_ATTR_REPORT_ID;
     attr.value.oid = getTAMReportObjID(object_type);
@@ -758,12 +783,13 @@ void HFTelProfile::initTelemetry()
     sai_object_id_t sai_object;
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
+    sai_object_id_t sai_tam_collector_obj = m_sai_tam_collector_obj;
 
     // Create TAM telemetry object
     sai_object = m_sai_tam_collector_obj;
     attr.id = SAI_TAM_TELEMETRY_ATTR_COLLECTOR_LIST;
     attr.value.objlist.count = 1;
-    attr.value.objlist.list = &sai_object;
+    attr.value.objlist.list = &sai_tam_collector_obj;
     attrs.push_back(attr);
 
     handleSaiCreateStatus(
@@ -807,7 +833,7 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID;
-    attr.value.oid = stat_id;
+    attr.value.oid = sai_obj;
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STAT_ID;
@@ -855,7 +881,7 @@ void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type, sai
         return;
     }
 
-    for (const auto &stat_id : group->second.m_stats_ids_ref)
+    for (const auto &stat_id : group->second.getStatsIDs())
     {
         deployCounterSubscription(object_type, sai_obj, stat_id, label);
     }
@@ -872,16 +898,16 @@ void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type)
     {
         return;
     }
-    for (const auto &obj : group->second.m_objects_ref)
+    for (const auto &obj : group->second.getObjects())
     {
         auto itr = m_name_sai_map[object_type].find(obj.first);
         if (itr == m_name_sai_map[object_type].end())
         {
             continue;
         }
-        for (const auto &stat_id : group->second.m_stats_ids_ref)
+        for (const auto &stat_id : group->second.getStatsIDs())
         {
-            deployCounterSubscription(object_type, itr->second, stat_id, HFTelUtils::get_sai_label(obj.first));
+            deployCounterSubscription(object_type, itr->second, stat_id, obj.second);
         }
     }
 }
