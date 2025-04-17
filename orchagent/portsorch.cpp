@@ -4629,20 +4629,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-
                 if (pCfg.serdes.unreliable_los.is_set)
-		{
-			auto status = setPortUnreliableLOS(p, pCfg.serdes.unreliable_los.value);
-			if (status != task_success)
-			{
-			    SWSS_LOG_ERROR(
-				"Failed to set the port %s unreliable_los from %d to %d",
-				p.m_alias.c_str(), p.m_unreliable_los, pCfg.serdes.unreliable_los.value
+                {
+                        auto status = setPortUnreliableLOS(p, pCfg.serdes.unreliable_los.value);
+                        if (status != task_success)
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s AN from %d to %d",
+                                p.m_alias.c_str(), p.m_unreliable_los, pCfg.serdes.unreliable_los.value
                             );
-			} else {
+                            p.m_unreliable_los = false;
+                        } else {
                             p.m_unreliable_los = pCfg.serdes.unreliable_los.value;
-			}
-                }
+                        }
+                        m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
+                } 
 
                 if (pCfg.adv_interface_types.is_set)
                 {
