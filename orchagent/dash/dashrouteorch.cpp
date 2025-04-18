@@ -76,16 +76,22 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         SWSS_LOG_INFO("Retry as route group %s not found", ctxt.route_group.c_str());
         return false;
     }
+
+    std::string routing_type_str = dash::route_type::RoutingType_Name(ctxt.metadata.routing_type());
     if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET &&
         ctxt.metadata.has_vnet() && gVnetNameToId.find(ctxt.metadata.vnet()) == gVnetNameToId.end())
     {
-        SWSS_LOG_INFO("Retry as vnet %s not found", ctxt.metadata.vnet().c_str());
+        SWSS_LOG_INFO("Retry as vnet %s not found for routing type %s",
+                      ctxt.metadata.vnet().c_str(),
+                      routing_type_str.c_str());
         return false;
     }
     if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT &&
         ctxt.metadata.has_vnet_direct() && gVnetNameToId.find(ctxt.metadata.vnet_direct().vnet()) == gVnetNameToId.end())
     {
-        SWSS_LOG_INFO("Retry as vnet %s not found", ctxt.metadata.vnet_direct().vnet().c_str());
+        SWSS_LOG_INFO("Retry as vnet %s not found for routing type %s",
+                      ctxt.metadata.vnet_direct().vnet().c_str(),
+                      routing_type_str.c_str());
         return false;
     }
 
@@ -100,7 +106,6 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     auto it = sOutboundAction.find(ctxt.metadata.routing_type());
     if (it == sOutboundAction.end())
     {
-        std::string routing_type_str = dash::route_type::RoutingType_Name(ctxt.metadata.routing_type());
         SWSS_LOG_WARN("Routing type %s for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
         return false;
     }
