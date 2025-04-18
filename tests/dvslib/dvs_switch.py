@@ -1,4 +1,5 @@
 """Utilities for interacting with SWITCH objects when writing VS tests."""
+
 from typing import Dict, List
 
 
@@ -7,9 +8,20 @@ class DVSSwitch:
 
     ADB_SWITCH = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
 
-    def __init__(self, asic_db):
+    CONFIG_SWITCH_TRIMMING = "SWITCH_TRIMMING"
+    KEY_SWITCH_TRIMMING_GLOBAL = "GLOBAL"
+
+    def __init__(self, asic_db, config_db):
         """Create a new DVS switch manager."""
         self.asic_db = asic_db
+        self.config_db = config_db
+
+    def update_switch_trimming(
+        self,
+        qualifiers: Dict[str, str]
+    ) -> None:
+        """Update switch trimming global in CONFIG DB."""
+        self.config_db.update_entry(self.CONFIG_SWITCH_TRIMMING, self.KEY_SWITCH_TRIMMING_GLOBAL, qualifiers)
 
     def get_switch_ids(
         self,
@@ -65,6 +77,14 @@ class DVSSwitch:
                 if k == "SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM":
                     assert sai_qualifiers[k] == v
                 elif k == "SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM":
+                    assert sai_qualifiers[k] == v
+                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE":
+                    assert sai_qualifiers[k] == v
+                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE":
+                    assert sai_qualifiers[k] == v
+                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE":
+                    assert sai_qualifiers[k] == v
+                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX":
                     assert sai_qualifiers[k] == v
             else:
                 assert False, "Unknown SAI qualifier: key={}, value={}".format(k, v)
