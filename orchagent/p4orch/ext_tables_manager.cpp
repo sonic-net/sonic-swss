@@ -1,4 +1,4 @@
-#include "p4orch/ext_tables_manager.h"
+#include "orchagent/p4orch/ext_tables_manager.h"
 
 #include <boost/algorithm/string.hpp>
 #include <memory>
@@ -8,12 +8,12 @@
 #include <utility>
 #include <vector>
 
-#include "crmorch.h"
-#include "directory.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/directory.h"
 #include "logger.h"
-#include "orch.h"
-#include "p4orch/p4orch.h"
-#include "p4orch/p4orch_util.h"
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
 #include "tokenize.h"
 
 extern sai_counter_api_t *sai_counter_api;

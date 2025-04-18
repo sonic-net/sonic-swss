@@ -8,21 +8,21 @@
 #include <algorithm>
 
 #include "converter.h"
-#include "dashorch.h"
+#include "orchagent/dash/dashorch.h"
 #include "macaddress.h"
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "sai.h"
 #include "saiextensions.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "tokenize.h"
-#include "crmorch.h"
-#include "saihelper.h"
-#include "directory.h"
-#include "flex_counter_manager.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/saihelper.h"
+#include "orchagent/directory.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 
-#include "taskworker.h"
-#include "pbutils.h"
-#include "dashrouteorch.h"
+#include "orchagent/dash/taskworker.h"
+#include "orchagent/dash/pbutils.h"
+#include "orchagent/dash/dashrouteorch.h"
 
 using namespace std;
 using namespace swss;

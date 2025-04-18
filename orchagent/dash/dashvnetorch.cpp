@@ -9,22 +9,21 @@
 #include <numeric>
 
 #include "converter.h"
-#include "dashvnetorch.h"
+#include "orchagent/dash/dashvnetorch.h"
 #include "ipaddress.h"
 #include "macaddress.h"
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "sai.h"
 #include "saiextensions.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "tokenize.h"
-#include "dashorch.h"
-#include "crmorch.h"
-#include "saihelper.h"
-#include "directory.h"
-#include "dashtunnelorch.h"
+#include "orchagent/dash/dashorch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/saihelper.h"
+#include "orchagent/directory.h"
 
-#include "taskworker.h"
-#include "pbutils.h"
+#include "orchagent/dash/taskworker.h"
+#include "orchagent/dash/pbutils.h"
 
 using namespace std;
 using namespace swss;

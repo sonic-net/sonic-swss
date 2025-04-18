@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "switch_container.h"
+#include "orchagent/switch/switch_container.h"
 
 class SwitchHelper final
 {

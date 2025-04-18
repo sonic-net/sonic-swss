@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "gearparserbase.h"
+#include "gearsyncd/gearparserbase.h"
 
 class PhyParser: public GearParserBase
 {

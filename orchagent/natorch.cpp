@@ -23,10 +23,10 @@
 #include "exec.h"
 #include "logger.h"
 #include "tokenize.h"
-#include "natorch.h"
-#include "notifier.h"
+#include "orchagent/natorch.h"
+#include "orchagent/notifier.h"
 #include "sai_serialize.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 
 extern CrmOrch            *gCrmOrch;
 extern PortsOrch          *gPortsOrch;

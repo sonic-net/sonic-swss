@@ -2,9 +2,9 @@
 
 #include <string>
 #include "dash_api/tunnel.pb.h"
-#include "bulker.h"
+#include "orchagent/bulker.h"
 #include "dbconnector.h"
-#include "zmqorch.h"
+#include "orchagent/zmqorch.h"
 #include "zmqserver.h"
 
 struct DashTunnelEndpointEntry

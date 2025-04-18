@@ -3,7 +3,7 @@
 #include "logger.h"
 #include "schema.h"
 #include "warm_restart.h"
-#include "warmRestartAssist.h"
+#include "warmrestart/warmRestartAssist.h"
 
 using namespace std;
 using namespace swss;

@@ -1,4 +1,4 @@
-#include "mock_sai_api.h"
+#include "tests/mock_tests/mock_sai_api.h"
 
 std::set<void (*)()> apply_mock_fns;
 std::set<void (*)()> remove_mock_fns;

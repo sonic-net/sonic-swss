@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "gearboxutils.h"
+#include "lib/gearboxutils.h"
 
 namespace swss {
 

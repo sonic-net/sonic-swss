@@ -1,20 +1,20 @@
 #define private public
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
-#include "ut_helper.h"
-#include "mock_orchagent_main.h"
-#include "mock_sai_api.h"
-#include "mock_dash_orch_test.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "tests/mock_tests/mock_orchagent_main.h"
+#include "tests/mock_tests/mock_sai_api.h"
+#include "tests/mock_tests/mock_orch_test.h"
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"
 #include "dash_api/qos.pb.h"
 #include "dash_api/eni_route.pb.h"
 #include "gtest/gtest.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 
 EXTERN_MOCK_FNS
 
