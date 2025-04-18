@@ -91,6 +91,7 @@ sai_stp_api_t*                      sai_stp_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
+extern event_handle_t g_events_handle;
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -534,100 +535,23 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    switch (api)
-    {
-        case SAI_API_FDB:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-                    return task_success;
-                case SAI_STATUS_ITEM_ALREADY_EXISTS:
-                    /*
-                     *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
-                     *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
-                     *  and orchagent should ignore the error and treat it as entry was explicitly created.
-                     */
-                    return task_success;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
-        case SAI_API_HOSTIF:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    return task_success;
-                case SAI_STATUS_FAILURE:
-                    /*
-                     * Host interface maybe failed due to lane not available.
-                     * In some scenarios, like SONiC virtual machine, the invalid lane may be not enabled by VM configuration,
-                     * So just ignore the failure and report an error log.
-                     */
-                    return task_ignore;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
-        case SAI_API_ROUTE:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-                    return task_success;
-                case SAI_STATUS_ITEM_ALREADY_EXISTS:
-                case SAI_STATUS_NOT_EXECUTED:
-                    /* With VNET routes, the same route can be learned via multiple
-                    sources, like via BGP. Handle this gracefully */
-                    return task_success;
-                case SAI_STATUS_TABLE_FULL:
-                    return task_need_retry;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
-        case SAI_API_NEIGHBOR:
-        case SAI_API_NEXT_HOP:
-        case SAI_API_NEXT_HOP_GROUP:
-            switch(status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-                    return task_success;
-                case SAI_STATUS_ITEM_ALREADY_EXISTS:
-                    return task_success;
-                case SAI_STATUS_TABLE_FULL:
-                    return task_need_retry;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
+     switch (status)
+     {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+            return task_success;
+        case SAI_STATUS_ITEM_ALREADY_EXISTS:
+            return task_success;
+        case SAI_STATUS_INSUFFICIENT_RESOURCES:
+        case SAI_STATUS_TABLE_FULL:
+        case SAI_STATUS_NO_MEMORY:
+        case SAI_STATUS_NV_STORAGE_FULL:
+            return task_need_retry;
         default:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-                    return task_success;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-    }
-    return task_need_retry;
+            handleSaiFailure(api, "create", status);
+            break;
+      }
+      return task_need_retry;
 }
 
 task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
@@ -643,67 +567,22 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    if (status == SAI_STATUS_SUCCESS)
+    switch (status)
     {
-        SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
-        return task_success;
-    }
-
-    switch (api)
-    {
-        case SAI_API_PORT:
-            switch (status)
-            {
-                case SAI_STATUS_INVALID_ATTR_VALUE_0:
-                    /*
-                     * If user gives an invalid attribute value, no need to retry or exit orchagent, just fail the current task
-                     * and let user correct the configuration.
-                     */
-                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INVALID_ATTR_VALUE_0 in set operation, task failed, SAI API: %s, status: %s",
-                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    return task_failed;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
-                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
-        case SAI_API_TUNNEL:
-            switch (status)
-            {
-                case SAI_STATUS_ATTR_NOT_SUPPORTED_0:
-                    SWSS_LOG_ERROR("Encountered SAI_STATUS_ATTR_NOT_SUPPORTED_0 in set operation, task failed, SAI API: %s, status: %s",
-                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    return task_failed;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
-                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
-        case SAI_API_BUFFER:
-            switch (status)
-            {
-                case SAI_STATUS_INSUFFICIENT_RESOURCES:
-                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INSUFFICIENT_RESOURCES in set operation, task failed, SAI API: %s, status: %s",
-                                   sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    return task_failed;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
-                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+            return task_success;
+        case SAI_STATUS_ITEM_ALREADY_EXISTS:
+            return task_success;
+        case SAI_STATUS_INSUFFICIENT_RESOURCES:
+        case SAI_STATUS_TABLE_FULL:
+        case SAI_STATUS_NO_MEMORY:
+        case SAI_STATUS_NV_STORAGE_FULL:
+            return task_need_retry;
         default:
-            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            handleSaiFailure(true);
+            handleSaiFailure(api, "set", status);
             break;
     }
-
     return task_need_retry;
 }
 
@@ -721,55 +600,19 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    switch (api)
+    switch (status)
     {
-        case SAI_API_ROUTE:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
-                    return task_success;
-                case SAI_STATUS_ITEM_NOT_FOUND:
-                case SAI_STATUS_NOT_EXECUTED:
-                    /* When the same route is learned via multiple sources,
-                       there can be a duplicate remove operation. Handle this gracefully */
-                    return task_success;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
-        case SAI_API_NEIGHBOR:
-        case SAI_API_NEXT_HOP:
-        case SAI_API_NEXT_HOP_GROUP:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
-                    return task_success;
-                case SAI_STATUS_ITEM_NOT_FOUND:
-                    return task_success;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
-                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
-            break;
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
+            return task_success;
+        case SAI_STATUS_ITEM_NOT_FOUND:
+        case SAI_STATUS_ADDR_NOT_FOUND:
+            return task_success;
+        case SAI_STATUS_OBJECT_IN_USE:
+            return task_need_retry;
         default:
-            switch (status)
-            {
-                case SAI_STATUS_SUCCESS:
-                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
-                    return task_success;
-                default:
-                    SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    handleSaiFailure(true);
-                    break;
-            }
+            handleSaiFailure(api, "remove", status);
+            break;
     }
     return task_need_retry;
 }
@@ -793,12 +636,10 @@ task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void 
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiGetStatus");
             return task_success;
         case SAI_STATUS_NOT_IMPLEMENTED:
-            SWSS_LOG_ERROR("Encountered failure in get operation due to the function is not implemented, exiting orchagent, SAI API: %s",
-                        sai_serialize_api(api).c_str());
             throw std::logic_error("SAI get function not implemented");
         default:
-            SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            handleSaiFailure(api, "get", status);
+            break;
     }
     return task_failed;
 }
@@ -822,26 +663,33 @@ bool parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
-/* Handling SAI failure. Request redis to invoke SAI failure dump and abort if set*/
-void handleSaiFailure(bool abort_on_failure)
+/* Handling SAI failure. Request redis to invoke SAI failure dump */
+void handleSaiFailure(sai_api_t api, string oper, sai_status_t status)
 {
     SWSS_LOG_ENTER();
+
+    string s_api = sai_serialize_api(api);
+    string s_status = sai_serialize_status(status);
+    SWSS_LOG_ERROR("Encountered failure in %s operation, SAI API: %s, status: %s",
+                        oper.c_str(), s_api.c_str(), s_status.c_str());
+
+    // Publish a structured syslog event
+    event_params_t params = {
+        { "operation", oper },
+        { "api", s_api },
+        { "status", s_status }};
+    event_publish(g_events_handle, "sai-operation-failure", &params);
 
     sai_attribute_t attr;
 
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 =  SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP;
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to take sai failure dump %d", status);
     }
-    if (abort_on_failure)
-    {
-        abort();
-    }
 }
-
 
 static inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
 {
@@ -856,8 +704,6 @@ static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_grou
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugin_name);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugins);
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size);
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size_per_prefix);
 }
 
 static inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, const std::string &str)
@@ -942,8 +788,6 @@ void setFlexCounterGroupParameter(const string &group,
     attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
     attr.value.ptr = &flex_counter_group_param;
 
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size);
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size_per_prefix);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.poll_interval, poll_interval);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.operation, operation);
@@ -1019,25 +863,6 @@ void setFlexCounterGroupStatsMode(const std::string &group,
     initSaiRedisCounterEmptyParameter(flex_counter_group_param);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.stats_mode, stats_mode);
-
-    notifySyncdCounterOperation(is_gearbox, attr);
-}
-
-void setFlexCounterGroupBulkChunkSize(const std::string &group,
-                                      const std::string &bulk_chunk_size,
-                                      const std::string &bulk_chunk_size_per_prefix,
-                                      bool is_gearbox)
-{
-    sai_attribute_t attr;
-    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-    attr.value.ptr = &flex_counter_group_param;
-
-    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
-    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
-    initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_chunk_size, bulk_chunk_size);
-    initSaiRedisCounterParameterFromString(flex_counter_group_param.bulk_chunk_size_per_prefix, bulk_chunk_size_per_prefix);
 
     notifySyncdCounterOperation(is_gearbox, attr);
 }
@@ -1142,7 +967,7 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
 
     if (!info)
     {
-        SWSS_LOG_ERROR("Metadata info query failed, invalid object: %d", object_type);
+        SWSS_LOG_WARN("Metadata info query failed, invalid object: %d", object_type);
         return stat_list;
     }
 
