@@ -726,7 +726,9 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+                    SWSS_LOG_ERROR("Failed to parse buffer profile(%s) field(%s): invalid value(%s)",
+                        object_name.c_str(), field.c_str(), value.c_str()
+                    );
                     return task_process_status::task_failed;
                 }
 
