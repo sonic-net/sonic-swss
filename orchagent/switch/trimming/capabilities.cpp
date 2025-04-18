@@ -100,16 +100,16 @@ bool SwitchTrimmingCapabilities::isSwitchTrimmingSupported() const
     auto size = capabilities.size.isAttrSupported;
     auto dscp = capabilities.dscp.isAttrSupported;
     auto mode = capabilities.mode.isAttrSupported;
-    auto index = true;
+    auto queue = true;
 
     // Do not care of queue index configuration capabilities,
     // if static queue resolution mode is not supported
     if (capabilities.mode.isStaticModeSupported)
     {
-        index = capabilities.index.isAttrSupported;
+        queue = capabilities.queue.isAttrSupported;
     }
 
-    return size && dscp && mode && index;
+    return size && dscp && mode && queue;
 }
 
 bool SwitchTrimmingCapabilities::validateQueueModeCap(sai_packet_trim_queue_resolution_mode_t value) const
@@ -278,7 +278,7 @@ void SwitchTrimmingCapabilities::queryTrimModeAttrCapabilities()
     capabilities.mode.isAttrSupported = true;
 }
 
-void SwitchTrimmingCapabilities::queryTrimIndexAttrCapabilities()
+void SwitchTrimmingCapabilities::queryTrimQueueAttrCapabilities()
 {
     SWSS_LOG_ENTER();
 
@@ -305,7 +305,7 @@ void SwitchTrimmingCapabilities::queryTrimIndexAttrCapabilities()
         return;
     }
 
-    capabilities.index.isAttrSupported = true;
+    capabilities.queue.isAttrSupported = true;
 }
 
 void SwitchTrimmingCapabilities::queryCapabilities()
@@ -316,7 +316,7 @@ void SwitchTrimmingCapabilities::queryCapabilities()
     queryTrimModeEnumCapabilities();
     queryTrimModeAttrCapabilities();
 
-    queryTrimIndexAttrCapabilities();
+    queryTrimQueueAttrCapabilities();
 }
 
 FieldValueTuple SwitchTrimmingCapabilities::makeSwitchTrimmingCapDbEntry() const
