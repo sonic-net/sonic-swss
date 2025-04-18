@@ -4635,7 +4635,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         if (status != task_success)
                         {
                             SWSS_LOG_ERROR(
-                                "Failed to set port %s AN from %d to %d",
+                                "Failed to set port %s unreliable from %d to %d",
                                 p.m_alias.c_str(), p.m_unreliable_los, pCfg.serdes.unreliable_los.value
                             );
                             p.m_unreliable_los = false;
