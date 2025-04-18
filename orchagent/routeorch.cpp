@@ -742,44 +742,44 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
                 for (auto i : kfvFieldsValues(t))
                 {
-                    if (fvField(i) == "nexthop")
+                    if (fvField(i) == "nexthop" && fvValue(i) != "")
                         ips = fvValue(i);
 
-                    if (fvField(i) == "ifname")
+                    if (fvField(i) == "ifname" && fvValue(i) != "")
                         aliases = fvValue(i);
 
-                    if (fvField(i) == "mpls_nh")
+                    if (fvField(i) == "mpls_nh" && fvValue(i) != "")
                         mpls_nhs = fvValue(i);
 
-                    if (fvField(i) == "vni_label") {
+                    if (fvField(i) == "vni_label" && fvValue(i) != "") {
                         vni_labels = fvValue(i);
                         overlay_nh = true;
                     }
 
-                    if (fvField(i) == "router_mac")
+                    if (fvField(i) == "router_mac" && fvValue(i) != "")
                         remote_macs = fvValue(i);
 
                     if (fvField(i) == "blackhole")
                         blackhole = fvValue(i) == "true";
 
-                    if (fvField(i) == "weight")
+                    if (fvField(i) == "weight" && fvValue(i) != "")
                         weights = fvValue(i);
 
-                    if (fvField(i) == "nexthop_group")
+                    if (fvField(i) == "nexthop_group" && fvValue(i) != "")
                         nhg_index = fvValue(i);
 
-                    if (fvField(i) == "segment") {
+                    if (fvField(i) == "segment" && fvValue(i) != "") {
                         srv6_segments = fvValue(i);
                         srv6_seg = true;
                         srv6_nh = true;
                     }
 
-                    if (fvField(i) == "seg_src") {
+                    if (fvField(i) == "seg_src" && fvValue(i) != "") {
                         srv6_source = fvValue(i);
                         srv6_nh = true;
                     }
 
-                    if (fvField(i) == "protocol")
+                    if (fvField(i) == "protocol" && fvValue(i) != "")
                     {
                         ctx.protocol = fvValue(i);
                     }
@@ -787,13 +787,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                     if (fvField(i) == "fallback_to_default_route")
                         fallback_to_default_route = fvValue(i) == "true";
 
-                    if (fvField(i) == "vpn_sid") {
+                    if (fvField(i) == "vpn_sid" && fvValue(i) != "") {
                         srv6_vpn_sids = fvValue(i);
                         srv6_nh = true;
                         srv6_vpn = true;
                     }
 
-                    if (fvField(i) == "pic_context_id")
+                    if (fvField(i) == "pic_context_id" && fvValue(i) != "")
                     {
                         context_index = fvValue(i);
                         srv6_vpn = true;

@@ -7,7 +7,7 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
-#include "mock_orch_test.h"
+#include "mock_dash_orch_test.h"
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"
@@ -20,7 +20,7 @@ EXTERN_MOCK_FNS
 namespace dashorch_test
 {
     using namespace mock_orch_test;
-    class DashOrchTest : public MockOrchTest {};
+    class DashOrchTest : public MockDashOrchTest {};
 
     TEST_F(DashOrchTest, GetNonExistRoutingType)
     {   
