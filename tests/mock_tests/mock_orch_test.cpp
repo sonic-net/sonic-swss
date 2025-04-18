@@ -307,7 +307,7 @@ void MockOrchTest::SetUp()
         APP_DASH_ROUTE_GROUP_TABLE_NAME
     };
 
-    m_DashRouteOrch = new DashRouteOrch(m_app_db.get(), dash_route_tables, m_DashOrch, nullptr);
+    m_DashRouteOrch = new DashRouteOrch(m_app_db.get(), dash_route_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashRouteOrch);
     ut_orch_list.push_back((Orch **)&m_DashRouteOrch);
 
