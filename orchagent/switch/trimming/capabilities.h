@@ -30,7 +30,7 @@ private:
     void queryTrimDscpAttrCapabilities();
     void queryTrimModeEnumCapabilities();
     void queryTrimModeAttrCapabilities();
-    void queryTrimIndexAttrCapabilities();
+    void queryTrimQueueAttrCapabilities();
 
     void queryCapabilities();
     void writeCapabilitiesToDb();
@@ -53,6 +53,6 @@ private:
 
         struct {
             bool isAttrSupported = false;
-        } index; // SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX
+        } queue; // SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX
     } capabilities;
 };
