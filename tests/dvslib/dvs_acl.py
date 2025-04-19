@@ -330,6 +330,7 @@ class DVSAcl:
         assert (int(action_count) == len(action_list))
         for action in expected_action_list:
             assert action in action_list
+        print(expected_action_list)
     
     def create_dscp_acl_rule(
             self,
@@ -354,6 +355,34 @@ class DVSAcl:
 
         for k, v in qualifiers.items():
             fvs[k] = v
+        self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
+
+    def create_inner_src_mac_rewrite_acl_rule(
+        self,
+            table_name: str,
+            rule_name: str,
+            qualifiers: Dict[str, str],
+            action: str= "AA:BB:CC:DD:EE:FF",
+            priority: str = "2020"
+    )->None:
+        """Create a new INNER SRC MAC REWRITE ACL rule in the given table.
+        Args:
+            table_name: The name of the ACL table to add the rule to.
+            rule_name: The name of the ACL rule.
+            qualifiers: The list of qualifiers to add to the rule.
+            action: Mac Address value.
+            priority: The priority of the rule.
+        """
+        fvs = {
+            "priority": priority,
+            "INNER_SRC_IP": "10.10.10.10/32",
+            "INNER_SRC_MAC_REWRITE_ACTION": action
+        }
+
+        for k, v in qualifiers.items():
+            fvs[k] = v
+            print(k,v)
+        print('creart_ismac_acl_rule',fvs)
         self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
             
     def create_acl_rule(
@@ -518,8 +547,34 @@ class DVSAcl:
             acl_rule_id = self._get_acl_rule_id()
 
         fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
+        print(fvs)
         self._check_acl_entry_base(fvs, sai_qualifiers, action, priority)
         self._check_acl_entry_packet_action(fvs, action)
+        self._check_acl_entry_counters_map(acl_rule_id)
+
+    def verify_inner_src_mac_rewrite_acl_rule(
+            self,
+            sai_qualifiers: Dict[str, str],
+            action: str= 'AA:BB:CC:DD:EE:FF',
+            priority: str = "2020",
+            acl_rule_id: str = None
+    ) -> None:
+        """Verify that an ACL rule has the correct ASIC DB representation.
+
+        Args:
+            sai_qualifiers: The expected set of SAI qualifiers to be found in ASIC DB.
+            action: The mac address of inner src mac rewrite action.
+            priority: The priority of the rule.
+            acl_rule_id: A specific OID to check in ASIC DB. If left empty, this method
+                         assumes that only one rule exists in ASIC DB.
+        """
+        print(sai_qualifiers)
+        if not acl_rule_id:
+            acl_rule_id = self._get_acl_rule_id()
+
+        fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
+        self._check_acl_entry_base(fvs, sai_qualifiers, action, priority)
+        self._check_acl_entry_inner_src_mac_rewrite_action(fvs, action)
         self._check_acl_entry_counters_map(acl_rule_id)
 
     def verify_redirect_acl_rule(
@@ -749,6 +804,8 @@ class DVSAcl:
                 assert action in self.ADB_PACKET_ACTION_LOOKUP
             elif k == "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT":
                 assert action == "REDIRECT"
+            elif k == "SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC":
+                assert action == "INNER_SRC_MAC_REWRITE_ACTION"
             elif "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR" in k:
                 assert action == "MIRROR"
             elif "SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT" in k:
@@ -762,6 +819,9 @@ class DVSAcl:
     def _check_acl_entry_packet_action(self, entry: Dict[str, str], action: str) -> None:
         assert "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION" in entry
         assert self.ADB_PACKET_ACTION_LOOKUP.get(action, None) == entry["SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION"]
+
+    def _check_acl_entry_inner_src_mac_rewrite_action(self, entry: Dict[str, str], sai_mac_t, mac_address: str) -> None:
+        assert entry.get("SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC", None) == mac_address
 
     def _check_acl_entry_redirect_action(self, entry: Dict[str, str], expected_destination: str) -> None:
         assert entry.get("SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT", None) == expected_destination
