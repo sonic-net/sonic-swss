@@ -215,10 +215,14 @@ void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, N
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
-        ipPrefix.to_string().c_str(), nextHop.to_string().c_str(), index);
+    string key = ipPrefix.to_string();
+    string field = std::to_string(index);
+    string value = nextHop.to_string();
 
-    m_stateWarmRestartRouteTable.hset(ipPrefix.to_string(), std::to_string(index), nextHop.to_string());
+    m_stateWarmRestartRouteTable.hset(key, field, value);
+
+    SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
+                  key.c_str(), value.c_str(), index);
 }
 
 bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, HashBucketIdx index, sai_object_id_t nh_oid,
