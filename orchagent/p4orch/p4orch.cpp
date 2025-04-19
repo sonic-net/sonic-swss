@@ -29,9 +29,13 @@ extern PortsOrch *gPortsOrch;
 #define P4_EXT_COUNTERS_STATS_POLL_TIMER_NAME "P4_EXT_COUNTERS_STATS_POLL_TIMER"
 #define APP_P4RT_EXT_TABLES_MANAGER "EXT_TABLES_MANAGER"
 
-P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOrch *vrfOrch, CoppOrch *coppOrch)
-    : Orch(db, tableNames)
-{
+P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
+               ZmqServer* zmqServer, VRFOrch* vrfOrch, CoppOrch* coppOrch)
+    : ZmqOrch(db, tableNames, zmqServer, /*orderedQueue=*/true,
+              /*dbPersistence=*/false),
+      m_zmqServer(zmqServer),
+      m_publisher("APPL_DB", /*bool buffered=*/true,
+                  /*db_write_thread=*/true, zmqServer) {
     SWSS_LOG_ENTER();
 
     m_tablesDefnManager = std::make_unique<TablesDefnManager>(&m_p4OidMapper, &m_publisher);
@@ -88,14 +92,9 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     Orch::addExecutor(ext_executor);
     m_extCounterStatsTimer->start();
 
-    // Add port state change notification handling support
-    swss::DBConnector notificationsDb("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
-    auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
-    Orch::addExecutor(portStatusNotifier);
 }
 
-void P4Orch::doTask(Consumer &consumer)
+void P4Orch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 

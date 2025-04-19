@@ -95,34 +95,55 @@ def set_interface_status(dvs, if_name, status = "down", server = 0):
   time.sleep(1)
 
 class DBInterface(object):
-  """ Interface to interact with different redis databases on dvs."""
+    """ Interface to interact with different redis databases on dvs."""
 
-  # common attribute fields for L3 objects
-  ACTION_FIELD = "action"
+    # common attribute fields for L3 objects
+    ACTION_FIELD = "action"
 
-  def set_up_databases(self, dvs):
-    self.appl_db = _set_up_appl_db(dvs)
-    self.asic_db = _set_up_asic_db(dvs)
-    self.appl_state_db = _set_up_appl_state_db(dvs)
+    def set_up_databases(self, dvs):
+        self.appl_db = _set_up_appl_db(dvs)
+        self.asic_db = _set_up_asic_db(dvs)
+        self.appl_state_db = _set_up_appl_state_db(dvs)
+        self.zmq = swsscommon.ZmqClient("ipc://" + dvs.zmq_sock, 5000)
+        self.zmq_db = swsscommon.DBConnector("APPL_DB", 0)
+        self.zmq_tbl = swsscommon.ZmqProducerStateTable(
+            self.zmq_db, self.APP_DB_TBL_NAME, self.zmq)
 
-  def set_app_db_entry(self, key, attr_list):
-    fvs = swsscommon.FieldValuePairs(attr_list)
-    tbl = swsscommon.ProducerStateTable(self.appl_db, self.APP_DB_TBL_NAME)
-    tbl.set(key, fvs)
-    time.sleep(1)
+    def set_app_db_entry(self, key, attr_list):
+        fvs = swsscommon.FieldValuePairs(attr_list)
+        self.zmq_tbl.set(key, fvs)
+        time.sleep(0.5)
+        self.zmq_wait()
 
-  def remove_app_db_entry(self, key):
-    tbl = swsscommon.ProducerStateTable(self.appl_db, self.APP_DB_TBL_NAME)
-    tbl._del(key)
-    time.sleep(1)
+    def remove_app_db_entry(self, key):
+        self.zmq_tbl.delete(key)
+        time.sleep(0.5)
+        self.zmq_wait()
 
-  # Get list of original entries in redis on init.
-  def get_original_redis_entries(self, db_list):
-    self._original_entries = {}
-    for i in db_list:
-      db = i[0]
-      table = i[1]
-      self._original_entries["{}:{}".format(db, table)]= get_keys(db, table)
+    def zmq_wait(self):
+        kcos = swsscommon.zmqWait(self.zmq_tbl)
+        assert len(kcos) == 1
+        (self.zmq_data, self.zmq_values) = kcos[0]
+
+    def verify_response(self, key, attr_list, status, err_message="SWSS_RC_SUCCESS"):
+        assert self.zmq_data == key, "data '%s' does not match key '%s'" % (
+            self.zmq_data, key)
+        assert len(self.zmq_values) >= 1
+        assert self.zmq_values[0][0] == status, "received status '%s' does not match status '%s'" % (
+            self.zmq_values[0][0], status)
+        assert self.zmq_values[0][1] == err_message, "Unexpected message '%s' received, expected '%s'" % (
+            self.zmq_values[0][1], err_message)
+        values = self.zmq_values[1:]
+        verify_attr(values, attr_list)
+
+    # Get list of original entries in redis on init.
+    def get_original_redis_entries(self, db_list):
+        self._original_entries = {}
+        for i in db_list:
+            db = i[0]
+            table = i[1]
+            self._original_entries["{}:{}".format(
+                db, table)] = get_keys(db, table)
 
 class KeyToOidDBHelper(object):
   """Provides helper APIs for P4RT key to OID mapping in Redis DB."""

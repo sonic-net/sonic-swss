@@ -131,7 +131,7 @@ namespace flexcounter_test
         }
         else
         {
-            if (flexCounterGroupParam->bulk_chunk_size.list != nullptr || flexCounterGroupParam->bulk_chunk_size_per_prefix.list != nullptr)
+           // if (flexCounterGroupParam->bulk_chunk_size.list != nullptr || flexCounterGroupParam->bulk_chunk_size_per_prefix.list != nullptr)
             {
                 return SAI_STATUS_SUCCESS;
             }

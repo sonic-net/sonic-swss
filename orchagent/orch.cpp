@@ -1,5 +1,7 @@
+#include <fstream>
 #include <inttypes.h>
 #include <stdexcept>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
@@ -17,8 +19,43 @@ using namespace swss;
 
 int gBatchSize = 0;
 
+extern bool gSwssRecord;
+extern ofstream gRecordOfs;
+extern bool gLogRotate;
+extern string gRecordFile;
+size_t gRecordSize = 0;
+uint32_t gLostLogRecords = 0;
+
 std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
 std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
+
+namespace
+{
+
+    bool isRecorderSuppressEnabled()
+    {
+        SWSS_LOG_ENTER();
+
+        bool suppress_enabled = true;
+        swss::DBConnector db("CONFIG_DB", 0);
+        swss::Table table(&db, "LOGGER");
+        std::vector<swss::FieldValueTuple> fvs;
+        if (table.get("record", fvs))
+        {
+            for (const auto &fv : fvs)
+            {
+                if (fvField(fv) == "suppress" && fvValue(fv) == "disable")
+                {
+                    suppress_enabled = false;
+                    break;
+                }
+            }
+        }
+
+        return suppress_enabled;
+    }
+
+}  // namespace
 
 RingBuffer::RingBuffer(int size): buffer(size)
 {
@@ -135,6 +172,10 @@ Orch::Orch(const vector<TableConnector>& tables)
 
 Orch::Orch()
 {
+    if (gRecordOfs.is_open())
+    {
+        gRecordOfs.close();
+    }
 }
 
 vector<Selectable *> Orch::getSelectables()
@@ -628,8 +669,7 @@ void Orch::removeObject(
 
     auto &obj = searchRef->second;
 
-    for (auto field_ref : obj.m_objsReferencingByMe)
-    {
+    for (auto field_ref : obj.m_objsReferencingByMe) {
         removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field_ref.first, field_ref.second, false);
     }
 
@@ -687,6 +727,66 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 void Orch::flushResponses()
 {
     m_publisher.flush();
+}
+
+void Orch::logfileReopen()
+{
+    if (gLostLogRecords > 0)
+    {
+        SWSS_LOG_WARN("Orchagent lost %d records", gLostLogRecords);
+        gRecordOfs << getTimestamp() << "|#" << gLostLogRecords << " records lost" << '\n';
+    }
+
+    gRecordOfs.close();
+
+    /*
+     * On log rotate we will use the same file name, we are assuming that
+     * logrotate daemon move filename to filename.1 and we will create new
+     * empty file here.
+     */
+
+    gRecordSize = 0;
+    gLostLogRecords = 0;
+
+    struct stat fbuf;
+    int rc = stat(gRecordFile.c_str(), &fbuf);
+    if (rc == 0) {
+        gRecordSize = fbuf.st_size;
+    }
+
+    gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
+
+    if (!gRecordOfs.is_open())
+    {
+        SWSS_LOG_ERROR("failed to open gRecordOfs file %s: %s", gRecordFile.c_str(), strerror(errno));
+        return;
+    }
+}
+
+void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
+{
+    if (gLogRotate)
+    {
+        gLogRotate = false;
+        logfileReopen();
+    }
+
+    string s = consumer.dumpTuple(tuple);
+    static bool rec_suppress = isRecorderSuppressEnabled();
+
+    if (gRecordSize <= SWSS_LOG_FILESIZE || !rec_suppress) {
+      std::string timestamp = getTimestamp();
+      gRecordOfs << timestamp << "|" << s << '\n';
+      gRecordSize += s.size() + timestamp.size() + 2;
+    } else {
+      ++gLostLogRecords;
+    }
+}
+
+string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
+{
+    string s = consumer.dumpTuple(tuple);
+    return s;
 }
 
 ref_resolve_status Orch::resolveFieldRefArray(
@@ -956,6 +1056,7 @@ void Orch2::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         bool erase_from_queue = true;
+        ReturnCode rc;
         try
         {
             request_.parse(it->second);
@@ -973,7 +1074,10 @@ void Orch2::doTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_ERROR("Wrong operation. Check RequestParser: %s", op.c_str());
+                rc = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                     << "Wrong operation, only supporting SET and DEL, but got "
+                     << op;
+                SWSS_LOG_ERROR("%s", rc.message().c_str());
             }
         }
         catch (const std::invalid_argument& e)

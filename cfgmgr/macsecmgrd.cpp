@@ -21,6 +21,11 @@
 using namespace std;
 using namespace swss;
 
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 

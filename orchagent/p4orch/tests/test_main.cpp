@@ -22,6 +22,11 @@ extern "C"
 
 using ::testing::StrictMock;
 
+bool gLogRotate = false;
+
+ofstream gRecordOfs;
+string gRecordFile;
+
 /* Global variables */
 sai_object_id_t gVirtualRouterId = SAI_NULL_OBJECT_ID;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;

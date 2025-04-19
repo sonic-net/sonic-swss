@@ -26,6 +26,7 @@
 #include "p4orch/wcmp_manager.h"
 #include "response_publisher.h"
 #include "vrforch.h"
+#include "zmqorch.h"
 
 static const std::map<std::string, std::string> FixedTablesMap = {
     {"router_interface_table", APP_P4RT_ROUTER_INTERFACE_TABLE_NAME},
@@ -38,10 +39,10 @@ static const std::map<std::string, std::string> FixedTablesMap = {
     {"l3_admit_table", APP_P4RT_L3_ADMIT_TABLE_NAME},
     {"tunnel_table", APP_P4RT_TUNNEL_TABLE_NAME}};
 
-class P4Orch : public Orch
-{
+class P4Orch : public ZmqOrch {
   public:
-    P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOrch *vrfOrch, CoppOrch *coppOrch);
+    P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
+           swss::ZmqServer* zmqServer, VRFOrch* vrfOrch, CoppOrch* coppOrch);
     // Add ACL table to ACLRuleManager mapping in P4Orch.
     bool addAclTableToManagerMapping(const std::string &acl_table_name);
     // Remove the ACL table name to AclRuleManager mapping in P4Orch
@@ -56,7 +57,7 @@ class P4Orch : public Orch
     std::unordered_map<std::string, ObjectManagerInterface *> m_p4TableToManagerMap;
 
   private:
-    void doTask(Consumer &consumer);
+    void doTask(ConsumerBase& consumer);
     void doTask(swss::SelectableTimer &timer);
     void doTask(swss::NotificationConsumer &consumer);
     void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
@@ -83,8 +84,9 @@ class P4Orch : public Orch
     // Notification consumer for port state change
     swss::NotificationConsumer *m_portStatusNotificationConsumer;
 
+    swss::ZmqServer* m_zmqServer;
     // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
-    ResponsePublisher m_publisher{"APPL_DB", /*bool buffered=*/true, /*db_write_thread=*/true};
+    ResponsePublisher m_publisher;
 
     friend class p4orch::test::WcmpManagerTest;
 };

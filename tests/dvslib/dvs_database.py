@@ -29,6 +29,10 @@ class DVSDatabase:
         """Get DB separator."""
         return self._separator
 
+    def set_up_zmq_connection(self, zmq_sock: str, db_name: str = "APPL_DB"):
+        self.zmq = swsscommon.ZmqClient("ipc://" + zmq_sock, 5000)
+        self.zmq_db = swsscommon.DBConnector(db_name, 0)
+
     def create_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Add the mapping {`key` -> `entry`} to the specified table.
 
@@ -160,7 +164,9 @@ class DVSDatabase:
             fv_pairs = self.get_entry(table_name, key)
             return (bool(fv_pairs), fv_pairs)
 
-        message = failure_message or f'Entry not found: key="{key}", table="{table_name}"'
+        message = (
+            failure_message or f'Entry not found: key="{key}", table="{table_name}"'
+        )
         _, result = wait_for_result(access_function, polling_config, message)
 
         return result
@@ -206,6 +212,28 @@ class DVSDatabase:
             assert not polling_config.strict, message
 
         return result
+
+
+    def set_zmq_entry(
+        self, table_name: str, key: str, entry: Dict[str, str]
+    ) -> Tuple[str, List[Tuple[str, str]]]:
+        fvs = swsscommon.FieldValuePairs(list(entry.items()))
+        zmq_tbl = swsscommon.ZmqProducerStateTable(self.zmq_db, table_name, self.zmq)
+        zmq_tbl.set(key, fvs)
+        time.sleep(0.5)
+        kcos = swsscommon.zmqWait(zmq_tbl)
+        assert len(kcos) == 1
+        return kcos[0]
+
+    def remove_zmq_entry(
+        self, table_name: str, key: str
+    ) -> Tuple[str, List[Tuple[str, str]]]:
+        zmq_tbl = swsscommon.ZmqProducerStateTable(self.zmq_db, table_name, self.zmq)
+        zmq_tbl.delete(key)
+        time.sleep(0.5)
+        kcos = swsscommon.zmqWait(zmq_tbl)
+        assert len(kcos) == 1
+        return kcos[0]
 
     def wait_for_field_match(
         self,
