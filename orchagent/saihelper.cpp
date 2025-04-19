@@ -1160,3 +1160,41 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
     }
     return stat_list;
 }
+
+void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key,
+                     uint32_t res, const string& version)
+{
+    SWSS_LOG_ENTER();
+
+    if (!table)
+    {
+        SWSS_LOG_WARN("Table passed in is NULL");
+        return;
+    }
+
+    std::vector<FieldValueTuple> fvVector;
+
+    fvVector.emplace_back("result", std::to_string(res));
+
+    if (!version.empty())
+    {
+        fvVector.emplace_back("version", version);
+    }
+
+    table->set(key, fvVector);
+    SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
+}
+
+void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
+{
+    SWSS_LOG_ENTER();
+
+    if (!table)
+    {
+        SWSS_LOG_WARN("Table passed in is NULL");
+        return;
+    }
+
+    table->del(key);
+    SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
+}

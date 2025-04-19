@@ -13,6 +13,8 @@ from dvslib.sai_utils import assert_sai_attribute_exists
 import sai_attrs as sai
 import dash_api.route_type_pb2 as rt
 
+DVS_ENV = ["HWSKU=DPU-2P"]
+NUM_PORTS = 2
 
 def get_expected_tunnel_ips(tunnel_config):
     # We expect orchagent to ignore duplicate IPs, so use a set to ensure the expected IPs are unique
