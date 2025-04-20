@@ -113,11 +113,8 @@ jobs:
       project: build
       pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
-      # runVersion: 'latestFromBranch'
-      # runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
-      runVersion: 'specific'
-      pipelineId: 810860
-      allowFailedBuilds: true
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
