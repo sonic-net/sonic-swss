@@ -8,8 +8,6 @@ from dash_api.appliance_pb2 import *
 from dash_api.vnet_pb2 import *
 from dash_api.eni_pb2 import *
 from dash_api.eni_route_pb2 import *
-from dash_api.ha_scope_pb2 import *
-from dash_api.ha_set_pb2 import *
 from dash_api.route_pb2 import *
 from dash_api.route_group_pb2 import *
 from dash_api.route_rule_pb2 import *
@@ -31,8 +29,6 @@ ASIC_PA_VALIDATION_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY"
 ASIC_OUTBOUND_ROUTING_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY"
 ASIC_INBOUND_ROUTING_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY"
 ASIC_OUTBOUND_ROUTING_GROUP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP"
-ASIC_DASH_HA_SET_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_HA_SET"
-ASIC_DASH_HA_SCOPE_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_HA_SCOPE"
 
 APP_DB_TO_PROTOBUF_MAP = {
     swsscommon.APP_DASH_APPLIANCE_TABLE_NAME: Appliance,
@@ -208,10 +204,6 @@ class DashDB(object):
             self.dvs.get_app_db().db_connection, "DASH_ENI_ROUTE_TABLE")
         self.app_dash_route_group_table = ProducerStateTable(
             self.dvs.get_app_db().db_connection, "DASH_ROUTE_GROUP_TABLE")
-        self.app_dash_ha_set_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_HA_SET_TABLE")
-        self.app_dash_ha_scope_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_HA_SCOPE_TABLE")
 
         self.asic_dash_appliance_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_DASH_APPLIANCE")
@@ -235,10 +227,6 @@ class DashDB(object):
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY")
         self.asic_outbound_routing_group_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP")
-        self.asic_ha_set_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_HA_SET")
-        self.asic_ha_scope_table = Table(
-            self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_HA_SCOPE")
 
     def create_appliance(self, appliance_id, attr_maps: dict):
         self.app_dash_appliance_table[str(appliance_id)] = attr_maps
@@ -263,18 +251,6 @@ class DashDB(object):
     
     def remove_eni_route(self, eni):
         del self.app_dash_eni_route_table[str(eni)]
-
-    def create_ha_set(self, ha_set, attr_maps: dict):
-        self.app_dash_ha_set_table[str(ha_set)] = attr_maps
-
-    def remove_ha_set(self, ha_set):
-        del self.app_dash_ha_set_table[str(ha_set)]
-
-    def create_ha_scope(self, ha_scope, attr_maps: dict):
-        self.app_dash_ha_scope_table[str(ha_scope)] = attr_maps
-
-    def remove_ha_scope(self, ha_scope):
-        del self.app_dash_ha_scope_table[str(ha_scope)]
 
     def create_vnet_mapping(self, vnet, ip, attr_maps: dict):
         self.app_dash_vnet_map_table[str(vnet) + ":" + str(ip)] = attr_maps
