@@ -97,6 +97,7 @@ void MockOrchTest::SetUp()
     gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
     gDirectory.set(gSwitchOrch);
     ut_orch_list.push_back((Orch **)&gSwitchOrch);
+    global_orch_list.insert((Orch **)&gSwitchOrch);
 
     vector<string> flex_counter_tables = {
         CFG_FLEX_COUNTER_TABLE_NAME
@@ -112,18 +113,22 @@ void MockOrchTest::SetUp()
     gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
     gDirectory.set(gFlowCounterRouteOrch);
     ut_orch_list.push_back((Orch **)&gFlowCounterRouteOrch);
+    global_orch_list.insert((Orch **)&gFlowCounterRouteOrch);
 
     gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(gVrfOrch);
     ut_orch_list.push_back((Orch **)&gVrfOrch);
+    global_orch_list.insert((Orch **)&gVrfOrch);
 
     gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
     gDirectory.set(gIntfsOrch);
     ut_orch_list.push_back((Orch **)&gIntfsOrch);
+    global_orch_list.insert((Orch **)&gIntfsOrch);
 
     gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
     gDirectory.set(gPortsOrch);
     ut_orch_list.push_back((Orch **)&gPortsOrch);
+    global_orch_list.insert((Orch **)&gPortsOrch);
 
     const int fgnhgorch_pri = 15;
 
@@ -136,6 +141,7 @@ void MockOrchTest::SetUp()
     gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
     gDirectory.set(gFgNhgOrch);
     ut_orch_list.push_back((Orch **)&gFgNhgOrch);
+    global_orch_list.insert((Orch **)&gFgNhgOrch);
 
     const int fdborch_pri = 20;
 
@@ -150,10 +156,12 @@ void MockOrchTest::SetUp()
     gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
     gDirectory.set(gFdbOrch);
     ut_orch_list.push_back((Orch **)&gFdbOrch);
+    global_orch_list.insert((Orch **)&gFdbOrch);
 
     gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
     gDirectory.set(gNeighOrch);
     ut_orch_list.push_back((Orch **)&gNeighOrch);
+    global_orch_list.insert((Orch **)&gNeighOrch);
 
     vector<string> tunnel_tables = {
         APP_TUNNEL_DECAP_TABLE_NAME,
@@ -177,6 +185,7 @@ void MockOrchTest::SetUp()
     };
     gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
     ut_orch_list.push_back((Orch **)&gBufferOrch);
+    global_orch_list.insert((Orch **)&gBufferOrch);
 
     vector<TableConnector> policer_tables = {
         TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
@@ -187,10 +196,12 @@ void MockOrchTest::SetUp()
     gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
     gDirectory.set(gPolicerOrch);
     ut_orch_list.push_back((Orch **)&gPolicerOrch);
+    global_orch_list.insert((Orch **)&gPolicerOrch);
 
     gNhgOrch = new NhgOrch(m_app_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
     gDirectory.set(gNhgOrch);
     ut_orch_list.push_back((Orch **)&gNhgOrch);
+    global_orch_list.insert((Orch **)&gNhgOrch);
 
     TableConnector srv6_sid_list_table(m_app_db.get(), APP_SRV6_SID_LIST_TABLE_NAME);
     TableConnector srv6_my_sid_table(m_app_db.get(), APP_SRV6_MY_SID_TABLE_NAME);
@@ -204,9 +215,12 @@ void MockOrchTest::SetUp()
     gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
     ut_orch_list.push_back((Orch **)&gSrv6Orch);
+    global_orch_list.insert((Orch **)&gSrv6Orch);
+
     gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
     gDirectory.set(gCrmOrch);
     ut_orch_list.push_back((Orch **)&gCrmOrch);
+    global_orch_list.insert((Orch **)&gCrmOrch);
 
     const int routeorch_pri = 5;
     vector<table_name_with_pri_t> route_tables = {
@@ -216,11 +230,14 @@ void MockOrchTest::SetUp()
     gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
     gDirectory.set(gRouteOrch);
     ut_orch_list.push_back((Orch **)&gRouteOrch);
+    global_orch_list.insert((Orch **)&gRouteOrch);
+
     TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
     gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch);
     gDirectory.set(gMirrorOrch);
     ut_orch_list.push_back((Orch **)&gMirrorOrch);
+    global_orch_list.insert((Orch **)&gMirrorOrch);
 
     vector<string> dash_tables = {
         APP_DASH_APPLIANCE_TABLE_NAME,
@@ -253,6 +270,7 @@ void MockOrchTest::SetUp()
                             gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, NULL);
     gDirectory.set(gAclOrch);
     ut_orch_list.push_back((Orch **)&gAclOrch);
+    global_orch_list.insert((Orch **)&gAclOrch);
 
     m_MuxOrch = new MuxOrch(m_config_db.get(), mux_tables, m_TunnelDecapOrch, gNeighOrch, gFdbOrch);
     gDirectory.set(m_MuxOrch);
@@ -291,6 +309,23 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_dashHaOrch);
     ut_orch_list.push_back((Orch **)&m_dashHaOrch);
 
+    vector<string> dash_route_tables = {
+        APP_DASH_ROUTE_TABLE_NAME,
+        APP_DASH_ROUTE_RULE_TABLE_NAME,
+        APP_DASH_ROUTE_GROUP_TABLE_NAME
+    };
+
+    m_DashRouteOrch = new DashRouteOrch(m_app_db.get(), dash_route_tables, m_DashOrch, nullptr);
+    gDirectory.set(m_DashRouteOrch);
+    ut_orch_list.push_back((Orch **)&m_DashRouteOrch);
+
+    vector<string> dash_tunnel_tables = {
+        APP_DASH_TUNNEL_TABLE_NAME
+    };
+    m_DashTunnelOrch= new DashTunnelOrch(m_app_db.get(), dash_tunnel_tables, nullptr);
+    gDirectory.set(m_DashTunnelOrch);
+    ut_orch_list.push_back((Orch **)&m_DashTunnelOrch);
+
     ApplyInitialConfigs();
     PostSetUp();
 }
@@ -302,7 +337,10 @@ void MockOrchTest::TearDown()
     {
         Orch **orch = *rit;
         delete *orch;
-        *orch = nullptr;
+        if (global_orch_list.find(orch) != global_orch_list.end())
+        {
+            *orch = nullptr;
+        }
     }
 
     gDirectory.m_values.clear();

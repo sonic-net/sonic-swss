@@ -15,6 +15,7 @@ from dash_api.route_group_pb2 import *
 from dash_api.route_rule_pb2 import *
 from dash_api.vnet_mapping_pb2 import *
 from dash_api.route_type_pb2 import *
+from dash_api.tunnel_pb2 import *
 from dash_api.types_pb2 import *
 from google.protobuf.json_format import ParseDict
 from google.protobuf.message import Message
@@ -42,7 +43,8 @@ APP_DB_TO_PROTOBUF_MAP = {
     swsscommon.APP_DASH_ROUTE_RULE_TABLE_NAME: RouteRule,
     swsscommon.APP_DASH_ENI_ROUTE_TABLE_NAME: EniRoute,
     swsscommon.APP_DASH_ROUTING_TYPE_TABLE_NAME: RouteType,
-    swsscommon.APP_DASH_ROUTE_GROUP_TABLE_NAME: RouteGroup
+    swsscommon.APP_DASH_ROUTE_GROUP_TABLE_NAME: RouteGroup,
+    swsscommon.APP_DASH_TUNNEL_TABLE_NAME: Tunnel
 }
 
 @pytest.fixture(scope='module')
@@ -78,6 +80,9 @@ class Table(swsscommon.Table):
             return None
         else:
             return dict(result)
+
+    def __contains__(self, key: str):
+        return self[key] is not None
 
     def get_keys(self):
         return self.getKeys()
@@ -126,15 +131,25 @@ class DashDB(object):
         table = Table(self.dvs.get_asic_db().db_connection, table_name)
         return table[key]
 
-    def wait_for_asic_db_keys(self, table_name, min_keys=1):
+    def wait_for_asic_db_keys(self, table_name, min_keys=1, old_keys=None):
 
         def polling_function():
             table = Table(self.dvs.get_asic_db().db_connection, table_name)
             keys = table.get_keys()
+            if old_keys:
+                keys = [key for key in keys if key not in old_keys]
             return len(keys) >= min_keys, keys
 
         _, keys = wait_for_result(polling_function, failure_message=f"Found fewer than {min_keys} keys in ASIC_DB table {table_name}")
         return keys
+
+    def wait_for_asic_db_key_del(self, table_name, key):
+        def polling_function():
+            table = Table(self.dvs.get_asic_db().db_connection, table_name)
+            return key not in table, None
+
+        _, attrs = wait_for_result(polling_function, failure_message=f"ASIC_DB table {table_name} still has key {key}")
+        return attrs
 
     def wait_for_asic_db_field(self, table_name, key, field, expected_value=None):
 
@@ -159,15 +174,15 @@ class DashDB(object):
         else:
             return None
 
-    def wait_for_asic_db_keys_(self, table_name, min_keys=1):
-
-        def polling_function():
-            table = Table(self.dvs.get_asic_db().db_connection, table_name)
-            keys = table.get_keys()
-            return len(keys) >= min_keys, keys
-
-        _, keys = wait_for_result(polling_function, failure_message=f"Found fewer than {min_keys} keys in ASIC_DB table {table_name}")
-        return keys
+    def get_attr_to_sai_object_map(self, table_name, attribute):
+        table = Table(self.dvs.get_asic_db().db_connection, table_name)
+        keys = table.get_keys()
+        attr_to_sai_object_map = {}
+        for key in keys:
+            attrs = table[key]
+            if attribute in attrs:
+                attr_to_sai_object_map[attrs[attribute]] = key
+        return attr_to_sai_object_map
 
     def get_keys(self, table_name):
         table = Table(self.dvs.get_asic_db().db_connection, table_name)
