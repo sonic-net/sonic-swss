@@ -172,10 +172,8 @@ jobs:
         artifact: sonic-dash-api
       ${{ else }}:
         artifact: sonic-dash-api.${{ parameters.arch }}
-      # runVersion: 'latestFromBranch'
-      # runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      runVersion: 'specific'
-      pipelineId: 810892
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download/common
       patterns: |
         libdashapi*.deb

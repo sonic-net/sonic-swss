@@ -81,12 +81,8 @@ jobs:
       project: build
       pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
-      # runVersion: 'latestFromBranch'
-      # runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
-      runVersion: 'specific'
-      pipelineId: 810860
-      allowFailedBuilds: true
-      allowPartiallySucceededBuilds: true
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
@@ -117,10 +113,8 @@ jobs:
         artifact: sonic-dash-api
       ${{ else }}:
         artifact: sonic-dash-api.${{ parameters.arch }}
-      # runVersion: 'latestFromBranch'
-      # runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      runVersion: 'specific'
-      pipelineId: 810892
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: |
         libdashapi*.deb
