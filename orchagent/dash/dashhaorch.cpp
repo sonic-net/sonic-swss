@@ -17,17 +17,19 @@ extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 
-static std::map<dash::ha_scope::Role, std::string> ha_role_to_str_map = {
-    {dash::ha_scope::HA_SCOPE_ROLE_DEAD, "HA_SCOPE_ROLE_DEAD"},
-    {dash::ha_scope::HA_SCOPE_ROLE_ACTIVE, "HA_SCOPE_ROLE_ACTIVE"},
-    {dash::ha_scope::HA_SCOPE_ROLE_STANDBY, "HA_SCOPE_ROLE_STANDBY"},
-    {dash::ha_scope::HA_SCOPE_ROLE_STANDALONE, "HA_SCOPE_ROLE_STANDALONE"},
-    {dash::ha_scope::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE, "HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE"}
+static std::map<dash::types::HaRole, std::string> ha_role_to_str_map = {
+    {dash::types::HA_SCOPE_ROLE_UNSPECIFIED, "HA_SCOPE_ROLE_UNSPECIFIED"},
+    {dash::types::HA_SCOPE_ROLE_DEAD, "HA_SCOPE_ROLE_DEAD"},
+    {dash::types::HA_SCOPE_ROLE_ACTIVE, "HA_SCOPE_ROLE_ACTIVE"},
+    {dash::types::HA_SCOPE_ROLE_STANDBY, "HA_SCOPE_ROLE_STANDBY"},
+    {dash::types::HA_SCOPE_ROLE_STANDALONE, "HA_SCOPE_ROLE_STANDALONE"},
+    {dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE, "HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE"}
 };
 
-static std::map<dash::ha_set::Scope, std::string> ha_set_scope_to_str_map = {
-    {dash::ha_set::SCOPE_DPU, "SCOPE_DPU"},
-    {dash::ha_set::SCOPE_ENI, "SCOPE_ENI"},
+static std::map<dash::types::HaScope, std::string> ha_set_scope_to_str_map = {
+    {dash::types::SCOPE_UNSPECIFIED, "SCOPE_UNSPECIFIED"},
+    {dash::types::SCOPE_DPU, "SCOPE_DPU"},
+    {dash::types::SCOPE_ENI, "SCOPE_ENI"},
 };
 
 DashHaOrch::DashHaOrch(DBConnector *dpu_appl_db, DBConnector *dpu_state_db, vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer, ZmqClient *zmqClient) :
@@ -251,7 +253,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
 
     // set HA Scope ID to ENI
-    if (ha_set_it->second.metadata.scope() == dash::ha_set::Scope::SCOPE_ENI)
+    if (ha_set_it->second.metadata.scope() == dash::types::HaScope::SCOPE_ENI)
     {
         auto eni_entry = m_dash_orch->getEni(key);
         if (eni_entry == nullptr)
@@ -262,7 +264,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
 
         return setEniHaScopeId(eni_entry->eni_id, sai_ha_scope_oid);
 
-    } else if (ha_set_it->second.metadata.scope() == dash::ha_set::Scope::SCOPE_DPU)
+    } else if (ha_set_it->second.metadata.scope() == dash::types::HaScope::SCOPE_DPU)
     {
         auto eni_table = m_dash_orch->getEniTable();
         auto it = eni_table->begin();

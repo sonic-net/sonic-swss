@@ -48,9 +48,8 @@ namespace dashhaorch_ut
             swss::IpAddress local_ip("3.3.3.3");
             swss::IpAddress peer_ip("4.4.4.4");
 
-            ha_set.set_ha_set_id("HA_SET_1");
             ha_set.set_version("1");
-            ha_set.set_scope(dash::ha_set::SCOPE_DPU);
+            ha_set.set_scope(dash::types::SCOPE_DPU);
             ha_set.mutable_vip_v4()->set_ipv4(vip_v4.getV4Addr());
             ha_set.mutable_local_npu_ip()->set_ipv4(npu_ip.getV4Addr());
             ha_set.mutable_local_ip()->set_ipv4(local_ip.getV4Addr());
@@ -70,9 +69,8 @@ namespace dashhaorch_ut
         {
             Table ha_scope_table = Table(m_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME);
             dash::ha_scope::HaScope ha_scope = dash::ha_scope::HaScope();
-            ha_scope.set_ha_scope_id("HA_SET_1");
             ha_scope.set_version("1");
-            ha_scope.set_ha_role(dash::ha_scope::HA_SCOPE_ROLE_DEAD);
+            ha_scope.set_ha_role(dash::types::HA_SCOPE_ROLE_DEAD);
             ha_scope_table.set("HA_SET_1", { { "pb", ha_scope.SerializeAsString() } });
             m_dashHaOrch->addExistingData(&ha_scope_table);
             static_cast<Orch *>(m_dashHaOrch)->doTask();
