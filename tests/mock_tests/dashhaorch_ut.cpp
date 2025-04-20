@@ -20,7 +20,7 @@ EXTERN_MOCK_FNS
 
 namespace dashhaorch_ut 
 {
-    DEFINE_SAI_GENERIC_API_MOCK(dash_ha, ha_set, ha_scope);
+    DEFINE_SAI_GENERIC_APIS_MOCK(dash_ha, ha_set, ha_scope);
     using namespace mock_orch_test;
 
     class DashHaOrchTest : public MockOrchTest
