@@ -80,8 +80,7 @@
         "DPU_APPL_DB": {
             "id": 15,
             "separator": ":",
-            "instance": "redis",
-            "format": "proto"
+            "instance": "redis"
         },
         "DPU_STATE_DB": {
             "id": 17,
