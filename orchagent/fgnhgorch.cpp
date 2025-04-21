@@ -223,31 +223,14 @@ void FgNhgOrch::calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry)
 void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
-
     string key = ipPrefix.to_string();
-    // Write to StateDb
-    std::vector<FieldValueTuple> fvs;
+    string field = std::to_string(index);
+    string value = nextHop.to_string();
 
-    // check if profile already exists - if yes - skip creation
-    m_stateWarmRestartRouteTable.get(key, fvs);
+    m_stateWarmRestartRouteTable.hset(key, field, value);
 
-    //bucket rewrite
-    if (fvs.size() > index)
-    {
-        FieldValueTuple fv(std::to_string(index), nextHop.to_string());
-        fvs[index] = fv;
-        SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
-                        ipPrefix.to_string().c_str(), nextHop.to_string().c_str(), index);
-        m_stateWarmRestartRouteTable.set(key, fvs);
-    }
-    else
-    {
-        fvs.push_back(FieldValueTuple(std::to_string(index), nextHop.to_string()));
-        SWSS_LOG_INFO("Add new next hop entry %s with index %d for ip prefix %s",
-                nextHop.to_string().c_str(), index, ipPrefix.to_string().c_str());
-        m_stateWarmRestartRouteTable.set(key, fvs);
-    }
-
+    SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
+                  key.c_str(), value.c_str(), index);
 }
 
 bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
