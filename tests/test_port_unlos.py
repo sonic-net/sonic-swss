@@ -1,7 +1,7 @@
 from swsscommon import swsscommon
 
 
-class TestPortAutoNeg(object):
+class TestPortUnreliableLos(object):
     def test_PortUnreliableLosForce(self, dvs, testlog):
 
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
