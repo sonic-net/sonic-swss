@@ -197,8 +197,6 @@ bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTup
 
     // update the STATE DB and local session maps
     auto& fvVector = sai_session_handler.get_fv_vector();
-    auto state = m_session_state_lkup.at(SAI_ICMP_ECHO_SESSION_STATE_DOWN);
-    fvVector.push_back({IcmpSaiSessionHandler::m_state_fname, state});
     auto& state_db_key = sai_session_handler.get_state_db_key();
 
     m_stateIcmpSessionTable.set(state_db_key, fvVector);
