@@ -447,6 +447,11 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
             return false;
         }
 
+        /*
+         * To avoid dependency issues, addPaValidation is called in the end of
+         * addOutboundCaToPa, which ensures ca_to_pa and pa_validation entries
+         * are both created consistently at one time.
+         */
         remove_from_consumer = addOutboundCaToPa(key, ctxt);
     }
     /*
