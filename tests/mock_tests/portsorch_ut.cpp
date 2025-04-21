@@ -883,6 +883,7 @@ namespace portsorch_test
                 { "lanes",               lanes.str() },
                 { "speed",               "100000"    },
                 { "autoneg",             "off"       },
+                { "unreliable_los",      "off"       },
                 { "adv_speeds",          "all"       },
                 { "interface_type",      "none"      },
                 { "adv_interface_types", "all"       },
@@ -922,6 +923,8 @@ namespace portsorch_test
         std::vector<std::string> keys;
         bufferMaxParameterTable.getKeys(keys);
         ASSERT_TRUE(keys.empty());
+        // Verify unreliablelos
+        ASSERT_EQ(p.m_unreliable_los, false);
     }
 
     TEST_F(PortsOrchTest, PortBasicConfig)
@@ -986,7 +989,7 @@ namespace portsorch_test
         // Verify auto-negotiation
         ASSERT_TRUE(p.m_autoneg);
 
-        // Verify auto-negotiation
+        // Verify unreliablelos
         ASSERT_TRUE(p.m_unreliable_los);
 
         // Verify advertised speed
