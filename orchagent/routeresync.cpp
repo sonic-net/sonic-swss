@@ -10,6 +10,8 @@
 using namespace std;
 using namespace swss;
 
+const string ZMQ_DEFAULT_ADDRESS = "tcp://localhost";
+
 void usage(char **argv)
 {
     cout << "Usage: " << argv[0] << " [start|stop]" << endl;
@@ -21,8 +23,8 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
-    // [Hua] test code, need improve to a parameter
-    ZmqClient zmqClient("tcp://localhost:8100");
+    std::string address = ZMQ_DEFAULT_ADDRESS + ":" + to_string(ORCH_ZMQ_PORT);
+    ZmqClient zmqClient(address);
 
     DBConnector db("APPL_DB", 0);
     ZmqProducerStateTable r(&db, APP_ROUTE_TABLE_NAME, zmqClient);
