@@ -923,8 +923,6 @@ namespace portsorch_test
         std::vector<std::string> keys;
         bufferMaxParameterTable.getKeys(keys);
         ASSERT_TRUE(keys.empty());
-        // Verify unreliablelos
-        ASSERT_EQ(p.m_unreliable_los, false);
     }
 
     TEST_F(PortsOrchTest, PortBasicConfig)
@@ -1065,23 +1063,24 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvList = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "preemphasis", "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
-                { "idriver",     "0x5,0x3,0x4,0x1"             },
-                { "ipredriver",  "0x1,0x4,0x3,0x5"             },
-                { "pre1",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre2",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre3",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "main",        "0x90,0x92,0x91,0x93"         },
-                { "post1",       "0x10,0x12,0x11,0x13"         },
-                { "post2",       "0x10,0x12,0x11,0x13"         },
-                { "post3",       "0x10,0x12,0x11,0x13"         },
-                { "attn",        "0x80,0x82,0x81,0x83"         },
-                { "ob_m2lp",     "0x4,0x6,0x5,0x7"             },
-                { "ob_alev_out", "0xf,0x11,0x10,0x12"          },
-                { "obplev",      "0x69,0x6b,0x6a,0x6c"         },
-                { "obnlev",      "0x5f,0x61,0x60,0x62"         },
-                { "regn_bfm1p",  "0x1e,0x20,0x1f,0x21"         },
-                { "regn_bfm1n",  "0xaa,0xac,0xab,0xad"         }
+                { "preemphasis",   "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
+                { "idriver",       "0x5,0x3,0x4,0x1"             },
+                { "ipredriver",    "0x1,0x4,0x3,0x5"             },
+                { "pre1",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre2",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre3",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "main",          "0x90,0x92,0x91,0x93"         },
+                { "post1",         "0x10,0x12,0x11,0x13"         },
+                { "post2",         "0x10,0x12,0x11,0x13"         },
+                { "post3",         "0x10,0x12,0x11,0x13"         },
+                { "attn",          "0x80,0x82,0x81,0x83"         },
+                { "unreliable_los","off"                         },
+                { "ob_m2lp",       "0x4,0x6,0x5,0x7"             },
+                { "ob_alev_out",   "0xf,0x11,0x10,0x12"          },
+                { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
+                { "obnlev",        "0x5f,0x61,0x60,0x62"         },
+                { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
+                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         }
             }
         }};
 
@@ -1163,6 +1162,9 @@ namespace portsorch_test
         // Verify regn_bfm1n
         std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
         ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
+
+        // Verify unreliablelos
+        ASSERT_EQ(p.m_unreliable_los, false);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
