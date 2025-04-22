@@ -214,7 +214,6 @@ def shutdown_link(dvs, db, port):
 def startup_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
-    time.sleep(5)
 
 def run_warm_reboot(dvs):
     dvs.warm_restart_swss("true")
@@ -284,7 +283,6 @@ def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         dvs.port_admin_set(if_name_key, "up")
         shutdown_link(dvs, app_db, i)
         startup_link(dvs, app_db, i)
-        time.sleep(5)
         bank = 1
         if i >= (nh_range_end - nh_range_start)/2:
             bank = 0
@@ -741,7 +739,7 @@ class TestFineGrainedNextHopGroup(object):
     def test_fgnhg_matchmode_nexthop_multi_route(self, dvs, testlog):
         '''
         Test route/nh transitions to/from Fine Grained ECMP and Regular ECMP.
-        Create multiple prefixes pointing to the Fine Grained nhs and ensure 
+        Create multiple prefixes pointing to the Fine Grained nhs and ensure
         fine grained ECMP ASIC objects were created for this scenario as expected.
         '''
         app_db = dvs.get_app_db()
@@ -777,7 +775,8 @@ class TestFineGrainedNextHopGroup(object):
             startup_link(dvs, app_db, i)
             dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
 
-        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)  
+        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs + NUM_NHs_non_fgnhg)
+
         # Program the route
         ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.5"),
