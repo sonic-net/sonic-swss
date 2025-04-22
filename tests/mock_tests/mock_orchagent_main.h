@@ -12,6 +12,7 @@
 #include "orchagent/mirrororch.h"
 #define private public
 #include "orchagent/dash/dashorch.h"
+#include "orchagent/dash/dashrouteorch.h"
 #include "orchagent/bufferorch.h"
 #include "orchagent/qosorch.h"
 #define protected public
@@ -35,6 +36,7 @@
 #undef private 
 #include "orchagent/directory.h"
 #include "orchagent/dash/dashvnetorch.h"
+#include "orchagent/dash/dashtunnelorch.h"
 
 extern int gBatchSize;
 

@@ -7,7 +7,7 @@
 #include "tests/mock_tests/ut_helper.h"
 #include "tests/mock_tests/mock_orchagent_main.h"
 #include "tests/mock_tests/mock_sai_api.h"
-#include "tests/mock_tests/mock_orch_test.h"
+#include "tests/mock_tests/mock_dash_orch_test.h"
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"

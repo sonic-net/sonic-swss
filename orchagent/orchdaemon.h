@@ -52,6 +52,7 @@
 #include "orchagent/dash/dashaclorch.h"
 #include "orchagent/dash/dashorch.h"
 #include "orchagent/dash/dashrouteorch.h"
+#include "orchagent/dash/dashtunnelorch.h"
 #include "orchagent/dash/dashvnetorch.h"
 #include <sairedis.h>
 

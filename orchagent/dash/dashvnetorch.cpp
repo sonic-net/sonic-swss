@@ -21,6 +21,7 @@
 #include "orchagent/crmorch.h"
 #include "orchagent/saihelper.h"
 #include "orchagent/directory.h"
+#include "orchagent/dash/dashtunnelorch.h"
 
 #include "orchagent/dash/taskworker.h"
 #include "orchagent/dash/pbutils.h"
