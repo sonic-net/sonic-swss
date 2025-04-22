@@ -544,83 +544,96 @@ void StpMgr::doStpVlanPortTask(Consumer &consumer)
     }
 }
 
-void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntry, const string intfName)
+void StpMgr::processStpPortAttr(const string op,
+                                vector<FieldValueTuple> &tupEntry,
+                                const string intfName)
 {
-    STP_PORT_CONFIG_MSG *msg;
+    STP_PORT_CONFIG_MSG *msg = nullptr;
     uint32_t len = 0;
     int vlanCnt = 0;
     vector<VLAN_ATTR> vlan_list;
 
+    // If we're setting this port's attributes, retrieve the list of VLANs for it.
     if (op == SET_COMMAND)
-        vlanCnt = getAllPortVlan(intfName, vlan_list);
-
-    len = (uint32_t)(sizeof(STP_PORT_CONFIG_MSG) + (vlanCnt * sizeof(VLAN_ATTR)));
-    msg = (STP_PORT_CONFIG_MSG *)calloc(1, len);
-    if (!msg)
     {
-        SWSS_LOG_ERROR("mem failed for %s", intfName.c_str());
-        return;
+        vlanCnt = getAllPortVlan(intfName, vlan_list);
     }
 
+    // Allocate enough space for STP_PORT_CONFIG_MSG + all VLAN_ATTR entries.
+    len = static_cast<uint32_t>(
+        sizeof(STP_PORT_CONFIG_MSG) + (vlanCnt * sizeof(VLAN_ATTR))
+    );
+    msg = static_cast<STP_PORT_CONFIG_MSG *>(calloc(1, len));
+    if (!msg)
+    {
+        SWSS_LOG_ERROR("calloc failed for interface %s", intfName.c_str());
+        return;
+    }
+    // Copy interface name and VLAN count into the message.
     strncpy(msg->intf_name, intfName.c_str(), IFNAMSIZ - 1);
     msg->count = vlanCnt;
-    SWSS_LOG_INFO("Vlan count %d", vlanCnt);
+    SWSS_LOG_INFO("VLAN count for %s is %d", intfName.c_str(), vlanCnt);
 
-    if (msg->count)
+    // If there are VLANs, copy them into the message structure.
+    if (msg->count > 0)
     {
-        int i = 0;
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
-        VLAN_ATTR *attr = msg->vlan_list;
-#pragma GCC diagnostic pop
-        for (auto p = vlan_list.begin(); p != vlan_list.end(); p++)
+        for (int i = 0; i < msg->count; i++)
         {
-            attr[i].inst_id = p->inst_id;
-            attr[i].mode    = p->mode;
-            SWSS_LOG_DEBUG("Inst:%d Mode:%d", p->inst_id, p->mode);
-            i++;
+            msg->vlan_list[i].inst_id = vlan_list[i].inst_id;
+            msg->vlan_list[i].mode    = vlan_list[i].mode;
+            msg->vlan_list[i].vlan_id = vlan_list[i].vlan_id;
+            SWSS_LOG_DEBUG("Inst:%d Mode:%d",
+                           vlan_list[i].inst_id,
+                           vlan_list[i].mode);
         }
     }
 
+    // Populate message fields based on the operation (SET or DEL).
     if (op == SET_COMMAND)
     {
-        msg->opcode = STP_SET_COMMAND;
-        msg->priority = -1;
+        msg->opcode   = STP_SET_COMMAND;
+        msg->priority = -1; // Default priority unless specified
 
-        for (auto i : tupEntry)
+        for (auto &fvt : tupEntry)
         {
-            SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
-            if (fvField(i) == "enabled")
+            const auto &field = fvField(fvt);
+            const auto &value = fvValue(fvt);
+
+            SWSS_LOG_DEBUG("Field: %s, Value: %s", field.c_str(), value.c_str());
+
+            if (field == "enabled")
             {
-                msg->enabled = (fvValue(i) == "true") ? 1 : 0;
+                msg->enabled = (value == "true") ? 1 : 0;
             }
-            else if (fvField(i) == "root_guard")
+            else if (field == "root_guard")
             {
-                msg->root_guard = (fvValue(i) == "true") ? 1 : 0;
+                msg->root_guard = (value == "true") ? 1 : 0;
             }
-            else if (fvField(i) == "bpdu_guard")
+            else if (field == "bpdu_guard")
             {
-                msg->bpdu_guard = (fvValue(i) == "true") ? 1 : 0;
+                msg->bpdu_guard = (value == "true") ? 1 : 0;
             }
-            else if (fvField(i) == "bpdu_guard_do_disable")
+            else if (field == "bpdu_guard_do_disable")
             {
-                msg->bpdu_guard_do_disable = (fvValue(i) == "true") ? 1 : 0;
+                msg->bpdu_guard_do_disable = (value == "true") ? 1 : 0;
             }
-            else if (fvField(i) == "path_cost")
+            else if (field == "path_cost")
             {
-                msg->path_cost = stoi(fvValue(i).c_str());
+                msg->path_cost = stoi(value);
             }
-            else if (fvField(i) == "priority")
+            else if (field == "priority")
             {
-                msg->priority = stoi(fvValue(i).c_str());
+                msg->priority = stoi(value);
             }
             else if (fvField(i) == "portfast" && l2ProtoEnabled == L2_PVSTP)
+            else if (field == "portfast")
             {
-                msg->portfast = (fvValue(i) == "true") ? 1 : 0;
+                msg->portfast = (value == "true") ? 1 : 0;
             }
             else if (fvField(i) == "uplink_fast" && l2ProtoEnabled ==L2_PVSTP)
+            else if (field == "uplink_fast")
             {
-                msg->uplink_fast = (fvValue(i) == "true") ? 1 : 0;
+                msg->uplink_fast = (value == "true") ? 1 : 0;
             }
             else if (fvField(i) == "edge_port" && l2ProtoEnabled ==L2_MSTP)
             {
@@ -634,13 +647,15 @@ void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntr
     }
     else if (op == DEL_COMMAND)
     {
-        msg->opcode = STP_DEL_COMMAND;
+        msg->opcode  = STP_DEL_COMMAND;
         msg->enabled = 0;
     }
 
-    sendMsgStpd(STP_PORT_CONFIG, len, (void *)msg);
-    if (msg)
-        free(msg);
+    // Send the fully prepared message to the STP daemon.
+    sendMsgStpd(STP_PORT_CONFIG, len, reinterpret_cast<void *>(msg));
+
+    // Clean up.
+    free(msg);
 }
 
 void StpMgr::doStpPortTask(Consumer &consumer)
