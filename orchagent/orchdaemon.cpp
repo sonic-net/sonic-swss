@@ -1256,7 +1256,7 @@ bool DpuOrchDaemon::init()
     vector<string> dash_tunnel_tables = {
         APP_DASH_TUNNEL_TABLE_NAME
     };
-    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_zmqServer);
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, m_zmqServer);
     gDirectory.set(dash_tunnel_orch);
 
     addOrchList(dash_acl_orch);
