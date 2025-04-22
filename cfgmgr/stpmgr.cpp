@@ -635,7 +635,7 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field == "edge_port" && l2ProtoEnabled ==L2_MSTP)
             {
-                msg->edge_port = (fvValue(i) == "true") ? 1 : 0;
+                msg->edge_port = (value == "true") ? 1 : 0;
             }
             else if (field== "link_type" && l2ProtoEnabled == L2_MSTP)
             {
