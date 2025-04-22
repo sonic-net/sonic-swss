@@ -4640,13 +4640,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             );
                             p.m_unreliable_los = false;
                         } else {
+
                             p.m_unreliable_los = pCfg.serdes.unreliable_los.value;
+                            SWSS_LOG_INFO(
+                                "Set port %s unreliable los to %s",
+                                p.m_alias.c_str(), m_portHlpr.getUnreliableLosStr(pCfg).c_str()
+                            );
                         }
                         m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
-                        SWSS_LOG_NOTICE(
-                            "Set port %s unreliable los to %s",
-                            p.m_alias.c_str(), m_portHlpr.getUnreliableLosStr(pCfg).c_str()
-                        );
                 } 
 
                 if (pCfg.adv_interface_types.is_set)
