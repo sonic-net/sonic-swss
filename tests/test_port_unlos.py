@@ -15,6 +15,10 @@ class TestPortUnreliableLos(object):
         fvs = swsscommon.FieldValuePairs([("unreliable_los","on")])
         tbl.set("Ethernet4", fvs)
 
+        tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+        fvs = swsscommon.FieldValuePairs([("unreliable_los","err")])
+        tbl.set("Ethernet8", fvs)
+
         # validate if unreliable false is pushed to asic db when set first time
         port_oid = adb.port_name_map["Ethernet0"]
         expected_fields = {'NULL': 'NULL', 'SAI_PORT_ATTR_ADMIN_STATE': 'false', 'SAI_PORT_ATTR_AUTO_NEG_MODE': 'true', 'SAI_PORT_ATTR_MTU': '9122', 'SAI_PORT_ATTR_SPEED': '100000', 'SAI_PORT_ATTR_UNRELIABLE_LOS': 'false'}
@@ -23,6 +27,10 @@ class TestPortUnreliableLos(object):
         # validate if unreliable true is pushed to asic db when set first time
         port_oid = adb.port_name_map["Ethernet4"]
         expected_fields = {'NULL': 'NULL', 'SAI_PORT_ATTR_ADMIN_STATE': 'false', 'SAI_PORT_ATTR_AUTO_NEG_MODE': 'true', 'SAI_PORT_ATTR_MTU': '9122', 'SAI_PORT_ATTR_SPEED': '100000', 'SAI_PORT_ATTR_UNRELIABLE_LOS': 'true'}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
+        port_oid = adb.port_name_map["Ethernet8"]
+        expected_fields = {'NULL': 'NULL', 'SAI_PORT_ATTR_ADMIN_STATE': 'false', 'SAI_PORT_ATTR_AUTO_NEG_MODE': 'true', 'SAI_PORT_ATTR_MTU': '9122', 'SAI_PORT_ATTR_SPEED': '100000'}
         adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
 # Add Dummy always-pass test at end as workaroud
