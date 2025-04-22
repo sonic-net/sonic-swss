@@ -265,12 +265,13 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string appliance_id = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = DASH_RESULT_SUCCESS;
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -351,13 +352,14 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
         dash::route_type::RoutingType routing_type;
-        uint32_t result = DASH_RESULT_SUCCESS;
+        result = DASH_RESULT_SUCCESS;
 
         std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
         routing_type_str = "ROUTING_TYPE_" + routing_type_str;
@@ -691,12 +693,13 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         auto t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = DASH_RESULT_SUCCESS;
+        result = DASH_RESULT_SUCCESS;
         if (op == SET_COMMAND)
         {
             EniEntry entry;
@@ -771,12 +774,13 @@ bool DashOrch::removeQosEntry(const string& qos_name)
 void DashOrch::doTaskQosTable(ConsumerBase& consumer)
 {
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string qos_name = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = DASH_RESULT_SUCCESS;
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -923,12 +927,13 @@ bool DashOrch::removeEniRoute(const std::string& eni)
 void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
 {
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        uint32_t result = DASH_RESULT_SUCCESS;
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {

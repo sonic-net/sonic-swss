@@ -169,7 +169,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
-
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         // Map to store vnet bulk op results
@@ -186,6 +186,8 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                     std::forward_as_tuple());
             bool inserted = rc.second;
             auto& vnet_ctxt = rc.first->second;
+            // Result needs to be reset for every iteration
+            result = DASH_RESULT_SUCCESS;
 
             if (!inserted)
             {
@@ -203,6 +205,11 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                 if (addVnet(key, vnet_ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    /*
+                     * Write result only when removing from consumer in pre-op
+                     * For other cases, this will be handled in post-op
+                     */
+                    writeResultToDB(dash_vnet_result_table_, key, result);
                 }
                 else
                 {
@@ -214,6 +221,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                 if (removeVnet(key, vnet_ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    removeResultFromDB(dash_vnet_result_table_, key);
                 }
                 else
                 {
@@ -236,7 +244,8 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
 
             string key = kfvKey(t);
             string op = kfvOp(t);
-            uint32_t result = DASH_RESULT_SUCCESS;
+            // Result needs to be reset for every iteration
+            result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {
@@ -723,7 +732,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
-
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         std::map<std::pair<std::string, std::string>,
@@ -739,6 +748,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                     std::forward_as_tuple());
             bool inserted = rc.second;
             auto& ctxt = rc.first->second;
+            result = DASH_RESULT_SUCCESS;
 
             if (!inserted)
             {
@@ -775,6 +785,11 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                 if (addVnetMap(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    /*
+                     * Write result only when removing from consumer in pre-op
+                     * For other cases, this will be handled in post-op
+                     */
+                    writeResultToDB(dash_vnet_map_result_table_, key, result);
                 }
                 else
                 {
@@ -786,6 +801,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                 if (removeVnetMap(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    removeResultFromDB(dash_vnet_map_result_table_, key);
                 }
                 else
                 {
@@ -808,7 +824,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
-            uint32_t result = DASH_RESULT_SUCCESS;
+            result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {

@@ -314,7 +314,7 @@ void MockOrchTest::SetUp()
     vector<string> dash_tunnel_tables = {
         APP_DASH_TUNNEL_TABLE_NAME
     };
-    m_DashTunnelOrch= new DashTunnelOrch(m_app_db.get(), dash_tunnel_tables, nullptr);
+    m_DashTunnelOrch= new DashTunnelOrch(m_app_db.get(), dash_tunnel_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashTunnelOrch);
     ut_orch_list.push_back((Orch **)&m_DashTunnelOrch);
 
