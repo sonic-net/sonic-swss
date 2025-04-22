@@ -268,7 +268,7 @@ class WcmpManagerTest : public ::testing::Test
 
         // init P4 orch
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
     }
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)

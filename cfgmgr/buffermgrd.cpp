@@ -18,6 +18,11 @@ using namespace std;
 using namespace swss;
 using json = nlohmann::json;
 
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+
 /* SELECT() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 

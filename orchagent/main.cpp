@@ -47,6 +47,13 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
+bool gSairedisRecord = true;
+bool gSwssRecord = true;
+bool gLogRotate = false;
+
+ofstream gRecordOfs;
+string gRecordFile;
+
 extern size_t gMaxBulkSize;
 
 #define DEFAULT_BATCH_SIZE  128
@@ -548,6 +555,10 @@ int main(int argc, char **argv)
     attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
     attr.value.booldata = true;
     attrs.push_back(attr);
+
+    gSairedisRecord =
+        (record_type & SAIREDIS_RECORD_ENABLE) == SAIREDIS_RECORD_ENABLE;
+    gSwssRecord = (record_type & SWSS_RECORD_ENABLE) == SWSS_RECORD_ENABLE;
 
     if (gMySwitchType != "dpu")
     {

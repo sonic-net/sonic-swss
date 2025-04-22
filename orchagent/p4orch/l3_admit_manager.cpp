@@ -75,18 +75,22 @@ void L3AdmitManager::enqueue(const std::string &table_name, const swss::KeyOpFie
     m_entries.push_back(entry);
 }
 
-void L3AdmitManager::drain()
-{
+void L3AdmitManager::drainWithNotExecuted() {
+   drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode L3AdmitManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
         const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
         auto app_db_entry_or = deserializeP4L3AdmitAppDbEntry(key, attributes);
         if (!app_db_entry_or.ok())
         {
@@ -96,7 +100,7 @@ void L3AdmitManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &app_db_entry = *app_db_entry_or;
 
@@ -133,8 +137,12 @@ void L3AdmitManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
+        if (!status.ok()) {
+            break;
+        } 
     }
-    m_entries.clear();
+    drainWithNotExecuted();
+    return status;
 }
 
 P4L3AdmitEntry *L3AdmitManager::getL3AdmitEntry(const std::string &l3_admit_key)
