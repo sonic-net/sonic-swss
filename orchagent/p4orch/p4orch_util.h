@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <iomanip>
 #include <map>
 #include <set>
@@ -11,6 +12,8 @@
 #include "ipaddress.h"
 #include "ipprefix.h"
 #include "macaddress.h"
+#include "response_publisher_interface.h"
+#include "return_code.h"
 #include "table.h"
 extern "C"
 {
@@ -329,6 +332,10 @@ void parseP4RTKey(const std::string &key, std::string *table_name, std::string *
 std::string verifyAttrs(const std::vector<swss::FieldValueTuple> &targets,
                         const std::vector<swss::FieldValueTuple> &exp, const std::vector<swss::FieldValueTuple> &opt,
                         bool allow_unknown);
+
+// Helper function to drain all entries in the manager without execution.
+void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
+                               ResponsePublisherInterface* publisher);
 
 // class KeyGenerator includes member functions to generate keys for entries
 // stored in P4 Orch managers.

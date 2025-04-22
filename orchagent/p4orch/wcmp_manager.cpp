@@ -767,18 +767,22 @@ void WcmpManager::enqueue(const std::string &table_name, const swss::KeyOpFields
     m_entries.push_back(entry);
 }
 
-void WcmpManager::drain()
-{
+void WcmpManager::drainWithNotExecuted() {
+    drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode WcmpManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string db_key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
         const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
         auto app_db_entry_or = deserializeP4WcmpGroupAppDbEntry(db_key, attributes);
         if (!app_db_entry_or.ok())
         {
@@ -788,7 +792,7 @@ void WcmpManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &app_db_entry = *app_db_entry_or;
 
@@ -803,7 +807,7 @@ void WcmpManager::drain()
                 m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                      status,
                                      /*replace=*/true);
-                continue;
+                break;
             }
             auto *wcmp_group_entry = getWcmpGroupEntry(app_db_entry.wcmp_group_id);
             if (wcmp_group_entry == nullptr)
@@ -832,8 +836,12 @@ void WcmpManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
+        if (!status.ok()) {
+            break;
+        }
     }
-    m_entries.clear();
+    drainWithNotExecuted();
+    return status;
 }
 
 std::string WcmpManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)

@@ -176,12 +176,17 @@ void AclRuleManager::enqueue(const std::string &table_name, const swss::KeyOpFie
     m_entries.push_back(entry);
 }
 
-void AclRuleManager::drain()
-{
+void AclRuleManager::drainWithNotExecuted() {
+   drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode AclRuleManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string db_key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
@@ -190,7 +195,6 @@ void AclRuleManager::drain()
 
         SWSS_LOG_NOTICE("OP: %s, RULE_KEY: %s", op.c_str(), QuotedVar(db_key).c_str());
 
-        ReturnCode status;
         auto app_db_entry_or = deserializeAclRuleAppDbEntry(table_name, db_key, attributes);
         if (!app_db_entry_or.ok())
         {
@@ -200,7 +204,7 @@ void AclRuleManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &app_db_entry = *app_db_entry_or;
 
@@ -212,7 +216,7 @@ void AclRuleManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
 
         const auto &acl_table_name = app_db_entry.acl_table_name;
@@ -243,8 +247,12 @@ void AclRuleManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
-    }
-    m_entries.clear();
+        if (!status.ok()) {
+            break;
+        }
+     }
+     drainWithNotExecuted();
+     return status;
 }
 
 ReturnCode AclRuleManager::setUpUserDefinedTraps()

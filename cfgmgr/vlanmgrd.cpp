@@ -23,6 +23,11 @@ using namespace swss;
 
 MacAddress gMacAddress;
 
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("vlanmgrd");

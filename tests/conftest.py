@@ -365,8 +365,10 @@ class DockerVirtualSwitch:
                     self.servers.append(server)
 
                 self.mount = f"/var/run/redis-vs/{ctn_sw_name}"
+                self.zmq_mount = f"/zmq/{ctn_sw_name}"
             else:
                 self.mount = "/var/run/redis-vs/{}".format(name)
+                self.zmq_mount = "/zmq/{}".format(name)
 
             self.net_cleanup()
 
@@ -401,12 +403,17 @@ class DockerVirtualSwitch:
             # mount redis to base to unique directory
             self.mount = f"/var/run/redis-vs/{self.ctn_sw.name}"
             ensure_system(f"mkdir -p {self.mount}")
+            self.zmq_mount = f"/zmq/{self.ctn_sw.name}"
+            ensure_system(f"mkdir -p {self.zmq_mount}")
 
             kwargs = {}
             if newctnname:
                 kwargs["name"] = newctnname
                 self.dvsname = newctnname
-            vols = {self.mount: {"bind": "/var/run/redis", "mode": "rw"}}
+            vols = {
+                self.mount: {"bind": "/var/run/redis", "mode": "rw"},
+                self.zmq_mount: {"bind": "/zmq_swss", "mode": "rw"},
+            }
             if ctnmounts:
                 for k, v in ctnmounts.items():
                     vols[k] = v
@@ -426,6 +433,9 @@ class DockerVirtualSwitch:
         self.pid = int(output)
         self.redis_sock = os.path.join(self.mount, "redis.sock")
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
+        self.zmq_sock = os.path.join(self.zmq_mount, "zmq_swss_ep")
+        ensure_system(f"rm -rf /var/run/redis/redis.sock")
+        ensure_system(f"ln -sf {self.redis_sock} /var/run/redis/redis.sock")
 
         self.reset_dbs()
 
@@ -1902,16 +1912,17 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
-    if graceful_stop:
+    if graceful_stop and dvs is not None:
         dvs.stop_swss()
         dvs.stop_syncd()
 
-    dvs.get_logs()
-    dvs.destroy()
+    if dvs is not None:
+        dvs.get_logs()
+        dvs.destroy()
 
-    if dvs.persistent:
-        dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
-        dvs.ctn_restart()
+        if dvs.persistent:
+            dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
+            dvs.ctn_restart()
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:

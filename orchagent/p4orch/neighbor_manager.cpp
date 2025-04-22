@@ -368,18 +368,22 @@ void NeighborManager::enqueue(const std::string &table_name, const swss::KeyOpFi
     m_entries.push_back(entry);
 }
 
-void NeighborManager::drain()
-{
+void NeighborManager::drainWithNotExecuted() {
+   drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode NeighborManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string db_key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
         const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
         auto app_db_entry_or = deserializeNeighborEntry(db_key, attributes);
         if (!app_db_entry_or.ok())
         {
@@ -389,7 +393,7 @@ void NeighborManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &app_db_entry = *app_db_entry_or;
 
@@ -401,7 +405,7 @@ void NeighborManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
 
         const std::string neighbor_key =
@@ -434,8 +438,12 @@ void NeighborManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
+        if (!status.ok()) {
+            break;
+        }
     }
-    m_entries.clear();
+    drainWithNotExecuted();
+    return status;
 }
 
 std::string NeighborManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
