@@ -1799,13 +1799,14 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     if (!warmRestartInProgress)
     {
-        m_routeTable->set(destipprefix, fvVector);
         if(nhg_id)
         {
+            m_routeTable->set(destipprefix, fvVector);
             SWSS_LOG_INFO("RouteTable set msg: %s %d ", destipprefix, nhg_id);
         }
         else
         {
+            m_routeTable->set(destipprefix, fvVector);
             SWSS_LOG_INFO("RouteTable set msg: %s %s %s %s", destipprefix,
                        gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
         }
