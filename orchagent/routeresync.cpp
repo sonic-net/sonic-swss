@@ -3,10 +3,14 @@
 #include <vector>
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
 #include "logger.h"
 
 using namespace std;
 using namespace swss;
+
+const string ZMQ_DEFAULT_ADDRESS = "tcp://localhost";
 
 void usage(char **argv)
 {
@@ -19,8 +23,11 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
+    std::string address = ZMQ_DEFAULT_ADDRESS + ":" + to_string(ORCH_ZMQ_PORT);
+    ZmqClient zmqClient(address);
+
     DBConnector db("APPL_DB", 0);
-    ProducerStateTable r(&db, APP_ROUTE_TABLE_NAME);
+    ZmqProducerStateTable r(&db, APP_ROUTE_TABLE_NAME, zmqClient);
 
     if (argc != 2)
     {

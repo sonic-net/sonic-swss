@@ -9,6 +9,8 @@
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
 #include <nlohmann/json.hpp>
 
 using namespace std;
@@ -21,9 +23,14 @@ const int el_count = 2;
 
 const string SWSS_CONFIG_DIR    = "/etc/swss/config.d/";
 
+/*
+ * swssconfig will only connect to local orchagent ZMQ endpoint.
+ */
+const char* ZMQ_LOCAL_ADDRESS = "tcp://localhost";
+
 void usage()
 {
-    cout << "Usage: swssconfig [FILE...]" << endl;
+    cout << "Usage: swssconfig [-p zmq port] [FILE...]" << endl;
     cout << "       (default config folder is /etc/swss/config.d/)" << endl;
 }
 
@@ -39,12 +46,18 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
-bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
+bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, int zmq_port)
 {
     DBConnector db("APPL_DB", 0, false);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
-    unordered_map<string, ProducerStateTable> table_map;
-    
+    unordered_map<string, ProducerStateTable*> table_map;
+
+    std::unique_ptr<ZmqClient> zmq_client = nullptr;
+    if (zmq_port)
+    {
+        zmq_client = std::make_unique<ZmqClient>(string(ZMQ_LOCAL_ADDRESS) + ":" + std::to_string(zmq_port));
+    }
+
     for (auto &db_item : db_items)
     {
         dump_db_item(db_item);
@@ -58,17 +71,42 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
-        auto ret = table_map.emplace(std::piecewise_construct, std::forward_as_tuple(table_name), std::forward_as_tuple(&pipeline, table_name, true));
+
+        auto findResult = table_map.find(table_name);
+        ProducerStateTable* p_table= nullptr;
+        if (findResult == table_map.end())
+        {
+            if ((table_name == APP_ROUTE_TABLE_NAME ||table_name == APP_LABEL_ROUTE_TABLE_NAME)
+                && (zmq_client != nullptr)) {
+                p_table = new ZmqProducerStateTable(&pipeline, table_name, *zmq_client, true);
+            }
+            else {
+                p_table = new ProducerStateTable(&pipeline, table_name, true);
+            }
+
+            table_map.emplace(table_name, p_table);
+        }
+        else
+        {
+            p_table = findResult->second;
+        }
+
 
         if (kfvOp(db_item) == SET_COMMAND)
-            ret.first->second.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
+            p_table->set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
         else if (kfvOp(db_item) == DEL_COMMAND)
-            ret.first->second.del(key_name, DEL_COMMAND);
+            p_table->del(key_name, DEL_COMMAND);
         else
         {
             SWSS_LOG_ERROR("Invalid operation: %s\n", kfvOp(db_item).c_str());
             return false;
         }
+    }
+
+    // release tables
+    for (const auto& table_item : table_map)
+    {
+        delete table_item.second;
     }
 
     return true;
@@ -165,6 +203,7 @@ vector<string> read_directory(const string &path)
 int main(int argc, char **argv)
 {
     vector<string> files;
+    int zmq_port = 0;
     if (argc == 1)
     {
         files = read_directory(SWSS_CONFIG_DIR);
@@ -176,7 +215,14 @@ int main(int argc, char **argv)
     }
     else
     {
-        for (auto i = 1; i < argc; i++)
+        int start = 1;
+        if (!strcmp(argv[1], "-p"))
+        {
+            start = 3;
+            zmq_port = atoi(argv[2]);
+        }
+
+        for (auto i = start; i < argc; i++)
         {
             files.push_back(string(argv[i]));
         }
@@ -203,7 +249,7 @@ int main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
 
-            if (!write_db_data(db_items))
+            if (!write_db_data(db_items, zmq_port))
             {
                 SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;
