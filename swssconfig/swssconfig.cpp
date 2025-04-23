@@ -71,8 +71,15 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, int zmq_flag)
     std::unique_ptr<ZmqClient> zmq_client = nullptr;
     if (zmq_flag)
     {
-        // swssconfig only write to local default namespace
-        zmq_client = std::make_unique<ZmqClient>(string(ZMQ_LOCAL_ADDRESS) + ":" + std::to_string(ORCH_ZMQ_PORT));
+        // swssconfig running inside swss contianer, so need get ZMQ port according to namespace ID.
+        auto zmq_port = ORCH_ZMQ_PORT;
+        if (const char* nsid = std::getenv("NAMESPACE_ID"))
+        {
+            // namespace start from 0, using original ZMQ port for global namespace
+            zmq_port += atoi(nsid) + 1;
+        }
+
+        zmq_client = std::make_unique<ZmqClient>(string(ZMQ_LOCAL_ADDRESS) + ":" + std::to_string(zmq_port));
     }
 
     for (auto &db_item : db_items)
