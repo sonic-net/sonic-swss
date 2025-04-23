@@ -9,8 +9,6 @@
 #include "gtest/gtest.h"
 #include <string>
 
-EXTERN_MOCK_FNS
-
 namespace zmq_orch_test
 {
     using namespace mock_orch_test;
