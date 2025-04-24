@@ -191,11 +191,13 @@ void CoppOrch::initDefaultTrapIds()
     /*
      * Use a default trap priority > 0 to avoid undesirable packet trapping
      * behavior on some platforms that use 0 as default SAI-internal priority.
-     * Note: Mellanox and Marvell platforms don't support trap priority setting.
+     * Note: Mellanox and Marvell Prestera platforms don't support trap priority setting.
+     * For Marvell platforms, string comparison is used to prevent sub-string matches with
+     * marvell-teralynx which does support trap priority.
      */
 
     char *platform = getenv("platform");
-    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
+    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (strcmp(platform, MRVL_PLATFORM_SUBSTRING) != 0)))
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
         attr.value.u32 = 1;
@@ -1019,7 +1021,7 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
             /* Mellanox platform doesn't support trap priority setting */
             /* Marvell platform doesn't support trap priority. */
 	    char *platform = getenv("platform");
-	    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
+	    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (strcmp(platform, MRVL_PLATFORM_SUBSTRING) != 0)))
             {
                 attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
                     attr.value.u32 = (uint32_t)stoul(fvValue(*i));
