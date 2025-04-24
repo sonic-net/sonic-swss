@@ -70,29 +70,28 @@ void NhgOrch::doTask(Consumer& consumer)
             /* Get group's next hop IPs and aliases */
             for (auto i : kfvFieldsValues(t))
             {
-                if (fvField(i) == "nexthop")
+                if (fvField(i) == "nexthop" && fvValue(i) != "")
                     ips = fvValue(i);
 
-                if (fvField(i) == "ifname")
+                if (fvField(i) == "ifname" && fvValue(i) != "")
                     aliases = fvValue(i);
 
-                if (fvField(i) == "weight")
+                if (fvField(i) == "weight" && fvValue(i) != "")
                     weights = fvValue(i);
 
-                if (fvField(i) == "mpls_nh")
+                if (fvField(i) == "mpls_nh" && fvValue(i) != "")
                     mpls_nhs = fvValue(i);
 
-                if (fvField(i) == "seg_src")
+                if (fvField(i) == "seg_src" && fvValue(i) != "")
                 {
                     srv6_source = fvValue(i);
                     srv6_nh = true;
                 }
 
-                if (fvField(i) == "nexthop_group")
+                if (fvField(i) == "nexthop_group" && fvValue(i) != "")
                 {
                     nhgs = fvValue(i);
-                    if (!nhgs.empty())
-                        is_recursive = true;
+                    is_recursive = true;
                 }
             }
             /* A NHG should not have both regular(ip/alias) and recursive fields */

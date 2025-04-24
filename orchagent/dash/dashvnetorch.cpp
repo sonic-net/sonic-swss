@@ -21,6 +21,7 @@
 #include "crmorch.h"
 #include "saihelper.h"
 #include "directory.h"
+#include "dashtunnelorch.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -331,6 +332,19 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         }
     }
 
+    if (ctxt.metadata.has_tunnel())
+    {
+        auto tunnel_oid = gDirectory.get<DashTunnelOrch*>()->getTunnelOid(ctxt.metadata.tunnel());
+        if (tunnel_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Tunnel %s for VnetMap %s does not exist yet", ctxt.metadata.tunnel().c_str(), key.c_str());
+            return false;
+        }
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_TUNNEL_ID;
+        outbound_ca_to_pa_attr.value.oid = tunnel_oid;
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    }
+
     if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
     {
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
@@ -372,6 +386,8 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
+
+    addPaValidation(key, ctxt);
     return false;
 }
 
@@ -431,12 +447,12 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
             return false;
         }
 
+        /*
+         * To avoid dependency issues, addPaValidation is called in the end of
+         * addOutboundCaToPa, which ensures ca_to_pa and pa_validation entries
+         * are both created consistently at one time.
+         */
         remove_from_consumer = addOutboundCaToPa(key, ctxt);
-        // If addOutboundCaToPa fails, skip addPaValidation
-        if (!remove_from_consumer)
-        {
-            addPaValidation(key, ctxt);
-        }
     }
     /*
      * If the VNET map is already added, don't add it to the bulker and
