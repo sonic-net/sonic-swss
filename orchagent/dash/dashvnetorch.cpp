@@ -186,7 +186,6 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                     std::forward_as_tuple());
             bool inserted = rc.second;
             auto& vnet_ctxt = rc.first->second;
-            // Result needs to be reset for every iteration
             result = DASH_RESULT_SUCCESS;
 
             if (!inserted)
@@ -244,7 +243,6 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
 
             string key = kfvKey(t);
             string op = kfvOp(t);
-            // Result needs to be reset for every iteration
             result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
