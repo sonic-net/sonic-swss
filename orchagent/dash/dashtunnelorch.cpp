@@ -184,13 +184,21 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 if (addTunnelPost(tunnel_name, ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
+                    /*
+                     * The result should be written here only if the tunnel has
+                     * one endpoint. For more tunnel endpoints, we need to wait
+                     * until after tunnel members post-op.
+                     */
+                    if (ctxt.metadata.endpoints_size() == 1)
+                    {
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name,
+                                        result);
+                    }
                 }
                 else
                 {
-                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
-                writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
             }
             else if (op == DEL_COMMAND)
             {
@@ -234,6 +242,9 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                     result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
+                /*
+                 * Write result for tunnels with more than one endpoint.
+                 */
                 writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
             }
             else if (op == DEL_COMMAND)
