@@ -19,10 +19,12 @@
 #include "dashorch.h"
 #include "crmorch.h"
 #include "saihelper.h"
+#include "dashtunnelorch.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
 #include "dash_api/route_type.pb.h"
+#include "directory.h"
 
 using namespace std;
 using namespace swss;
@@ -33,6 +35,7 @@ extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
+extern Directory<Orch*> gDirectory;
 
 static std::unordered_map<dash::route_type::RoutingType, sai_outbound_routing_entry_action_t> sOutboundAction =
 {
@@ -73,9 +76,22 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         SWSS_LOG_INFO("Retry as route group %s not found", ctxt.route_group.c_str());
         return false;
     }
-    if (ctxt.metadata.has_vnet() && gVnetNameToId.find(ctxt.metadata.vnet()) == gVnetNameToId.end())
+
+    std::string routing_type_str = dash::route_type::RoutingType_Name(ctxt.metadata.routing_type());
+    if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET &&
+        ctxt.metadata.has_vnet() && gVnetNameToId.find(ctxt.metadata.vnet()) == gVnetNameToId.end())
     {
-        SWSS_LOG_INFO("Retry as vnet %s not found", ctxt.metadata.vnet().c_str());
+        SWSS_LOG_INFO("Retry as vnet %s not found for routing type %s",
+                      ctxt.metadata.vnet().c_str(),
+                      routing_type_str.c_str());
+        return false;
+    }
+    if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT &&
+        ctxt.metadata.has_vnet_direct() && gVnetNameToId.find(ctxt.metadata.vnet_direct().vnet()) == gVnetNameToId.end())
+    {
+        SWSS_LOG_INFO("Retry as vnet %s not found for routing type %s",
+                      ctxt.metadata.vnet_direct().vnet().c_str(),
+                      routing_type_str.c_str());
         return false;
     }
 
@@ -90,7 +106,6 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     auto it = sOutboundAction.find(ctxt.metadata.routing_type());
     if (it == sOutboundAction.end())
     {
-        std::string routing_type_str = dash::route_type::RoutingType_Name(ctxt.metadata.routing_type());
         SWSS_LOG_WARN("Routing type %s for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
         return false;
     }
@@ -141,6 +156,20 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         {
             return false;
         }
+        outbound_routing_attrs.push_back(outbound_routing_attr);
+    }
+
+    if (ctxt.metadata.has_tunnel())
+    {
+        auto dash_tunnel_orch = gDirectory.get<DashTunnelOrch*>();
+        sai_object_id_t tunnel_oid = dash_tunnel_orch->getTunnelOid(ctxt.metadata.tunnel());
+        if (tunnel_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Retry as tunnel %s not found", ctxt.metadata.tunnel().c_str());
+            return false;
+        }
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DASH_TUNNEL_ID;
+        outbound_routing_attr.value.oid = tunnel_oid;
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 
@@ -203,7 +232,7 @@ bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulk
     if (isRouteGroupBound(ctxt.route_group))
     {
         SWSS_LOG_WARN("Cannot remove route from route group %s as it is already bound", ctxt.route_group.c_str());
-        return true;
+        return false;
     }
 
     auto& object_statuses = ctxt.object_statuses;
@@ -710,6 +739,11 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
     sai_status_t status = sai_dash_outbound_routing_api->remove_outbound_routing_group(route_group_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
+        //Retry later if object is in use
+        if (status == SAI_STATUS_OBJECT_IN_USE)
+        {
+            return false;
+        }
         SWSS_LOG_ERROR("Failed to remove route group %s", route_group.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
         if (handle_status != task_success)

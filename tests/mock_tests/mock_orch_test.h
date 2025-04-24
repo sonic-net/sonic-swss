@@ -39,6 +39,7 @@ namespace mock_orch_test
     {
     protected:
         std::vector<Orch **> ut_orch_list;
+        std::set<Orch **> global_orch_list;
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
@@ -53,6 +54,8 @@ namespace mock_orch_test
         VNetOrch *m_vnetOrch;
         DashOrch *m_DashOrch;
         DashVnetOrch *m_dashVnetOrch;
+        DashRouteOrch *m_DashRouteOrch;
+        DashTunnelOrch *m_DashTunnelOrch;
 
         void PrepareSai();
         void SetUp();
