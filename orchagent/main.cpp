@@ -571,8 +571,6 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
-    sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-
     if (!gAsicInstance.empty())
     {
         attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
