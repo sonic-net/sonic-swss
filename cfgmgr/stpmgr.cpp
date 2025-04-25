@@ -1,5 +1,5 @@
 #include "exec.h"
-#include "stpmgr.h"
+#include "cfgmgr/stpmgr.h"
 #include "logger.h"
 #include "tokenize.h"
 #include "warm_restart.h"

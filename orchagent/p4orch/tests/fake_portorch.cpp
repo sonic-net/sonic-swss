@@ -6,7 +6,7 @@ extern "C"
 #include <map>
 #include <string>
 
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 
 #define PORT_SPEED_LIST_DEFAULT_SIZE                     16
 #define PORT_STATE_POLLING_SEC                            5

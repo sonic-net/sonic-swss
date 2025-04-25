@@ -1,28 +1,28 @@
-#include "p4orch.h"
+#include "orchagent/p4orch/p4orch.h"
 
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "copporch.h"
+#include "orchagent/copporch.h"
 #include "logger.h"
-#include "orch.h"
-#include "p4orch/acl_rule_manager.h"
-#include "p4orch/acl_table_manager.h"
-#include "p4orch/ext_tables_manager.h"
-#include "p4orch/gre_tunnel_manager.h"
-#include "p4orch/l3_admit_manager.h"
-#include "p4orch/neighbor_manager.h"
-#include "p4orch/next_hop_manager.h"
-#include "p4orch/p4orch_util.h"
-#include "p4orch/route_manager.h"
-#include "p4orch/router_interface_manager.h"
-#include "p4orch/tables_definition_manager.h"
-#include "portsorch.h"
-#include "return_code.h"
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/acl_rule_manager.h"
+#include "orchagent/p4orch/acl_table_manager.h"
+#include "orchagent/p4orch/ext_tables_manager.h"
+#include "orchagent/p4orch/gre_tunnel_manager.h"
+#include "orchagent/p4orch/l3_admit_manager.h"
+#include "orchagent/p4orch/neighbor_manager.h"
+#include "orchagent/p4orch/next_hop_manager.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/p4orch/route_manager.h"
+#include "orchagent/p4orch/router_interface_manager.h"
+#include "orchagent/p4orch/tables_definition_manager.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/return_code.h"
 #include "sai_serialize.h"
-#include "timer.h"
+#include "orchagent/timer.h"
 
 extern PortsOrch *gPortsOrch;
 #define P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME "P4_ACL_COUNTERS_STATS_POLL_TIMER"

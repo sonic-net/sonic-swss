@@ -1,10 +1,10 @@
-#include "cbfnhgorch.h"
-#include "crmorch.h"
-#include "bulker.h"
+#include "orchagent/cbf/cbfnhgorch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/bulker.h"
 #include "tokenize.h"
-#include "nhgorch.h"
-#include "nhgmaporch.h"
-#include "routeorch.h"
+#include "orchagent/nhgorch.h"
+#include "orchagent/cbf/nhgmaporch.h"
+#include "orchagent/routeorch.h"
 
 extern sai_object_id_t gSwitchId;
 

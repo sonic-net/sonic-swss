@@ -1,10 +1,10 @@
 #include "exec.h"
-#include "teammgr.h"
+#include "cfgmgr/teammgr.h"
 #include "logger.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "tokenize.h"
 #include "warm_restart.h"
-#include "portmgr.h"
+#include "cfgmgr/portmgr.h"
 #include <swss/redisutility.h>
 
 #include <algorithm>

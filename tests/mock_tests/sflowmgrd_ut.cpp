@@ -1,7 +1,7 @@
 #include "gtest/gtest.h"
-#include "mock_table.h"
+#include "tests/mock_tests/mock_table.h"
 #include "redisutility.h"
-#include "sflowmgr.h"
+#include "cfgmgr/sflowmgr.h"
 
 namespace sflowmgr_ut
 {

@@ -1,11 +1,11 @@
-#include "p4orch_util.h"
+#include "orchagent/p4orch/p4orch_util.h"
 
 #include <gtest/gtest.h>
 
 #include <string>
 
 #include "ipprefix.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 
 namespace
 {

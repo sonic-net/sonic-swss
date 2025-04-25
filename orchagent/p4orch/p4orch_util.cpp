@@ -1,6 +1,6 @@
-#include "p4orch/p4orch_util.h"
+#include "orchagent/p4orch/p4orch_util.h"
 
-#include "p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch.h"
 #include "schema.h"
 
 using ::p4orch::kTableKeyDelimiter;

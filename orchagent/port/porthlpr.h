@@ -5,7 +5,7 @@
 #include <vector>
 #include <string>
 
-#include "portcnt.h"
+#include "orchagent/port/portcnt.h"
 
 class PortHelper final
 {

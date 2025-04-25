@@ -6,11 +6,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "orch.h"
-#include "flex_counter_stat_manager.h"
-#include "debug_counter.h"
-#include "drop_counter.h"
-#include "observer.h"
+#include "orchagent/orch.h"
+#include "orchagent/flex_counter/flex_counter_stat_manager.h"
+#include "orchagent/debug_counter/debug_counter.h"
+#include "orchagent/debug_counter/drop_counter.h"
+#include "orchagent/observer.h"
 
 extern "C" {
 #include "sai.h"

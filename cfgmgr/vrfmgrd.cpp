@@ -5,7 +5,7 @@
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "vrfmgr.h"
+#include "cfgmgr/vrfmgr.h"
 #include <fstream>
 #include <iostream>
 #include "warm_restart.h"

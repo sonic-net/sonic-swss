@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nhgbase.h"
+#include "orchagent/nhgbase.h"
 
 using namespace std;
 

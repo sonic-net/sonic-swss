@@ -5,11 +5,11 @@
 #include <exception>
 
 #include "sai_serialize.h"
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "logger.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "converter.h"
-#include "mirrororch.h"
+#include "orchagent/mirrororch.h"
 #include "tokenize.h"
 
 #define MIRROR_SESSION_STATUS               "status"

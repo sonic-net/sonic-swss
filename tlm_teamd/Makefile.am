@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I$(top_srcdir)/lib
+INCLUDES = -I $(top_srcdir)
 
 bin_PROGRAMS = tlm_teamd
 

@@ -1,4 +1,4 @@
-#include "p4orch/neighbor_manager.h"
+#include "orchagent/p4orch/neighbor_manager.h"
 
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -6,13 +6,13 @@
 #include <vector>
 
 #include "SaiAttributeList.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "dbconnector.h"
 #include "logger.h"
-#include "orch.h"
-#include "p4orch/p4orch_util.h"
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
 #include "sai_serialize.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "table.h"
 extern "C"
 {

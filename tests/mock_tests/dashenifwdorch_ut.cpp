@@ -1,10 +1,10 @@
-#include "mock_orch_test.h"
+#include "tests/mock_tests/mock_orch_test.h"
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
-#include "mock_table.h"
+#include "tests/mock_tests/mock_table.h"
 #define protected public
 #define private public
-#include "dash/dashenifwdorch.h"
+#include "orchagent/dash/dashenifwdorch.h"
 #undef public
 #undef protected
 

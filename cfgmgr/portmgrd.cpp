@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "exec.h"
-#include "portmgr.h"
+#include "cfgmgr/portmgr.h"
 #include "schema.h"
 #include "select.h"
 

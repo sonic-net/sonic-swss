@@ -2,7 +2,7 @@
 
 #include <gmock/gmock.h>
 
-#include "response_publisher_interface.h"
+#include "orchagent/response_publisher_interface.h"
 
 class MockResponsePublisher : public ResponsePublisherInterface
 {

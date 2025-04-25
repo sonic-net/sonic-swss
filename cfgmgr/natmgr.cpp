@@ -18,15 +18,15 @@
 #include "logger.h"
 #include "producerstatetable.h"
 #include "macaddress.h"
-#include "natmgr.h"
+#include "cfgmgr/natmgr.h"
 #include "exec.h"
 #include "tokenize.h"
 #include "converter.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "warm_restart.h"
 #include "ipaddress.h"
 #include "ipprefix.h"
-#include "notifier.h"
+#include "orchagent/notifier.h"
 
 using namespace std;
 using namespace swss;

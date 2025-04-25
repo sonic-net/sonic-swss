@@ -1,6 +1,6 @@
-#include "ut_helper.h"
-#include "mock_orchagent_main.h"
-#include "mock_table.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "tests/mock_tests/mock_orchagent_main.h"
+#include "tests/mock_tests/mock_table.h"
 
 #include <sstream>
 

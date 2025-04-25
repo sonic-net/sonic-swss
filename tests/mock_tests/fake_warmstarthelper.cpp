@@ -1,4 +1,4 @@
-#include "warmRestartHelper.h"
+#include "warmrestart/warmRestartHelper.h"
 
 static swss::DBConnector gDb("APPL_DB", 0);
 

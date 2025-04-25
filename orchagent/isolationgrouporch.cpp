@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
-#include "isolationgrouporch.h"
+#include "orchagent/isolationgrouporch.h"
 #include "converter.h"
 #include "tokenize.h"
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;

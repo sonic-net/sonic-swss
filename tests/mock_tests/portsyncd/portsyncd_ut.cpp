@@ -1,9 +1,9 @@
 #include "gtest/gtest.h"
 #include <net/if.h>
 #include <netlink/route/link.h>
-#include "mock_table.h"
+#include "tests/mock_tests/mock_table.h"
 #define private public 
-#include "linksync.h"
+#include "portsyncd/linksync.h"
 #undef private
 
 struct if_nameindex *if_ni_mock = NULL;

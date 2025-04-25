@@ -10,15 +10,15 @@ extern "C" {
 }
 #include "macaddress.h"
 #include "ipaddress.h"
-#include "orch.h"
-#include "request_parser.h"
-#include "vxlanorch.h"
-#include "directory.h"
-#include "swssnet.h"
+#include "orchagent/orch.h"
+#include "orchagent/request_parser.h"
+#include "orchagent/vxlanorch.h"
+#include "orchagent/directory.h"
+#include "orchagent/swssnet.h"
 #include "warm_restart.h"
 #include "tokenize.h"
 #include "sai_serialize.h"
-#include "flex_counter_manager.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 #include "converter.h"
 
 /* Global variables */

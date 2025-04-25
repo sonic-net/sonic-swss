@@ -7,7 +7,7 @@
 #include "netlink.h"
 #include "notificationconsumer.h"
 #include "subscriberstatetable.h"
-#include "warmRestartHelper.h"
+#include "warmrestart/warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
 #include "fpmsyncd/routesync.h"
