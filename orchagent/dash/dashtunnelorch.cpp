@@ -51,6 +51,7 @@ bool ipAddrEq(const dash::types::IpAddress& lhs, const dash::types::IpAddress& r
 DashTunnelOrch::DashTunnelOrch(
     swss::DBConnector *db,
     std::vector<std::string> &tables,
+    swss::DBConnector *app_state_db,
     swss::ZmqServer *zmqServer) :
     tunnel_bulker_(sai_dash_tunnel_api, gSwitchId, gMaxBulkSize, SAI_OBJECT_TYPE_DASH_TUNNEL),
     tunnel_member_bulker_(sai_dash_tunnel_api, gSwitchId, gMaxBulkSize, SAI_OBJECT_TYPE_DASH_TUNNEL_MEMBER),
@@ -58,6 +59,7 @@ DashTunnelOrch::DashTunnelOrch(
     ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
+    dash_tunnel_result_table_ = std::make_unique<swss::Table>(app_state_db, APP_DASH_TUNNEL_TABLE_NAME);
 }
 
 sai_object_id_t DashTunnelOrch::getTunnelOid(const std::string& tunnel_name)
@@ -90,6 +92,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
     SWSS_LOG_ENTER();
 
     const auto& tn = consumer.getTableName();
+    uint32_t result = DASH_RESULT_SUCCESS;
     SWSS_LOG_INFO("doTask: %s", tn.c_str());
     if (tn != APP_DASH_TUNNEL_TABLE_NAME)
     {
@@ -102,6 +105,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
     {
         std::map<std::pair<std::string, std::string>,
             DashTunnelBulkContext> toBulk;
+
         while (it != consumer.m_toSync.end())
         {
             swss::KeyOpFieldsValuesTuple t = it->second;
@@ -112,6 +116,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                     std::forward_as_tuple());
             bool inserted = rc.second;
             auto& ctxt = rc.first->second;
+            result = DASH_RESULT_SUCCESS;
             if (!inserted)
             {
                 ctxt.clear();
@@ -127,6 +132,11 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 if (addTunnel(tunnel_name, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    /*
+                     * Write result only when removing from consumer in pre-op
+                     * For other cases, this will be handled in post-op
+                     */
+                    writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
                 }
                 else
                 {
@@ -137,6 +147,10 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             {
                 if (removeTunnel(tunnel_name, ctxt))
                 {
+                    /*
+                     * Postpone removal of result from result table until after
+                     * tunnel members are removed.
+                     */
                     it = consumer.m_toSync.erase(it);
                 }
                 else
@@ -145,7 +159,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 }
             }
         }
-        
+
         tunnel_member_bulker_.flush();
         tunnel_bulker_.flush();
         tunnel_nhop_bulker_.flush();
@@ -156,6 +170,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it_prev->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
+            result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(std::make_pair(tunnel_name, op));
             if (found == toBulk.end())
             {
@@ -172,14 +187,17 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 }
                 else
                 {
+                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
+                writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
             }
             else if (op == DEL_COMMAND)
             {
                 if (removeTunnelPost(tunnel_name, ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
+                    removeResultFromDB(dash_tunnel_result_table_, tunnel_name);
                 }
                 else
                 {
@@ -196,6 +214,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it_prev->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
+            result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(std::make_pair(tunnel_name, op));
             if (found == toBulk.end())
             {
@@ -212,8 +231,10 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 }
                 else
                 {
+                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
+                writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
             }
             else if (op == DEL_COMMAND)
             {
