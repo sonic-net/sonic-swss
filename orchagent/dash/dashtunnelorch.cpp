@@ -135,6 +135,9 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                     /*
                      * Write result only when removing from consumer in pre-op
                      * For other cases, this will be handled in post-op
+                     * TODO: There are cases where addTunnel returns true for
+                     * errors that are not retried. Such cases need to be
+                     * written to result table as a failure instead of success.
                      */
                     writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
                 }
