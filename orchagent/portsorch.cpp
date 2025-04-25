@@ -345,7 +345,7 @@ const std::unordered_map<sai_port_error_status_t, std::string> PortOperErrorEven
     { SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS, "fec_sync_loss"},
     { SAI_PORT_ERROR_STATUS_FEC_LOSS_ALIGNMENT_MARKER, "fec_alignment_loss"},
     { SAI_PORT_ERROR_STATUS_HIGH_SER,  "high_ser_error"},
-    { SAI_PORT_ERROR_STATUS_HIGH_BER, "high ber_error"},
+    { SAI_PORT_ERROR_STATUS_HIGH_BER, "high_ber_error"},
     { SAI_PORT_ERROR_STATUS_CRC_RATE, "crc_rate"},
     { SAI_PORT_ERROR_STATUS_DATA_UNIT_CRC_ERROR, "data_unit_crc_error"},
     { SAI_PORT_ERROR_STATUS_DATA_UNIT_SIZE, "data_unit_size"},
@@ -1535,12 +1535,6 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
 {
     sai_stat_capability_list_t queue_stats_capability, port_stats_capability;
 
-    uint32_t  queue_stat_count = (uint32_t) queue_stat_ids.size() +
-                                 (uint32_t) queueWatermarkStatIds.size() +
-                                 (uint32_t) wred_queue_stat_ids.size();
-    uint32_t  port_stat_count = (uint32_t) port_stat_ids.size() +
-                                 (uint32_t) wred_port_stat_ids.size() +
-                                 (uint32_t) port_buffer_drop_stat_ids.size();
     uint32_t  it = 0;
     bool      pt_grn_pkt = false, pt_red_pkt = false, pt_ylw_pkt = false, pt_tot_pkt = false;
     bool      q_ecn_byte = false, q_ecn_pkt = false, q_wred_byte = false, q_wred_pkt = false;
@@ -1548,9 +1542,9 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
     sai_stat_capability_t stat_initializer;
     stat_initializer.stat_enum = 0;
     stat_initializer.stat_modes = 0;
-    vector<sai_stat_capability_t> qstat_cap_list(queue_stat_count, stat_initializer);
-    queue_stats_capability.count = queue_stat_count;
-    queue_stats_capability.list = qstat_cap_list.data();
+    vector<sai_stat_capability_t> qstat_cap_list;
+    queue_stats_capability.count = 0;
+    queue_stats_capability.list = nullptr;
 
     vector<FieldValueTuple> fieldValuesTrue;
     fieldValuesTrue.push_back(FieldValueTuple("isSupported", "true"));
@@ -1572,7 +1566,7 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
     sai_status_t status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_QUEUE, &queue_stats_capability);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
-        qstat_cap_list.resize(queue_stats_capability.count);
+        qstat_cap_list.resize(queue_stats_capability.count, stat_initializer);
         queue_stats_capability.list = qstat_cap_list.data();
         status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_QUEUE, &queue_stats_capability);
     }
@@ -1611,15 +1605,15 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
         SWSS_LOG_NOTICE("Queue stat capability get failed: WRED queue stats can not be enabled, rv:%d", status);
     }
 
-    vector<sai_stat_capability_t> pstat_cap_list(port_stat_count, stat_initializer);
-    port_stats_capability.count = port_stat_count;
-    port_stats_capability.list = pstat_cap_list.data();
+    vector<sai_stat_capability_t> pstat_cap_list;
+    port_stats_capability.count = 0;
+    port_stats_capability.list = nullptr;
 
     /*  4. Get port stats capability from the platform*/
     status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_PORT, &port_stats_capability);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
-        pstat_cap_list.resize(port_stats_capability.count);
+        pstat_cap_list.resize(port_stats_capability.count, stat_initializer);
         port_stats_capability.list = pstat_cap_list.data();
         status = sai_query_stats_capability(switchId, SAI_OBJECT_TYPE_PORT, &port_stats_capability);
     }
@@ -6085,8 +6079,13 @@ bool PortsOrch::initializePort(Port &port)
         initializePortBufferMaximumParameters(port);
     }
 
+    /*
+     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
+     */
+    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+
     /* Create host interface */
-    if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
+    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
         return false;
@@ -6182,21 +6181,10 @@ bool PortsOrch::initializePort(Port &port)
         setHostTxReady(port, hostTxReadyStr);
     }
 
-    /*
-     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
-     */
-    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
-    if (!setHostIntfsOperStatus(port, isUp))
-    {
-        SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
-                      operStatus.c_str(), port.m_alias.c_str());
-        return false;
-    }
-
     return true;
 }
 
-bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id)
+bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp)
 {
     SWSS_LOG_ENTER();
 
@@ -6230,6 +6218,10 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
         port.m_host_tx_queue_configured = true;
     }
 
+    attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+    attr.value.booldata = isUp;
+    attrs.push_back(attr);
+
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -6241,7 +6233,10 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
         }
     }
 
-    SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
+    SWSS_LOG_NOTICE("Create host interface for port %s with oper status %s", alias.c_str(), isUp ? "up" : "down");
+
+    event_params_t params = {{"ifname", alias},{"status", isUp ? "up" : "down"}};
+    event_publish(g_events_handle, "if-state", &params);
 
     return true;
 }
@@ -8412,16 +8407,25 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
         return;
     }
 
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
-
-    consumer.pop(op, data, values);
-
     if (&consumer != m_portStatusNotificationConsumer && &consumer != m_portHostTxReadyNotificationConsumer)
     {
         return;
     }
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    consumer.pops(entries);
+
+    for (auto& entry : entries)
+    {
+        handleNotification(consumer, entry);
+    }
+}
+
+void PortsOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry)
+{
+    auto op = kfvOp(entry);
+    auto data = kfvKey(entry);
+    auto values = kfvFieldsValues(entry);
 
     if (&consumer == m_portStatusNotificationConsumer && op == "port_state_change")
     {
@@ -8467,7 +8471,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                     if (!m_portHlpr.fecToStr(fec_str, fec_mode))
                     {
                         SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
-                                       static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
+                                    static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
                         fec_str = "N/A";
                     }
                     updateDbPortOperFec(port,fec_str);
@@ -8506,7 +8510,6 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
         }
         setHostTxReady(p, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
     }
-
 }
 
 void PortsOrch::updatePortErrorStatus(Port &port, sai_port_error_status_t errstatus)

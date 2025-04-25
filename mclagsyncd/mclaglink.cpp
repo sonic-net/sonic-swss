@@ -1844,7 +1844,7 @@ MclagLink::~MclagLink()
 void MclagLink::accept()
 {
     struct sockaddr_in client_addr;
-    socklen_t client_len;
+    socklen_t client_len = sizeof(struct sockaddr_in);
 
     m_connection_socket = ::accept(m_server_socket, (struct sockaddr *)&client_addr,
             &client_len);

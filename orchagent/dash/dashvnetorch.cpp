@@ -21,6 +21,7 @@
 #include "crmorch.h"
 #include "saihelper.h"
 #include "directory.h"
+#include "dashtunnelorch.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -321,7 +322,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             else
             {
                 SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
-                return false;
+                return true;
             }
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
@@ -334,6 +335,19 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 
 
         }
+    }
+
+    if (ctxt.metadata.has_tunnel())
+    {
+        auto tunnel_oid = gDirectory.get<DashTunnelOrch*>()->getTunnelOid(ctxt.metadata.tunnel());
+        if (tunnel_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Tunnel %s for VnetMap %s does not exist yet", ctxt.metadata.tunnel().c_str(), key.c_str());
+            return false;
+        }
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_TUNNEL_ID;
+        outbound_ca_to_pa_attr.value.oid = tunnel_oid;
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 
     if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
@@ -377,10 +391,12 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
-    return true;
+
+    addPaValidation(key, ctxt);
+    return false;
 }
 
-bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -394,7 +410,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     {
         SWSS_LOG_INFO("Vnet %s already has PA validation entry for IP %s", ctxt.vnet_name.c_str(), to_string(ctxt.metadata.underlay_ip()).c_str());
         object_statuses.emplace_back(SAI_STATUS_ITEM_ALREADY_EXISTS);
-        return true;
+        return;
     }
 
     uint32_t attr_count = 1;
@@ -413,7 +429,6 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     vnet_table_[ctxt.vnet_name].underlay_ips.insert(underlay_sip_str);
     SWSS_LOG_INFO("Bulk create PA validation entry for Vnet %s underlay IP %s",
                     ctxt.vnet_name.c_str(), to_string(ctxt.metadata.underlay_ip()).c_str());
-    return true;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -426,7 +441,7 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
         SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
         return false;
     }
-    return addOutboundCaToPa(key, ctxt) && addPaValidation(key, ctxt);
+    return addOutboundCaToPa(key, ctxt);
 }
 
 bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt)
@@ -445,8 +460,7 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
     {
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            // Retry if item exists in the bulker
-            return false;
+            return true;
         }
 
         SWSS_LOG_ERROR("Failed to create CA to PA entry for %s", key.c_str());
@@ -504,16 +518,16 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
 {
     SWSS_LOG_ENTER();
 
-    bool status = addOutboundCaToPaPost(key, ctxt) && addPaValidationPost(key, ctxt);
-    if (!status)
+    bool remove_from_consumer = addOutboundCaToPaPost(key, ctxt) && addPaValidationPost(key, ctxt);
+    if (!remove_from_consumer)
     {
         SWSS_LOG_ERROR("addVnetMapPost failed for %s ", key.c_str());
-        return false;
+        return remove_from_consumer;
     }
 
     SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
 
-    return true;
+    return remove_from_consumer;
 }
 
 void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
@@ -641,14 +655,15 @@ bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext
 {
     SWSS_LOG_ENTER();
 
-    bool status = removeOutboundCaToPaPost(key, ctxt);
-    if (!status)
+    bool remove_from_consumer = removeOutboundCaToPaPost(key, ctxt);
+    if (!remove_from_consumer)
     {
-        return false;
+        SWSS_LOG_ERROR("removeVnetMapPost failed for %s ", key.c_str());
+        return remove_from_consumer;
     }
     SWSS_LOG_INFO("Vnet map removed for %s", key.c_str());
 
-    return true;
+    return remove_from_consumer;
 }
 
 void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)

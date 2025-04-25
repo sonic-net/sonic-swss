@@ -49,6 +49,21 @@ class TestDash(TestFlexCountersBase):
         self.sip = "10.0.0.1"
         self.vm_vni = "4321"
         self.local_region_id = "10"
+
+        # verify behavior when outbound_direction_lookup is specified
+        pb = Appliance()
+        pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
+        pb.vm_vni = int(self.vm_vni)
+        pb.local_region_id = int(self.local_region_id)
+        pb.outbound_direction_lookup = "dst_mac"
+        dash_db.create_appliance(self.appliance_id, {"pb": pb.SerializeToString()})
+        direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
+        dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION")
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC")
+        dash_db.remove_appliance(self.appliance_id)
+        time.sleep(2)
+
         pb = Appliance()
         pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
         pb.vm_vni = int(self.vm_vni)
@@ -62,7 +77,8 @@ class TestDash(TestFlexCountersBase):
         direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
         dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
         assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION")
-        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC")
+        # When outbound_direction_lookup is not specified, src mac is used by default
+        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC")
 
         vip_keys = dash_db.wait_for_asic_db_keys(ASIC_VIP_TABLE)
         vip_attrs = dash_db.get_asic_db_entry(ASIC_VIP_TABLE, vip_keys[0])
@@ -195,12 +211,53 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP", routing_attrs, self.overlay_ip)
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID", routing_attrs)
 
+    def test_outbound_routing_dependency(self, dash_db: DashDB):
+        vnet = "Vnet2"
+        prefix1 = "10.1.1.0/24"
+        prefix2 = "10.1.2.0/24"
+        overlay_ip = "10.0.0.7"
+        group_id = ROUTE_GROUP1
+        guid = "559c6ce8-26ab-5651-b946-ccc6e8f930b2"
+
+        pb = Route()
+        pb.action_type = RoutingType.ROUTING_TYPE_VNET
+        pb.vnet = vnet
+        dash_db.create_route(group_id, prefix1, {"pb": pb.SerializeToString()})
+
+        pb = Route()
+        pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
+        pb.vnet_direct.vnet = vnet
+        pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(overlay_ip)))
+        dash_db.create_route(group_id, prefix2, {"pb": pb.SerializeToString()})
+
+        time.sleep(2)
+        keys = dash_db.get_keys(ASIC_OUTBOUND_ROUTING_TABLE)
+        # Outbound routes for prefix1 and prefix2 are not ready before Vnet2 creation
+        assert len(keys) == 1
+
+        pb = Vnet()
+        pb.vni = int("45655")
+        pb.guid.value = bytes.fromhex(uuid.UUID(guid).hex)
+        dash_db.create_vnet(vnet, {"pb": pb.SerializeToString()})
+        keys = dash_db.wait_for_asic_db_keys(ASIC_VNET_TABLE, min_keys=2)
+        assert len(keys) == 2
+
+        routing_entries = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_ROUTING_TABLE, min_keys=3)
+        # Outbound routes for prefix1 and prefix2 are ready after Vnet2 creation
+        assert len(routing_entries) == 3
+
+        dash_db.remove_route(group_id, prefix1)
+        dash_db.remove_route(group_id, prefix2)
+        dash_db.remove_vnet(vnet)
+
+    def test_eni_route(self, dash_db: DashDB):
         pb = EniRoute()
-        pb.group_id = self.group_id
+        pb.group_id = ROUTE_GROUP1
         self.mac_string = "F4939FEFC47E"
         dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
 
         enis = dash_db.wait_for_asic_db_keys(ASIC_ENI_TABLE)
+        outbound_routing_group_entries = dash_db.get_keys(ASIC_OUTBOUND_ROUTING_GROUP_TABLE)
         dash_db.wait_for_asic_db_field(ASIC_ENI_TABLE, enis[0], "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID", outbound_routing_group_entries[0])
 
     def test_inbound_routing(self, dash_db: DashDB):
@@ -235,9 +292,9 @@ class TestDash(TestFlexCountersBase):
         self.appliance_id = "100"
         self.routing_type = "vnet_encap"
         dash_db.remove_inbound_routing(self.mac_string, self.vni, self.sip)
-        dash_db.remove_eni_route(self.mac_string)
         dash_db.remove_route(self.group_id, self.dip)
         dash_db.remove_route_group(self.group_id)
+        dash_db.remove_eni_route(self.mac_string)
         dash_db.remove_vnet_mapping(self.vnet, self.sip)
         dash_db.remove_vnet_mapping(self.vnet, self.ip2)
         dash_db.remove_routing_type(self.routing_type)
