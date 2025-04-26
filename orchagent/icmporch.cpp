@@ -141,7 +141,7 @@ void IcmpOrch::doTask(NotificationConsumer &consumer)
             }
 
             // handle state update
-            if (state != m_icmp_session_lookup[id].state)
+            if (state != m_icmp_session_lookup[id].state || m_icmp_session_lookup[id].init_state)
             {
                 auto key = m_icmp_session_lookup[id].db_key;
                 vector<FieldValueTuple> fvVector;
@@ -155,6 +155,7 @@ void IcmpOrch::doTask(NotificationConsumer &consumer)
                             m_session_state_lkup.at(m_icmp_session_lookup[id].state).c_str(), m_session_state_lkup.at(state).c_str());
 
                 m_icmp_session_lookup[id].state = state;
+                m_icmp_session_lookup[id].init_state = false;
             }
         }
 
@@ -203,7 +204,7 @@ bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTup
     auto session_id = sai_session_handler.get_session_id();
     IcmpSessionDataCache session_cache{session_id, sai_session_handler.get_fv_map()};
     m_icmp_session_map[key] = session_cache;
-    m_icmp_session_lookup[session_id] = {state_db_key, SAI_ICMP_ECHO_SESSION_STATE_DOWN};
+    m_icmp_session_lookup[session_id] = {state_db_key, SAI_ICMP_ECHO_SESSION_STATE_DOWN, true};
 
     SWSS_LOG_NOTICE("Created ICMP offload session key(%s)", key.c_str());
     return true;

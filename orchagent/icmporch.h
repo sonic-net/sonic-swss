@@ -35,6 +35,7 @@ struct IcmpUpdate
 {
     std::string db_key;
     sai_icmp_echo_session_state_t state;
+    bool init_state;
 };
 
 /**
