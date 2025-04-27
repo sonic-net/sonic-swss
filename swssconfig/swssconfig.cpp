@@ -58,12 +58,16 @@ set<string> load_zmq_tables()
 {
     DBConnector db("CONFIG_DB", 0, false);
     auto zmq_tables = db.hget(DEVICE_METADATA_LOCALHOST, ZMQ_TABLE_LIST_FIELD);
-    
-    string table;
+
     set<string> tables;
-    stringstream table_stream(*zmq_tables);
-    while(getline(table_stream, table, LIST_FIELD_DELIMETER)) {
-        tables.emplace(table);
+    if (zmq_tables)
+    {
+        string table;
+        stringstream table_stream(*zmq_tables);
+        while(getline(table_stream, table, LIST_FIELD_DELIMETER))
+        {
+            tables.emplace(table);
+        }
     }
 
     return tables;
