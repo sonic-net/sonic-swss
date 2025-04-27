@@ -12,6 +12,7 @@
 #include "producerstatetable.h"
 #include "zmqclient.h"
 #include "zmqproducerstatetable.h"
+#include "orch_zmq_config.h"
 #include <nlohmann/json.hpp>
 
 using namespace std;
@@ -23,18 +24,6 @@ const char* const name_delimiter     = ":";
 const int el_count = 2;
 
 const string SWSS_CONFIG_DIR    = "/etc/swss/config.d/";
-
-/*
- * swssconfig will only connect to local orchagent ZMQ endpoint.
- */
-const char* ZMQ_LOCAL_ADDRESS = "tcp://localhost";
-
-/*
- * Orchagent ZMQ enabled table will stored in "DEVICE_METADATA|localhost" table "orch_zmq_tables" field.
- */
-const char* DEVICE_METADATA_LOCALHOST = "DEVICE_METADATA|localhost";
-const char* ZMQ_TABLE_LIST_FIELD = "orch_zmq_tables@";
-const char LIST_FIELD_DELIMETER = ',';
 
 void usage()
 {
@@ -54,45 +43,34 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
-set<string> load_zmq_tables()
+shared_ptr<ProducerStateTable> get_table(unordered_map<string, shared_ptr<ProducerStateTable>>& table_map, RedisPipeline &pipeline, string table_name, set<string>  zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
 {
-    DBConnector db("CONFIG_DB", 0, false);
-    auto zmq_tables = db.hget(DEVICE_METADATA_LOCALHOST, ZMQ_TABLE_LIST_FIELD);
-
-    set<string> tables;
-    if (zmq_tables)
+    shared_ptr<ProducerStateTable> p_table= nullptr;
+    auto findResult = table_map.find(table_name);
+    if (findResult == table_map.end())
     {
-        string table;
-        stringstream table_stream(*zmq_tables);
-        while(getline(table_stream, table, LIST_FIELD_DELIMETER))
-        {
-            tables.emplace(table);
+        if ((zmq_tables.find(table_name) != zmq_tables.end()) && (zmq_client != nullptr)) {
+            p_table = make_shared<ZmqProducerStateTable>(&pipeline, table_name, *zmq_client, true);
         }
+        else {
+            p_table = make_shared<ProducerStateTable>(&pipeline, table_name, true);
+        }
+
+        table_map.emplace(table_name, p_table);
+    }
+    else
+    {
+        p_table = findResult->second;
     }
 
-    return tables;
+    return p_table;
 }
 
-
-bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  zmq_tables)
+bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
 {
     DBConnector db("APPL_DB", 0, false);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
     unordered_map<string, shared_ptr<ProducerStateTable>> table_map;
-
-    std::unique_ptr<ZmqClient> zmq_client = nullptr;
-    if (zmq_tables.size() > 0)
-    {
-        // swssconfig running inside swss contianer, so need get ZMQ port according to namespace ID.
-        auto zmq_port = ORCH_ZMQ_PORT;
-        if (const char* nsid = std::getenv("NAMESPACE_ID"))
-        {
-            // namespace start from 0, using original ZMQ port for global namespace
-            zmq_port += atoi(nsid) + 1;
-        }
-
-        zmq_client = std::make_unique<ZmqClient>(string(ZMQ_LOCAL_ADDRESS) + ":" + std::to_string(zmq_port));
-    }
 
     for (auto &db_item : db_items)
     {
@@ -108,24 +86,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  zmq_ta
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
 
-        shared_ptr<ProducerStateTable> p_table= nullptr;
-        auto findResult = table_map.find(table_name);
-        if (findResult == table_map.end())
-        {
-            if ((zmq_tables.find(table_name) != zmq_tables.end()) && (zmq_client != nullptr)) {
-                p_table = make_shared<ZmqProducerStateTable>(&pipeline, table_name, *zmq_client, true);
-            }
-            else {
-                p_table = make_shared<ProducerStateTable>(&pipeline, table_name, true);
-            }
-
-            table_map.emplace(table_name, p_table);
-        }
-        else
-        {
-            p_table = findResult->second;
-        }
-
+        auto p_table= get_table(table_map, pipeline, table_name, zmq_tables, zmq_client);
 
         if (kfvOp(db_item) == SET_COMMAND)
             p_table->set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
@@ -250,6 +211,11 @@ int main(int argc, char **argv)
     }
 
     auto zmq_tables = load_zmq_tables();
+    std::shared_ptr<ZmqClient> zmq_client = nullptr;
+    if (zmq_tables.size() > 0)
+    {
+        zmq_client = create_zmq_client(ZMQ_LOCAL_ADDRESS);
+    }
 
     for (auto i : files)
     {
@@ -272,7 +238,7 @@ int main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
 
-            if (!write_db_data(db_items, zmq_tables))
+            if (!write_db_data(db_items, zmq_tables, zmq_client))
             {
                 SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;
