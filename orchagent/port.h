@@ -24,7 +24,7 @@ extern "C" {
  * hence setting to 1492 (1514 - 22)
  */
 #define DEFAULT_MTU             1492
-#define DEFAULT_DHCP_RATE_LIMIT 300
+// #define DEFAULT_DHCP_RATE_LIMIT 300
 
 /*
  * Default TPID is 8100
@@ -86,14 +86,14 @@ public:
     ~PortOperErrorEvent() = default;
 
     inline void incrementErrorCount(void) { m_errorCount++; }
-    
+
     inline size_t getErrorCount(void) const { return m_errorCount; }
-    
+
     void recordEventTime(void) {
         auto now = std::chrono::system_clock::now();
         m_eventTime = std::chrono::system_clock::to_time_t(now);
     }
-    
+
     std::string getEventTime(void) {
         std::ostringstream oss;
         oss << std::put_time(std::gmtime(&m_eventTime), "%Y-%m-%d %H:%M:%S");
@@ -101,7 +101,7 @@ public:
     }
 
     inline std::string getDbKey(void) const { return m_dbKeyError; }
-    
+
     // Returns true if port oper error flag in sai_port_error_status_t is set
     bool isErrorSet(sai_port_error_status_t errstatus) const { return (m_errorFlag & errstatus);}
 

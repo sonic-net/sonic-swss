@@ -290,7 +290,7 @@ void PortMgr::doTask(Consumer &consumer)
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
-            if (!dhcp_rate_limit.empty())
+            if (!dhcp_rate_limit.empty() or dhcp_rate_limit==DEFAULT_DHCP_RATE_LIMIT_STR)
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
