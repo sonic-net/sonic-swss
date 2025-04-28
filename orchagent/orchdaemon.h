@@ -63,7 +63,6 @@ class OrchDaemon
 {
 public:
     OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
-    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
     virtual ~OrchDaemon();
 
     virtual bool init();
@@ -106,12 +105,11 @@ public:
 
     std::thread ring_thread;
 
-private:
+protected:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
     DBConnector *m_chassisAppDb;
-    DBConnector *m_dpuApplDb;
     ZmqServer *m_zmqServer;
 
     bool m_fabricEnabled = false;
@@ -139,4 +137,14 @@ private:
     DBConnector *m_configDb;
 };
 
+
+class DpuOrchDaemon : public OrchDaemon
+{
+public:
+    DpuOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
+    bool init() override;
+private:
+    DBConnector *m_dpu_appDb;
+    DBConnector *m_dpu_appstateDb;
+};
 #endif /* SWSS_ORCHDAEMON_H */

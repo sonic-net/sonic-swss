@@ -77,15 +77,15 @@
             "separator": ":",
             "instance" : "redis"
         },
-        "DPU_APPL_DB": {
-            "id": 15,
+        "DPU_APPL_DB" : {
+            "id" : 15,
             "separator": ":",
-            "instance": "redis"
+            "instance" : "redis"
         },
-        "DPU_STATE_DB": {
-            "id": 17,
+        "DPU_APPL_STATE_DB" : {
+            "id" : 16,
             "separator": "|",
-            "instance": "redis"
+            "instance" : "redis"
         }
     },
     "VERSION" : "1.0"

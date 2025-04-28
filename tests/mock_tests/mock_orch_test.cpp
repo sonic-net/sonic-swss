@@ -70,8 +70,9 @@ void MockOrchTest::SetUp()
     m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
     m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
     m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
-    m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
     m_dpu_app_db = make_shared<swss::DBConnector>("DPU_APPL_DB", 0);
+    m_dpu_app_state_db = make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
+    m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
 
     PrepareSai();
 
@@ -246,7 +247,7 @@ void MockOrchTest::SetUp()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    m_DashOrch = new DashOrch(m_app_db.get(), dash_tables, nullptr);
+    m_DashOrch = new DashOrch(m_app_db.get(), dash_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashOrch);
     ut_orch_list.push_back((Orch **)&m_DashOrch);
 
@@ -296,7 +297,7 @@ void MockOrchTest::SetUp()
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
 
-    m_dashVnetOrch = new DashVnetOrch(m_app_db.get(), dash_vnet_tables, nullptr);
+    m_dashVnetOrch = new DashVnetOrch(m_app_db.get(), dash_vnet_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_dashVnetOrch);
     ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
 
@@ -314,14 +315,14 @@ void MockOrchTest::SetUp()
         APP_DASH_ROUTE_GROUP_TABLE_NAME
     };
 
-    m_DashRouteOrch = new DashRouteOrch(m_app_db.get(), dash_route_tables, m_DashOrch, nullptr);
+    m_DashRouteOrch = new DashRouteOrch(m_app_db.get(), dash_route_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashRouteOrch);
     ut_orch_list.push_back((Orch **)&m_DashRouteOrch);
 
     vector<string> dash_tunnel_tables = {
         APP_DASH_TUNNEL_TABLE_NAME
     };
-    m_DashTunnelOrch= new DashTunnelOrch(m_app_db.get(), dash_tunnel_tables, nullptr);
+    m_DashTunnelOrch= new DashTunnelOrch(m_app_db.get(), dash_tunnel_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashTunnelOrch);
     ut_orch_list.push_back((Orch **)&m_DashTunnelOrch);
 
