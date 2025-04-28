@@ -43,7 +43,7 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
-shared_ptr<ProducerStateTable> get_table(unordered_map<string, shared_ptr<ProducerStateTable>>& table_map, RedisPipeline &pipeline, string table_name, set<string>  zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
+shared_ptr<ProducerStateTable> get_table(unordered_map<string, shared_ptr<ProducerStateTable>> &table_map, RedisPipeline &pipeline, string table_name, set<string> &zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
 {
     shared_ptr<ProducerStateTable> p_table= nullptr;
     auto findResult = table_map.find(table_name);
@@ -66,7 +66,7 @@ shared_ptr<ProducerStateTable> get_table(unordered_map<string, shared_ptr<Produc
     return p_table;
 }
 
-bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
+bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  &zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
 {
     DBConnector db("APPL_DB", 0, false);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
