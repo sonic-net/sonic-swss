@@ -659,7 +659,6 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
 
                         SWSS_LOG_INFO("%s already reached expected bucket size %d, don't add more buckets, bkt_idx(%d)",
                                       (*it).to_string().c_str(), exp_bucket_size, bkt_idx);
-                        //it = active_nh_list.erase(it);
                         remove_nh = true;
                     }
                     else
@@ -680,13 +679,13 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
 
                 if (move_bkt)
                 {
-                  if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(bkt_idx),
-                                             nhopgroup_members_set[*it], ipPrefix, *it))
-                  {
-                      return false;
-                  }
-                  bank_fgnhg_map->at(*it).push_back(hash_buckets->at(bkt_idx));
-                  bkt_idx++;
+                    if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(bkt_idx),
+                                               nhopgroup_members_set[*it], ipPrefix, *it))
+                    {
+                        return false;
+                    }
+                    bank_fgnhg_map->at(*it).push_back(hash_buckets->at(bkt_idx));
+                    bkt_idx++;
                 }
                 if (remove_nh)
                 {
@@ -735,9 +734,6 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                 add_nh_exp_bucket_size = exp_bucket_size + 1;
                 num_nhs_with_one_more--;
             }
-            // Print the values of total_nhs, exp_bucket_size, num_nhs_with_one_more, and add_nh_exp_bucket_size
-            SWSS_LOG_INFO("total_nhs: %u, exp_bucket_size: %u, num_nhs_with_one_more: %u, add_nh_exp_bucket_size: %u",
-                          total_nhs, exp_bucket_size, num_nhs_with_one_more, add_nh_exp_bucket_size);
             for (const auto &nh : active_nh_list)
             {
                 SWSS_LOG_INFO("Active next-hop %s has %zu buckets assigned",
@@ -746,7 +742,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
             // add buckets to this nh until HashBuckets size has reached the expected size
             while (bank_fgnhg_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
             {
-                move_bkt=false;
+                move_bkt = false;
                 remove_nh = false;
                 if (it == active_nh_list.end())
                 {
@@ -1023,7 +1019,6 @@ bool FgNhgOrch::computeAndSetHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
         }
         else
         {
-            SWSS_LOG_INFO("No active nhs in bank %u", bank_idx);
             if (!setInactiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry,
                         bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
             {
