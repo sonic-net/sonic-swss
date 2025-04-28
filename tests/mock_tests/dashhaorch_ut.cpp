@@ -41,7 +41,10 @@ namespace dashhaorch_ut
 
         void CreateHaSet()
         {
-            Table ha_set_table = Table(m_app_db.get(), APP_DASH_HA_SET_TABLE_NAME);
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
             dash::ha_set::HaSet ha_set = dash::ha_set::HaSet();
             swss::IpAddress vip_v4("1.1.1.1");
             swss::IpAddress npu_ip("2.2.2.2");
@@ -60,38 +63,65 @@ namespace dashhaorch_ut
             ha_set.set_dp_channel_src_port_max(1000);
             ha_set.set_dp_channel_probe_interval_ms(1000);
             ha_set.set_dp_channel_probe_fail_threshold(3);
-            ha_set_table.set("HA_SET_1", { { "pb", ha_set.SerializeAsString() } });
-            m_dashHaOrch->addExistingData(&ha_set_table);
-            static_cast<Orch *>(m_dashHaOrch)->doTask();
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                { "pb", ha_set.SerializeAsString() }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
         void CreateHaScope()
         {
-            Table ha_scope_table = Table(m_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME);
-            dash::ha_scope::HaScope ha_scope = dash::ha_scope::HaScope();
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            dash::ha_scope::HaScope ha_scope;
             ha_scope.set_version("1");
             ha_scope.set_ha_role(dash::types::HA_SCOPE_ROLE_DEAD);
-            ha_scope_table.set("HA_SET_1", { { "pb", ha_scope.SerializeAsString() } });
-            m_dashHaOrch->addExistingData(&ha_scope_table);
-            static_cast<Orch *>(m_dashHaOrch)->doTask();
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                { "pb", ha_scope.SerializeAsString() }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
     };
 
     TEST_F(DashHaOrchTest, AddHaSet)
     {
-        CreateHaSet();
         EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
-            .Times(1)
-            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
 
+        CreateHaSet();
     }
 
     TEST_F(DashHaOrchTest, AddHaScope)
     {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
         CreateHaSet();
         CreateHaScope();
-        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
-            .Times(1)
-            .WillOnce(Return(SAI_STATUS_SUCCESS));
     }
 }
