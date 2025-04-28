@@ -6,8 +6,6 @@
 #include "dashorch.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
-#include "zmqclient.h"
-#include "zmqproducerstatetable.h"
 #include "saitypes.h"
 
 #include "dash_api/ha_set.pb.h"
@@ -31,19 +29,13 @@ typedef std::map<std::string, HaScopeEntry> HaScopeTable;
 class DashHaOrch : public ZmqOrch
 {
 public:
-
-    DashHaOrch(swss::DBConnector *dpu_appl_db, swss::DBConnector *dpu_state_db, std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer, swss::ZmqClient *zmqClient);
+    DashHaOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, swss::ZmqServer *zmqServer);
 
 private:
     HaSetTable m_ha_set_entries;
     HaScopeTable m_ha_scope_entries;
 
     DashOrch *m_dash_orch;
-
-    swss::DBConnector *m_dpu_state_db;
-    swss::ZmqClient *m_zmqClient;
-    swss::ZmqProducerStateTable dash_ha_set_state_table;
-    swss::ZmqProducerStateTable dash_ha_scope_state_table;
 
     void doTask(ConsumerBase &consumer);
     void doTaskEniTable(ConsumerBase &consumer);

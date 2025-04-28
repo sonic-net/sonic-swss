@@ -527,18 +527,13 @@ int main(int argc, char **argv)
     DBConnector config_db("CONFIG_DB", 0);
     DBConnector state_db("STATE_DB", 0);
     DBConnector dpu_appl_db("DPU_APPL_DB", 0);
-    DBConnector dpu_state_db("DPU_STATE_DB", 0);
 
     // Instantiate ZMQ server
     shared_ptr<ZmqServer> zmq_server = nullptr;
-    shared_ptr<ZmqClient> zmq_client = nullptr;
     if (enable_zmq)
     {
         SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
         zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
-
-        SWSS_LOG_NOTICE("Instantiate ZMQ Client");
-        zmq_client = make_shared<ZmqClient>(zmq_server_address.c_str(), vrf.c_str());
     }
     else
     {
@@ -830,7 +825,7 @@ int main(int argc, char **argv)
     shared_ptr<OrchDaemon> orchDaemon;
     if (gMySwitchType != "fabric")
     {
-        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), &dpu_appl_db, &dpu_state_db, zmq_server.get(), zmq_client.get());
+        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), &dpu_appl_db, zmq_server.get());
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);

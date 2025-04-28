@@ -84,15 +84,13 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
     m_lastHeartBeat = std::chrono::high_resolution_clock::now();
 }
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, DBConnector *dpuApplDb, DBConnector * dpuStateDb,  ZmqServer *zmqServer, ZmqClient *zmqClient) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, DBConnector *dpuApplDb, ZmqServer *zmqServer) :
         m_applDb(applDb),
         m_configDb(configDb),
         m_stateDb(stateDb),
         m_chassisAppDb(chassisAppDb),
         m_dpuApplDb(dpuApplDb),
-        m_dpuStateDb(dpuStateDb),
-        m_zmqServer(zmqServer),
-        m_zmqClient(zmqClient)
+        m_zmqServer(zmqServer)
 {
     SWSS_LOG_ENTER();
     m_select = new Select();
@@ -358,7 +356,7 @@ bool OrchDaemon::init()
         APP_DASH_HA_SET_TABLE_NAME,
         APP_DASH_HA_SCOPE_TABLE_NAME
     };
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpuApplDb, m_dpuStateDb, dash_ha_tables, dash_orch, m_zmqServer, m_zmqClient);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpuApplDb, dash_ha_tables, dash_orch, m_zmqServer);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
