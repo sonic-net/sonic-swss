@@ -35,7 +35,7 @@ class DashAclOrch : public ZmqOrch
 public:
     using TaskArgs = std::vector<swss::FieldValueTuple>;
 
-    DashAclOrch(swss::DBConnector *db, const std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer);
+    DashAclOrch(swss::DBConnector *db, const std::vector<std::string> &tables, DashOrch *dash_orch, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
     DashAclGroupMgr& getDashAclGroupMgr();
     DashTagMgr& getDashAclTagMgr();
 

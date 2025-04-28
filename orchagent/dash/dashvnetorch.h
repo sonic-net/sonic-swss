@@ -68,13 +68,15 @@ struct VnetMapBulkContext
 class DashVnetOrch : public ZmqOrch
 {
 public:
-    DashVnetOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);
+    DashVnetOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
 
 private:
     DashVnetTable vnet_table_;
     ObjectBulker<sai_dash_vnet_api_t> vnet_bulker_;
     EntityBulker<sai_dash_outbound_ca_to_pa_api_t> outbound_ca_to_pa_bulker_;
     EntityBulker<sai_dash_pa_validation_api_t> pa_validation_bulker_;
+    std::unique_ptr<swss::Table> dash_vnet_result_table_;
+    std::unique_ptr<swss::Table> dash_vnet_map_result_table_;
 
     void doTask(ConsumerBase &consumer);
     void doTaskVnetTable(ConsumerBase &consumer);
