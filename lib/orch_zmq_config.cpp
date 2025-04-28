@@ -1,19 +1,22 @@
+#include <iostream>
+#include <fstream>
+
 #include "orch_zmq_config.h"
+
+#define ZMQ_TABLE_CONFIGFILE       "/etc/swss/orch_zmq_tables.conf"
 
 std::set<std::string> swss::load_zmq_tables()
 {
-    DBConnector db("CONFIG_DB", 0, false);
-    auto zmq_tables = db.hget(DEVICE_METADATA_LOCALHOST, ZMQ_TABLE_LIST_FIELD);
-
     std::set<std::string> tables;
-    if (zmq_tables)
+    std::ifstream config_file(ZMQ_TABLE_CONFIGFILE);
+    if (config_file.is_open())
     {
         std::string table;
-        std::stringstream table_stream(*zmq_tables);
-        while(std::getline(table_stream, table, LIST_FIELD_DELIMETER))
+        while (std::getline(config_file, table))
         {
             tables.emplace(table);
         }
+        config_file.close();
     }
 
     return tables;
