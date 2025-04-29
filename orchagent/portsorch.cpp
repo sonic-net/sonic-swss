@@ -4648,7 +4648,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             );
                         }
                         m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
-                } 
+                }
 
                 if (pCfg.adv_interface_types.is_set)
                 {
