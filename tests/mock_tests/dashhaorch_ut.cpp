@@ -1,16 +1,9 @@
-#define protected public
-#define private public
 #include "mock_orch_test.h"
 #include "mock_table.h"
 #include "mock_sai_api.h"
-
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
-
 #include "dash/dashhaorch.h"
-#undef private
-#undef protected
-
 using namespace ::testing;
 
 EXTERN_MOCK_FNS
@@ -142,6 +135,32 @@ namespace dashhaorch_ut
             );
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
+
+        void SetHaScopeHaRole()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+            
+            dash::ha_scope::HaScope ha_scope;
+            ha_scope.set_version("1");
+            ha_scope.set_ha_role(dash::types::HA_SCOPE_ROLE_ACTIVE);
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                { "pb", ha_scope.SerializeAsString() }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
     };
 
     TEST_F(DashHaOrchTest, AddRemoveHaSet)
@@ -176,4 +195,16 @@ namespace dashhaorch_ut
         RemoveHaScope();
     }
 
+    TEST_F(DashHaOrchTest, SetHaScopeHaRole)
+    {
+        CreateHaSet();
+        CreateHaScope();
+        EXPECT_EQ(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role(), dash::types::HA_SCOPE_ROLE_DEAD);
+
+        SetHaScopeHaRole();
+
+        EXPECT_EQ(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role(), dash::types::HA_SCOPE_ROLE_ACTIVE);
+
+        RemoveHaScope();
+    }
 }
