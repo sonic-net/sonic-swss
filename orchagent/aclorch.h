@@ -405,7 +405,7 @@ protected:
 class AclRuleInnerSrcMacRewrite: public AclRule
  {
  public:
-     AclRuleInnerSrcMacRewrite(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = false);
+     AclRuleInnerSrcMacRewrite(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = true);
 
      bool validateAddAction(string attr_name, string attr_value);
      bool validate();
