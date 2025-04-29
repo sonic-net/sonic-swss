@@ -2067,13 +2067,3 @@ def dpb_setup_fixture(dvs):
         dvs.vct.restart()
     yield
     remove_dpb_config_file(dvs)
-
-
-@pytest.fixture(autouse=True)
-def mark_syslog(request, dvs):
-    """
-    Mark the syslog with the test name.
-    """
-    dvs.runcmd(f"logger -t pytest === start test {request.node.nodeid} ===")
-    yield
-    dvs.runcmd(f"logger -t pytest === finish test {request.node.nodeid} ===")
