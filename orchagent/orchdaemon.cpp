@@ -321,49 +321,6 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
-	vector<string> dash_vnet_tables = {
-        APP_DASH_VNET_TABLE_NAME,
-        APP_DASH_VNET_MAPPING_TABLE_NAME
-    };
-    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_zmqServer);
-    gDirectory.set(dash_vnet_orch);
-
-    vector<string> dash_tables = {
-        APP_DASH_APPLIANCE_TABLE_NAME,
-        APP_DASH_ROUTING_TYPE_TABLE_NAME,
-        APP_DASH_ENI_TABLE_NAME,
-        APP_DASH_ENI_ROUTE_TABLE_NAME,
-        APP_DASH_QOS_TABLE_NAME
-    };
-
-    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_zmqServer);
-    gDirectory.set(dash_orch);
-
-    vector<string> dash_route_tables = {
-        APP_DASH_ROUTE_TABLE_NAME,
-        APP_DASH_ROUTE_RULE_TABLE_NAME,
-        APP_DASH_ROUTE_GROUP_TABLE_NAME
-    };
-
-    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_zmqServer);
-    gDirectory.set(dash_route_orch);
-
-    vector<string> dash_acl_tables = {
-        APP_DASH_PREFIX_TAG_TABLE_NAME,
-        APP_DASH_ACL_IN_TABLE_NAME,
-        APP_DASH_ACL_OUT_TABLE_NAME,
-        APP_DASH_ACL_GROUP_TABLE_NAME,
-        APP_DASH_ACL_RULE_TABLE_NAME
-    };
-    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_zmqServer);
-    gDirectory.set(dash_acl_orch);
-
-    vector<string> dash_tunnel_tables = {
-        APP_DASH_TUNNEL_TABLE_NAME
-    };
-    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_zmqServer);
-    gDirectory.set(dash_tunnel_orch);
-    
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
@@ -496,7 +453,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -593,15 +550,9 @@ bool OrchDaemon::init()
     m_orchList.push_back(gNatOrch);
     m_orchList.push_back(gMlagOrch);
     m_orchList.push_back(gIsoGrpOrch);
-    m_orchList.push_back(gFgNhgOrch);
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
-    m_orchList.push_back(dash_acl_orch);
-    m_orchList.push_back(dash_vnet_orch);
-    m_orchList.push_back(dash_route_orch);
-    m_orchList.push_back(dash_orch);
-    m_orchList.push_back(dash_tunnel_orch);
 
     if (m_fabricEnabled)
     {
@@ -1247,6 +1198,71 @@ bool FabricOrchDaemon::init()
         CFG_FLEX_COUNTER_TABLE_NAME
     };
     addOrchList(new FlexCounterOrch(m_configDb, flex_counter_tables));
+
+    return true;
+}
+
+DpuOrchDaemon::DpuOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, DBConnector *dpuAppDb, DBConnector *dpuAppstateDb, ZmqServer *zmqServer) :
+    OrchDaemon(applDb, configDb, stateDb, chassisAppDb, zmqServer),
+    m_dpu_appDb(dpuAppDb),
+    m_dpu_appstateDb(dpuAppstateDb)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("DpuOrchDaemon starting...");
+}
+
+bool DpuOrchDaemon::init()
+{
+    SWSS_LOG_NOTICE("DpuOrchDaemon init...");
+    OrchDaemon::init();
+    vector<string> dash_vnet_tables = {
+        APP_DASH_VNET_TABLE_NAME,
+        APP_DASH_VNET_MAPPING_TABLE_NAME
+    };
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_vnet_orch);
+
+    vector<string> dash_tables = {
+        APP_DASH_APPLIANCE_TABLE_NAME,
+        APP_DASH_ROUTING_TYPE_TABLE_NAME,
+        APP_DASH_ENI_TABLE_NAME,
+        APP_DASH_ENI_ROUTE_TABLE_NAME,
+        APP_DASH_QOS_TABLE_NAME
+    };
+
+    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_orch);
+
+    vector<string> dash_route_tables = {
+        APP_DASH_ROUTE_TABLE_NAME,
+        APP_DASH_ROUTE_RULE_TABLE_NAME,
+        APP_DASH_ROUTE_GROUP_TABLE_NAME
+    };
+
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_route_orch);
+
+    vector<string> dash_acl_tables = {
+        APP_DASH_PREFIX_TAG_TABLE_NAME,
+        APP_DASH_ACL_IN_TABLE_NAME,
+        APP_DASH_ACL_OUT_TABLE_NAME,
+        APP_DASH_ACL_GROUP_TABLE_NAME,
+        APP_DASH_ACL_RULE_TABLE_NAME
+    };
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_acl_orch);
+
+    vector<string> dash_tunnel_tables = {
+        APP_DASH_TUNNEL_TABLE_NAME
+    };
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_tunnel_orch);
+
+    addOrchList(dash_acl_orch);
+    addOrchList(dash_vnet_orch);
+    addOrchList(dash_route_orch);
+    addOrchList(dash_orch);
+    addOrchList(dash_tunnel_orch);
 
     return true;
 }
