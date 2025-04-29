@@ -6,9 +6,9 @@ DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd test_bfdsyncd tests_response_publisher
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd test_bfdsyncd tests_response_publisher
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
@@ -261,6 +261,24 @@ tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST
 tests_fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fpmsyncd_INCLUDES)
 tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
+## bfdsyncd unit tests
+
+tests_bfdsyncd_SOURCES = swss_ut_main.cpp \
+                         bfdsyncd/test_bfdlink.cpp \
+                         fake_warmstarthelper.cpp \
+                         fake_producerstatetable.cpp \
+                         mock_dbconnector.cpp \
+                         mock_table.cpp \
+                         mock_hiredis.cpp \
+                         $(top_srcdir)/warmrestart/ \
+                         $(top_srcdir)/bfdsyncd/bfdlink.cpp
+
+tests_bfdsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_bfdsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
+tests_bfdsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_bfdsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_bfdsyncd_INCLUDES)
+tests_bfdsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lboost_program_options
 
 ## response publisher unit tests
 

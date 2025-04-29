@@ -68,6 +68,10 @@ public:
     BfdLink(DBConnector *db, DBConnector *stateDb, unsigned short port = BFD_DATA_PLANE_DEFAULT_PORT, int debug = 0);
     virtual ~BfdLink();
 
+    virtual std::string exec(const char* cmd);
+    virtual std::string get_intf_mac(const char* intf);
+    virtual bool sendmsg(uint16_t msglen);
+
     /* Wait for connection (blocking) */
     void accept();
 
@@ -83,6 +87,7 @@ public:
     };
     bool handleBfdStateUpdate(std::string key, const std::vector<swss::FieldValueTuple> &fvs);
     void bfdStateUpdate(std::string key);
+    char *m_messageBuffer;
 
 private:
     /* bfd table */
@@ -90,7 +95,6 @@ private:
     Table m_bfdStateTable;
 
     unsigned int m_bufSize;
-    char *m_messageBuffer;
     char *m_sendBuffer;
     char m_printbuf[1024];
     unsigned int m_pos;

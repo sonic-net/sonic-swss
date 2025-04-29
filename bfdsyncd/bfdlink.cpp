@@ -17,29 +17,6 @@
 
 #include <arpa/inet.h>
 
-std::string exec(const char* cmd) {
-    std::array<char, 128> buffer;
-    std::string result;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
-    if (!pipe) {
-        throw std::runtime_error("popen() failed!");
-    }
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
-        result += buffer.data();
-    }
-    return result;
-}
-
-std::string get_intf_mac(const char* intf) {
-    std::string mac;
-    std::string path;
-    std::ifstream netfile;
-    path = "/sys/class/net/" + string(intf) + "/address";
-    netfile.open(path);
-    std::getline(netfile, mac);
-    netfile.close();
-    return mac;
-}
 
 extern "C" {
 #include "sai.h"
@@ -131,6 +108,47 @@ BfdLink::~BfdLink()
         close(m_connection_socket);
     if (m_server_up)
         close(m_server_socket);
+}
+
+std::string BfdLink::get_intf_mac(const char* intf)
+{
+    std::string mac;
+    std::string path;
+    std::ifstream netfile;
+    path = "/sys/class/net/" + string(intf) + "/address";
+    netfile.open(path);
+    std::getline(netfile, mac);
+    netfile.close();
+    return mac;
+}
+
+std::string BfdLink::exec(const char* cmd) {
+    std::array<char, 128> buffer;
+    std::string result;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
+    if (!pipe) {
+        throw std::runtime_error("popen() failed!");
+    }
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    return result;
+}
+
+
+bool BfdLink::sendmsg(uint16_t msglen) {
+    size_t sent = 0;
+    while (sent != msglen)
+    {
+        auto rc = ::send(m_connection_socket, m_sendBuffer + sent, msglen - sent, 0);
+        if (rc == -1)
+        {
+            SWSS_LOG_ERROR("Failed to send BFD state or counter message: %s", strerror(errno));
+            return false;
+        }
+        sent += rc;
+    }
+    return true;
 }
 
 void BfdLink::accept()
@@ -315,17 +333,8 @@ void BfdLink::handleBfdDpMessage(size_t start)
         memcpy(m_sendBuffer, &msg, msglen);
 
         SWSS_LOG_INFO("BFD_SESSION_COUNTERS send counters to bfdd, id %d, lid %u",  ntohs(msg.header.id), ntohl(msg.data.session_counters.lid));
-        size_t sent = 0;
-        while (sent != msglen)
-        {
-            auto rc = ::send(m_connection_socket, m_sendBuffer + sent, msglen - sent, 0);
-            if (rc == -1)
-            {
-                SWSS_LOG_ERROR("Failed to send BFD state message: %s", strerror(errno));
-                return;
-            }
-            sent += rc;
-        }
+
+        sendmsg(msglen);
         return;
     }
 
@@ -708,17 +717,6 @@ bool BfdLink::handleBfdStateUpdate(std::string k, const std::vector<swss::FieldV
 
     memcpy(m_sendBuffer, &msg, msglen);
 
-    size_t sent = 0;
-    while (sent != msglen)
-    {
-        auto rc = ::send(m_connection_socket, m_sendBuffer + sent, msglen - sent, 0);
-        if (rc == -1)
-        {
-            SWSS_LOG_ERROR("Failed to send BFD state message: %s", strerror(errno));
-            return false;
-        }
-        sent += rc;
-    }
+    return sendmsg(msglen);
 
-    return true;
 }
