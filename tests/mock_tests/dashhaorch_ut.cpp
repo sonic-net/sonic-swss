@@ -1,3 +1,5 @@
+#define protected public
+#define private public
 #include "mock_orch_test.h"
 #include "mock_table.h"
 #include "mock_sai_api.h"
@@ -5,8 +7,6 @@
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
-#define protected public
-#define private public
 #include "dash/dashhaorch.h"
 #undef private
 #undef protected
@@ -166,10 +166,6 @@ namespace dashhaorch_ut
         EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
         .Times(1)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
-
-        EXPECT_CALL(*mockDashOrch, getEniTable)
-        .Times(1)
-        .WillOnce(ReturnRef(*mockDashOrch->getEniTable()));
 
         CreateHaScope();
 
