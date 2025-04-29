@@ -45,13 +45,16 @@ static std::unordered_map<dash::route_type::RoutingType, sai_outbound_routing_en
     { dash::route_type::RoutingType::ROUTING_TYPE_DROP, SAI_OUTBOUND_ROUTING_ENTRY_ACTION_DROP }
 };
 
-DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrch *dash_orch, ZmqServer *zmqServer) :
+DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     outbound_routing_bulker_(sai_dash_outbound_routing_api, gMaxBulkSize),
     inbound_routing_bulker_(sai_dash_inbound_routing_api, gMaxBulkSize),
     ZmqOrch(db, tableName, zmqServer),
     dash_orch_(dash_orch)
 {
     SWSS_LOG_ENTER();
+    dash_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_TABLE_NAME);
+    dash_route_rule_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_RULE_TABLE_NAME);
+    dash_route_group_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME);
 }
 
 bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
@@ -287,7 +290,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
-
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         std::map<std::pair<std::string, std::string>,
@@ -303,6 +306,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                     std::forward_as_tuple());
             bool inserted = rc.second;
             auto &ctxt = rc.first->second;
+            result = DASH_RESULT_SUCCESS;
 
             if (!inserted)
             {
@@ -339,6 +343,11 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 if (addOutboundRouting(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    /*
+                     * Write result only when removing from consumer in pre-op
+                     * For other cases, this will be handled in post-op
+                     */
+                    writeResultToDB(dash_route_result_table_, key, result);
                 }
                 else
                 {
@@ -350,6 +359,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 if (removeOutboundRouting(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    removeResultFromDB(dash_route_result_table_, key);
                 }
                 else
                 {
@@ -371,6 +381,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
+            result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {
@@ -395,13 +406,16 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 else
                 {
                     it_prev++;
+                    result = DASH_RESULT_FAILURE;
                 }
+                writeResultToDB(dash_route_result_table_, key, result);
             }
             else if (op == DEL_COMMAND)
             {
                 if (removeOutboundRoutingPost(key, ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
+                    removeResultFromDB(dash_route_result_table_, key);
                 }
                 else
                 {
@@ -568,7 +582,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
-
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         std::map<std::pair<std::string, std::string>,
@@ -584,6 +598,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                     std::forward_as_tuple());
             bool inserted = rc.second;
             auto &ctxt = rc.first->second;
+            result = DASH_RESULT_SUCCESS;
 
             if (!inserted)
             {
@@ -618,6 +633,11 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 if (addInboundRouting(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    /*
+                     * Write result only when removing from consumer in pre-op
+                     * For other cases, this will be handled in post-op
+                     */
+                    writeResultToDB(dash_route_rule_result_table_, key, result);
                 }
                 else
                 {
@@ -629,6 +649,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 if (removeInboundRouting(key, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    removeResultFromDB(dash_route_rule_result_table_, key);
                 }
                 else
                 {
@@ -650,6 +671,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
+            result = DASH_RESULT_SUCCESS;
             auto found = toBulk.find(make_pair(key, op));
             if (found == toBulk.end())
             {
@@ -673,14 +695,17 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 }
                 else
                 {
+                    result = DASH_RESULT_FAILURE;
                     it_prev++;
                 }
+                writeResultToDB(dash_route_rule_result_table_, key, result);
             }
             else if (op == DEL_COMMAND)
             {
                 if (removeInboundRoutingPost(key, ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
+                    removeResultFromDB(dash_route_rule_result_table_, key);
                 }
                 else
                 {
@@ -816,12 +841,13 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
-
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         auto t = it->second;
         string route_group = kfvKey(t);
         string op = kfvOp(t);
+        result = DASH_RESULT_SUCCESS;
         if (op == SET_COMMAND)
         {
             dash::route_group::RouteGroup entry;
@@ -838,14 +864,17 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_route_group_result_table_, route_group, result, entry.version());
         }
         else if (op == DEL_COMMAND)
         {
             if (removeRouteGroup(route_group))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_route_group_result_table_, route_group);
             }
             else
             {

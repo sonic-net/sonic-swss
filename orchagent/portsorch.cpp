@@ -3253,6 +3253,21 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     return rc;
 }
 
+task_process_status PortsOrch::setPortUnreliableLOS(Port &port, bool enabled)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+    attr.id = SAI_PORT_ATTR_UNRELIABLE_LOS;
+    attr.value.booldata = enabled;
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+    return task_success;
+}
+
 task_process_status PortsOrch::setPortAdvSpeeds(Port &port, std::set<sai_uint32_t> &speed_list)
 {
     SWSS_LOG_ENTER();
@@ -4613,6 +4628,27 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         );
                     }
                 }
+
+                if (pCfg.serdes.unreliable_los.is_set)
+                {
+                        auto status = setPortUnreliableLOS(p, pCfg.serdes.unreliable_los.value);
+                        if (status != task_success)
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s unreliable from %d to %d",
+                                p.m_alias.c_str(), p.m_unreliable_los, pCfg.serdes.unreliable_los.value
+                            );
+                            p.m_unreliable_los = false;
+                        } else {
+
+                            p.m_unreliable_los = pCfg.serdes.unreliable_los.value;
+                            SWSS_LOG_INFO(
+                                "Set port %s unreliable los to %s",
+                                p.m_alias.c_str(), m_portHlpr.getUnreliableLosStr(pCfg).c_str()
+                            );
+                        }
+                        m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
+                } 
 
                 if (pCfg.adv_interface_types.is_set)
                 {
