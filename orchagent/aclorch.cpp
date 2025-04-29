@@ -2165,20 +2165,24 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
     {
         if (!_attr_value.empty())
         {
-            try {
-                MacAddress(_attr_value).getMac();
+            MacAddress inner_src_mac_addr;
+            try
+            {
+                inner_src_mac_addr = MacAddress(_attr_value);
             }
             catch (invalid_argument &e)
             {
-                SWSS_LOG_ERROR("Mac address in the wrong format");
+                SWSS_LOG_ERROR("Invalid Mac Address %s", _attr_value.c_str());
                 return false;
             }
-            memcpy(actionData.parameter.mac, MacAddress(_attr_value).getMac(), sizeof(sai_mac_t));
+
+            memcpy(actionData.parameter.mac, inner_src_mac_addr.getMac(), sizeof(sai_mac_t));
             action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
-            SWSS_LOG_INFO("Converting the mac address to SAI acl action parameter");
+            SWSS_LOG_INFO("Converting the Mac address %s to SAI acl action parameter", _attr_value.c_str());
         }   
          
-        else {
+        else
+        {
             return false;
         }
     }
