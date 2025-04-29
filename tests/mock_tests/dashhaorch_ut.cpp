@@ -1,18 +1,15 @@
-#define protected public
-#include "orch.h"
-#undef protected
 #include "mock_orch_test.h"
 #include "mock_table.h"
 #include "mock_sai_api.h"
 
-#include "dash_api/ha_set.pb.h"
-#include "dash_api/ha_scope.pb.h"
-#include "dash_api/types.pb.h"
-
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
+#define protected public
+#define private public
 #include "dash/dashhaorch.h"
+#undef private
+#undef protected
 
 using namespace ::testing;
 
@@ -21,6 +18,7 @@ EXTERN_MOCK_FNS
 namespace dashhaorch_ut 
 {
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_ha, ha_set, ha_scope);
+
     using namespace mock_orch_test;
 
     class DashHaOrchTest : public MockOrchTest
@@ -79,6 +77,26 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
+        void RemoveHaSet()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            DEL_COMMAND,
+                            { }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
         void CreateHaScope()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
@@ -104,24 +122,62 @@ namespace dashhaorch_ut
             );
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
+
+        void RemoveHaScope()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            DEL_COMMAND,
+                            { }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
     };
 
-    TEST_F(DashHaOrchTest, AddHaSet)
+    TEST_F(DashHaOrchTest, AddRemoveHaSet)
     {
         EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
         .Times(1)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
         CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
     }
 
-    TEST_F(DashHaOrchTest, AddHaScope)
+    TEST_F(DashHaOrchTest, AddRemoveHaScope)
     {
+        CreateHaSet();
+
         EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
         .Times(1)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-        CreateHaSet();
+        EXPECT_CALL(*mockDashOrch, getEniTable)
+        .Times(1)
+        .WillOnce(ReturnRef(*mockDashOrch->getEniTable()));
+
         CreateHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaScope();
     }
+
 }
