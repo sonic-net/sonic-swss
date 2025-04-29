@@ -483,6 +483,7 @@ private:
 
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
+    task_process_status setPortUnreliableLOS(Port &port, bool enabled);
     task_process_status setPortInterfaceType(Port &port, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types);
     task_process_status setPortLinkTraining(const Port& port, bool state);
