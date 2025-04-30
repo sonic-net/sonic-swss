@@ -43,24 +43,7 @@ def common_setup_teardown(dash_db: DashDB, dvs):
 
     yield
 
-    # manually restart DVS to ensure full cleanup
-    # This is a temporary workaround until VS SAI supports implicit deletion of DASH objects
-    dvs.runcmd('killall5 -15')
-    dvs.net_cleanup()
-    dvs.destroy_servers()
-    dvs.create_servers()
-    dvs.restart()
-
-    # dash_db.remove_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID)
-    # dash_db.remove_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1)
-    # dash_db.remove_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1)
-    # dash_db.remove_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP1)
-    # dash_db.remove_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP2)
-    # dash_db.remove_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID)
-    # dash_db.remove_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1)
-    # dash_db.remove_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID)
-    # dash_db.remove_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK)
-    # dash_db.remove_app_db_entry(APP_DASH_TUNNEL_TABLE_NAME, TUNNEL1)
+    # cleanup is handled automatically by the dash_db fixture
 
 
 def test_pl_eni_attrs(dash_db: DashDB):
