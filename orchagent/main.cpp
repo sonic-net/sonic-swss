@@ -571,21 +571,6 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
-    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
-    // since it is not using ASIC_DB, we can execute it before create_switch
-    // when g_syncMode is set to true here, create_switch will wait the response from syncd
-    if (gSyncMode)
-    {
-        SWSS_LOG_WARN("sync mode is depreacated, use -z param");
-
-        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
-    }
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
-    attr.value.s32 = gRedisCommunicationMode;
-
-    sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-
     if (!gAsicInstance.empty())
     {
         attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
