@@ -607,6 +607,12 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
             return false;
         }
 
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_WARN("Outbound CA to PA entry for %s already removed", key.c_str());
+            return true;
+        }
+
         SWSS_LOG_ERROR("Failed to remove outbound CA to PA entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_CA_TO_PA, status);
         if (handle_status != task_success)
@@ -787,7 +793,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
             const auto& ctxt = found->second;
             const auto& outbound_ca_to_pa_object_statuses = ctxt.outbound_ca_to_pa_object_statuses;
             const auto& pa_validation_object_statuses = ctxt.pa_validation_object_statuses;
-            if (outbound_ca_to_pa_object_statuses.empty() || pa_validation_object_statuses.empty())
+            if (outbound_ca_to_pa_object_statuses.empty() && pa_validation_object_statuses.empty())
             {
                 it_prev++;
                 continue;
