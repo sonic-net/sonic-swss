@@ -42,42 +42,36 @@ namespace portmgr_ut
         Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // **Test Case 1: Port not ready (state not "ok")**
+        // Port is not ready, verify that doTask does not handle port configuration
+
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
             {"index", "1"},
             {"dhcp_rate_limit", "300"}
         });
-
         mockCallArgs.clear();
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
-
         ASSERT_TRUE(mockCallArgs.empty());
         std::vector<FieldValueTuple> values;
         app_port_table.get("Ethernet0", values);
-
         auto value_opt = swss::fvsGetValue(values, "mtu", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
-
         value_opt = swss::fvsGetValue(values, "admin_status", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
-
         value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("300", value_opt.get());
-
         value_opt = swss::fvsGetValue(values, "speed", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("100000", value_opt.get());
-
         value_opt = swss::fvsGetValue(values, "index", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("1", value_opt.get());
 
-        // **Test Case 2: Port ready (state "ok")**
+        // Set port state to ok, verify that doTask handle port configuration
         state_port_table.set("Ethernet0", {
             {"state", "ok"}
         });
