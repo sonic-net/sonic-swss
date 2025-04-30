@@ -240,6 +240,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
         }
 
         vnet_bulker_.flush();
+        pa_validation_bulker_.flush();
 
         auto it_prev = consumer.m_toSync.begin();
         while (it_prev != it)
@@ -257,17 +258,18 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             }
 
             const auto& vnet_ctxt = found->second;
-            const auto& object_statuses = vnet_ctxt.vnet_statuses;
-            const auto& object_ids = vnet_ctxt.object_ids;
+            const auto& vnet_statuses = vnet_ctxt.vnet_statuses;
+            const auto& pa_validation_statuses = vnet_ctxt.pa_validation_statuses;
+
+            if (vnet_statuses.empty() && pa_validation_statuses.empty())
+            {
+                it_prev++;
+                continue;
+            }
 
             if (op == SET_COMMAND)
             {
-                if (object_ids.empty())
-                {
-                    it_prev++;
-                    continue;
-                }
-                if (addVnetPost(key, vnet_ctxt))
+               if (addVnetPost(key, vnet_ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
                 }
@@ -280,12 +282,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             }
             else if (op == DEL_COMMAND)
             {
-                if (object_statuses.empty())
-                {
-                    it_prev++;
-                    continue;
-                }
-                if (removeVnetPost(key, vnet_ctxt))
+               if (removeVnetPost(key, vnet_ctxt))
                 {
                     it_prev = consumer.m_toSync.erase(it_prev);
                     removeResultFromDB(dash_vnet_result_table_, key);
