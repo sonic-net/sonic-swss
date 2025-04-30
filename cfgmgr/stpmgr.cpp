@@ -555,7 +555,6 @@ void StpMgr::processStpPortAttr(const string op,
 
     // If we're setting this port's attributes, retrieve the list of VLANs for it.
     if (op == SET_COMMAND)
-<<<<<<< HEAD
     {
         vlanCnt = getAllPortVlan(intfName, vlan_list);
     }
@@ -630,26 +629,19 @@ void StpMgr::processStpPortAttr(const string op,
                 msg->priority = stoi(value);
             }
             else if (field == "portfast" && l2ProtoEnabled == L2_PVSTP)
-            else if (field == "portfast" && l2ProtoEnabled == L2_PVSTP)
             {
                 msg->portfast = (value == "true") ? 1 : 0;
             }
             else if (field == "uplink_fast" && l2ProtoEnabled ==L2_PVSTP)
-            else if (field == "uplink_fast" && l2ProtoEnabled ==L2_PVSTP)
             {
-                msg->uplink_fast = (value == "true") ? 1 : 0;
                 msg->uplink_fast = (value == "true") ? 1 : 0;
             }
             else if (field == "edge_port" && l2ProtoEnabled ==L2_MSTP)
-            else if (field == "edge_port" && l2ProtoEnabled ==L2_MSTP)
             {
-                msg->edge_port = (value == "true") ? 1 : 0;
                 msg->edge_port = (value == "true") ? 1 : 0;
             }
             else if (field== "link_type" && l2ProtoEnabled == L2_MSTP)
-            else if (field== "link_type" && l2ProtoEnabled == L2_MSTP)
             {
-                msg->link_type = static_cast<LinkType>(stoi(field.c_str()));
                 msg->link_type = static_cast<LinkType>(stoi(field.c_str()));
             }
         }
