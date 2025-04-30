@@ -49,6 +49,7 @@ namespace dashvnetorch_test
         {
             CreateApplianceEntry();
             CreateVnet();
+            AddVnetMap();
         }
         void PreTearDown() override
         {

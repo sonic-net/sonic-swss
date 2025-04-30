@@ -258,10 +258,11 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             }
 
             const auto& vnet_ctxt = found->second;
+            const auto& object_ids = vnet_ctxt.object_ids;
             const auto& vnet_statuses = vnet_ctxt.vnet_statuses;
             const auto& pa_validation_statuses = vnet_ctxt.pa_validation_statuses;
 
-            if (vnet_statuses.empty() && pa_validation_statuses.empty())
+            if (object_ids.empty() && vnet_statuses.empty() && pa_validation_statuses.empty())
             {
                 it_prev++;
                 continue;
