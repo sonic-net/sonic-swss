@@ -121,14 +121,15 @@ void SwitchOrch::set_switch_bfd_next_hop_capability()
     vector<FieldValueTuple> fvVector;
 
     /* check platform to set SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE */
-	string platform = getenv("platform") ? getenv("platform") : "";
-	if (platform == CISCO_8000_PLATFORM_SUBSTRING)
-	{
-		fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "true");
-	} else
-	{
-		fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "false");
-	}
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "true");
+    }
+    else
+    {
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "false");
+    }
     set_switch_capability(fvVector);
 }
 
