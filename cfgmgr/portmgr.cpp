@@ -202,25 +202,18 @@ void PortMgr::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            /* portOk=true indicates that the port has been created in kernel.
-             * We should not call any ip command if portOk=false. However, it is
-             * valid to put port configuration to APP DB which will trigger port creation in kernel.
-             */
             bool portOk = isPortStateOk(alias);
 
             string admin_status, mtu, dhcp_rate_limit;
             std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
+            bool dhcpRateLimitConfigured = false;
 
-            /* If this is the first time we set port settings
-             * assign default admin status and mtu and dhcp_rate_limit
-             */
             if (!configured)
             {
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
-                dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT_STR;
                 m_portList.insert(alias);
             }
             else if (!portOk)
@@ -238,7 +231,7 @@ void PortMgr::doTask(Consumer &consumer)
                 else if (fvField(i) == "dhcp_rate_limit")
                 {
                     dhcp_rate_limit = fvValue(i);
-
+                    dhcpRateLimitConfigured = true;
                 }
                 else if (fvField(i) == "admin_status")
                 {
@@ -252,11 +245,12 @@ void PortMgr::doTask(Consumer &consumer)
 
             if (!portOk)
             {
-                // Port configuration is handled by the orchagent. If the configuration is written to the APP DB using
-                // multiple Redis write commands, the orchagent may receive a partial configuration and create a port
-                // with incorrect settings.
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
+                if (dhcpRateLimitConfigured)
+                {
+                    field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+                }
             }
 
             if (field_values.size())
@@ -268,18 +262,24 @@ void PortMgr::doTask(Consumer &consumer)
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                if (dhcpRateLimitConfigured)
+                {
+                    writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                }
 
-                /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
-                field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+                if (dhcpRateLimitConfigured)
+                {
+                    field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+                }
 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
                 continue;
             }
+
             if (!mtu.empty())
             {
                 setPortMtu(alias, mtu);
@@ -289,8 +289,8 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
-            }            
-            if (!dhcp_rate_limit.empty())
+            }
+            if (dhcpRateLimitConfigured && !dhcp_rate_limit.empty())
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());

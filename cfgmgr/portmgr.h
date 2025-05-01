@@ -29,7 +29,7 @@ private:
     Table m_statePortTable;
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appSendToIngressPortTable;
-
+    
     std::set<std::string> m_portList;
 
     void doTask(Consumer &consumer);
