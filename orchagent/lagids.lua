@@ -41,7 +41,7 @@ if op == "add" then
         local index = redis.call("lpos", "SYSTEM_LAG_IDS_FREE_LIST", tostring(plagid))
         if index ~= false then
             if redis.call("sismember", "SYSTEM_LAG_ID_SET", tostring(plagid)) == 0 then
-                redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 1, tostring(plagid))
+                redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 0, tostring(plagid))
                 redis.call("hset", "SYSTEM_LAG_ID_TABLE", pcname, tostring(plagid))
                 redis.call("sadd", "SYSTEM_LAG_ID_SET", tostring(plagid))
                 if dblagid then
@@ -52,7 +52,7 @@ if op == "add" then
                 end
                 return plagid
             else
-                redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 1, tostring(plagid))
+                redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 0, tostring(plagid))
             end
         end
     end
@@ -73,7 +73,7 @@ if op == "add" then
     end
 
     -- Remove it from free list in case there is duplicated one 
-    redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 1, lagid)
+    redis.call("lrem", "SYSTEM_LAG_IDS_FREE_LIST", 0, lagid)
 
     redis.call("hset", "SYSTEM_LAG_ID_TABLE", pcname, lagid)
     redis.call("sadd", "SYSTEM_LAG_ID_SET", lagid)
