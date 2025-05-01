@@ -120,3 +120,27 @@ std::string to_string(const dash::types::IpAddress &pb_address)
 
     return IpAddress(to_swss(pb_address)).to_string();
 }
+
+sai_uint16_t to_sai(const dash::types::HaRole ha_role)
+{
+    SWSS_LOG_ENTER();
+
+    switch (ha_role)
+    {
+        case dash::types::HA_SCOPE_ROLE_UNSPECIFIED:
+            return SAI_DASH_HA_ROLE_DEAD;
+        case dash::types::HA_SCOPE_ROLE_DEAD:
+            return SAI_DASH_HA_ROLE_DEAD;
+        case dash::types::HA_SCOPE_ROLE_ACTIVE:
+            return SAI_DASH_HA_ROLE_ACTIVE;
+        case dash::types::HA_SCOPE_ROLE_STANDBY:
+            return SAI_DASH_HA_ROLE_STANDBY;
+        case dash::types::HA_SCOPE_ROLE_STANDALONE:
+            return SAI_DASH_HA_ROLE_STANDALONE;
+        case dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE:
+            return SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE;
+        default:
+            SWSS_LOG_ERROR("Invalid HA Role %s", dash::types::HaRole_Name(ha_role).c_str());
+            return SAI_DASH_HA_ROLE_DEAD;
+    }
+}

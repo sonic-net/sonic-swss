@@ -130,6 +130,9 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
 #define DEFINE_SAI_API_MOCK(...) \
     GET_MOCK_MACRO(__VA_ARGS__, DEFINE_SAI_API_MOCK_SPECIFY_ENTRY, DEFINE_SAI_API_MOCK_MATCH_ENTRY)(__VA_ARGS__)
 
+/* DEFINE_SAI_GENERIC_API_MOCK will be deprecated.
+ * Please use DEFINE_SAI_GENERIC_APIS_MOCK which supports one or multiple sai_object_type to be mocked in one sai api class.
+ */
 #define DEFINE_SAI_GENERIC_API_MOCK(sai_api_name, sai_object_type)                                                           \
     static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api;                                                         \
     static sai_##sai_api_name##_api_t ut_sai_##sai_api_name##_api;                                                           \
@@ -214,8 +217,6 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
     sai_##sai_api_name##_api->create_##sai_object_type = mock_create_##sai_object_type; \
     sai_##sai_api_name##_api->remove_##sai_object_type = mock_remove_##sai_object_type; \
     sai_##sai_api_name##_api->set_##sai_object_type##_attribute = mock_set_##sai_object_type##_attribute;
-
-
 
 #define DEFINE_SAI_GENERIC_APIS_MOCK(sai_api_name, ...) \
     static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api; \

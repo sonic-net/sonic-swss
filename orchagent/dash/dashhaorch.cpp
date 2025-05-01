@@ -188,21 +188,24 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     auto ha_scope_it = m_ha_scope_entries.find(key);
     if (ha_scope_it != m_ha_scope_entries.end())
     {
+        bool success = true;
+
         if (ha_scope_it->second.metadata.ha_role() != entry.ha_role())
         {
-            return setHaScopeHaRole(key, entry);
+            success = success && setHaScopeHaRole(key, entry);
         }
 
         if (entry.flow_reconcile_requested() == true)
         {
-            return setHaScopeFlowReconcileRequest(key);
+            success = success && setHaScopeFlowReconcileRequest(key);
         }
 
         if (entry.activate_role_requested() == true)
         {
-            return setHaScopeActivateRoleRequest(key);
+            success = success && setHaScopeActivateRoleRequest(key);
         }
 
+        return success;
     }
 
     if (ha_scope_it != m_ha_scope_entries.end())
@@ -229,7 +232,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
 
     // TODO: add ha_role to attribute value enum
     ha_scope_attrs[1].id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
-    ha_scope_attrs[1].value.u16 = static_cast<sai_uint16_t>(entry.ha_role());
+    ha_scope_attrs[1].value.u16 = to_sai(entry.ha_role());
 
     status = sai_dash_ha_api->create_ha_scope(&sai_ha_scope_oid,
                                          gSwitchId,
@@ -297,7 +300,7 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
 
     sai_attribute_t ha_scope_attr;
     ha_scope_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
-    ha_scope_attr.value.u32 = entry.ha_role();
+    ha_scope_attr.value.u16 = to_sai(entry.ha_role());
 
     sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
                                                                 &ha_scope_attr);
