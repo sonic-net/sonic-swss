@@ -116,6 +116,22 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
     set_switch_capability(fvVector);
 }
 
+void SwitchOrch::set_switch_bfd_next_hop_capability()
+{
+    vector<FieldValueTuple> fvVector;
+
+    /* check platform to set SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE */
+	string platform = getenv("platform") ? getenv("platform") : "";
+	if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+	{
+		fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "true");
+	} else
+	{
+		fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "false");
+	}
+    set_switch_capability(fvVector);
+}
+
 SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, TableConnector switchTable):
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
@@ -132,6 +148,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
+    set_switch_bfd_next_hop_capability();
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
