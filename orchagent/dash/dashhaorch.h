@@ -11,6 +11,8 @@
 #include "dash_api/ha_set.pb.h"
 #include "dash_api/ha_scope.pb.h"
 
+#include "pbutils.h"
+
 struct HaSetEntry
 {
     sai_object_id_t ha_set_id;
@@ -50,8 +52,6 @@ private:
     bool setHaScopeFlowReconcileRequest(const  std::string &key);
     bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
-
-    sai_ip_address_t covertPbIpaddrToSaiIpaddr(const dash::types::IpAddress &ipaddr);
 
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
