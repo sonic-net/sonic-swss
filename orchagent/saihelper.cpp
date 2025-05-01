@@ -89,6 +89,7 @@ sai_dash_ha_api_t*                  sai_dash_ha_api;
 sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
+sai_dash_meter_api_t*               sai_dash_meter_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -234,6 +235,7 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION,        (void**)&sai_dash_pa_validation_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_ROUTING,     (void**)&sai_dash_outbound_routing_api);
     sai_api_query((sai_api_t)SAI_API_DASH_INBOUND_ROUTING,      (void**)&sai_dash_inbound_routing_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_METER,                (void**)&sai_dash_meter_api);
     sai_api_query((sai_api_t)SAI_API_DASH_ENI,                  (void**)&sai_dash_eni_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);

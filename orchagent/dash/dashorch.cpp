@@ -23,6 +23,7 @@
 #include "taskworker.h"
 #include "pbutils.h"
 #include "dashrouteorch.h"
+#include "dashmeterorch.h"
 
 using namespace std;
 using namespace swss;
@@ -458,6 +459,31 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         return false;
     }
 
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
+                                     entry.metadata.v4_meter_policy_id() : "";
+    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
+                                     entry.metadata.v6_meter_policy_id() : "";
+
+    if (!v4_meter_policy.empty())
+    {
+        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);    
+        if (meter_policy_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Retry as v4 meter_policy %s not found", v4_meter_policy.c_str());
+            return false;
+        }
+    }
+    if (!v6_meter_policy.empty())
+    {
+        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);    
+        if (meter_policy_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Retry as v6 meter_policy %s not found", v6_meter_policy.c_str());
+            return false;
+        }
+    }
+
     sai_object_id_t &eni_id = entry.eni_id;
     sai_attribute_t eni_attr;
     vector<sai_attribute_t> eni_attrs;
@@ -516,6 +542,20 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         eni_attrs.push_back(eni_attr);
     }
 
+    if (!v4_meter_policy.empty())
+    {
+        eni_attr.id = SAI_ENI_ATTR_V4_METER_POLICY_ID;
+        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);    
+        eni_attrs.push_back(eni_attr);
+    }
+
+    if (!v6_meter_policy.empty())
+    {
+        eni_attr.id = SAI_ENI_ATTR_V6_METER_POLICY_ID;
+        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);    
+        eni_attrs.push_back(eni_attr);
+    }
+
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
                                 (uint32_t)eni_attrs.size(), eni_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -531,6 +571,15 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     addEniToFC(eni_id, eni);
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);
+
+    if (!v4_meter_policy.empty())
+    {
+        dash_meter_orch->incrMeterPolicyEniBindCount(v4_meter_policy);
+    }
+    if (!v6_meter_policy.empty())
+    {
+        dash_meter_orch->incrMeterPolicyEniBindCount(v6_meter_policy);
+    }
 
     SWSS_LOG_NOTICE("Created ENI object for %s", eni.c_str());
 
@@ -629,6 +678,21 @@ bool DashOrch::removeEniObject(const string& eni)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+    }
+
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
+                                     entry.metadata.v4_meter_policy_id() : "";
+    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
+                                     entry.metadata.v6_meter_policy_id() : "";
+
+    if (!v4_meter_policy.empty())
+    {
+        dash_meter_orch->decrMeterPolicyEniBindCount(v4_meter_policy);
+    }
+    if (!v6_meter_policy.empty())
+    {
+        dash_meter_orch->decrMeterPolicyEniBindCount(v6_meter_policy);
     }
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);

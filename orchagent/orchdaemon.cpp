@@ -321,6 +321,7 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
+
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
@@ -1266,11 +1267,19 @@ bool DpuOrchDaemon::init()
     DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, m_zmqServer);
     gDirectory.set(dash_tunnel_orch);
 
+    vector<string> dash_meter_tables = {
+        APP_DASH_METER_POLICY_TABLE_NAME,
+        APP_DASH_METER_RULE_TABLE_NAME
+    };
+    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_meter_orch);
+
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
     addOrchList(dash_orch);
     addOrchList(dash_tunnel_orch);
+    addOrchList(dash_meter_orch);
 
     return true;
 }
