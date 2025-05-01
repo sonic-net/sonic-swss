@@ -38,6 +38,7 @@ namespace dashhaorch_ut
 
             dash::ha_set::HaSet ha_set = dash::ha_set::HaSet();
             swss::IpAddress vip_v4("1.1.1.1");
+            swss::IpAddress vip_v6("::1");
             swss::IpAddress npu_ip("2.2.2.2");
             swss::IpAddress local_ip("3.3.3.3");
             swss::IpAddress peer_ip("4.4.4.4");
@@ -45,6 +46,7 @@ namespace dashhaorch_ut
             ha_set.set_version("1");
             ha_set.set_scope(dash::types::SCOPE_DPU);
             ha_set.mutable_vip_v4()->set_ipv4(vip_v4.getV4Addr());
+            ha_set.mutable_vip_v6()->set_ipv6(reinterpret_cast<const char*>(vip_v6.getV6Addr()));
             ha_set.mutable_local_npu_ip()->set_ipv4(npu_ip.getV4Addr());
             ha_set.mutable_local_ip()->set_ipv4(local_ip.getV4Addr());
             ha_set.mutable_peer_ip()->set_ipv4(peer_ip.getV4Addr());
@@ -170,6 +172,7 @@ namespace dashhaorch_ut
 
             dash::ha_scope::HaScope ha_scope;
             ha_scope.set_version("1");
+            ha_scope.set_ha_role(dash::types::HA_SCOPE_ROLE_ACTIVE);
             ha_scope.set_activate_role_requested(true);
 
             consumer->addToSync(
@@ -196,6 +199,7 @@ namespace dashhaorch_ut
 
             dash::ha_scope::HaScope ha_scope;
             ha_scope.set_version("1");
+            ha_scope.set_ha_role(dash::types::HA_SCOPE_ROLE_ACTIVE);
             ha_scope.set_flow_reconcile_requested(true);
 
             consumer->addToSync(
@@ -230,6 +234,22 @@ namespace dashhaorch_ut
         RemoveHaSet();
     }
 
+    TEST_F(DashHaOrchTest, HaSetAlreadyExists)
+    {
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(0);
+
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
     TEST_F(DashHaOrchTest, AddRemoveHaScope)
     {
         CreateHaSet();
@@ -243,6 +263,19 @@ namespace dashhaorch_ut
         EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
         .Times(1)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaScope();
+    }
+
+    TEST_F(DashHaOrchTest, NoHaSetFound)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(0);
+
+        CreateHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(0);
 
         RemoveHaScope();
     }
@@ -265,6 +298,7 @@ namespace dashhaorch_ut
     {
         CreateHaSet();
         CreateHaScope();
+        SetHaScopeHaRole();
 
         EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
         .Times(1)
@@ -280,6 +314,7 @@ namespace dashhaorch_ut
     {
         CreateHaSet();
         CreateHaScope();
+        SetHaScopeHaRole();
 
         EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
         .Times(1)
