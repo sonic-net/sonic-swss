@@ -24,7 +24,6 @@ extern "C" {
  * hence setting to 1492 (1514 - 22)
  */
 #define DEFAULT_MTU             1492
-#define DEFAULT_DHCP_RATE_LIMIT 300
 
 /*
  * Default TPID is 8100
@@ -86,14 +85,14 @@ public:
     ~PortOperErrorEvent() = default;
 
     inline void incrementErrorCount(void) { m_errorCount++; }
-    
+
     inline size_t getErrorCount(void) const { return m_errorCount; }
-    
+
     void recordEventTime(void) {
         auto now = std::chrono::system_clock::now();
         m_eventTime = std::chrono::system_clock::to_time_t(now);
     }
-    
+
     std::string getEventTime(void) {
         std::ostringstream oss;
         oss << std::put_time(std::gmtime(&m_eventTime), "%Y-%m-%d %H:%M:%S");
@@ -101,7 +100,7 @@ public:
     }
 
     inline std::string getDbKey(void) const { return m_dbKeyError; }
-    
+
     // Returns true if port oper error flag in sai_port_error_status_t is set
     bool isErrorSet(sai_port_error_status_t errstatus) const { return (m_errorFlag & errstatus);}
 
@@ -170,10 +169,10 @@ public:
     Type                m_type = UNKNOWN;
     uint16_t            m_index = 0;    // PHY_PORT: index
     uint32_t            m_mtu = DEFAULT_MTU;
-    uint32_t            m_dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT;
     uint32_t            m_speed = 0;    // Mbps
     port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     bool                m_autoneg = false;
+    bool                m_unreliable_los = false;
     bool                m_link_training = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;

@@ -76,15 +76,6 @@ class TestSubPortIntf(object):
     VNET_UNDER_TEST = "Vnet1000"
     VNI_UNDER_TEST = "1000"
 
-    def get_oids(self, table):
-        return self.asic_db.get_keys(table)
-
-    def get_default_vrf_oid(self):
-        oids = self.get_oids(ASIC_VIRTUAL_ROUTER_TABLE)
-        assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
-        print(f"    oid     :       {oids}       oid[0]      :       {oids[0]}")
-        return oids[0]
-        
     def connect_dbs(self, dvs):
         self.app_db = dvs.get_app_db()
         self.asic_db = dvs.get_asic_db()
@@ -131,7 +122,7 @@ class TestSubPortIntf(object):
             return "PortChannel"+intf_index+VLAN_SUB_INTERFACE_SEPARATOR+sub_intf_idx
         else:
             return str(port_name)
-   
+
     def get_port_longname(self, port_name):
         if port_name is None:
            return None
@@ -389,6 +380,9 @@ class TestSubPortIntf(object):
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_ROUTE_TABLE_NAME)
         tbl._del(vrf_name + APPL_DB_SEPARATOR + ip_prefix if vrf_name else ip_prefix)
 
+    def get_oids(self, table):
+        return self.asic_db.get_keys(table)
+
     def get_newly_created_oid(self, table, old_oids):
         new_oids = self.asic_db.wait_for_n_keys(table, len(old_oids) + 1)
         oid = [ids for ids in new_oids if ids not in old_oids]
@@ -400,7 +394,6 @@ class TestSubPortIntf(object):
         return oids[0]
 
     def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None, prefix_present=True):
-
         if vrf_oid is None:
             vrf_oid = self.default_vrf_oid
 
@@ -1189,10 +1182,10 @@ class TestSubPortIntf(object):
                 "SAI_ROUTER_INTERFACE_ATTR_PORT_ID": parent_port_oid,
             }
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
-            #If subintf mtu deleted, it inherits from parent 
+            #If subintf mtu deleted, it inherits from parent
             if vrf_name == self.VRF_UNDER_TEST or vrf_name == self.VNET_UNDER_TEST:
                 if parent_port.startswith(ETHERNET_PREFIX):
-                    fv_dict["SAI_ROUTER_INTERFACE_ATTR_MTU"] = ETHERNET_PORT_DEFAULT_MTU 
+                    fv_dict["SAI_ROUTER_INTERFACE_ATTR_MTU"] = ETHERNET_PORT_DEFAULT_MTU
             self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
         else:
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
@@ -1314,7 +1307,7 @@ class TestSubPortIntf(object):
 
         # Restore parent port mtu
         dvs.set_mtu(parent_port, DEFAULT_MTU)
-        dvs.set_dhcp_rate_limit(parent_port,"300")
+
         # Verify that sub port router interface entry in ASIC_DB has the default mtu
         fv_dict = {
             "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,

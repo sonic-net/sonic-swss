@@ -18,6 +18,7 @@
 #include <tuple>
 #include <sstream>
 #include <unordered_set>
+
 #include <netinet/if_ether.h>
 #include "net/if.h"
 
@@ -494,7 +495,7 @@ static bool isPathTracingSupported()
         SWSS_LOG_INFO("Querying OBJECT_TYPE_LIST is not supported on this platform");
         return false;
     }
-    else 
+    else
     {
         SWSS_LOG_ERROR(
             "Failed to get a list of supported switch capabilities. Error=%d", status
@@ -3252,6 +3253,21 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     return rc;
 }
 
+task_process_status PortsOrch::setPortUnreliableLOS(Port &port, bool enabled)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+    attr.id = SAI_PORT_ATTR_UNRELIABLE_LOS;
+    attr.value.booldata = enabled;
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+    return task_success;
+}
+
 task_process_status PortsOrch::setPortAdvSpeeds(Port &port, std::set<sai_uint32_t> &speed_list)
 {
     SWSS_LOG_ENTER();
@@ -4611,6 +4627,27 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), m_portHlpr.getPortInterfaceTypeStr(pCfg).c_str()
                         );
                     }
+                }
+
+                if (pCfg.serdes.unreliable_los.is_set)
+                {
+                        auto status = setPortUnreliableLOS(p, pCfg.serdes.unreliable_los.value);
+                        if (status != task_success)
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s unreliable from %d to %d",
+                                p.m_alias.c_str(), p.m_unreliable_los, pCfg.serdes.unreliable_los.value
+                            );
+                            p.m_unreliable_los = false;
+                        } else {
+
+                            p.m_unreliable_los = pCfg.serdes.unreliable_los.value;
+                            SWSS_LOG_INFO(
+                                "Set port %s unreliable los to %s",
+                                p.m_alias.c_str(), m_portHlpr.getUnreliableLosStr(pCfg).c_str()
+                            );
+                        }
+                        m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
                 }
 
                 if (pCfg.adv_interface_types.is_set)
@@ -6451,7 +6488,7 @@ bool PortsOrch::removeBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
-    
+
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
@@ -8282,7 +8319,7 @@ void PortsOrch::generateWredPortCounterMap()
 
 /****
 *  Func Name  : addWredQueueFlexCounters
-*  Parameters : queueStateVector 
+*  Parameters : queueStateVector
 *  Returns    : void
 *  Description: Top level API to Set WRED flex counters for Queues
 **/
@@ -8352,9 +8389,9 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
 }
 /****
 *  Func Name  : addWredQueueFlexCountersPerPortPerQueueIndex
-*  Parameters : port, queueIndex, is_voq 
+*  Parameters : port, queueIndex, is_voq
 *  Returns    : void
-*  Description: Sets the Stats list to be polled by the flexcounter 
+*  Description: Sets the Stats list to be polled by the flexcounter
 **/
 
 void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq, sai_queue_type_t queueType)

@@ -155,11 +155,14 @@ class DVSDatabase:
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
+
         def access_function():
             fv_pairs = self.get_entry(table_name, key)
             return (bool(fv_pairs), fv_pairs)
+
         message = failure_message or f'Entry not found: key="{key}", table="{table_name}"'
-        _, result = wait_for_result(access_function, polling_config, message)        
+        _, result = wait_for_result(access_function, polling_config, message)
+
         return result
 
     def wait_for_fields(
@@ -239,6 +242,7 @@ class DVSDatabase:
         status, result = wait_for_result(
             access_function, self._disable_strict_polling(polling_config)
         )
+
         if not status:
             message = failure_message or (
                 f"Expected field/value pairs not found: expected={expected_fields}, "
@@ -374,7 +378,7 @@ class DVSDatabase:
         self,
         table_name: str,
         num_keys: int,
-        wait_at_least_n_keys: bool = False, 
+        wait_at_least_n_keys: bool = False,
         polling_config: PollingConfig = PollingConfig(),
         failure_message: str = None,
     ) -> List[str]:

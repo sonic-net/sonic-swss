@@ -17,6 +17,24 @@ RUN dpkg --purge python3-swsscommon sonic-db-cli libsaimetadata libsairedis libs
 
 RUN apt-get update
 
+# vpp package configure requires to set:
+# permission denied on key "vm.nr_hugepages"
+# permission denied on key "vm.hugetlb_shm_group"
+# permission denied on key "fs.protected_fifos"
+# permission denied on key "fs.protected_hardlinks"
+# permission denied on key "fs.protected_regular"
+# permission denied on key "fs.protected_symlinks"
+
+# which can't be done during "docker build" command
+# so let's put "true" command as sysctl, and after install let's bring it back
+
+RUN cp /usr/sbin/sysctl /usr/sbin/sysctl.org
+RUN cp /usr/bin/true /usr/sbin/sysctl
+
+RUN apt install -y $(ls /debs/*.deb | grep vpp)
+
+RUN mv /usr/sbin/sysctl.org /usr/sbin/sysctl
+
 RUN apt install -y /debs/libdashapi_1.0.0_amd64.deb \
             /debs/libswsscommon_1.0.0_amd64.deb \
             /debs/python3-swsscommon_1.0.0_amd64.deb \

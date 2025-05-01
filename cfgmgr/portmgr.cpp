@@ -181,6 +181,7 @@ void PortMgr::doSendToIngressPortTask(Consumer &consumer)
 
 }
 
+
 void PortMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
