@@ -239,8 +239,8 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             }
         }
 
-        vnet_bulker_.flush();
         pa_validation_bulker_.flush();
+        vnet_bulker_.flush();
 
         auto it_prev = consumer.m_toSync.begin();
         while (it_prev != it)
