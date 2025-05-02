@@ -88,9 +88,12 @@ sai_dash_tunnel_api_t*              sai_dash_tunnel_api;
 sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
+sai_dash_meter_api_t*               sai_dash_meter_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
+extern bool gSyncMode;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -231,6 +234,7 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION,        (void**)&sai_dash_pa_validation_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_ROUTING,     (void**)&sai_dash_outbound_routing_api);
     sai_api_query((sai_api_t)SAI_API_DASH_INBOUND_ROUTING,      (void**)&sai_dash_inbound_routing_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_METER,                (void**)&sai_dash_meter_api);
     sai_api_query((sai_api_t)SAI_API_DASH_ENI,                  (void**)&sai_dash_eni_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
@@ -298,6 +302,16 @@ void initFlexCounterTables()
 
 void initSaiRedis()
 {
+    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
+    // since it is not using ASIC_DB, we can execute it before create_switch
+    // when g_syncMode is set to true here, create_switch will wait the response from syncd
+    if (gSyncMode)
+    {
+        SWSS_LOG_WARN("sync mode is depreacated, use -z param");
+
+        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
+    }
+
     /**
      * NOTE: Notice that all Redis attributes here are using SAI_NULL_OBJECT_ID
      * as the switch ID, because those operations don't require actual switch
@@ -306,6 +320,16 @@ void initSaiRedis()
 
     sai_attribute_t attr;
     sai_status_t status;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
+    attr.value.s32 = gRedisCommunicationMode;
+
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set communication mode, rv:%d", status);
+        exit(EXIT_FAILURE);
+    }
 
     auto record_filename = Recorder::Instance().sairedis.getFile();
     auto record_location = Recorder::Instance().sairedis.getLoc();
@@ -351,16 +375,19 @@ void initSaiRedis()
         exit(EXIT_FAILURE);
     }
 
-    attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
-    attr.value.booldata = true;
-
-    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC)
     {
-        SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
-        exit(EXIT_FAILURE);
+        SWSS_LOG_NOTICE("Enable redis pipeline");
+        attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
+        attr.value.booldata = true;
+
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
+            exit(EXIT_FAILURE);
+        }
     }
-    SWSS_LOG_NOTICE("Enable redis pipeline");
 
     char *platform = getenv("platform");
     if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
@@ -1159,4 +1186,42 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
         stat_list.push_back(static_cast<sai_stat_id_t>(statenumlist[i]));
     }
     return stat_list;
+}
+
+void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key,
+                     uint32_t res, const string& version)
+{
+    SWSS_LOG_ENTER();
+
+    if (!table)
+    {
+        SWSS_LOG_WARN("Table passed in is NULL");
+        return;
+    }
+
+    std::vector<FieldValueTuple> fvVector;
+
+    fvVector.emplace_back("result", std::to_string(res));
+
+    if (!version.empty())
+    {
+        fvVector.emplace_back("version", version);
+    }
+
+    table->set(key, fvVector);
+    SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
+}
+
+void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
+{
+    SWSS_LOG_ENTER();
+
+    if (!table)
+    {
+        SWSS_LOG_WARN("Table passed in is NULL");
+        return;
+    }
+
+    table->del(key);
+    SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }
