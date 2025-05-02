@@ -256,7 +256,7 @@ void MockOrchTest::SetUp()
         APP_DASH_METER_RULE_TABLE_NAME
     };
 
-    m_DashMeterOrch = new DashMeterOrch(m_app_db.get(), dash_meter_tables, m_DashOrch, nullptr);
+    m_DashMeterOrch = new DashMeterOrch(m_app_db.get(), dash_meter_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashMeterOrch);
     ut_orch_list.push_back((Orch **)&m_DashMeterOrch);
 
