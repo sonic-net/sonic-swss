@@ -17,11 +17,14 @@ extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
 
-DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer) :
+DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tables, zmqServer),
     m_dash_orch(dash_orch)
 {
     SWSS_LOG_ENTER();
+
+    dash_ha_set_result_table_ = make_unique<Table>(app_state_db, APP_DASH_HA_SET_TABLE_NAME);
+    dash_ha_scope_result_table_ = make_unique<Table>(app_state_db, APP_DASH_HA_SCOPE_TABLE_NAME);
 }
 
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
@@ -133,6 +136,8 @@ void DashHaOrch::doTaskHaSetTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
+    uint32_t result;
+
     auto it = consumer.m_toSync.begin();
 
     while (it != consumer.m_toSync.end())
@@ -140,6 +145,7 @@ void DashHaOrch::doTaskHaSetTable(ConsumerBase &consumer)
         KeyOpFieldsValuesTuple tuple = it->second;
         const auto& key = kfvKey(tuple);
         const auto& op = kfvOp(tuple);
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -158,8 +164,10 @@ void DashHaOrch::doTaskHaSetTable(ConsumerBase &consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_ha_set_result_table_, key, result);
 
         }
         else if (op == DEL_COMMAND)
@@ -167,6 +175,7 @@ void DashHaOrch::doTaskHaSetTable(ConsumerBase &consumer)
             if(removeHaSetEntry(key))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_ha_set_result_table_, key);
             }
             else
             {
@@ -429,6 +438,8 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
+    uint32_t result;
+
     auto it = consumer.m_toSync.begin();
 
     while (it != consumer.m_toSync.end())
@@ -436,6 +447,7 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         KeyOpFieldsValuesTuple tuple = it->second;
         const auto& key = kfvKey(tuple);
         const auto& op = kfvOp(tuple);
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -454,14 +466,17 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_ha_scope_result_table_, key, result);
         }
         else if (op == DEL_COMMAND)
         {
             if(removeHaScopeEntry(key))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_ha_scope_result_table_, key);
             }
             else
             {

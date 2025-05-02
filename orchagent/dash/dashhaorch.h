@@ -31,7 +31,7 @@ typedef std::map<std::string, HaScopeEntry> HaScopeTable;
 class DashHaOrch : public ZmqOrch
 {
 public:
-    DashHaOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, swss::ZmqServer *zmqServer);
+    DashHaOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
 
 private:
     HaSetTable m_ha_set_entries;
@@ -52,6 +52,9 @@ private:
     bool setHaScopeFlowReconcileRequest(const  std::string &key);
     bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
+
+    std::unique_ptr<swss::Table> dash_ha_set_result_table_;
+    std::unique_ptr<swss::Table> dash_ha_scope_result_table_;
 
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
