@@ -31,12 +31,8 @@ namespace dashhaorch_ut
             DEINIT_SAI_API_MOCK(dash_ha);
         }
 
-        void CreateHaSet()
+        dash::ha_set::HaSet HaSetPbObject()
         {
-            auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
-                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
-
             dash::ha_set::HaSet ha_set = dash::ha_set::HaSet();
             swss::IpAddress vip_v4("1.1.1.1");
             swss::IpAddress vip_v6("::1");
@@ -59,6 +55,42 @@ namespace dashhaorch_ut
             ha_set.set_dp_channel_src_port_max(1000);
             ha_set.set_dp_channel_probe_interval_ms(1000);
             ha_set.set_dp_channel_probe_fail_threshold(3);
+
+            return ha_set;
+        }
+
+        void CreateHaSet()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            dash::ha_set::HaSet ha_set = HaSetPbObject();
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                { "pb", ha_set.SerializeAsString() }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void CreateEniScopeHaSet()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            dash::ha_set::HaSet ha_set = HaSetPbObject();
+            ha_set.set_scope(dash::types::SCOPE_ENI);
+
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
                     {
@@ -358,6 +390,23 @@ namespace dashhaorch_ut
         // HA Scope already exists
         EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
         .Times(0);
+        CreateHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaScope();
+    }
+
+    TEST_F(DashHaOrchTest, AddRemoveEniHaScope)
+    {
+        CreateEniScopeHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
         CreateHaScope();
 
         EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)

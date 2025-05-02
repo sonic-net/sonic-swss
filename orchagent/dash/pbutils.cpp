@@ -129,9 +129,6 @@ sai_uint16_t to_sai(const dash::types::HaRole ha_role)
 
     switch (ha_role)
     {
-        case dash::types::HA_SCOPE_ROLE_UNSPECIFIED:
-            sai_ha_role = SAI_DASH_HA_ROLE_DEAD;
-            break;
         case dash::types::HA_SCOPE_ROLE_DEAD:
             sai_ha_role = SAI_DASH_HA_ROLE_DEAD;
             break;
@@ -149,7 +146,6 @@ sai_uint16_t to_sai(const dash::types::HaRole ha_role)
             break;
         default:
             SWSS_LOG_ERROR("Invalid HA Role %s", dash::types::HaRole_Name(ha_role).c_str());
-            sai_ha_role = SAI_DASH_HA_ROLE_DEAD;
     }
 
     return static_cast<sai_uint16_t>(sai_ha_role);

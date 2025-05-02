@@ -49,13 +49,11 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     if (!to_sai(entry.local_ip(), sai_local_ip))
     {
-        SWSS_LOG_ERROR("Failed to convert local IP for HA Set entry %s", key.c_str());
         return false;
     }
 
     if (!to_sai(entry.peer_ip(), sai_peer_ip))
     {
-        SWSS_LOG_ERROR("Failed to convert peer IP for HA Set entry %s", key.c_str());
         return false;
     }
 
@@ -198,29 +196,36 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     if (ha_scope_it != m_ha_scope_entries.end())
     {
         bool success = true;
+        bool repeated_message = true;
 
         if (ha_scope_it->second.metadata.ha_role() != entry.ha_role())
         {
             success = success && setHaScopeHaRole(key, entry);
+            repeated_message = false;
         }
 
         if (entry.flow_reconcile_requested() == true)
         {
             success = success && setHaScopeFlowReconcileRequest(key);
+            repeated_message = false;
         }
 
         if (entry.activate_role_requested() == true)
         {
             success = success && setHaScopeActivateRoleRequest(key);
+            repeated_message = false;
+        }
+
+        if (repeated_message)
+        {
+            SWSS_LOG_WARN("HA Scope entry already exists for %s", key.c_str());
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("HA Scope entry updated for %s", key.c_str());
         }
 
         return success;
-    }
-
-    if (ha_scope_it != m_ha_scope_entries.end())
-    {
-        SWSS_LOG_WARN("HA Scope entry already exists for %s", key.c_str());
-        return true;
     }
 
     auto ha_set_it = m_ha_set_entries.find(key);
