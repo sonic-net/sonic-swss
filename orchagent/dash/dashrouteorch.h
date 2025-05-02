@@ -77,7 +77,7 @@ struct InboundRoutingBulkContext
 class DashRouteOrch : public ZmqOrch
 {
 public:
-    DashRouteOrch(swss::DBConnector *db, std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer);
+    DashRouteOrch(swss::DBConnector *db, std::vector<std::string> &tables, DashOrch *dash_orch, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
     sai_object_id_t getRouteGroupOid(const std::string& route_group) const;
     void bindRouteGroup(const std::string& route_group);
     void unbindRouteGroup(const std::string& route_group);
@@ -91,6 +91,9 @@ private:
     DashOrch *dash_orch_;
     std::unordered_map<std::string, sai_object_id_t> route_group_oid_map_;
     std::unordered_map<std::string, int> route_group_bind_count_;
+    std::unique_ptr<swss::Table> dash_route_result_table_;
+    std::unique_ptr<swss::Table> dash_route_rule_result_table_;
+    std::unique_ptr<swss::Table> dash_route_group_result_table_;
 
     void doTask(ConsumerBase &consumer);
     void doTaskRouteTable(ConsumerBase &consumer);

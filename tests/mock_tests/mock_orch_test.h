@@ -43,6 +43,8 @@ namespace mock_orch_test
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
+        shared_ptr<swss::DBConnector> m_dpu_app_db;
+        shared_ptr<swss::DBConnector> m_dpu_app_state_db;
         shared_ptr<swss::DBConnector> m_chassis_app_db;
         MuxOrch *m_MuxOrch;
         MuxCableOrch *m_MuxCableOrch;

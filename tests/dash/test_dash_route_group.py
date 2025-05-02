@@ -15,6 +15,8 @@ from swsscommon.swsscommon import (
     APP_DASH_ROUTE_GROUP_TABLE_NAME,
 )
 
+DVS_ENV = ["HWSKU=DPU-2P"]
+NUM_PORTS = 2
 
 @pytest.fixture(autouse=True)
 def common_setup_teardown(dash_db: DashDB):

@@ -50,6 +50,7 @@ public:
     DashTunnelOrch(
         swss::DBConnector *db,
         std::vector<std::string> &tables,
+        swss::DBConnector *app_state_db,
         swss::ZmqServer *zmqServer);
 
     sai_object_id_t getTunnelOid(const std::string& tunnel_name);
@@ -59,6 +60,7 @@ private:
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_member_bulker_;
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_nhop_bulker_;
     std::unordered_map<std::string, DashTunnelEntry> tunnel_table_;
+    std::unique_ptr<swss::Table> dash_tunnel_result_table_;
 
     void doTask(ConsumerBase &consumer);
     bool addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
