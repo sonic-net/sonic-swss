@@ -300,7 +300,7 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
 
     sai_attribute_t ha_scope_attr;
     ha_scope_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
-    ha_scope_attr.value.u16 = to_sai(entry.ha_role());
+    ha_scope_attr.value.u32 = to_sai(entry.ha_role());
 
     sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
                                                                 &ha_scope_attr);

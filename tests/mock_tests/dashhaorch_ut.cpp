@@ -4,6 +4,7 @@
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 #include "dash/dashhaorch.h"
+#include "pbutils.h"
 using namespace ::testing;
 
 EXTERN_MOCK_FNS
@@ -140,7 +141,7 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
-        void SetHaScopeHaRole()
+        void SetHaScopeHaRole(dash::types::HaRole role=dash::types::HA_SCOPE_ROLE_ACTIVE)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
@@ -148,7 +149,7 @@ namespace dashhaorch_ut
             
             dash::ha_scope::HaScope ha_scope;
             ha_scope.set_version("1");
-            ha_scope.set_ha_role(dash::types::HA_SCOPE_ROLE_ACTIVE);
+            ha_scope.set_ha_role(role);
 
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
@@ -387,12 +388,27 @@ namespace dashhaorch_ut
     TEST_F(DashHaOrchTest, SetHaScopeHaRole)
     {
         CreateHaSet();
+
         CreateHaScope();
-        EXPECT_EQ(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role(), dash::types::HA_SCOPE_ROLE_DEAD);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
 
         SetHaScopeHaRole();
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
 
-        EXPECT_EQ(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role(), dash::types::HA_SCOPE_ROLE_ACTIVE);
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_UNSPECIFIED);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_DEAD);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_STANDBY);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDBY);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_STANDALONE);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDALONE);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
 
         RemoveHaScope();
         RemoveHaSet();
@@ -440,5 +456,6 @@ namespace dashhaorch_ut
         EXPECT_EQ(m_dashHaOrch->getHaSetEntries().find("HA_SET_1"), m_dashHaOrch->getHaSetEntries().end());
 
         HaSetScopeUnspecified();
+        CreateHaScope();
     }
 }
