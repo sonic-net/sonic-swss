@@ -42,6 +42,14 @@ NUM_PORTS = 32
 FABRIC_NUM_PORTS = 16
 
 def ensure_system(cmd):
+    # Check if this is the symlink creation command and pre-clean the target
+    if cmd.startswith("ln -s"):
+        parts = cmd.split()
+        if len(parts) == 4:
+            target = parts[3]  # e.g., /var/run/redis/redis.sock
+            if os.path.exists(target) or os.path.islink(target):
+                os.unlink(target)
+
     rc, output = subprocess.getstatusoutput(cmd)
     if rc:
         raise RuntimeError(f"Failed to run command: {cmd}. rc={rc}. output: {output}")
@@ -1906,25 +1914,23 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
-    if graceful_stop:
-        dvs.stop_swss()
-        dvs.stop_syncd()
+    if dvs is not None:
+        if graceful_stop:
+            dvs.stop_swss()
+            dvs.stop_syncd()
 
-    dvs.get_logs()
-    dvs.destroy()
+        dvs.get_logs()
+        dvs.destroy()
 
-    if dvs.persistent:
-        dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
-        dvs.ctn_restart()
+        if dvs.persistent:
+            dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
+            dvs.ctn_restart()
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     dvs_env = getattr(request.module, "DVS_ENV", [])
     global NUM_PORTS
-    if getattr(request.module, "NUM_PORTS", None):
-        NUM_PORTS = getattr(request.module, "NUM_PORTS")
-    else:
-        NUM_PORTS = request.config.getoption("--num-ports")
+    NUM_PORTS = getattr(request.module, "NUM_PORTS", request.config.getoption("--num-ports"))
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 

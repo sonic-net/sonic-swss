@@ -4,7 +4,7 @@ FIXME:
     - Reference DBs by name rather than ID/socket
     - Add support for ProducerStateTable
 """
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from swsscommon import swsscommon
 from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig
@@ -28,10 +28,6 @@ class DVSDatabase:
     def separator(self) -> str:
         """Get DB separator."""
         return self._separator
-
-    def set_up_zmq_connection(self, zmq_sock: str, db_name: str = "APPL_DB"):
-        self.zmq = swsscommon.ZmqClient("ipc://" + zmq_sock, 5000)
-        self.zmq_db = swsscommon.DBConnector(db_name, 0)
 
     def create_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Add the mapping {`key` -> `entry`} to the specified table.
@@ -212,28 +208,6 @@ class DVSDatabase:
             assert not polling_config.strict, message
 
         return result
-
-
-    def set_zmq_entry(
-        self, table_name: str, key: str, entry: Dict[str, str]
-    ) -> Tuple[str, List[Tuple[str, str]]]:
-        fvs = swsscommon.FieldValuePairs(list(entry.items()))
-        zmq_tbl = swsscommon.ZmqProducerStateTable(self.zmq_db, table_name, self.zmq)
-        zmq_tbl.set(key, fvs)
-        time.sleep(0.2)
-        kcos = swsscommon.zmqWait(zmq_tbl)
-        assert len(kcos) == 1
-        return kcos[0]
-
-    def remove_zmq_entry(
-        self, table_name: str, key: str
-    ) -> Tuple[str, List[Tuple[str, str]]]:
-        zmq_tbl = swsscommon.ZmqProducerStateTable(self.zmq_db, table_name, self.zmq)
-        zmq_tbl.delete(key)
-        time.sleep(0.2)
-        kcos = swsscommon.zmqWait(zmq_tbl)
-        assert len(kcos) == 1
-        return kcos[0]
 
     def wait_for_field_match(
         self,
