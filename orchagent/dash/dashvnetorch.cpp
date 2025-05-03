@@ -197,7 +197,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             {
                 vnet_ctxt.clear();
             }
-
+            vnet_ctxt.vnet_name = key;
             if (op == SET_COMMAND)
             {
                 if (!parsePbMessage(kfvFieldsValues(tuple), vnet_ctxt.metadata))
