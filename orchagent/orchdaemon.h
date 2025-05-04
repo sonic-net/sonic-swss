@@ -54,6 +54,7 @@
 #include "dash/dashrouteorch.h"
 #include "dash/dashtunnelorch.h"
 #include "dash/dashvnetorch.h"
+#include "dash/dashmeterorch.h"
 #include <sairedis.h>
 
 using namespace swss;
@@ -104,7 +105,7 @@ public:
 
     std::thread ring_thread;
 
-private:
+protected:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
@@ -136,4 +137,14 @@ private:
     DBConnector *m_configDb;
 };
 
+
+class DpuOrchDaemon : public OrchDaemon
+{
+public:
+    DpuOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
+    bool init() override;
+private:
+    DBConnector *m_dpu_appDb;
+    DBConnector *m_dpu_appstateDb;
+};
 #endif /* SWSS_ORCHDAEMON_H */
