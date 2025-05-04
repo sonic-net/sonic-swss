@@ -2,7 +2,7 @@ import pytest
 from requests import request
 import time
 from swsscommon import swsscommon
-from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_common import PollingConfig, wait_for_result
 import pdb
 import json
 
@@ -56,45 +56,35 @@ class TestInnerSrcMacRewriteAclTable:
     def remove_acl_rule(self, dvs, table_name, rule_name):
         tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         tbl._del(table_name + "|" + rule_name)
-    
-    def validate_asic_acl_entries(self, asic_db, rule_id, expected_qualifier):
+
+    def validate_asic_acl_entries(self, dvs_acl, asic_db, rule_id, expected_qualifier, update=False):
         def _access_function():
             false_ret = (False, '')
-            keys = asic_db.get_keys(ASIC_STATE_ACL)
-            rule_entry_exists = False
-            for k in keys:
-                if k == rule_id:
-                    rule_entry_exists = True
-                    key = k
-            
-            if rule_entry_exists == False:
-                return false_ret
 
+            if update == False:
+                key = rule_id     
+            else:
+                keys = asic_db.get_keys(ASIC_STATE_ACL)
+                for k in keys:
+                    if k == rule_id:
+                        return false_ret
+                    
+                key = dvs_acl.get_acl_rule_id()
+                
             fvs = asic_db.get_entry(ASIC_STATE_ACL, key)
             if not fvs:
                 return false_ret
 
-            inner_src_ip = fvs.get("SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP")
-            if inner_src_ip != expected_qualifier.get("SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP"):
-                return false_ret
+            for qualifer in expected_qualifier:
+                if qualifer not in fvs:
+                    return false_ret
 
-            tunnel_vni = fvs.get("SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI")
-            if tunnel_vni != expected_qualifier.get("SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI"):
-                return false_ret
+                if fvs[qualifer] != expected_qualifier[qualifer]:
+                    return false_ret
 
-            priority = fvs.get("SAI_ACL_ENTRY_ATTR_PRIORITY")
-            if priority != expected_qualifier.get("SAI_ACL_ENTRY_ATTR_PRIORITY"):
-                return false_ret
-
-            action = fvs.get("SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC")
-            if action != expected_qualifier.get("SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC"):
-                return false_ret
-
-            return (True, rule_id)
-
-        _, result = wait_for_result(_access_function,
-           failure_message="Inner-src-mac-rewrite ACL entry not found")
-        return result
+            return (True, key)
+        val, result = wait_for_result(_access_function, polling_config = PollingConfig(polling_interval=1, timeout=1.0, strict=True),
+           failure_message="Inner-src-mac-rewrite ACL rule not updated")
 
     def update_acl_rule(self, dvs, table_name, rule_name, qualifier):
         table = swsscommon.Table(self.cdb, "ACL_RULE")
@@ -127,35 +117,24 @@ class TestInnerSrcMacRewriteAclTable:
     def test_InnerSrcMacRewriteAclRuleCreationDeletion(self, dvs, dvs_acl, innersrcmacrewrite_acl_table):
 
         # This test checks for ACL rule creation(more than one) deletion for the table type inner src mac rewrite
-
         self.setup_db(dvs)
-        # Add the rule
+
+        # Add the first rule and verify status in STATE_DB
         config_qualifiers = {"INNER_SRC_IP": "10.10.10.10/32", "TUNNEL_VNI": "5000"}
         self.create_acl_rule(dvs, TABLE_NAME, RULE_NAME, config_qualifiers, priority="1000", action="60:BB:AA:C3:3E:AB")
         dvs_acl.verify_acl_rule_status(TABLE_NAME, RULE_NAME, "Active")
 
-        # SAI entries for the rule creation
-        expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "10.10.10.10&mask:255.255.255.255",
-            "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI": "5000&mask:0xffffffff",
-            "SAI_ACL_ENTRY_ATTR_PRIORITY":"1000",
-            "SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC":"60:BB:AA:C3:3E:AB"}
-
-        # Verify the first rule with SAI entries
-        self.validate_asic_acl_entries(dvs_acl.asic_db, dvs_acl.get_acl_rule_id(), expected_sai_qualifiers)
-
-        # Add second rule
-        config_qualifiers = {"INNER_SRC_IP": "10.10.10.10/32", "TUNNEL_VNI": "5000"}
+        # Add second rule and verify status in STATE_DB
+        config_qualifiers = {"INNER_SRC_IP": "9.9.9.9/30", "TUNNEL_VNI": "5000"}
         self.create_acl_rule(dvs, TABLE_NAME, RULE_NAME+"2", config_qualifiers, priority="9990", action="AB:BB:AA:C3:3E:AB")
-        dvs_acl.verify_acl_rule_status(TABLE_NAME, RULE_NAME, "Active")
-
-        # Verify the rule2 status in ASIC_DB
-        members = dvs_acl.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 2)
-
-        # Remove first rule and check status in ASIC_DB
+        dvs_acl.verify_acl_rule_status(TABLE_NAME, RULE_NAME+"2", "Active")
+        
+        # Remove first rule and check status in STATE_DB
         self.remove_acl_rule(dvs, TABLE_NAME, RULE_NAME)
         dvs_acl.verify_acl_rule_status(TABLE_NAME, RULE_NAME, None)
+        dvs_acl.verify_acl_rule_status(TABLE_NAME, RULE_NAME+"2", "Active")
 
-        # Remove second rule and check status in ASIC_DB
+        # Remove second rule and check status in STATE_DB
         self.remove_acl_rule(dvs, TABLE_NAME, RULE_NAME+"2")
         dvs_acl.verify_acl_rule_status(TABLE_NAME, RULE_NAME+"2", None)
 
@@ -173,6 +152,7 @@ class TestInnerSrcMacRewriteAclTable:
             config_qualifiers = {"INNER_SRC_IP": "10.10.10.10/32", "TUNNEL_VNI": "4000"}
             self.create_acl_rule(dvs, TABLE_NAME, RULE_NAME, config_qualifiers, priority="1001", action="66:BB:AA:C3:3E:AB")
             dvs_acl.verify_acl_rule_status(TABLE_NAME, RULE_NAME, "Active")
+            rule_id = dvs_acl.get_acl_rule_id()
 
             # SAI entries for the rule creation
             new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "10.10.10.10&mask:255.255.255.255",
@@ -181,58 +161,49 @@ class TestInnerSrcMacRewriteAclTable:
                                         "SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC": "66:BB:AA:C3:3E:AB"} 
 
             # Verify the rule with SAI entries
-            self.validate_asic_acl_entries(dvs_acl.asic_db, dvs_acl.get_acl_rule_id(), new_expected_sai_qualifiers)
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id, new_expected_sai_qualifiers)
             
             # Verify the rule with counter id to be present in ASIC DB
             counter_id = dvs_acl.get_acl_counter_oid()
             assert counter_id in dvs_acl.get_acl_counter_ids(1)
             
             # Update the rule with inner src ip
-            self.update_acl_rule(dvs, TABLE_NAME, RULE_NAME, {"INNER_SRC_IP": "15.15.15.11/20"})
+            self.update_acl_rule(dvs, TABLE_NAME, RULE_NAME, {"INNER_SRC_IP": "15.15.15.15/20"})
 
-            # Expected SAI entries for the rule update 1 
-            new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "15.15.15.11&mask:255.255.240.0",
-                                         "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI": "4000&mask:0xffffffff",
-                                         "SAI_ACL_ENTRY_ATTR_PRIORITY": "1001",
-                                         "SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC": "66:BB:AA:C3:3E:AB"} 
-    
-            # Verify the rule update of inner src ip with SAI entries
-            time.sleep(1)
-            self.validate_asic_acl_entries(dvs_acl.asic_db, dvs_acl.get_acl_rule_id(), new_expected_sai_qualifiers)
+            # Expected SAI entries for the rule update #1 
+            new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "15.15.15.15&mask:255.255.240.0"}
+
+            # Verify the rule id and SAI entries are updated in ASIC DB
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id, new_expected_sai_qualifiers, True)
         
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_2 = dvs_acl.get_acl_counter_oid()
+            rule_id_2 = dvs_acl.get_acl_rule_id()
             assert counter_id_2 in dvs_acl.get_acl_counter_ids(1)
 
-            # Update the rule with tunnel vni 
-            self.update_acl_rule(dvs, TABLE_NAME, RULE_NAME, {"TUNNEL_VNI": "111"} )
+            # Update the rule with tunnel vni and inner src ip
+            self.update_acl_rule(dvs, TABLE_NAME, RULE_NAME, {"TUNNEL_VNI": "111", "INNER_SRC_IP": "20.20.20.20/20"} )
 
-            # Expected SAI entries for the rule update 1 
-            new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "15.15.15.11&mask:255.255.240.0",
-                                         "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI": "111&mask:0xffffffff",
-                                         "SAI_ACL_ENTRY_ATTR_PRIORITY": "1001",
-                                         "SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC": "66:BB:AA:C3:3E:AB"} 
+            # Expected SAI entries for the rule update #2 
+            new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "20.20.20.20&mask:255.255.240.0",
+                                         "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI": "111&mask:0xffffffff"} 
 
-            # Verify the rule update of tunnel vni with SAI entries
-            time.sleep(1)
-            self.validate_asic_acl_entries(dvs_acl.asic_db, dvs_acl.get_acl_rule_id(), new_expected_sai_qualifiers)
+            # Verify the rule id and SAI entries are updated in ASIC DB 
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id_2, new_expected_sai_qualifiers, True)
 
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_3 = dvs_acl.get_acl_counter_oid()
+            rule_id_3 = dvs_acl.get_acl_rule_id()
             assert counter_id_3 in dvs_acl.get_acl_counter_ids(1)
 
             # Update the rule with action
             self.update_acl_rule(dvs, TABLE_NAME, RULE_NAME, {"INNER_SRC_MAC_REWRITE_ACTION": "11:BB:AA:C3:3E:AB"} )
 
-            # Expected SAI entries for the rule update 3
-            new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "15.15.15.11&mask:255.255.240.0",
-                                         "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI": "111&mask:0xffffffff",
-                                         "SAI_ACL_ENTRY_ATTR_PRIORITY": "1001",
-                                         "SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC": "11:BB:AA:C3:3E:AB"} 
+            # Expected SAI entries for the rule update #3
+            new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC": "11:BB:AA:C3:3E:AB"} 
 
-            # Verify the rule update of action with SAI entries
-            time.sleep(1)
-            self.validate_asic_acl_entries(dvs_acl.asic_db, dvs_acl.get_acl_rule_id(), new_expected_sai_qualifiers)
+            # Verify the rule id and SAI entries are updated in ASIC DB
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id_3, new_expected_sai_qualifiers, True)
 
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_4= dvs_acl.get_acl_counter_oid()
