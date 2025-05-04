@@ -29,6 +29,7 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+#include <QuickTrace/QtFmtGeneric.h>
 
 using namespace std;
 using namespace swss;
@@ -344,6 +345,8 @@ int main(int argc, char **argv)
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
+
+    QuickTrace::initialize( "myQuicktraceFile.qt" );
 
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
