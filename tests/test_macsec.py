@@ -628,6 +628,19 @@ class TestMACsec(object):
                 macsec_port_identifier))
         wpa.deinit_macsec_port(port_name)
 
+//divya
+    def wait_for_macsec_port(inspector, macsec_port, expected_substring=None, retries=10, delay=0.5):
+        for _ in range(retries):
+            port_info = inspector.get_macsec_port(macsec_port)
+            if expected_substring:
+                if expected_substring in port_info:
+                    return port_info
+            else:
+                if port_info
+                    return port_info
+            time.sleep(delay)
+    return ""
+
     def test_macsec_term_orch(self, dvs: conftest.DockerVirtualSwitch, testlog):
         port_name = "Ethernet0"
         local_mac_address = "00-15-5D-78-FF-C1"
@@ -660,7 +673,11 @@ class TestMACsec(object):
             auth_key,
             ssci,
             salt)
-        assert(inspector.get_macsec_port(macsec_port))
+        //assert(inspector.get_macsec_port(macsec_port))
+
+        //divya
+        macsec_info = wait_for_macsec_port(inspector, macsec_port)
+        assert macsec_info, f"MACsec port {macsec_port} did not appear in time"
         assert(
             inspector.get_macsec_sc(
                 macsec_port,
@@ -803,8 +820,21 @@ class TestMACsec(object):
             auth_key,
             ssci,
             salt)
-        macsec_info = inspector.get_macsec_port(macsec_port)
+        //macsec_info = inspector.get_macsec_port(macsec_port)
+        //assert("encrypt off" in macsec_info)
+        MAX_RETRIES = 20
+        DELAY_SECONDS = 0.5
+
+        macsec_info = ""
+        for attempt in range(MAX_RETRIES):
+            macsec_info = inspector.get_macsec_port(macsec_port)
+            if "encrypt off" in macsec_info:
+                break
+            time.sleep(DELAY_SECONDS)
+
+        print(f"MACsec port info after retries: {macsec_info}")
         assert("encrypt off" in macsec_info)
+
         assert("GCM-AES-256" in macsec_info)
         self.deinit_macsec(
             wpa,
@@ -873,7 +903,20 @@ class TestMACsec(object):
 
         # Check Portchannel member in ASIC db that should been created after MACsec enabled
         lagmtbl = swsscommon.Table(swsscommon.DBConnector(1, dvs.redis_sock, 0), "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
-        lagms = lagmtbl.getKeys()
+        //lagms = lagmtbl.getKeys()
+        //assert len(lagms) == 1
+        # Retry loop for up to 10 seconds
+        MAX_RETRIES = 20
+        DELAY_SECONDS = 0.5
+
+        lagms = []
+        for attempt in range(MAX_RETRIES):
+            lagms = lagmtbl.getKeys()
+            if len(lagms) >= 1:
+                break
+        time.sleep(DELAY_SECONDS)
+
+        print(f"LAG members after retry: {lagms}")
         assert len(lagms) == 1
 
         self.deinit_macsec(

@@ -42,14 +42,6 @@ NUM_PORTS = 32
 FABRIC_NUM_PORTS = 16
 
 def ensure_system(cmd):
-    # Check if this is the symlink creation command and pre-clean the target
-    if cmd.startswith("ln -s"):
-        parts = cmd.split()
-        if len(parts) == 4:
-            target = parts[3]  # e.g., /var/run/redis/redis.sock
-            if os.path.exists(target) or os.path.islink(target):
-                os.unlink(target)
-
     rc, output = subprocess.getstatusoutput(cmd)
     if rc:
         raise RuntimeError(f"Failed to run command: {cmd}. rc={rc}. output: {output}")
@@ -437,7 +429,7 @@ class DockerVirtualSwitch:
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
         self.zmq_sock = os.path.join(self.zmq_mount, "zmq_swss_ep")
         ensure_system(f"rm -rf /var/run/redis/redis.sock")
-        ensure_system(f"ln -s {self.redis_sock} /var/run/redis/redis.sock")
+        ensure_system(f"ln -sf {self.redis_sock} /var/run/redis/redis.sock")
 
         self.reset_dbs()
 
@@ -1914,23 +1906,25 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
-    if dvs is not None:
-        if graceful_stop:
-            dvs.stop_swss()
-            dvs.stop_syncd()
+    if graceful_stop:
+        dvs.stop_swss()
+        dvs.stop_syncd()
 
-        dvs.get_logs()
-        dvs.destroy()
+    dvs.get_logs()
+    dvs.destroy()
 
-        if dvs.persistent:
-            dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
-            dvs.ctn_restart()
+    if dvs.persistent:
+        dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
+        dvs.ctn_restart()
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     dvs_env = getattr(request.module, "DVS_ENV", [])
     global NUM_PORTS
-    NUM_PORTS = getattr(request.module, "NUM_PORTS", request.config.getoption("--num-ports"))
+    if getattr(request.module, "NUM_PORTS", None):
+        NUM_PORTS = getattr(request.module, "NUM_PORTS")
+    else:
+        NUM_PORTS = request.config.getoption("--num-ports")
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 
