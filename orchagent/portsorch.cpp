@@ -823,6 +823,21 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         removeDefaultBridgePorts();
     }
 
+    // Enable fdb event notifications after all ports are removed from default 1Q bridge
+    // If fdb entry is learnt before this point, reference count will be incremented and
+    // the port will not be removed from the bridge
+    if (gMySwitchType != "dpu")
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+        attr.value.ptr = (void *)on_fdb_event;
+        if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY attribute");
+            throw runtime_error("PortsOrch initialization failure (failed to set fdb event notify)");
+        }
+    }
+
     /* Add port oper status notification support */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
