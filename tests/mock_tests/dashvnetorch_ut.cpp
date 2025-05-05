@@ -119,7 +119,6 @@ namespace dashvnetorch_test
     {
         AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
-        AddVnetMap();
         std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
         int expectedUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION);
         EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries)
