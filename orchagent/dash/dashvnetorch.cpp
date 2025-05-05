@@ -382,6 +382,12 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 
+    if (ctxt.metadata.has_metering_class_or()) {
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_METER_CLASS_OR;
+        outbound_ca_to_pa_attr.value.u32 = ctxt.metadata.metering_class_or();
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    }
+
     if (ctxt.metadata.has_mac_address())
     {
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;

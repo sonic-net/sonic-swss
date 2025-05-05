@@ -708,7 +708,8 @@ class TestAcl:
     def test_AclRuleIcmpV6(self, dvs_acl, l3v6_acl_table):
         config_qualifiers = {
             "ICMPV6_TYPE": "8",
-            "ICMPV6_CODE": "9"
+            "ICMPV6_CODE": "9",
+            "PACKET_ACTION": "FORWARD"
         }
 
         expected_sai_qualifiers = {
