@@ -262,7 +262,7 @@ void Srv6Orch::setCountersState(bool enable)
         return;
     }
 
-    SWSS_LOG_INFO("Setting SRv6 MySID counters state to %s", enable ? "enabled" : "disabled");
+    SWSS_LOG_NOTICE("Setting SRv6 MySID counters state to %s", enable ? "enabled" : "disabled");
 
     for (auto& mysid : srv6_my_sid_table_)
     {
