@@ -366,7 +366,7 @@ int main(int argc, char **argv)
     string record_location = Recorder::DEFAULT_DIR;
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
-    string zmq_server_address = ZMQ_DEFAULT_ADDRESS;
+    string zmq_server_address = "";
     string vrf;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
@@ -532,10 +532,13 @@ int main(int argc, char **argv)
 
     // Instantiate ZMQ server
     shared_ptr<ZmqServer> zmq_server = nullptr;
-    if (std::regex_search(zmq_server_address, ZMQ_ADDRESS_WITH_PORT))
+    if (zmq_server_address.empty())
+    {
+        SWSS_LOG_NOTICE("ZMQ disabled");
+    }
+    else if (std::regex_search(zmq_server_address, ZMQ_ADDRESS_WITH_PORT))
     {
         // TODO: remove this code block after orchagent.sh migrate to pass ZMQ address without port
-        // for backword compatibility, when pass ZMQ server address with port, enable ZMQ with Dash tables
         SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
         zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
     }
