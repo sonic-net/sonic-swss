@@ -2147,7 +2147,7 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
                         aclTableName + "|" + aclRuleName,
                         SET_COMMAND,
                         {
-                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
+                            { MATCH_INNER_SRC_IP, "1.1.1." },
                             { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
                         }
                     }
@@ -2155,8 +2155,26 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
             )
         );
 
-        // Missing VNI is not supported on this table
-        ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
+        // Invalid Inner src ip not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "BB:CC:DD:44:66" }
+                        }
+                    }
+                }
+            )
+        );
+
+        // Invalid mac address not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
 
         orch->doAclRuleTask(
             deque<KeyOpFieldsValuesTuple>(
@@ -2199,14 +2217,14 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         // First Update, 2 matches and 1 action added to the rule
         auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, aclRuleName, aclTableName);
         ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
-        ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2/24"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2"));
         ASSERT_FALSE(rule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
         ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
         ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
 
         ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, aclTableName));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.255");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
 
@@ -2223,6 +2241,8 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
         ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
+
+        // SRC IP SAI attribute is updated even though the match is not validated
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.13.12.12&mask:255.255.255.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.248.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
