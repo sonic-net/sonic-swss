@@ -131,7 +131,7 @@ bool DashVnetOrch::removeVnet(const string& vnet_name, DashVnetBulkContext& ctxt
 bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
-    if (!removePaValidationPost(vnet_name, ctxt))
+    if (!ctxt.pa_validation_statuses.empty() && !removePaValidationPost(vnet_name, ctxt))
     {
         return false;
     }
