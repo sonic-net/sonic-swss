@@ -5,6 +5,7 @@
 #include "mock_table.h"
 #define private public
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/fpmlink.h"
 #undef private
 
 #include <arpa/inet.h>
@@ -17,6 +18,7 @@
 
 using namespace swss;
 using namespace testing;
+using namespace ut_fpmsyncd;
 
 #define MAX_PAYLOAD 1024
 
@@ -905,4 +907,204 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
     }
 
     rtnl_route_put(test_route);
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnSrv6VpnRouteMsg_Add_Multi)
+{
+    cout << "[UT Debug] TestOnSrv6VpnRouteMsg_Add_Multi begins" << endl;
+    std::string dst_prefix = "2001:db8::/64";
+    std::string encap_src = "2001:db8::1";
+    std::string vpn_sid = "2001:db8::2";
+    uint16_t vrf_table_id = 100;
+    uint32_t pic_id = 67;
+    uint32_t nhg_id = 12;
+
+    // Create IpAddress and IpPrefix Object
+    IpAddress _encap_src_obj = IpAddress(encap_src);
+    IpAddress _vpn_sid_obj = IpAddress(vpn_sid);
+    IpPrefix _dst_obj = IpPrefix(dst_prefix);
+
+    // Create Srv6 Vpn route netlink msg
+    struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(
+        RTM_NEWSRV6VPNROUTE,
+        &_dst_obj,
+        &_encap_src_obj,
+        &_vpn_sid_obj,
+        vrf_table_id,
+        64,
+        AF_INET6,
+        RTN_UNICAST,
+        nhg_id,
+        pic_id);
+    if (!nl_obj) {
+        ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+        return;
+    }
+
+    // Mock using getIfName to return vrfname
+    EXPECT_CALL(m_mockRouteSync, getIfName(vrf_table_id, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Vrf100", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    // Construct PIC Group
+    NextHopGroup pic_group(pic_id, encap_src, "sr0");
+    pic_group.vpn_sid = vpn_sid;
+    pic_group.seg_src = encap_src;
+    m_mockRouteSync.m_nh_groups.insert({pic_id, pic_group});
+
+    // Construct NHG
+    vector<pair<uint32_t, uint8_t>> nhg_data;
+    nhg_data.push_back(make_pair(1, 1));
+    NextHopGroup nh_group(nhg_id, nhg_data);
+    nh_group.nexthop = "fe80::1";
+    nh_group.intf = "eth0";
+    m_mockRouteSync.m_nh_groups.insert({nhg_id, nh_group});
+
+    // Call the target function
+    m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj->n, nl_obj->n.nlmsg_len);
+
+    // Check whether use the m_routeTable.set
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+    std::vector<FieldValueTuple> fvs;
+    std::string key = "Vrf100:" + dst_prefix;
+
+    //EXPECT_TRUE(route_table.get(key, fvs));
+    bool found = route_table.get(key, fvs);
+    std::cout << "[UT Debug] Route table get(" << key << ") returned: "
+              << (found ? "true" : "false") << std::endl;
+
+    EXPECT_TRUE(found);
+
+    /* Print the fvs */
+    for (const auto& fv : fvs) {
+        std::cout << "Field: " << fvField(fv) << ", Value: " << fvValue(fv) << std::endl;
+    }
+
+    for (const auto& fv : fvs) {
+        if (fvField(fv) == "pic_context_id") {
+            EXPECT_EQ(fvValue(fv), "67");
+        } else if (fvField(fv) == "nexthop_group") {
+            EXPECT_EQ(fvValue(fv), "12");
+        }
+    }
+
+    // Check whether use the m_nexthop_groupTable.set
+    Table nhg_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
+    std::vector<FieldValueTuple> fvs_nhg;
+    std::string key_nhg = m_mockRouteSync.getNextHopGroupKeyAsString(nhg_id);
+
+    bool found_nhg = nhg_table.get(key_nhg.c_str(), fvs_nhg);
+    std::cout << "[UT Debug] NHG table get (" << key_nhg << ") returned: "
+              << (found_nhg ? "true" : "false") << std::endl;
+
+    EXPECT_TRUE(found_nhg);
+
+    /* Print the fvs_nhg*/
+    for (const auto& fv_nhg : fvs_nhg) {
+        std::cout << "Field: " << fvField(fv_nhg) << ", Value: " << fvValue(fv_nhg) << std::endl;
+    }
+
+    for (const auto& fv_nhg : fvs_nhg) {
+        if (fvField(fv_nhg) == "seg_src") {
+            EXPECT_EQ(fvValue(fv_nhg), "2001:db8::1");
+        }
+    }
+
+    // Free the memory
+    free(nl_obj);
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnSrv6VpnRouteMsg_Add_Single)
+{
+    cout << "[UT Debug] TestOnSrv6VpnRouteMsg_Add_Single begins" << endl;
+    std::string dst_prefix = "2001:db8:1::/64";
+    std::string encap_src = "2001:db8:1::1";
+    std::string vpn_sid = "2001:db8:1::2";
+    uint16_t vrf_table_id = 101;
+    uint32_t pic_id = 89;
+    uint32_t nhg_id = 34;
+
+    /* Create IpAddress and IpPrefix Object */
+    IpAddress _encap_src_obj = IpAddress(encap_src);
+    IpAddress _vpn_sid_obj = IpAddress(vpn_sid);
+    IpPrefix _dst_obj = IpPrefix(dst_prefix);
+
+    /* Create Srv6 Vpn route netlink msg */
+    struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(
+        RTM_NEWSRV6VPNROUTE,
+        &_dst_obj,
+        &_encap_src_obj,
+        &_vpn_sid_obj,
+        vrf_table_id,
+        64,
+        AF_INET6,
+        RTN_UNICAST,
+        nhg_id,
+        pic_id);
+    if (!nl_obj) {
+        ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+        return;
+    }
+
+    /* Mock using getIfName to return vrfname */
+    EXPECT_CALL(m_mockRouteSync, getIfName(vrf_table_id, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Vrf101", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+        /* Construct PIC Group */
+        NextHopGroup pic_group(pic_id, encap_src, "sr0");
+        pic_group.vpn_sid = vpn_sid;
+        pic_group.seg_src = encap_src;
+        m_mockRouteSync.m_nh_groups.insert({pic_id, pic_group});
+
+        /* Construct NHG with no group */
+        NextHopGroup nh_group(nhg_id, "fe80::2", "eth1");
+        nh_group.nexthop = "fe80::2";
+        nh_group.intf = "eth1";
+        m_mockRouteSync.m_nh_groups.insert({nhg_id, nh_group});
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj->n, nl_obj->n.nlmsg_len);
+
+        /* Check whether use the m_routeTable.set */
+        Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+        std::vector<FieldValueTuple> fvs;
+        std::string key = "Vrf101:" + dst_prefix;
+
+        //EXPECT_TRUE(route_table.get(key, fvs));
+        bool found = route_table.get(key, fvs);
+        std::cout << "[UT Debug] Route table get(" << key << ") returned: "
+                  << (found ? "true" : "false") << std::endl;
+
+        EXPECT_TRUE(found);
+
+        /* Print the fvs */
+        for (const auto& fv : fvs) {
+            std::cout << "Field: " << fvField(fv) << ", Value: " << fvValue(fv) << std::endl;
+        }
+
+        for (const auto& fv : fvs) {
+            if (fvField(fv) == "nexthop") {
+                EXPECT_EQ(fvValue(fv), "2001:db8:1::1");
+            } else if (fvField(fv) == "vpn_sid") {
+                EXPECT_EQ(fvValue(fv), "2001:db8:1::2");
+            } else if (fvField(fv) == "seg_src") {
+                EXPECT_EQ(fvValue(fv), "2001:db8:1::1");
+            } else if (fvField(fv) == "ifname") {
+                EXPECT_EQ(fvValue(fv), "eth1");
+            }
+        }
+
+        /* Free the memory */
+        free(nl_obj);
 }
