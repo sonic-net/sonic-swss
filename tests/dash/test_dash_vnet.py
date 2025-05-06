@@ -162,6 +162,7 @@ class TestDash(TestFlexCountersBase):
         self.mac_address = "F4:93:9F:EF:C4:7E"
         self.routing_type = "vnet_encap"
         self.underlay_ip = "101.1.2.3"
+        self.vnet_map_metering_class_or = "222"
         route_type_msg = RouteType()
         route_action = RouteTypeItem()
         route_action.action_name = "action1"
@@ -172,6 +173,7 @@ class TestDash(TestFlexCountersBase):
         pb = VnetMapping()
         pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
+        pb.metering_class_or = int(self.vnet_map_metering_class_or)
         pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
         pb.use_dst_vni = False
 
@@ -183,6 +185,7 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP", attrs, self.underlay_ip)
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC", attrs, self.mac_address)
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION", attrs, "SAI_DASH_ENCAPSULATION_NVGRE")
+        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_METER_CLASS_OR", attrs, self.vnet_map_metering_class_or)
 
         vnet_pa_validation_maps = dash_db.wait_for_asic_db_keys(ASIC_PA_VALIDATION_TABLE)
         pa_validation_attrs = dash_db.get_asic_db_entry(ASIC_PA_VALIDATION_TABLE, vnet_pa_validation_maps[0])
@@ -199,10 +202,14 @@ class TestDash(TestFlexCountersBase):
         self.ip = "10.1.0.0/24"
         self.action_type = "vnet_direct"
         self.overlay_ip = "10.0.0.6"
+        self.outbound_metering_class_or = "333"
+        self.outbound_metering_class_and = "369"
         pb = Route()
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
         pb.vnet_direct.vnet = self.vnet
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
+        pb.metering_class_or = int(self.outbound_metering_class_or)
+        pb.metering_class_and = int(self.outbound_metering_class_and)
         dash_db.create_route(self.group_id, self.ip, {"pb": pb.SerializeToString()})
 
         outbound_routing_entries = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_ROUTING_TABLE)
@@ -210,6 +217,8 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION", routing_attrs, "SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT")
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP", routing_attrs, self.overlay_ip)
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID", routing_attrs)
+        assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR", routing_attrs, self.outbound_metering_class_or)
+        assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND", routing_attrs, self.outbound_metering_class_and)
 
     def test_outbound_routing_dependency(self, dash_db: DashDB):
         vnet = "Vnet2"
@@ -269,17 +278,23 @@ class TestDash(TestFlexCountersBase):
         self.pa_validation = "true"
         self.priority = "1"
         self.protocol = "0"
+        self.inbound_metering_class_or = "444"
+        self.inbound_metering_class_and = "468"
         pb = RouteRule()
         pb.pa_validation = True
         pb.priority = int(self.priority)
         pb.protocol = int(self.protocol)
         pb.vnet = self.vnet
+        pb.metering_class_or = int(self.inbound_metering_class_or)
+        pb.metering_class_and = int(self.inbound_metering_class_and)
 
         dash_db.create_inbound_routing(self.mac_string, self.vni, self.ip, {"pb": pb.SerializeToString()})
 
         inbound_routing_entries = dash_db.wait_for_asic_db_keys(ASIC_INBOUND_ROUTING_TABLE)
         attrs = dash_db.get_asic_db_entry(ASIC_INBOUND_ROUTING_TABLE, inbound_routing_entries[0])
         assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION", attrs, "SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE")
+        assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR", attrs, self.inbound_metering_class_or)
+        assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND", attrs, self.inbound_metering_class_and)
 
     def test_cleanup(self, dash_db: DashDB):
         self.vnet = "Vnet1"

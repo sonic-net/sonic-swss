@@ -549,13 +549,6 @@ int main(int argc, char **argv)
     attr.value.booldata = true;
     attrs.push_back(attr);
 
-    if (gMySwitchType != "dpu")
-    {
-        attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
-        attr.value.ptr = (void *)on_fdb_event;
-        attrs.push_back(attr);
-    }
-
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
     attr.value.ptr = (void *)on_port_state_change;
     attrs.push_back(attr);
