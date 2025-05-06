@@ -8,6 +8,7 @@ extern "C" {
 #include <unordered_map>
 #include <map>
 #include <memory>
+#include <regex>
 #include <thread>
 #include <chrono>
 #include <getopt.h>
@@ -65,6 +66,10 @@ extern bool gIsNatSupported;
 
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
+
+const string ZMQ_DEFAULT_ADDRESS = "tcp://127.0.0.1";
+
+const std::regex ZMQ_ADDRESS_WITH_PORT("\\w+:\\/\\/\\w+:\\d+");
 
 string gMySwitchType = "";
 string gMySwitchSubType = "";
@@ -361,9 +366,8 @@ int main(int argc, char **argv)
     string record_location = Recorder::DEFAULT_DIR;
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
-    string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
+    string zmq_server_address = ZMQ_DEFAULT_ADDRESS;
     string vrf;
-    bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
@@ -456,7 +460,6 @@ int main(int argc, char **argv)
             if (optarg)
             {
                 zmq_server_address = optarg;
-                enable_zmq = true;
             }
             break;
         case 't':
@@ -529,14 +532,26 @@ int main(int argc, char **argv)
 
     // Instantiate ZMQ server
     shared_ptr<ZmqServer> zmq_server = nullptr;
-    if (enable_zmq)
+    if (std::regex_search(zmq_server_address, ZMQ_ADDRESS_WITH_PORT))
     {
+        // TODO: remove this code block after orchagent.sh migrate to pass ZMQ address without port
+        // for backword compatibility, when pass ZMQ server address with port, enable ZMQ with Dash tables
         SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
         zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
     }
     else
     {
-        SWSS_LOG_NOTICE("ZMQ disabled");
+        int port = ORCH_ZMQ_PORT;
+        if (const char* nsid = std::getenv("NAMESPACE_ID"))
+        {
+            // namespace start from 0, using original ZMQ port for global namespace
+            port += atoi(nsid) + 1;
+        }
+
+        string address = zmq_server_address + ":" + to_string(port);
+
+        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", address.c_str(), vrf.c_str());
+        zmq_server = make_shared<ZmqServer>(address.c_str(), vrf.c_str());
     }
 
     // Get switch_type
