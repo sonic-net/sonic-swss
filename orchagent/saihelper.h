@@ -56,3 +56,6 @@ void stopFlexCounterPolling(sai_object_id_t switch_oid,
                             const std::string &key);
 
 std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t);
+void writeResultToDB(const std::unique_ptr<swss::Table>&, const std::string& key,
+                     uint32_t res, const std::string& version="");
+void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const std::string& key);

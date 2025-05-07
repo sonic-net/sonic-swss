@@ -198,8 +198,7 @@ void IntfMgr::addLoopbackIntf(const string &alias)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link add " << alias << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy && ";
-    cmd << IP_CMD << " link set " << alias << " up";
+    cmd << IP_CMD << " link add " << alias << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy";
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
@@ -487,28 +486,43 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
     }
 }
 
-std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
+bool IntfMgr::setIntfAdminStatus(const string &alias, const string &admin_status)
 {
     stringstream cmd;
     string res, cmd_str;
 
+    SWSS_LOG_INFO("intf %s admin_status: %s", alias.c_str(), admin_status.c_str());
+    cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
+    cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
+    if (ret && !isIntfStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
+        SWSS_LOG_WARN("Setting admin_status to %s netdev failed with cmd:%s, rc:%d, error:%s",
+                      alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
+    else if (ret)
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
+    return true;
+}
+
+std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
+{
     if (parent_admin_status == "up" || admin_status == "down")
     {
-        SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), admin_status.c_str());
-        cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
-        cmd_str = cmd.str();
-        int ret = swss::exec(cmd_str, res);
-        if (ret && !isIntfStateOk(alias))
+        try
         {
-            // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
-            SWSS_LOG_WARN("Setting admin_status to %s netdev failed with cmd:%s, rc:%d, error:%s",
-                          alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+            setIntfAdminStatus(alias, admin_status);
+            return admin_status;
         }
-        else if (ret)
+        catch (const std::runtime_error &e)
         {
-            throw runtime_error(cmd_str + " : " + res);
+            SWSS_LOG_NOTICE("Set Host subinterface %s admin_status set failure %s failure. Runtime error: %s", alias.c_str(), admin_status.c_str(), e.what());
+            throw;
         }
-        return admin_status;
     }
     else
     {
@@ -842,6 +856,29 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 addLoopbackIntf(alias);
                 m_loopbackIntfList.insert(alias);
                 SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
+            }
+
+            if (adminStatus.empty())
+            {
+                adminStatus = "up";
+            }
+            else if (adminStatus != "up" && adminStatus != "down")
+            {
+                SWSS_LOG_WARN("Got incorrect value for admin_status as %s for intf %s, defaulting as up", adminStatus.c_str(), alias.c_str());
+                adminStatus = "up";
+            }
+
+            try
+            {
+                if (setIntfAdminStatus(alias, adminStatus))
+                {
+                    FieldValueTuple newAdminFvTuple("admin_status", adminStatus);
+                    data.push_back(newAdminFvTuple);
+                }
+            }
+            catch (const std::runtime_error &e)
+            {
+                SWSS_LOG_WARN("Lo interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
             }
         }
         else

@@ -11,6 +11,7 @@
 #define private public
 #include "pfcactionhandler.h"
 #include "switchorch.h"
+#include "notifications.h"
 #include <sys/mman.h>
 #undef private
 #define private public
@@ -20,6 +21,7 @@
 #include <sstream>
 
 extern redisReply *mockReply;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 using ::testing::_;
 using ::testing::StrictMock;
 
@@ -689,6 +691,12 @@ namespace portsorch_test
             gPortsOrch->doTask(*consumer);
             mockReply = nullptr;
 
+            // Call the orchagent port state change callback method with zmq mode
+            sai_redis_communication_mode_t oldRedisCommunicationMode = gRedisCommunicationMode;
+            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
+            on_port_state_change(1, &port_oper_status);
+            gRedisCommunicationMode = oldRedisCommunicationMode;
+
             gPortsOrch->getPort("Ethernet0", port);
             ASSERT_TRUE(port.m_oper_status == oper_status);
             ASSERT_TRUE(port.m_flap_count == count+1);
@@ -817,7 +825,7 @@ namespace portsorch_test
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }
-            else if (fvField(valueTuple) == "high ber_error_count")
+            else if (fvField(valueTuple) == "high_ber_error_count")
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }
@@ -883,6 +891,7 @@ namespace portsorch_test
                 { "lanes",               lanes.str() },
                 { "speed",               "100000"    },
                 { "autoneg",             "off"       },
+                { "unreliable_los",      "off"       },
                 { "adv_speeds",          "all"       },
                 { "interface_type",      "none"      },
                 { "adv_interface_types", "all"       },
@@ -956,6 +965,7 @@ namespace portsorch_test
             SET_COMMAND, {
                 { "speed",               "100000"            },
                 { "autoneg",             "on"                },
+                { "unreliable_los",      "on"                },
                 { "adv_speeds",          "1000,10000,100000" },
                 { "interface_type",      "CR"                },
                 { "adv_interface_types", "CR,CR2,CR4,CR8"    },
@@ -984,6 +994,9 @@ namespace portsorch_test
 
         // Verify auto-negotiation
         ASSERT_TRUE(p.m_autoneg);
+
+        // Verify unreliablelos
+        ASSERT_TRUE(p.m_unreliable_los);
 
         // Verify advertised speed
         std::set<std::uint32_t> adv_speeds = { 1000, 10000, 100000 };
@@ -1058,23 +1071,24 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvList = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "preemphasis", "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
-                { "idriver",     "0x5,0x3,0x4,0x1"             },
-                { "ipredriver",  "0x1,0x4,0x3,0x5"             },
-                { "pre1",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre2",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre3",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "main",        "0x90,0x92,0x91,0x93"         },
-                { "post1",       "0x10,0x12,0x11,0x13"         },
-                { "post2",       "0x10,0x12,0x11,0x13"         },
-                { "post3",       "0x10,0x12,0x11,0x13"         },
-                { "attn",        "0x80,0x82,0x81,0x83"         },
-                { "ob_m2lp",     "0x4,0x6,0x5,0x7"             },
-                { "ob_alev_out", "0xf,0x11,0x10,0x12"          },
-                { "obplev",      "0x69,0x6b,0x6a,0x6c"         },
-                { "obnlev",      "0x5f,0x61,0x60,0x62"         },
-                { "regn_bfm1p",  "0x1e,0x20,0x1f,0x21"         },
-                { "regn_bfm1n",  "0xaa,0xac,0xab,0xad"         }
+                { "preemphasis",   "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
+                { "idriver",       "0x5,0x3,0x4,0x1"             },
+                { "ipredriver",    "0x1,0x4,0x3,0x5"             },
+                { "pre1",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre2",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre3",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "main",          "0x90,0x92,0x91,0x93"         },
+                { "post1",         "0x10,0x12,0x11,0x13"         },
+                { "post2",         "0x10,0x12,0x11,0x13"         },
+                { "post3",         "0x10,0x12,0x11,0x13"         },
+                { "attn",          "0x80,0x82,0x81,0x83"         },
+                { "unreliable_los","off"                         },
+                { "ob_m2lp",       "0x4,0x6,0x5,0x7"             },
+                { "ob_alev_out",   "0xf,0x11,0x10,0x12"          },
+                { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
+                { "obnlev",        "0x5f,0x61,0x60,0x62"         },
+                { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
+                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         }
             }
         }};
 
@@ -1156,6 +1170,9 @@ namespace portsorch_test
         // Verify regn_bfm1n
         std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
         ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
+
+        // Verify unreliablelos
+        ASSERT_EQ(p.m_unreliable_los, false);
 
         // Dump pending tasks
         std::vector<std::string> taskList;

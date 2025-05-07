@@ -39,9 +39,12 @@ namespace mock_orch_test
     {
     protected:
         std::vector<Orch **> ut_orch_list;
+        std::set<Orch **> global_orch_list;
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
+        shared_ptr<swss::DBConnector> m_dpu_app_db;
+        shared_ptr<swss::DBConnector> m_dpu_app_state_db;
         shared_ptr<swss::DBConnector> m_chassis_app_db;
         MuxOrch *m_MuxOrch;
         MuxCableOrch *m_MuxCableOrch;
@@ -52,6 +55,10 @@ namespace mock_orch_test
         VxlanTunnelOrch *m_VxlanTunnelOrch;
         VNetOrch *m_vnetOrch;
         DashOrch *m_DashOrch;
+        DashVnetOrch *m_dashVnetOrch;
+        DashHaOrch *m_dashHaOrch;
+        DashRouteOrch *m_DashRouteOrch;
+        DashTunnelOrch *m_DashTunnelOrch;
 
         void PrepareSai();
         void SetUp();
@@ -59,5 +66,6 @@ namespace mock_orch_test
         virtual void ApplyInitialConfigs();
         virtual void PostSetUp();
         virtual void PreTearDown();
+        virtual void ApplySaiMock();
     };
 }
