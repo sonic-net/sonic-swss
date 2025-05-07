@@ -178,6 +178,7 @@ class TestInnerSrcMacRewriteAclTable:
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_2 = dvs_acl.get_acl_counter_oid()
             rule_id_2 = dvs_acl.get_acl_rule_id()
+            assert rule_id_2 != rule_id
             assert counter_id_2 in dvs_acl.get_acl_counter_ids(1)
 
             # Update the rule with tunnel vni and inner src ip
@@ -193,6 +194,7 @@ class TestInnerSrcMacRewriteAclTable:
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_3 = dvs_acl.get_acl_counter_oid()
             rule_id_3 = dvs_acl.get_acl_rule_id()
+            assert rule_id_3 != rule_id_2 and rule_id_3 != rule_id
             assert counter_id_3 in dvs_acl.get_acl_counter_ids(1)
 
             # Update the rule with action
