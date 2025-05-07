@@ -83,8 +83,7 @@ class TestInnerSrcMacRewriteAclTable:
                     return false_ret
 
             return (True, key)
-        val, result = wait_for_result(_access_function, polling_config = PollingConfig(polling_interval=1, timeout=1.0, strict=True),
-           failure_message="Inner-src-mac-rewrite ACL rule not updated")
+        val, result = wait_for_result(_access_function, failure_message="Inner-src-mac-rewrite ACL rule not updated")
 
     def update_acl_rule(self, dvs, table_name, rule_name, qualifier):
         table = swsscommon.Table(self.cdb, "ACL_RULE")
