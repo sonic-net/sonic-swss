@@ -37,7 +37,6 @@
 #include "sfloworch.h"
 #include "debugcounterorch.h"
 #include "directory.h"
-#include "natorch.h"
 #include "isolationgrouporch.h"
 #include "mlagorch.h"
 #include "muxorch.h"
@@ -54,6 +53,7 @@
 #include "dash/dashrouteorch.h"
 #include "dash/dashtunnelorch.h"
 #include "dash/dashvnetorch.h"
+#include "dash/dashhaorch.h"
 #include "dash/dashmeterorch.h"
 #include <sairedis.h>
 

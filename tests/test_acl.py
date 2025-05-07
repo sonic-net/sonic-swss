@@ -708,7 +708,8 @@ class TestAcl:
     def test_AclRuleIcmpV6(self, dvs_acl, l3v6_acl_table):
         config_qualifiers = {
             "ICMPV6_TYPE": "8",
-            "ICMPV6_CODE": "9"
+            "ICMPV6_CODE": "9",
+            "PACKET_ACTION": "FORWARD"
         }
 
         expected_sai_qualifiers = {
@@ -717,6 +718,7 @@ class TestAcl:
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        time.sleep(1)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
         # Verify status is written into STATE_DB
         dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")

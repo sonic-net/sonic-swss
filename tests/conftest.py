@@ -306,7 +306,7 @@ class DockerVirtualSwitch:
         self.rtd = ["fpmsyncd", "zebra", "staticd", "mgmtd"]
         self.teamd = ["teamsyncd", "teammgrd"]
         self.natd = ["natsyncd", "natmgrd"]
-        self.alld = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd + self.natd
+        self.alld = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd
 
         self.log_path = log_path
         self.dvsname = name
