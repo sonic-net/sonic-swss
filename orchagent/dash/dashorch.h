@@ -54,6 +54,7 @@ class DashOrch : public ZmqOrch
 public:
     DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
     const EniEntry *getEni(const std::string &eni) const;
+    const EniTable *getEniTable() const { return &eni_entries_; };
     bool getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type);
     void handleFCStatusUpdate(bool is_enabled);
     dash::types::IpAddress getApplianceVip();
