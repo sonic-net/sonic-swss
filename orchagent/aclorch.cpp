@@ -131,6 +131,11 @@ static acl_rule_attr_lookup_t aclOtherActionLookup =
     { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
 };
 
+static acl_rule_attr_lookup_t aclPolicerActionLookup =
+{
+    { ACTION_POLICER_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER }
+};
+
 static acl_packet_action_lookup_t aclPacketActionLookup =
 {
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
@@ -807,6 +812,7 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto dtelAction = aclDTelActionLookup.find(action);
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
+        auto policerAction = aclPolicerActionLookup.find(action);
         if (l3Action != aclL3ActionLookup.end())
         {
             saiActionAttr = l3Action->second;
@@ -826,6 +832,10 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         else if (metadataAction != aclMetadataDscpActionLookup.end())
         {
             saiActionAttr = metadataAction->second;
+        }
+        if (policerAction != aclPolicerActionLookup.end())
+        {
+            saiActionAttr = policerAction->second;
         }
         else
         {
@@ -867,6 +877,7 @@ AclRule::AclRule(AclOrch *pAclOrch, string rule, string table, bool createCounte
     m_priority(0),
     m_createCounter(createCounter)
 {
+
     auto tableOid = pAclOrch->getTableById(table);
     m_pTable = pAclOrch->getTableByOid(tableOid);
     if (!m_pTable)
@@ -1753,7 +1764,14 @@ bool AclRule::getCreateCounter() const
     return m_createCounter;
 }
 
-shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data, MetaDataMgr * m_metadataMgr)
+shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl,
+                                        MirrorOrch *mirror,
+                                        DTelOrch *dtel,
+                                        PolicerOrch *policer,
+                                        const string& rule,
+                                        const string& table,
+                                        const KeyOpFieldsValuesTuple& data,
+                                        MetaDataMgr * m_metadataMgr)
 {
     shared_ptr<AclRule> aclRule;
 
@@ -1781,6 +1799,10 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
             }
 
             return make_shared<AclRuleDTelWatchListEntry>(acl, dtel, rule, table);
+        }
+        else if (aclPolicerActionLookup.find(action) != aclPolicerActionLookup.cend())
+        {
+            return make_shared<AclRulePolicer>(acl, policer, rule, table);
         }
     }
 
@@ -2131,6 +2153,174 @@ bool AclRulePacket::validate()
 void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
+}
+
+AclRulePolicer::AclRulePolicer(AclOrch *aclOrch, PolicerOrch *policer, string rule, string table) :
+        AclRule(aclOrch, rule, table),
+        m_state(false),
+        m_pPolicerOrch(policer)
+{
+}
+
+bool AclRulePolicer::validateAddAction(string attr_name, string attr_value)
+{
+    SWSS_LOG_ENTER();
+
+    sai_acl_entry_attr_t action;
+
+    const auto it = aclPolicerActionLookup.find(attr_name);
+    if (it != aclPolicerActionLookup.cend())
+    {
+        action = it->second;
+    }
+    else
+    {
+        return false;
+    }
+
+    m_policerName = attr_value;
+
+    return setAction(action, sai_acl_action_data_t{});
+}
+
+bool AclRulePolicer::validate()
+{
+    SWSS_LOG_ENTER();
+
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_policerName.empty())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRulePolicer::createCounter()
+{
+    SWSS_LOG_ENTER();
+
+    if (!AclRule::createCounter())
+    {
+        SWSS_LOG_ERROR("Failed to create counter for policer rule %s", m_id.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRulePolicer::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    return activate();
+}
+
+bool AclRulePolicer::removeRule()
+{
+    SWSS_LOG_ENTER();
+
+    return deactivate();
+}
+
+bool AclRulePolicer::activate()
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+
+    if (!m_pPolicerOrch->policerExists(m_policerName))
+    {
+        SWSS_LOG_ERROR("Policer rule references policer name \"%s\" that does not exist yet", m_policerName.c_str());
+        return false;
+    }
+
+    if (!m_pPolicerOrch->getPolicerOid(m_policerName, oid) || (oid == SAI_NULL_OBJECT_ID))
+    {
+        SWSS_LOG_ERROR("Failed to get policer OID for policer %s", m_policerName.c_str());
+        return false;
+    }
+
+    for (auto& it: m_actions)
+    {
+        auto attr = it.second.getSaiAttr();
+        attr.value.aclaction.enable = true;
+        attr.value.aclaction.parameter.objlist.list = &oid;
+        attr.value.aclaction.parameter.objlist.count = 1;
+        setAction(it.first, attr.value.aclaction);
+    }
+
+    if (!hasCounter())
+    {
+        if (getCreateCounter() && !createCounter())
+        {
+            SWSS_LOG_ERROR("createCounter failed for Rule %s policer %s", m_id.c_str(), m_policerName.c_str());
+            return false;
+        }
+    }
+
+    if (!AclRule::createRule())
+    {
+        return false;
+    }
+
+    if (!m_pPolicerOrch->increaseRefCount(m_policerName))
+    {
+        SWSS_LOG_ERROR("Failed to increase policer reference count for policer %s", m_policerName.c_str());
+        return false;
+    }
+
+    m_state = true;
+
+    return true;
+}
+
+bool AclRulePolicer::deactivate()
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_state)
+    {
+        return true;
+    }
+
+    if (!AclRule::removeRule())
+    {
+        return false;
+    }
+
+    if (!m_pPolicerOrch->decreaseRefCount(m_policerName))
+    {
+        SWSS_LOG_ERROR("Failed to decrease policer reference count for policer %s", m_policerName.c_str());
+        return false;
+    }
+
+    m_state = false;
+
+    return true;
+}
+
+bool AclRulePolicer::update(const AclRule& rule)
+{
+    SWSS_LOG_ENTER();
+
+    auto policerRule = dynamic_cast<const AclRulePolicer*>(&rule);
+    if (!policerRule)
+    {
+        SWSS_LOG_ERROR("Cannot update policer rule with a rule of a different type");
+        return false;
+    }
+
+    SWSS_LOG_ERROR("Updating policer rule is currently not implemented");
+    return false;
+}
+
+void AclRulePolicer::onUpdate(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    // Do nothing, since:
+    // - PolicerOrch handles policer updates internally and transparently applies them to the policer SAI object.
+    // - The existing reference count mechanism in PolicerOrch prevents deletion of referenced policers, ensuring ACL rules remain valid.
 }
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
@@ -3954,7 +4144,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     {
         metadataActionLookup = aclMetadataDscpActionLookup;
     }
-    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup})
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclPolicerActionLookup})
     {
         for (const auto& it: action_map)
         {
@@ -4078,13 +4268,21 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
     m_switchOrch->set_switch_capability(fvVector);
 }
 
-AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, SwitchOrch *switchOrch,
-        PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
+AclOrch::AclOrch(vector<TableConnector>& connectors,
+                 DBConnector* stateDb,
+                 SwitchOrch *switchOrch,
+                 PortsOrch *portOrch,
+                 PolicerOrch *PolicerOrch,
+                 MirrorOrch *mirrorOrch,
+                 NeighOrch *neighOrch,
+                 RouteOrch *routeOrch,
+                 DTelOrch *dtelOrch) :
         Orch(connectors),
         m_aclStageCapabilityTable(stateDb, STATE_ACL_STAGE_CAPABILITY_TABLE_NAME),
         m_aclTableStateTable(stateDb, STATE_ACL_TABLE_TABLE_NAME),
         m_aclRuleStateTable(stateDb, STATE_ACL_RULE_TABLE_NAME),
         m_switchOrch(switchOrch),
+        m_policerOrch(PolicerOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
         m_routeOrch(routeOrch),
@@ -4333,7 +4531,7 @@ EgressSetDscpTableStatus AclOrch::addEgrSetDscpTable(string table_id, AclTable &
         if (!isAclMetaDataSupported())
         {
             SWSS_LOG_ERROR("Platform does not support MARK_META/MARK_METAV6 tables.");
-            return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_SUPPORTED; 
+            return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_SUPPORTED;
         }
         AclTable egrSetDscpTable(this);
 
@@ -5454,7 +5652,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
             try
             {
-                newRule = AclRule::makeShared(this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t, &m_metaDataMgr);
+                newRule = AclRule::makeShared(this, m_mirrorOrch, m_dTelOrch, m_policerOrch, rule_id, table_id, t, &m_metaDataMgr);
             }
             catch (exception &e)
             {
@@ -5938,6 +6136,7 @@ bool AclOrch::getAclBindPortId(Port &port, sai_object_id_t &port_id)
 void AclOrch::setAclTableStatus(string table_name, AclObjectStatus status)
 {
     vector<FieldValueTuple> fvVector;
+    SWSS_LOG_NOTICE("changing table '%s' status to '%s'", table_name.c_str(), aclObjectStatusLookup[status].c_str());
     fvVector.emplace_back("status", aclObjectStatusLookup[status]);
     m_aclTableStateTable.set(table_name, fvVector);
 }
@@ -5945,6 +6144,7 @@ void AclOrch::setAclTableStatus(string table_name, AclObjectStatus status)
 // Remove the status record of given ACL table from STATE_DB
 void AclOrch::removeAclTableStatus(string table_name)
 {
+    SWSS_LOG_NOTICE("removing ACL table '%s' status", table_name.c_str());
     m_aclTableStateTable.del(table_name);
 }
 
