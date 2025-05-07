@@ -179,12 +179,45 @@ jobs:
       set -ex
       cd download
       sudo dpkg -i $(find common -type f -name '*.deb')
+      cd ..
+    workingDirectory: $(Build.ArtifactStagingDirectory)
+    displayName: "Install libnl3"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: sonic-net.sonic-platform-vpp
+      artifact: vpp
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/main'
+      allowPartiallySucceededBuilds: true
+      path: $(Build.ArtifactStagingDirectory)/download
+    displayName: "Download sonic platform-vpp deb packages"
+    condition: eq('${{ parameters.arch }}', 'amd64')
+  - script: |
+      set -ex
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/libvppinfra-dev_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/libvppinfra_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-crypto-engines_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-dbg_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-dev_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-core_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-devtools_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-dpdk_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/python3-vpp-api_*_${{ parameters.arch }}.deb
+    workingDirectory: $(Build.ArtifactStagingDirectory)
+    displayName: "Install sonic platform-vpp packages"
+    condition: eq('${{ parameters.arch }}', 'amd64')
+  - script: |
+      set -ex
+      cd download
       sudo dpkg -i $(find swsscommon -type f -name '*.deb')
       sudo dpkg -i $(find sairedis -type f -name '*.deb')
       cd ..
       rm -rf download
     workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install libnl3, sonic swss common and sairedis"
+    displayName: "Install sonic swss common and sairedis"
   - script: |
       set -ex
       tar czf pytest.tgz tests

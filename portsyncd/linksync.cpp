@@ -140,13 +140,13 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     if (type)
     {
-        SWSS_LOG_NOTICE("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d type:%s",
-                       nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master, type);
+        SWSS_LOG_NOTICE("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d type:%s flags:%d",
+                       nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master, type, flags);
     }
     else
     {
-        SWSS_LOG_NOTICE("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d",
-                       nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master);
+        SWSS_LOG_NOTICE("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d flags:%d",
+                       nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master, flags);
     }
 
     /* teamd instances are dealt in teamsyncd */

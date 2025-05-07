@@ -62,11 +62,18 @@ tests_SOURCES = aclorch_ut.cpp \
                 switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
+                dashenifwdorch_ut.cpp \
                 dashorch_ut.cpp \
+                dashvnetorch_ut.cpp \
+                dashhaorch_ut.cpp \
+                dashrouteorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
                 mock_orch_test.cpp \
+                mock_dash_orch_test.cpp \
+                zmq_orch_ut.cpp \
+                mock_saihelper.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -132,12 +139,17 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashenifwdinfo.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclgroupmgr.cpp \
                 $(top_srcdir)/orchagent/dash/dashtagmgr.cpp \
                 $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashtunnelorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
                 $(top_srcdir)/orchagent/dash/pbutils.cpp \

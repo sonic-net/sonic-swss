@@ -75,6 +75,14 @@ elif [ "$HWSKU" == "DPU-2P" ]; then
     cp /usr/share/sonic/hwsku/sai_dpu_2p.profile /usr/share/sonic/hwsku/sai.profile
 fi
 
+if [ "$BFDOFFLOAD" == "false" ]; then
+    if ! grep -q "SAI_VS_BFD_OFFLOAD_SUPPORTED=" /usr/share/sonic/hwsku/sai.profile; then
+        echo 'SAI_VS_BFD_OFFLOAD_SUPPORTED=false' >> /usr/share/sonic/hwsku/sai.profile
+    else
+        sed -i "s/SAI_VS_BFD_OFFLOAD_SUPPORTED.*/SAI_VS_BFD_OFFLOAD_SUPPORTED=false/g" /usr/share/sonic/hwsku/sai.profile
+    fi
+fi
+
 mkdir -p /etc/swss/config.d/
 
 rm -f /var/run/rsyslogd.pid
