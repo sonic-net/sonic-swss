@@ -593,6 +593,9 @@ class DockerVirtualSwitch:
             self.get_state_db()
             self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
 
+        # Wait orchagent fully started
+        time.sleep(10)
+
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""
         re_space = re.compile(r'\s+')
