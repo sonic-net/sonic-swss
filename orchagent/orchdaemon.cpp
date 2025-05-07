@@ -1236,6 +1236,14 @@ bool DpuOrchDaemon::init()
     DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, m_zmqServer);
     gDirectory.set(dash_orch);
 
+    vector<string> dash_ha_tables = {
+        APP_DASH_HA_SET_TABLE_NAME,
+        APP_DASH_HA_SCOPE_TABLE_NAME
+    };
+
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_ha_orch);
+
     vector<string> dash_route_tables = {
         APP_DASH_ROUTE_TABLE_NAME,
         APP_DASH_ROUTE_RULE_TABLE_NAME,

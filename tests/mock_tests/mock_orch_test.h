@@ -56,6 +56,7 @@ namespace mock_orch_test
         VNetOrch *m_vnetOrch;
         DashOrch *m_DashOrch;
         DashVnetOrch *m_dashVnetOrch;
+        DashHaOrch *m_dashHaOrch;
         DashRouteOrch *m_DashRouteOrch;
         DashTunnelOrch *m_DashTunnelOrch;
 
