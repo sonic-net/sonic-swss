@@ -549,13 +549,6 @@ int main(int argc, char **argv)
     attr.value.booldata = true;
     attrs.push_back(attr);
 
-    if (gMySwitchType != "dpu")
-    {
-        attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
-        attr.value.ptr = (void *)on_fdb_event;
-        attrs.push_back(attr);
-    }
-
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
     attr.value.ptr = (void *)on_port_state_change;
     attrs.push_back(attr);
@@ -570,21 +563,6 @@ int main(int argc, char **argv)
         memcpy(attr.value.mac, gMacAddress.getMac(), 6);
         attrs.push_back(attr);
     }
-
-    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
-    // since it is not using ASIC_DB, we can execute it before create_switch
-    // when g_syncMode is set to true here, create_switch will wait the response from syncd
-    if (gSyncMode)
-    {
-        SWSS_LOG_WARN("sync mode is depreacated, use -z param");
-
-        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
-    }
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
-    attr.value.s32 = gRedisCommunicationMode;
-
-    sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
     if (!gAsicInstance.empty())
     {
@@ -822,7 +800,22 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
-    if (gMySwitchType != "fabric")
+
+    /*
+     * Declare shared pointers for dpu specific databases.
+     * These dpu databases exist on the npu for smartswitch.
+     */
+    shared_ptr<DBConnector> dpu_app_db;
+    shared_ptr<DBConnector> dpu_app_state_db;
+
+    if (gMySwitchType == "dpu")
+    {
+        dpu_app_db = make_shared<DBConnector>("DPU_APPL_DB", 0, true);
+        dpu_app_state_db = make_shared<DBConnector>("DPU_APPL_STATE_DB", 0, true);
+        orchDaemon = make_shared<DpuOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), dpu_app_db.get(), dpu_app_state_db.get(), zmq_server.get());
+    }
+
+    else if (gMySwitchType != "fabric")
     {
         orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
         if (gMySwitchType == "voq")
