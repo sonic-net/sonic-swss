@@ -7,7 +7,7 @@ import functools
 import typing
 import re
 import time
-
+import pytest
 
 def to_string(value):
     if isinstance(value, bool):
@@ -95,7 +95,6 @@ class ConfigTable(Table):
     def __init__(self, dvs: conftest.DockerVirtualSwitch, table_name: str):
         super(ConfigTable, self).__init__(dvs.get_config_db(), table_name)
 
-
 def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
     macsec_system_identifier = macsec_system_identifier.translate(
         str.maketrans("", "", ":.-"))
@@ -103,7 +102,6 @@ def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
         macsec_system_identifier,
         str(macsec_port_identifier).zfill(4)).lower()
     return sci
-
 
 def gen_sc_key(
         separator: str,
@@ -628,6 +626,7 @@ class TestMACsec(object):
                 macsec_port_identifier))
         wpa.deinit_macsec_port(port_name)
 
+    @pytest.mark.skip(reason="Disable since we remove macsecmgrd and macsecorch.")
     def test_macsec_term_orch(self, dvs: conftest.DockerVirtualSwitch, testlog):
         port_name = "Ethernet0"
         local_mac_address = "00-15-5D-78-FF-C1"
@@ -768,6 +767,7 @@ class TestMACsec(object):
             1)
         assert(not inspector.get_macsec_port(macsec_port))
 
+    @pytest.mark.skip(reason="Disable since we remove macsecmgrd and macsecorch.")
     def test_macsec_attribute_change(self, dvs: conftest.DockerVirtualSwitch, testlog):
         port_name = "Ethernet0"
         local_mac_address = "00-15-5D-78-FF-C1"
@@ -816,6 +816,7 @@ class TestMACsec(object):
             macsec_port_identifier,
             0)
 
+    @pytest.mark.skip(reason="Disable since we remove macsecmgrd and macsecorch.")
     def test_macsec_with_portchannel(self, dvs: conftest.DockerVirtualSwitch, testlog):
 
         # Set MACsec enabled on Ethernet0

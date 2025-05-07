@@ -50,11 +50,9 @@ BufferOrch *gBufferOrch;
 QosOrch *gQosOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
-NatOrch *gNatOrch;
 PolicerOrch *gPolicerOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
-MACsecOrch *gMacsecOrch;
 CoppOrch *gCoppOrch;
 P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
@@ -408,19 +406,6 @@ bool OrchDaemon::init()
 
     gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
 
-    const int natorch_base_pri = 50;
-
-    vector<table_name_with_pri_t> nat_tables = {
-        { APP_NAT_DNAT_POOL_TABLE_NAME,  natorch_base_pri + 5 },
-        { APP_NAT_TABLE_NAME,            natorch_base_pri + 4 },
-        { APP_NAPT_TABLE_NAME,           natorch_base_pri + 3 },
-        { APP_NAT_TWICE_TABLE_NAME,      natorch_base_pri + 2 },
-        { APP_NAPT_TWICE_TABLE_NAME,     natorch_base_pri + 1 },
-        { APP_NAT_GLOBAL_TABLE_NAME,     natorch_base_pri     }
-    };
-
-    gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
-
     vector<string> mux_tables = {
         CFG_MUX_CABLE_TABLE_NAME,
         CFG_PEER_SWITCH_TABLE_NAME
@@ -442,8 +427,6 @@ bool OrchDaemon::init()
         APP_MACSEC_INGRESS_SA_TABLE_NAME,
     };
 
-    gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
-
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
     /*
@@ -454,7 +437,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, bgp_global_state_orch, gBfdOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -548,7 +531,6 @@ bool OrchDaemon::init()
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
-    m_orchList.push_back(gNatOrch);
     m_orchList.push_back(gMlagOrch);
     m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(mux_st_orch);
@@ -1233,6 +1215,14 @@ bool DpuOrchDaemon::init()
 
     DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, m_zmqServer);
     gDirectory.set(dash_orch);
+
+    vector<string> dash_ha_tables = {
+        APP_DASH_HA_SET_TABLE_NAME,
+        APP_DASH_HA_SCOPE_TABLE_NAME
+    };
+
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
         APP_DASH_ROUTE_TABLE_NAME,

@@ -5,7 +5,7 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon -lpthread
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd coppmgrd tunnelmgrd fabricmgrd stpmgrd
 
 cfgmgrdir = $(datadir)/swss
 
@@ -81,11 +81,6 @@ sflowmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFL
 sflowmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 sflowmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-natmgrd_SOURCES = natmgrd.cpp natmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
-natmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-natmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-natmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
-
 coppmgrd_SOURCES = coppmgrd.cpp coppmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 coppmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 coppmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
@@ -95,12 +90,6 @@ tunnelmgrd_SOURCES = tunnelmgrd.cpp tunnelmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd
 tunnelmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 tunnelmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 tunnelmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
-
-macsecmgrd_SOURCES = macsecmgrd.cpp macsecmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
-macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-macsecmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
-
 
 stpmgrd_SOURCES = stpmgrd.cpp stpmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 stpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
@@ -118,10 +107,8 @@ vrfmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 nbrmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 vxlanmgrd_SOURCES +=  ../gcovpreload/gcovpreload.cpp
 sflowmgrd_SOURCES +=  ../gcovpreload/gcovpreload.cpp
-natmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 coppmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 tunnelmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
-macsecmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 stpmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
@@ -135,10 +122,8 @@ vrfmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 nbrmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 vxlanmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 sflowmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-natmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 coppmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 tunnelmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-macsecmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 fabricmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 stpmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 endif
