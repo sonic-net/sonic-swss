@@ -57,19 +57,11 @@ class TestInnerSrcMacRewriteAclTable:
         tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         tbl._del(table_name + "|" + rule_name)
 
-    def validate_asic_acl_entries(self, dvs_acl, asic_db, rule_id, expected_qualifier, update=False):
+    def validate_asic_acl_entries(self, dvs_acl, asic_db, expected_qualifier):
         def _access_function():
             false_ret = (False, '')
-
-            if update == False:
-                key = rule_id     
-            else:
-                keys = asic_db.get_keys(ASIC_STATE_ACL)
-                for k in keys:
-                    if k == rule_id:
-                        return false_ret
                     
-                key = dvs_acl.get_acl_rule_id()
+            key = dvs_acl.get_acl_rule_id()
                 
             fvs = asic_db.get_entry(ASIC_STATE_ACL, key)
             if not fvs:
@@ -83,8 +75,7 @@ class TestInnerSrcMacRewriteAclTable:
                     return false_ret
 
             return (True, key)
-        val, result = wait_for_result(_access_function, polling_config = PollingConfig(polling_interval=1, timeout=1.0, strict=True),
-        failure_message="Inner-src-mac-rewrite ACL rule not updated")
+        val, result = wait_for_result(_access_function, failure_message="Inner-src-mac-rewrite ACL rule not updated")
 
     def update_acl_rule(self, dvs, table_name, rule_name, qualifier):
         table = swsscommon.Table(self.cdb, "ACL_RULE")
@@ -161,7 +152,7 @@ class TestInnerSrcMacRewriteAclTable:
                                         "SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC": "66:BB:AA:C3:3E:AB"} 
 
             # Verify the rule with SAI entries
-            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id, new_expected_sai_qualifiers)
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, new_expected_sai_qualifiers)
             
             # Verify the rule with counter id to be present in ASIC DB
             counter_id = dvs_acl.get_acl_counter_oid()
@@ -174,7 +165,7 @@ class TestInnerSrcMacRewriteAclTable:
             new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP": "15.15.15.15&mask:255.255.240.0"}
 
             # Verify the rule id and SAI entries are updated in ASIC DB
-            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id, new_expected_sai_qualifiers, True)
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, new_expected_sai_qualifiers)
         
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_2 = dvs_acl.get_acl_counter_oid()
@@ -195,7 +186,7 @@ class TestInnerSrcMacRewriteAclTable:
                                          "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI": "111&mask:0xffffffff"} 
 
             # Verify the rule id and SAI entries are updated in ASIC DB 
-            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id_2, new_expected_sai_qualifiers, True)
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, new_expected_sai_qualifiers)
 
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_3 = dvs_acl.get_acl_counter_oid()
@@ -215,7 +206,7 @@ class TestInnerSrcMacRewriteAclTable:
             new_expected_sai_qualifiers={"SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC": "11:BB:AA:C3:3E:AB"} 
 
             # Verify the rule id and SAI entries are updated in ASIC DB
-            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, rule_id_3, new_expected_sai_qualifiers, True)
+            self.validate_asic_acl_entries(dvs_acl, dvs_acl.asic_db, new_expected_sai_qualifiers)
 
             # Verify the rule with counter id to be present in ASIC DB
             counter_id_4= dvs_acl.get_acl_counter_oid()
