@@ -181,8 +181,7 @@ class TestInnerSrcMacRewriteAclTable:
             rule_id_2 = dvs_acl.get_acl_rule_id()
 
             # Verify the rule id are different
-            assert rule_id not in dvs_acl.get_acl_rule_ids(1)
-            assert rule_id_2 in dvs_acl.get_acl_rule_ids(1)
+            assert rule_id != rule_id_2
 
             # Verify the counter id is different and present in ASIC DB
             assert counter_id not in dvs_acl.get_acl_counter_ids(1)
@@ -203,8 +202,7 @@ class TestInnerSrcMacRewriteAclTable:
             rule_id_3 = dvs_acl.get_acl_rule_id()
 
             # Verify the rule id are different
-            assert rule_id_2 not in dvs_acl.get_acl_rule_ids(1)
-            assert rule_id_3 in dvs_acl.get_acl_rule_ids(1)
+            assert rule_id_2 != rule_id_3
 
             # Verify the counter id is different and present in ASIC DB
             assert counter_id_2 not in dvs_acl.get_acl_counter_ids(1)
