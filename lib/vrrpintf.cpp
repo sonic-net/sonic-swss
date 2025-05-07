@@ -8,9 +8,6 @@
 
 using namespace swss;
 
-#define VRRP_V4_MAC_PREFIX "00:00:5e:00:01:"
-#define VRRP_V6_MAC_PREFIX "00:00:5e:00:02:"
-
 VrrpIntf::VrrpIntf()
 {
     parent_name = "";
