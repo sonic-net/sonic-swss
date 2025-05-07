@@ -10,6 +10,14 @@ struct BfdUpdate
     sai_bfd_session_state_t state;
 };
 
+struct BfdInjectNextHop
+{
+    sai_object_id_t bfd_session_id;
+    std::string peer;
+    std::string alias;
+    sai_object_id_t next_hop_id;
+};
+
 class BfdOrch: public Orch, public Subject
 {
 public:
@@ -18,11 +26,13 @@ public:
     BfdOrch(swss::DBConnector *db, std::string tableName, TableConnector stateDbBfdSessionTable);
     virtual ~BfdOrch(void);
     void handleTsaStateChange(bool tsaState);
+    void updateNextHopId(string alias, IpAddress peer_address, sai_object_id_t next_hop_id);
 
 private:
     bool create_bfd_session(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     bool remove_bfd_session(const std::string& key);
     std::string get_state_db_key(const std::string& vrf_name, const std::string& alias, const swss::IpAddress& peer_address);
+    std::string get_app_db_key(const std::string& vrf_name, const std::string& alias, const swss::IpAddress& peer_address);
 
     uint32_t bfd_gen_id(void);
     uint32_t bfd_src_port(void);
@@ -35,6 +45,7 @@ private:
 
     std::map<std::string, sai_object_id_t> bfd_session_map;
     std::map<sai_object_id_t, BfdUpdate> bfd_session_lookup;
+    std::map<std::string, BfdInjectNextHop> bfd_inject_next_hop_lookup;
 
     swss::Table m_stateBfdSessionTable;
 
