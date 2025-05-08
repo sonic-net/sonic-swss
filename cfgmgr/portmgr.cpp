@@ -215,6 +215,7 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
+                dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT_STR;
                 m_portList.insert(alias);
             }
             else if (!portOk)
