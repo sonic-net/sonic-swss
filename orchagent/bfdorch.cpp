@@ -348,6 +348,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     MacAddress dst_mac;
     bool dst_mac_provided = false;
     bool src_ip_provided = false;
+    sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -516,6 +517,14 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
         attr.id = SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS;
         memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
+        attrs.emplace_back(attr);
+
+        attr.id = SAI_BFD_SESSION_ATTR_USE_NEXT_HOP;
+        attr.value.booldata = true;
+        attrs.emplace_back(attr);
+
+        attr.id = SAI_BFD_SESSION_ATTR_NEXT_HOP_ID;
+        attr.value.oid = next_hop_id;
         attrs.emplace_back(attr);
     }
     else
