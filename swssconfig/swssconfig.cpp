@@ -4,11 +4,15 @@
 
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <vector>
 
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
+#include "orch_zmq_config.h"
 #include <nlohmann/json.hpp>
 
 using namespace std;
@@ -39,12 +43,35 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
-bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
+shared_ptr<ProducerStateTable> get_table(unordered_map<string, shared_ptr<ProducerStateTable>> &table_map, RedisPipeline &pipeline, string table_name, set<string> &zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
+{
+    shared_ptr<ProducerStateTable> p_table= nullptr;
+    auto findResult = table_map.find(table_name);
+    if (findResult == table_map.end())
+    {
+        if ((zmq_tables.find(table_name) != zmq_tables.end()) && (zmq_client != nullptr)) {
+            p_table = make_shared<ZmqProducerStateTable>(&pipeline, table_name, *zmq_client, true);
+        }
+        else {
+            p_table = make_shared<ProducerStateTable>(&pipeline, table_name, true);
+        }
+
+        table_map.emplace(table_name, p_table);
+    }
+    else
+    {
+        p_table = findResult->second;
+    }
+
+    return p_table;
+}
+
+bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  &zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
 {
     DBConnector db("APPL_DB", 0, false);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
-    unordered_map<string, ProducerStateTable> table_map;
-    
+    unordered_map<string, shared_ptr<ProducerStateTable>> table_map;
+
     for (auto &db_item : db_items)
     {
         dump_db_item(db_item);
@@ -58,12 +85,13 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
-        auto ret = table_map.emplace(std::piecewise_construct, std::forward_as_tuple(table_name), std::forward_as_tuple(&pipeline, table_name, true));
+
+        auto p_table= get_table(table_map, pipeline, table_name, zmq_tables, zmq_client);
 
         if (kfvOp(db_item) == SET_COMMAND)
-            ret.first->second.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
+            p_table->set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
         else if (kfvOp(db_item) == DEL_COMMAND)
-            ret.first->second.del(key_name, DEL_COMMAND);
+            p_table->del(key_name, DEL_COMMAND);
         else
         {
             SWSS_LOG_ERROR("Invalid operation: %s\n", kfvOp(db_item).c_str());
@@ -182,6 +210,13 @@ int main(int argc, char **argv)
         }
     }
 
+    auto zmq_tables = load_zmq_tables();
+    std::shared_ptr<ZmqClient> zmq_client = nullptr;
+    if (zmq_tables.size() > 0)
+    {
+        zmq_client = create_zmq_client(ZMQ_LOCAL_ADDRESS);
+    }
+
     for (auto i : files)
     {
         SWSS_LOG_NOTICE("Loading config from JSON file:%s...", i.c_str());
@@ -203,7 +238,7 @@ int main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
 
-            if (!write_db_data(db_items))
+            if (!write_db_data(db_items, zmq_tables, zmq_client))
             {
                 SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;

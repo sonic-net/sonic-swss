@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir)
+INCLUDES = -I $(top_srcdir) -I$(top_srcdir)/lib
 
 bin_PROGRAMS = swssconfig swssplayer
 
@@ -30,3 +30,5 @@ swssconfig_SOURCES += $(top_srcdir)/lib/asan.cpp
 swssplayer_SOURCES += $(top_srcdir)/lib/asan.cpp
 endif
 
+swssconfig_SOURCES += $(top_srcdir)/lib/orch_zmq_config.cpp
+swssplayer_SOURCES += $(top_srcdir)/lib/orch_zmq_config.cpp

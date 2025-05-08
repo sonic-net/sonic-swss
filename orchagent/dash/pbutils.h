@@ -77,3 +77,5 @@ bool to_sai(const google::protobuf::RepeatedPtrField<dash::types::ValueOrRange> 
 swss::ip_addr_t to_swss(const dash::types::IpAddress &pb_address);
 
 std::string to_string(const dash::types::IpAddress &pb_address);
+
+sai_uint16_t to_sai(const dash::types::HaRole ha_role);

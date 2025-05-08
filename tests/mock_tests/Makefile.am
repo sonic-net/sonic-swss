@@ -65,6 +65,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashenifwdorch_ut.cpp \
                 dashorch_ut.cpp \
                 dashvnetorch_ut.cpp \
+                dashhaorch_ut.cpp \
                 dashrouteorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
@@ -146,6 +147,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashtunnelorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
