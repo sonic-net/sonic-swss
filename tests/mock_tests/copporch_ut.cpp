@@ -150,6 +150,7 @@ namespace copporch_test
                 switchTableAppDb
             };
 
+            gCrmOrch = new CrmOrch(this->configDb.get(), CFG_CRM_TABLE_NAME);
             gSwitchOrch = new SwitchOrch(this->appDb.get(), switchTableList, switchCapTableStateDb);
             gDirectory.set(gSwitchOrch);
             resourcesList.push_back(gSwitchOrch);
@@ -244,6 +245,7 @@ namespace copporch_test
                 delete it;
             }
 
+            gCrmOrch = nullptr;
             gSwitchOrch = nullptr;
             gPortsOrch = nullptr;
             gQosOrch = nullptr;
