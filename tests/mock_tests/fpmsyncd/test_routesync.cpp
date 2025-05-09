@@ -884,13 +884,18 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
         vector<FieldValueTuple> fvs;
         EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
 
+        bool has_weights = false;
         for (const auto& fv : fvs) {
             if (fvField(fv) == "nexthop_group") {
                 EXPECT_EQ(fvValue(fv), "2");
             } else if (fvField(fv) == "protocol") {
                 EXPECT_EQ(fvValue(fv), "static");
+            } else if (fvField(fv) == "weight") {
+                EXPECT_EQ(fvValue(fv), "1,1");
+                has_weights = true;
             }
         }
+        EXPECT_TRUE(has_weights);
 
         vector<FieldValueTuple> group_fvs;
         Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
