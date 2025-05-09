@@ -249,7 +249,7 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);   
-                field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+                // field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
                 
             }
 
@@ -262,12 +262,12 @@ void PortMgr::doTask(Consumer &consumer)
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                // writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
                 
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
-                    field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+                // field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
