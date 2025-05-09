@@ -47,7 +47,7 @@ namespace portmgr_ut
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
             {"index", "1"},
-            {"dhcp_rate_limit", "0"}
+            {"dhcp_rate_limit", ""}
         });
         mockCallArgs.clear();
         m_portMgr->addExistingData(&cfg_port_table);
