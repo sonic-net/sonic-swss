@@ -462,7 +462,7 @@ class DockerVirtualSwitch:
                 self.runcmd('supervisorctl stop all')
 
             # Generate the converage info by lcov and copy to the host
-            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
+            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info && lcov --add-tracefile /tmp/coverage.info -o /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
             subprocess.getstatusoutput(cmd)
             cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; find . -name *.gcda -type f   -exec tar -rf /tmp/gcda.tar {{}} \\;'"
             subprocess.getstatusoutput(cmd)
@@ -737,6 +737,21 @@ class DockerVirtualSwitch:
         self.runcmd(['sh', '-c', 'pkill -9 zebra'])
         time.sleep(5)
 
+    def stop_teamsyncd(self):
+        self.runcmd(['sh', '-c', 'pkill -9 teamsyncd'])
+
+        time.sleep(5)
+
+    def start_teamsyncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl start teamsyncd'])
+
+        time.sleep(5)
+
+    def restart_teammgrd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl restart teammgrd'])
+
+        time.sleep(5)
+
     # deps: warm_reboot
     def start_fpmsyncd(self):
         self.runcmd(['sh', '-c', 'supervisorctl start fpmsyncd'])
@@ -748,6 +763,12 @@ class DockerVirtualSwitch:
     def stop_fpmsyncd(self):
         self.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
         time.sleep(1)
+
+    def disable_fpmsyncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl stop fpmsyncd'])
+
+        # Let's give fpmsyncd a chance to connect to Zebra.
+        time.sleep(5)
 
     # deps: warm_reboot
     def SubscribeAppDbObject(self, objpfx):
@@ -1093,6 +1114,28 @@ class DockerVirtualSwitch:
         fvs = swsscommon.FieldValuePairs([("admin_status", admin_status)])
         tbl.set(interface, fvs)
         time.sleep(1)
+
+    def get_interface_oper_status(self, interface):
+        _, output = self.runcmd(f"ip --brief address show {interface}")
+        state = output.split()[1]
+        return state
+
+    def get_interface_link_local_ipv6(self, interface, subnet=False):
+        """
+        If subnet is True, the returned address will include the subnet length (e.g., fe80::aa:bbff:fecc:ddee/64)
+        """
+        _, output = self.runcmd(f"ip --brief address show {interface}")
+        ipv6 = output.split()[2]
+        if not subnet:
+            slash = ipv6.find('/')
+            if slash > 0:
+                ipv6 = ipv6[0:slash]
+        return ipv6
+
+    def get_interface_mac(self, interface):
+        _, output = self.runcmd(f"ip --brief link show {interface}")
+        mac = output.split()[2]
+        return mac
 
     # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan, sub port intf
     def add_ip_address(self, interface, ip, vrf_name=None):
