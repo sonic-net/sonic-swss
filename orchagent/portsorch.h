@@ -379,6 +379,7 @@ private:
     void doTransceiverPresenceCheck(Consumer &consumer);
 
     void doTask(NotificationConsumer &consumer);
+    void handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry);
     void doTask(swss::SelectableTimer &timer);
 
     void removePortFromLanesMap(string alias);
@@ -393,7 +394,7 @@ private:
     void initializeSchedulerGroups(Port &port);
     void initializeVoqs(Port &port);
 
-    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
+    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
@@ -482,6 +483,7 @@ private:
 
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
+    task_process_status setPortUnreliableLOS(Port &port, bool enabled);
     task_process_status setPortInterfaceType(Port &port, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types);
     task_process_status setPortLinkTraining(const Port& port, bool state);

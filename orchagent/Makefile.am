@@ -114,8 +114,11 @@ orchagent_SOURCES = \
             dash/dashvnetorch.cpp \
             dash/dashaclorch.cpp \
             dash/dashaclgroupmgr.cpp \
+            dash/dashmeterorch.cpp \
             dash/dashtagmgr.cpp \
+            dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
+            dash/dashhaorch.cpp \
             twamporch.cpp \
             stporch.cpp
 

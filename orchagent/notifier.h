@@ -14,10 +14,18 @@ public:
         return static_cast<swss::NotificationConsumer *>(getSelectable());
     }
 
-    void execute()
+    void execute() override
     {
-        swss::NotificationConsumer *nc = getNotificationConsumer();
-        while(nc->hasData())
-            m_orch->doTask(*nc);
+        auto notificationConsumer = getNotificationConsumer();
+        /* Check before triggering doTask because pop() can throw an exception if there is no data */
+        while (notificationConsumer->hasData())
+        {
+            m_orch->doTask(*notificationConsumer);
+        }
+    }
+
+    void drain() override
+    {
+        this->execute();
     }
 };
