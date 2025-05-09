@@ -69,7 +69,11 @@ extern bool gIsNatSupported;
 
 const string ZMQ_DEFAULT_ADDRESS = "tcp://127.0.0.1";
 
-const std::regex ZMQ_ADDRESS_WITH_PORT("\\w+:\\/\\/\\w+:\\d+");
+// ZMQ none IPV6 address with port, for example: tcp://127.0.0.1:5555 tcp://localhost:5555
+const std::regex ZMQ_NONE_IPV6_ADDRESS_WITH_PORT("\\w+:\\/\\/[^:]+:\\d+");
+
+// ZMQ IPV6 address with port, for example: tcp://[fe80::fb7:c6df:9d3a:3d7b]:5555
+const std::regex ZMQ_IPV6_ADDRESS_WITH_PORT("\\w+:\\/\\/\\[.*\\]+:\\d+");
 
 string gMySwitchType = "";
 string gMySwitchSubType = "";
@@ -536,7 +540,8 @@ int main(int argc, char **argv)
     {
         SWSS_LOG_NOTICE("ZMQ disabled");
     }
-    else if (std::regex_search(zmq_server_address, ZMQ_ADDRESS_WITH_PORT))
+    else if (std::regex_search(zmq_server_address, ZMQ_NONE_IPV6_ADDRESS_WITH_PORT)
+            || std::regex_search(zmq_server_address, ZMQ_IPV6_ADDRESS_WITH_PORT))
     {
         // TODO: remove this code block after orchagent.sh migrate to pass ZMQ address without port
         SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
