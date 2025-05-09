@@ -235,6 +235,8 @@ local function compute_rate(port)
     redis.call('HSET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_NOT_CORRECTABLE_FARMES_last', fec_uncorr_frames)
     redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_PRE_BER', fec_corr_bits_ber_new)
     redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_POST_BER', fec_uncorr_bits_ber_new)
+    redis.call('HSET', rates_table_name .. ':' .. interface_name, 'FEC_PRE_BER', fec_corr_bits_ber_new)
+    redis.call('HSET', rates_table_name .. ':' .. interface_name, 'FEC_POST_BER', fec_uncorr_bits_ber_new)
 end
 
 local n = table.getn(KEYS)
