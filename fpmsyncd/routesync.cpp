@@ -2388,14 +2388,9 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
         /* Get the weight of next hop */
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
-        if (weight)
-        {
-            result += to_string(weight);
-        }
-        else
-        {
-            return "";
-        }
+        if (weight == 0)
+            weight = 1; // default weight is 1
+        result += to_string(weight);
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {
