@@ -127,20 +127,21 @@ jobs:
         git config --local --unset user.name
         git config --local --unset user.email
         ln -s ../debian debian
-        dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
+        DPKG_GENSYMBOLS_CHECK_LEVEL=0 dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
         popd
-        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         popd
       env:
         LIBNL3_VER: "3.7.0"
         LIBNL3_REV: "0.2"
+        LIBNL3_REV_SONIC: "0.2+b1sonic1"
 
     - if: matrix.language == 'cpp'
       name: Build repository

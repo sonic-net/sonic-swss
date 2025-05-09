@@ -185,6 +185,11 @@ public:
             bool is_set = false;
         } regn_bfm1n; // Port serdes regn_bfm1n
 
+        struct {
+            bool value;
+            bool is_set = false;
+        } unreliable_los; // Port unreliable_los
+
     } serdes; // Port serdes
 
     struct {

@@ -26,6 +26,7 @@ LDADD_GTEST = -L/usr/src/gtest
 tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(DASH_ORCH_DIR) -I$(top_srcdir)/warmrestart
 
 tests_SOURCES = aclorch_ut.cpp \
+                aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
@@ -61,10 +62,18 @@ tests_SOURCES = aclorch_ut.cpp \
                 switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
+                dashenifwdorch_ut.cpp \
                 dashorch_ut.cpp \
+                dashvnetorch_ut.cpp \
+                dashhaorch_ut.cpp \
+                dashrouteorch_ut.cpp \
                 twamporch_ut.cpp \
+                stporch_ut.cpp \
                 flexcounter_ut.cpp \
                 mock_orch_test.cpp \
+                mock_dash_orch_test.cpp \
+                zmq_orch_ut.cpp \
+                mock_saihelper.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -129,17 +138,23 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashenifwdinfo.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclgroupmgr.cpp \
                 $(top_srcdir)/orchagent/dash/dashtagmgr.cpp \
                 $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashtunnelorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
                 $(top_srcdir)/orchagent/dash/pbutils.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
-                $(top_srcdir)/orchagent/twamporch.cpp
+                $(top_srcdir)/orchagent/twamporch.cpp \
+                $(top_srcdir)/orchagent/stporch.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
@@ -225,8 +240,8 @@ tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
 tests_teammgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
 tests_teammgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teammgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teammgrd_INCLUDES)
-tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
-        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
+        -lswsscommon -lgtest -lgtest_main -lzmq -lpthread -lgmock -lgmock_main
 
 ## fpmsyncd unit tests
 

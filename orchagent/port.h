@@ -76,6 +76,7 @@ struct SystemLagInfo
     int32_t spa_id = 0;
 };
 
+typedef std::map<sai_uint16_t, sai_object_id_t> stp_port_ids_t;
 class PortOperErrorEvent
 {
 public:
@@ -171,6 +172,7 @@ public:
     uint32_t            m_speed = 0;    // Mbps
     port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     bool                m_autoneg = false;
+    bool                m_unreliable_los = false;
     bool                m_link_training = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;
@@ -234,6 +236,8 @@ public:
     sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
+    stp_port_ids_t m_stp_port_ids; //STP Port object ids for each STP instance
+    sai_int16_t m_stp_id = -1; //STP instance for the VLAN
     /* Port oper error status to event map*/
     std::unordered_map<sai_port_error_status_t, PortOperErrorEvent> m_portOperErrorToEvent;
 

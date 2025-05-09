@@ -107,14 +107,20 @@ orchagent_SOURCES = \
             response_publisher.cpp \
             nvgreorch.cpp \
             zmqorch.cpp \
+            dash/dashenifwdorch.cpp \
+            dash/dashenifwdinfo.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
             dash/dashaclorch.cpp \
             dash/dashaclgroupmgr.cpp \
+            dash/dashmeterorch.cpp \
             dash/dashtagmgr.cpp \
+            dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
-            twamporch.cpp
+            dash/dashhaorch.cpp \
+            twamporch.cpp \
+            stporch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
@@ -137,7 +143,7 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi
+orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
 
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)

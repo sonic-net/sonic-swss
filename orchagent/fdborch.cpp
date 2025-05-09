@@ -772,6 +772,7 @@ void FdbOrch::doTask(Consumer& consumer)
             string esi = "";
             unsigned int vni = 0;
             string sticky = "";
+            string discard = "false";
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -783,6 +784,10 @@ void FdbOrch::doTask(Consumer& consumer)
                 if (fvField(i) == "type")
                 {
                     type = fvValue(i);
+                }
+                if (fvField(i) == "discard")
+                {
+                    discard = fvValue(i);
                 }
 
                 if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
@@ -859,6 +864,7 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.esi = esi;
             fdbData.vni = vni;
             fdbData.is_flush_pending = false;
+            fdbData.discard = discard;
             if (addFdbEntry(entry, port, fdbData))
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
@@ -1138,6 +1144,35 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
         }
     }
 }
+void FdbOrch::flushFdbByVlan(const string &alias)
+{
+    sai_status_t status;
+    swss::Port vlan;
+    sai_attribute_t vlan_attr[2];
+
+    if (!m_portsOrch->getPort(alias, vlan))
+    {
+        return;
+    }
+
+    vlan_attr[0].id = SAI_FDB_FLUSH_ATTR_BV_ID;
+    vlan_attr[0].value.oid = vlan.m_vlan_info.vlan_oid;
+    vlan_attr[1].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+    vlan_attr[1].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+    status = sai_fdb_api->flush_fdb_entries(gSwitchId, 2, vlan_attr);
+  
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
+    }
+    else
+    {
+        SWSS_LOG_INFO("Flush by vlan %s vlan_oid 0x%" PRIx64 "",
+                    alias.c_str(), vlan.m_vlan_info.vlan_oid);
+    }
+
+    return;
+}
 
 void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
 {
@@ -1170,6 +1205,12 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     if (update.operStatus == SAI_PORT_OPER_STATUS_DOWN)
     {
         swss::Port p = update.port;
+        if (gMlagOrch->isMlagInterface(p.m_alias))
+        {
+            SWSS_LOG_NOTICE("Ignoring fdb flush on MCLAG port:%s", p.m_alias.c_str());
+            return;
+        }
+
         if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
         {
             flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -1451,7 +1492,9 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
     }
-
+    attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = (fdbData.discard == "true") ? SAI_PACKET_ACTION_DROP: SAI_PACKET_ACTION_FORWARD;
+    attrs.push_back(attr);
     if (macUpdate)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
