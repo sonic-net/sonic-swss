@@ -2323,6 +2323,15 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         return false;
     }
 
+    // Ensure VRF exists in m_syncdRoutes
+    auto routeTableIter = m_syncdRoutes.find(vrf_id);
+    if (routeTableIter == m_syncdRoutes.end())
+    {
+        SWSS_LOG_INFO("VRF 0x%" PRIx64 " doesn't exist in syncd routes for route %s, will retry later",
+                      vrf_id, ipPrefix.to_string().c_str());
+        return false;
+    }
+
     if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
     {
         /* Route is pointing to Fine Grained ECMP nexthop group */
@@ -2383,11 +2392,11 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     }
 
     auto it_status = object_statuses.begin();
-    auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
+    auto it_route = routeTableIter->second.find(ipPrefix);
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (isFineGrained)
     {
-        if (it_route == m_syncdRoutes.at(vrf_id).end())
+        if (it_route == routeTableIter->second.end())
         {
             /* First time route addition pointing to FG nhg */
             if (*it_status++ != SAI_STATUS_SUCCESS)
@@ -2429,7 +2438,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
         }
     }
-    else if (it_route == m_syncdRoutes.at(vrf_id).end())
+    else if (it_route == routeTableIter->second.end())
     {
         sai_status_t status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
@@ -2618,7 +2627,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         updateDefRouteState(ipPrefix.to_string(), true);
     }
 
-    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    if (it_route == routeTableIter->second.end())
     {
         gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
     }
