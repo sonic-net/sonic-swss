@@ -8,7 +8,6 @@ extern "C" {
 #include <unordered_map>
 #include <map>
 #include <memory>
-#include <regex>
 #include <thread>
 #include <chrono>
 #include <getopt.h>
@@ -24,6 +23,7 @@ extern "C" {
 #include <logger.h>
 
 #include "orchdaemon.h"
+#include "orch_zmq_config.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
 #include "notifications.h"
@@ -68,12 +68,6 @@ extern bool gIsNatSupported;
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
 
 const string ZMQ_DEFAULT_ADDRESS = "tcp://127.0.0.1";
-
-// ZMQ none IPV6 address with port, for example: tcp://127.0.0.1:5555 tcp://localhost:5555
-const std::regex ZMQ_NONE_IPV6_ADDRESS_WITH_PORT("\\w+:\\/\\/[^:]+:\\d+");
-
-// ZMQ IPV6 address with port, for example: tcp://[fe80::fb7:c6df:9d3a:3d7b]:5555
-const std::regex ZMQ_IPV6_ADDRESS_WITH_PORT("\\w+:\\/\\/\\[.*\\]+:\\d+");
 
 string gMySwitchType = "";
 string gMySwitchSubType = "";
@@ -540,26 +534,10 @@ int main(int argc, char **argv)
     {
         SWSS_LOG_NOTICE("ZMQ disabled");
     }
-    else if (std::regex_search(zmq_server_address, ZMQ_NONE_IPV6_ADDRESS_WITH_PORT)
-            || std::regex_search(zmq_server_address, ZMQ_IPV6_ADDRESS_WITH_PORT))
-    {
-        // TODO: remove this code block after orchagent.sh migrate to pass ZMQ address without port
-        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
-        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
-    }
     else
     {
-        int port = ORCH_ZMQ_PORT;
-        if (const char* nsid = std::getenv("NAMESPACE_ID"))
-        {
-            // namespace start from 0, using original ZMQ port for global namespace
-            port += atoi(nsid) + 1;
-        }
-
-        string address = zmq_server_address + ":" + to_string(port);
-
-        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", address.c_str(), vrf.c_str());
-        zmq_server = make_shared<ZmqServer>(address.c_str(), vrf.c_str());
+        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        zmq_server = create_zmq_server(zmq_server_address, vrf);
     }
 
     // Get switch_type
