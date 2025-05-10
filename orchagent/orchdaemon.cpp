@@ -276,8 +276,8 @@ bool OrchDaemon::init()
         { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
         { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
     };
-
-    gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch, false);
+    enable_route_zmq = false;
+    gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch, enable_route_zmq);
     gDirectory.set(gFgNhgOrch);
 
     TableConnector srv6_sid_list_table(m_applDb, APP_SRV6_SID_LIST_TABLE_NAME);
