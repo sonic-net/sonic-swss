@@ -2055,8 +2055,10 @@ def dvs_twamp_manager(request, dvs):
 @pytest.fixture(scope="class")
 def dvs_buffer_manager(request, dvs):
     request.cls.dvs_buffer = dvs_buffer.DVSBuffer(dvs.get_asic_db(),
+                                                  dvs.get_app_db(),
                                                   dvs.get_config_db(),
-                                                  dvs.get_state_db())
+                                                  dvs.get_state_db(),
+                                                  dvs.get_counters_db())
 
 @pytest.fixture(scope="class")
 def dvs_queue_manager(request, dvs):

@@ -9,7 +9,7 @@ from dvslib.dvs_common import PollingConfig
 def dynamic_buffer(dvs):
     buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
     yield
-    buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+    buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.get_app_db(), dvs.runcmd)
 
 @pytest.mark.usefixtures("dynamic_buffer")
 class TestBufferMgrDyn(object):
@@ -140,7 +140,7 @@ class TestBufferMgrDyn(object):
                                               'SAI_BUFFER_PROFILE_ATTR_POOL_ID': self.ingress_lossless_pool_oid,
                                               'SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE': sai_threshold_mode,
                                               sai_threshold_name: sai_threshold_value},
-                                          self.DEFAULT_POLLING_CONFIG)
+                                          polling_config=self.DEFAULT_POLLING_CONFIG)
 
     def make_lossless_profile_name(self, speed, cable_length, mtu = None, dynamic_th = None):
         extra = ""

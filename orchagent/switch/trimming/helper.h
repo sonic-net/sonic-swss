@@ -10,19 +10,21 @@ public:
     SwitchTrimmingHelper() = default;
     ~SwitchTrimmingHelper() = default;
 
+    bool isSymDscpMode(const SwitchTrimming &cfg) const;
     bool isStaticQueueMode(const SwitchTrimming &cfg) const;
 
     const SwitchTrimming& getConfig() const;
     void setConfig(const SwitchTrimming &cfg);
 
-    bool parseConfig(SwitchTrimming &cfg) const;
+    bool parseTrimConfig(SwitchTrimming &cfg) const;
 
 private:
-    bool parseSize(SwitchTrimming &cfg, const std::string &field, const std::string &value) const;
-    bool parseDscp(SwitchTrimming &cfg, const std::string &field, const std::string &value) const;
-    bool parseQueue(SwitchTrimming &cfg, const std::string &field, const std::string &value) const;
+    bool parseTrimSize(SwitchTrimming &cfg, const std::string &field, const std::string &value) const;
+    bool parseTrimDscp(SwitchTrimming &cfg, const std::string &field, const std::string &value) const;
+    bool parseTrimTc(SwitchTrimming &cfg, const std::string &field, const std::string &value) const;
+    bool parseTrimQueue(SwitchTrimming &cfg, const std::string &field, const std::string &value) const;
 
-    bool validateConfig(SwitchTrimming &cfg) const;
+    bool validateTrimConfig(SwitchTrimming &cfg) const;
 
 private:
     SwitchTrimming cfg;
