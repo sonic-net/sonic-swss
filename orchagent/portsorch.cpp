@@ -495,7 +495,7 @@ static bool isPathTracingSupported()
         SWSS_LOG_INFO("Querying OBJECT_TYPE_LIST is not supported on this platform");
         return false;
     }
-    else 
+    else
     {
         SWSS_LOG_ERROR(
             "Failed to get a list of supported switch capabilities. Error=%d", status
@@ -4663,7 +4663,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             );
                         }
                         m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
-                } 
+                }
 
                 if (pCfg.adv_interface_types.is_set)
                 {
@@ -6503,7 +6503,7 @@ bool PortsOrch::removeBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
-    
+
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
@@ -8334,7 +8334,7 @@ void PortsOrch::generateWredPortCounterMap()
 
 /****
 *  Func Name  : addWredQueueFlexCounters
-*  Parameters : queueStateVector 
+*  Parameters : queueStateVector
 *  Returns    : void
 *  Description: Top level API to Set WRED flex counters for Queues
 **/
@@ -8404,9 +8404,9 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
 }
 /****
 *  Func Name  : addWredQueueFlexCountersPerPortPerQueueIndex
-*  Parameters : port, queueIndex, is_voq 
+*  Parameters : port, queueIndex, is_voq
 *  Returns    : void
-*  Description: Sets the Stats list to be polled by the flexcounter 
+*  Description: Sets the Stats list to be polled by the flexcounter
 **/
 
 void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq, sai_queue_type_t queueType)
