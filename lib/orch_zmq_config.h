@@ -23,6 +23,8 @@ std::shared_ptr<ZmqClient> create_zmq_client(std::string zmq_address, std::strin
 
 std::shared_ptr<ZmqServer> create_zmq_server(std::string zmq_address, std::string vrf="");
 
+bool get_feature_status(std::string feature, bool default_value);
+
 }
 
 #endif /* SWSS_ORCH_ZMQ_CONFIG_H */

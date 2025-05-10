@@ -7,6 +7,7 @@
 #include <sairedis.h>
 #include "warm_restart.h"
 #include <iostream>
+#include "orch_zmq_config.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -1218,12 +1219,11 @@ bool DpuOrchDaemon::init()
     OrchDaemon::init();
 
     // Enable Dash ZMQ with CONFIG_DB flag
-    ZmqServer *dash_zmq_server = m_zmqServer;
-    auto enabled = m_configDb->hget("DEVICE_METADATA|localhost", "orch_dash_zmq_enabled");
-    if (enabled && *enabled == "false")
+    ZmqServer *dash_zmq_server = nullptr;
+    if (get_feature_status("orch_dash_zmq_enabled", true))
     {
-        // DASH ZMQ feature enabled by default
-        dash_zmq_server = nullptr;
+        SWSS_LOG_NOTICE("Dash ZMQ enabled.");
+        dash_zmq_server = m_zmqServer;
     }
 
     vector<string> dash_vnet_tables = {
