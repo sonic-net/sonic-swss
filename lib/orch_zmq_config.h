@@ -18,6 +18,8 @@ std::set<std::string> load_zmq_tables();
 
 std::shared_ptr<ZmqClient> create_zmq_client(std::string zmq_address);
 
+bool get_feature_status(std::string feature, bool default_value);
+
 }
 
 #endif /* SWSS_ORCH_ZMQ_CONFIG_H */

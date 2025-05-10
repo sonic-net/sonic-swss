@@ -7,6 +7,7 @@
 #include <sairedis.h>
 #include "warm_restart.h"
 #include <iostream>
+#include "orch_zmq_config.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -162,14 +163,6 @@ bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
 
-    // Enable Route ZMQ with CONFIG_DB flag
-    bool enable_route_zmq = false;
-    auto enabled = m_configDb->hget("DEVICE_METADATA|localhost", "orch_route_zmq_enabled");
-    if (enabled && *enabled == "true")
-    {
-        enable_route_zmq = true;
-    }
-
     string platform = getenv("platform") ? getenv("platform") : "";
 
     g_events_handle = events_init_publisher("sonic-events-swss");
@@ -276,6 +269,7 @@ bool OrchDaemon::init()
         { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
         { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
     };
+    auto enable_route_zmq = get_feature_status("orch_route_zmq_enabled", false);
     enable_route_zmq = false;
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch, enable_route_zmq);
     gDirectory.set(gFgNhgOrch);
