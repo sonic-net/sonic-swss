@@ -135,8 +135,8 @@ namespace portmgr_ut
         state_port_table.set("Ethernet1", {{"state", "ok"}});
         m_portMgr->doTask();
 
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" down", mockCallArgs[1]);
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" up", mockCallArgs[2]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" down", mockCallArgs[0]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
     }
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
