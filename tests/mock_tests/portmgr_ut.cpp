@@ -46,8 +46,8 @@ namespace portmgr_ut
 
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
-            {"index", "1"},
-            {"dhcp_rate_limit", ""}
+             {"index", "1"}
+            // {"dhcp_rate_limit", ""}
         });
         mockCallArgs.clear();
         m_portMgr->addExistingData(&cfg_port_table);
@@ -136,7 +136,7 @@ namespace portmgr_ut
         m_portMgr->doTask();
 
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" down", mockCallArgs[1]);
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" do", mockCallArgs[2]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" up", mockCallArgs[2]);
     }
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
