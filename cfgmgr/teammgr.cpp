@@ -248,6 +248,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             int min_links = 0;
             bool fallback = false;
             bool fast_rate = false;
+	    bool static_lag = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
@@ -296,11 +297,16 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     SWSS_LOG_INFO("Get fast_rate `%s`",
                                   fast_rate ? "true" : "false");
                 }
+		else if (fvField(i) == "static")
+		{
+		    static_lag = true;
+		    SWSS_LOG_INFO ("static %d", static_lag);
+		}
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
+                if (addLag(alias, min_links, fallback, fast_rate, static_lag) == task_need_retry)
                 {
                     // If LAG creation fails, we need to clean up any potentially orphaned teamd processes
                     removeLag(alias);
@@ -561,7 +567,7 @@ bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate, bool static_lag)
 {
     SWSS_LOG_ENTER();
 
@@ -602,11 +608,20 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
         }
     }
 
-    conf << "'{\"device\":\"" << alias << "\","
-         << "\"hwaddr\":\"" << mac_boot.to_string() << "\","
-         << "\"runner\":{"
-         << "\"active\":true,"
-         << "\"name\":\"lacp\"";
+    if (static_lag) {
+	conf << "'{\"device\":\"" << alias << "\","
+             << "\"hwaddr\":\"" << mac_boot.to_string() << "\","
+             << "\"runner\":{"
+             << "\"name\":\"loadbalance\"";
+    
+    } else {
+	    
+       conf << "'{\"device\":\"" << alias << "\","
+            << "\"hwaddr\":\"" << mac_boot.to_string() << "\","
+            << "\"runner\":{"
+            << "\"active\":true,"
+            << "\"name\":\"lacp\"";
+    }
 
     if (min_links != 0)
     {
