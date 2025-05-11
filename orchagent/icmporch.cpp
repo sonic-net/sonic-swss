@@ -552,7 +552,7 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_update()
             }
         }
 
-        m_fv_map.erase(m_tx_interval_fname);
+        m_fv_map[m_tx_interval_fname] = "0";
     }
 
     return SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY;
