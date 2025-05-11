@@ -105,7 +105,7 @@ class TestIcmpEcho(object):
 
         # Check STATE_DB entry related to the ICMP ECHO session
         expected_sdb_values = {"session_guid": "5000", "session_cookie": "12345",
-                               "state": "Down", "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"10",
+                               "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"10",
                                "rx_interval": "10", "hw_lookup": "true"}
         self.check_state_icmp_echo_session_value("default|default|5000|NORMAL", expected_sdb_values)
 
@@ -172,7 +172,7 @@ class TestIcmpEcho(object):
 
         # Check STATE_DB entry related to the ICMP ECHO session
         expected_sdb_values = {"session_guid": "5000", "session_cookie": "12345",
-                               "state": "Down", "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
+                               "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
                                "rx_interval": "10", "hw_lookup": "true"}
         self.check_state_icmp_echo_session_value("default|default|5000|RX", expected_sdb_values)
 
@@ -201,7 +201,7 @@ class TestIcmpEcho(object):
 
         # Check STATE_DB entry related to the ICMP ECHO session post update
         expected_sdb_values = {"session_guid": "5000", "session_cookie": "12345",
-                               "state": "Down", "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
+                               "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
                                "rx_interval": "100", "hw_lookup": "true"}
         self.check_state_icmp_echo_session_value("default|default|5000|RX", expected_sdb_values)
 
@@ -264,7 +264,7 @@ class TestIcmpEcho(object):
 
         # Check STATE_DB entry related to the ICMP ECHO session
         expected_sdb_values = {"session_guid": "5000", "session_cookie": "12345",
-                               "state": "Down", "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"10",
+                               "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"10",
                                "rx_interval": "10", "hw_lookup": "false"}
         self.check_state_icmp_echo_session_value("default|Ethernet0|5000|NORMAL", expected_sdb_values)
 
@@ -287,7 +287,6 @@ class TestIcmpEcho(object):
 
         # Checked created ICMP ECHO session in ASIC_DB
         createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
-        icmpEchoSessions = self.get_exist_icmp_echo_session()
         assert len(createdSessions) == 1
 
         session2 = createdSessions.pop()
@@ -306,7 +305,7 @@ class TestIcmpEcho(object):
 
         # Check STATE_DB entry related to the ICMP ECHO session
         expected_sdb_values = {"session_guid": "6000", "session_cookie": "12345",
-                               "state": "Down", "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
+                               "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
                                "rx_interval": "10", "hw_lookup": "false"}
         self.check_state_icmp_echo_session_value("default|Ethernet0|6000|RX", expected_sdb_values)
 

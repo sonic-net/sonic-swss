@@ -213,12 +213,12 @@ bool OrchDaemon::init()
     gDirectory.set(bgp_global_state_orch);
 
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
+    gDirectory.set(gBfdOrch);
 
     TableConnector stateDbIcmpSessionTable(m_stateDb, STATE_ICMP_ECHO_SESSION_TABLE_NAME);
     gIcmpOrch = new IcmpOrch(m_applDb, APP_ICMP_ECHO_SESSION_TABLE_NAME, stateDbIcmpSessionTable);
     gDirectory.set(gIcmpOrch);
 
-    gDirectory.set(gBfdOrch);
     static const  vector<string> route_pattern_tables = {
         CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
     };
