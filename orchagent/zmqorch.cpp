@@ -57,7 +57,7 @@ ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableName
 {
     for (const auto& it : tableNames_with_pri)
     {
-        addConsumer(db, it.first, it.second, zmqServer);
+        addConsumer(db, it.first, it.second, zmqServer, orderedQueue, dbPersistence);
     }
 }
 
