@@ -110,6 +110,7 @@ orchagent_SOURCES = \
             srv6orch.cpp \
             response_publisher.cpp \
             nvgreorch.cpp \
+            hashorch.cpp \
             zmqorch.cpp \
             dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
