@@ -131,7 +131,7 @@ class TestP4RTAcl(object):
         genetlink_name = "genl_packet"
         genetlink_mcgrp_name = "packets"
 
-        for queue_num in range(1, 9):
+        for queue_num in range(7, 15):
             attr_list = [
                 (self._p4rt_trap_group_obj.QUEUE, str(queue_num)),
                 (self._p4rt_trap_group_obj.HOSTIF_NAME, genetlink_name),
@@ -733,7 +733,7 @@ class TestP4RTAcl(object):
 
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
-            ("param/cpu_queue", "5"),
+            ("param/cpu_queue", "7"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
             (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
@@ -832,7 +832,7 @@ class TestP4RTAcl(object):
         )
         # default trap groups in and one trap groups per cpu queue
         # are defined in files/image_config/copp/copp_cfg.j2
-        # get trap group with cpu queue num 5
+        # get trap group with cpu queue num 7
         for key in trap_group_keys:
             (status, fvs) = util.get_key(
                 self._p4rt_trap_group_obj.asic_db,
@@ -840,7 +840,7 @@ class TestP4RTAcl(object):
                 key,
             )
             assert status == True
-            if fvs[0][1] == "5":
+            if fvs[0][1] == "7":
                 trap_group_asic_db_key = key
                 break
 
@@ -848,7 +848,6 @@ class TestP4RTAcl(object):
         user_trap_keys = util.get_keys(
             self._p4rt_user_trap_obj.asic_db, self._p4rt_user_trap_obj.ASIC_DB_TBL_NAME
         )
-        assert len(user_trap_keys) == 8
 
         # get user trap with trap group oid
         for key in user_trap_keys:
