@@ -22,6 +22,11 @@
 #define VXLAN_ENCAP_TTL 128
 #define VNET_BITMAP_RIF_MTU 9100
 
+#define VNET_TUNNEL_TERM_ACL_TABLE_TYPE "VNET_LOCAL_ENDPOINT_REDIRECT"
+#define VNET_TUNNEL_TERM_ACL_TABLE "VNET_LOCAL_ENDPOINT"
+#define VNET_TUNNEL_TERM_ACL_BASE_PRIORITY = 9998;
+#define VNET_TUNNEL_TERM_ACL_RULE_NAME_SUFFIX = "IN_TUNN_TERM";
+
 extern sai_object_id_t gVirtualRouterId;
 
 
@@ -31,6 +36,13 @@ typedef enum
     MONITOR_SESSION_STATE_UP,
     MONITOR_SESSION_STATE_DOWN,
 } monitor_session_state_t;
+
+typedef enum
+{
+    LOCAL_ENDPOINT_LIST_NONE,
+    LOCAL_ENDPOINT_LIST_AS_PRIMARY,
+    LOCAL_ENDPOINT_LIST_AS_SECONDARY
+} local_endpoint_list_type_t;
 
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
@@ -86,7 +98,8 @@ struct NextHopGroupInfo
     sai_object_id_t                         next_hop_group_id;      // next hop group id (null for single nexthop)
     int                                     ref_count;              // reference count
     std::map<NextHopKey, sai_object_id_t>   active_members;         // active nexthops and nexthop group member id (null for single nexthop)
-    std::set<IpPrefix>                      tunnel_routes;
+    std::set<IpPrefix>                      routes;
+
 };
 
 class VNetObject
@@ -308,6 +321,7 @@ const request_description_t vnet_route_description = {
         { "primary",                REQ_T_IP_LIST },
         { "monitoring",             REQ_T_STRING },
         { "adv_prefix",             REQ_T_IP_PREFIX },
+        { "local_endpoint",          REQ_T_BOOL_LIST},
     },
     { }
 };
@@ -410,6 +424,8 @@ typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
 typedef std::map<IpPrefix, std::map<IpAddress, MonitorSessionInfo>> MonitorSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
 
+class VNetTunnelTermAcl;
+
 class VNetRouteOrch : public Orch2, public Subject, public Observer
 {
 public:
@@ -474,6 +490,17 @@ private:
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
 
+
+    /* Add support for local endpoints (directly connected next hops). */
+    bool isLocalEndpoint(const IpAddress& ipAddr) {
+        auto it = is_local_endpoint_.find(ipAddr);
+        if (it != is_local_endpoint_.end())
+        {
+            return it->second;
+        }
+        return false;
+    };
+
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
     handler_map handler_map_;
@@ -495,6 +522,9 @@ private:
     shared_ptr<DBConnector> app_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
     unique_ptr<Table> state_vnet_rt_adv_table_;
+
+    std::map<IpAddress, bool> is_local_endpoint_;
+    shared_ptr<VNetTunnelTermAcl> *vnet_tunnel_term_acl_;
 };
 
 class VNetCfgRouteOrch : public Orch
@@ -510,6 +540,30 @@ private:
     bool doVnetRouteTask(const KeyOpFieldsValuesTuple & t, const std::string & op);
 
     ProducerStateTable m_appVnetRouteTable, m_appVnetRouteTunnelTable;
+};
+
+class VNetTunnelTermAcl
+{
+public:
+    VNetTunnelTermAcl(DBConnector *cfgDb, DBConnector *appDb);
+
+    bool createAclRule(const string vnet_name, swss::IpPrefix& vip, swss::IpAddress nh_ip);
+    bool removeAclRule(const string vnet_name, swss::IpPrefix& vip);
+
+protected:
+
+    std::string concat = [](const std::string &a, const std::string &b) { return a + "," + b; };
+    void lazyInit();
+    std::vector<std::string> getBindPoints();
+    std::set<std::string> findInternalPorts();
+    std::string getNbrAlias(const swss::IpAddress& ip);
+    std::string getRuleName(const std::string& vnet_name, const swss::IpPrefix& vip);
+
+    bool acl_table_initialized_ = false;
+    unique_ptr<swss::ProducerStateTable> acl_table_;
+    unique_ptr<swss::ProducerStateTable> acl_table_type_;
+    unique_ptr<swss::ProducerStateTable> acl_rule_table_;
+    unique_ptr<swss::Table> port_table_;
 };
 
 #endif // __VNETORCH_H
