@@ -573,7 +573,10 @@ void StpMgr::processStpPortAttr(const string op,
     strncpy(msg->intf_name, intfName.c_str(), IFNAMSIZ - 1);
     msg->count = vlanCnt;
     SWSS_LOG_INFO("VLAN count for %s is %d", intfName.c_str(), vlanCnt);
+    SWSS_LOG_INFO("VLAN count for %s is %d", intfName.c_str(), vlanCnt);
 
+    // If there are VLANs, copy them into the message structure.
+    if (msg->count > 0)
     // If there are VLANs, copy them into the message structure.
     if (msg->count > 0)
     {
