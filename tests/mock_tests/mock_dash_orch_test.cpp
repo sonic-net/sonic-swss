@@ -25,6 +25,16 @@ namespace mock_orch_test
         static_cast<Orch *>(m_dashVnetOrch)->doTask();
     }
 
+    void MockDashOrchTest::RemoveVnet()
+    {
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_VNET_TABLE_NAME),
+            m_dashVnetOrch, APP_DASH_VNET_TABLE_NAME
+        );
+        consumer->addToSync({vnet1, "DEL", {}});
+        static_cast<Orch *>(m_dashVnetOrch)->doTask(*consumer.get());
+    }
+
     void MockDashOrchTest::AddRoutingType(dash::route_type::EncapType encap_type)
     {
         Table route_type_table = Table(m_app_db.get(), APP_DASH_ROUTING_TYPE_TABLE_NAME);
@@ -77,8 +87,18 @@ namespace mock_orch_test
         dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
         vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
         vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
-        vnet_map_table.set(vnet1 + ":2.2.2.2", { { "pb", vnet_map.SerializeAsString() } });
+        vnet_map_table.set(vnet1 + ":" + vnet_map_ip1, { { "pb", vnet_map.SerializeAsString() } });
         m_dashVnetOrch->addExistingData(&vnet_map_table);
         static_cast<Orch *>(m_dashVnetOrch)->doTask();
+    }
+
+    void MockDashOrchTest::RemoveVnetMap()
+    {
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_VNET_MAPPING_TABLE_NAME),
+            m_dashVnetOrch, APP_DASH_VNET_MAPPING_TABLE_NAME
+        );
+        consumer->addToSync({vnet1 + ":" + vnet_map_ip1, "DEL", {}});
+        static_cast<Orch *>(m_dashVnetOrch)->doTask(*consumer.get());
     }
 }
