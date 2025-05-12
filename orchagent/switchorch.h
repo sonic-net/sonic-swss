@@ -48,8 +48,6 @@ public:
     // Return reference to ACL group created for each stage and the bind point is
     // the switch
     std::map<sai_acl_stage_t, referenced_object> &getAclGroupsBindingToSwitch();
-    // Initialize the ACL groups bind to Switch
-    void initAclGroupsBindToSwitch();
 
     bool checkOrderedEcmpEnable() { return m_orderedEcmpEnable; }
 
@@ -90,7 +88,8 @@ private:
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
 
-
+    // Initialize the ACL groups bind to Switch
+    void initAclGroupsBindToSwitch();
     // Create the default ACL group for the given stage, bind point is
     // SAI_ACL_BIND_POINT_TYPE_SWITCH and group type is
     // SAI_ACL_TABLE_GROUP_TYPE_PARALLEL.
@@ -99,6 +98,16 @@ private:
     // Bind the ACL group to switch for the given stage.
     // Set the SAI_SWITCH_ATTR_{STAGE}_ACL with the group oid.
     ReturnCode bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const referenced_object &acl_grp);
+
+    // Unbind the ACL group to switch for the given stage.
+    // Set the SAI_SWITCH_ATTR_{STAGE}_ACL to SAI_NULL_OBJECT_ID
+    ReturnCode unbindAclGroupToSwitch(const sai_acl_stage_t &group_stage);
+
+    // Remove the ACL group on given stage if reference count is zero.
+    ReturnCode removeAclGroup(const sai_acl_stage_t &group_stage);
+
+    // Remove all ACL groups on all stages.
+    ReturnCode removeAllAclGroups();
 
     swss::NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(swss::NotificationConsumer& consumer);
