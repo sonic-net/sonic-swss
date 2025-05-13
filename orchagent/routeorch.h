@@ -39,6 +39,15 @@ struct NhgBase;
 
 struct NextHopGroupEntry
 {
+    NextHopGroupEntry()
+        :next_hop_group_id(0),
+        ref_count(0),
+        nh_member_install_count(0),
+        eligible_for_default_route_nh_swap(false),
+        is_default_route_nh_swap(false)
+    {
+    }
+
     sai_object_id_t         next_hop_group_id;      // next hop group id
     int                     ref_count;              // reference count
     NextHopGroupMembers     nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
