@@ -5,7 +5,7 @@ import json
 import pytest
 
 from swsscommon import swsscommon
-
+from dvslib.dvs_common import PollingConfig
 
 # macros for number of interfaces and number of neighbors
 # TBD: NUM_NEIGH_PER_INTF >= 128 ips will cause test framework to hang by default kernel settings

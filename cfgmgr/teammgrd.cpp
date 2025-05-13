@@ -15,6 +15,11 @@ using namespace swss;
 bool received_sigterm = false;
 static struct sigaction old_sigaction;
 
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+
 void sig_handler(int signo)
 {
     SWSS_LOG_ENTER();
