@@ -2381,6 +2381,7 @@ string RouteSync::getNextHopIf(struct rtnl_route *route_obj)
  */
 string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
 {
+    static bool default_weight_logged = false;
     string result = "";
 
     for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
@@ -2390,6 +2391,15 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
         if (weight == 0)
         {
+            nl_addr* nh_addr = rtnl_route_nh_get_gateway(nexthop);
+            char nh_addr_str[16] = {0};
+            nl_addr2str(nh_addr, nh_addr_str, sizeof(nh_addr_str));
+            SWSS_LOG_INFO("Using default weight of 1 for nexthop %s", nh_addr_str);
+            if (!default_weight_logged)
+            {
+                SWSS_LOG_NOTICE("Using default weight of 1 for nexthop %s", nh_addr_str);
+                default_weight_logged = true;
+            }
             weight = 1; // default weight is 1
         }
         result += to_string(weight);
