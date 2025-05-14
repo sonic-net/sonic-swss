@@ -22,8 +22,6 @@ extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 
-const string ZMQ_DEFAULT_ADDRESS = "tcp://localhost";
-
 FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, bool enableRouteZmq) :
         Orch(db, tableNames),
         m_neighOrch(neighOrch),
@@ -37,8 +35,8 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, 
 
     swss::ProducerStateTable *producerStateTablePtr = nullptr;
     if (enableRouteZmq) {
-        m_zmqClient = swss::create_zmq_client(ZMQ_DEFAULT_ADDRESS);
-        SWSS_LOG_NOTICE("FgNhgOrch initialize ZMQ client : %s", ZMQ_DEFAULT_ADDRESS.c_str());
+        m_zmqClient = swss::create_zmq_client(ZMQ_LOCAL_ADDRESS);
+        SWSS_LOG_NOTICE("FgNhgOrch initialize ZMQ client : %s", ZMQ_LOCAL_ADDRESS);
 
         producerStateTablePtr = new swss::ZmqProducerStateTable(appDb, APP_ROUTE_TABLE_NAME, *m_zmqClient);
     }
