@@ -1598,6 +1598,7 @@ const request_description_t request_description_multi_value = {
         { "endpoint",    REQ_T_IP_LIST },
         { "vni",         REQ_T_UINT_LIST },
         { "mac_address", REQ_T_MAC_ADDRESS_LIST },
+        {"local_endpoint", REQ_T_BOOL_LIST},
     },
     { } // no mandatory attributes
 };
@@ -1616,6 +1617,7 @@ TEST(request_parser, multipleValues)
                                      { "endpoint", "1.1.1.1,2.2.2.2,3.3.3.3" },
                                      { "vni", "11111,11112,11113" },
                                      { "mac_address", "02:03:04:05:06:07,12:13:14:15:16:17,22:23:24:25:26:27" },
+                                     { "local_endpoint", "true,false,true" },
                                  }
                              };
 
@@ -1628,21 +1630,25 @@ TEST(request_parser, multipleValues)
         EXPECT_STREQ(request.getOperation().c_str(), "SET");
         EXPECT_STREQ(request.getFullKey().c_str(), "key1");
         EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"endpoint", "vni", "mac_address"}));
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"endpoint", "vni", "mac_address", "local_endpoint"}));
         auto ep_list = request.getAttrIPList("endpoint");
         auto vni_list = request.getAttrUintList("vni");
         auto mac_list = request.getAttrMacAddressList("mac_address");
+        auto local_ep_list = request.getAttrBoolList("local_endpoint");
         std::vector<std::string> expected_ep{ "1.1.1.1", "2.2.2.2", "3.3.3.3" };
         std::vector<uint64_t> expected_vni{ 11111, 11112, 11113 };
         std::vector<std::string> expected_mac{ "02:03:04:05:06:07", "12:13:14:15:16:17", "22:23:24:25:26:27" };
+        std::vector<bool> expected_local_ep{ true, false, true };
         EXPECT_EQ(ep_list.size(), value_size);
         EXPECT_EQ(vni_list.size(), value_size);
         EXPECT_EQ(mac_list.size(), value_size);
+        EXPECT_EQ(local_ep_list.size(), value_size);
         for (size_t idx = 0; idx < value_size; idx++)
         {
             EXPECT_STREQ(ep_list[idx].to_string().c_str(), expected_ep[idx].c_str());
             EXPECT_EQ(vni_list[idx], expected_vni[idx]);
             EXPECT_STREQ(mac_list[idx].to_string().c_str(), expected_mac[idx].c_str());
+            EXPECT_EQ(local_ep_list[idx], expected_local_ep[idx]);
         }
     }
     catch (const std::exception& e)
@@ -1751,6 +1757,37 @@ TEST(request_parser, multipleValuesInvalidMac)
     catch (const std::invalid_argument& e)
     {
         EXPECT_STREQ(e.what(), "Invalid mac address list: 02:03:04:05:06:07,invalid_mac,22:23:24:25:26:27");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
+}
+
+TEST(request_parser, multipleValuesInvalidBool)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     { "endpoint", "1.1.1.1,2.2.2.2,3.3.3.3" },
+                                     { "vni", "11111,11112,11113" },
+                                     { "mac_address", "02:03:04:05:06:07,12:13:14:15:16:17,22:23:24:25:26:27" },
+                                     { "local_endpoint", "true,false,invalid_bool" },
+                                 }
+                             };
+
+    try
+    {
+        TestRequestMultiValue request;
+        request.parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Invalid boolean list: true,false,invalid_bool");
     }
     catch (const std::exception& e)
     {
