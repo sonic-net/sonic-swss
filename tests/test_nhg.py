@@ -230,10 +230,6 @@ class TestNextHopGroupBase(object):
         self.asic_rts_count = len(self.asic_db.get_keys(self.ASIC_RT_STR))
         self.asic_nhg_maps_count = len(self.asic_db.get_keys(self.ASIC_NHG_MAP_STR))
 
-        # enable log for debug test case issue
-        self.dvs.runcmd(f"swssloglevel -d")
-        self.dvs.runcmd(f"swssloglevel -l DEBUG -a")
-
     def nhg_exists(self, nhg_index):
         return self.get_nhg_id(nhg_index) is not None
 

@@ -33,7 +33,10 @@ std::shared_ptr<swss::ZmqClient> swss::create_zmq_client(std::string zmq_address
         zmq_port += atoi(nsid) + 1;
     }
 
-    return std::make_shared<ZmqClient>(zmq_address + ":" + std::to_string(zmq_port));
+    auto zmq_address_with_port = zmq_address + ":" + std::to_string(zmq_port);
+
+    SWSS_LOG_NOTICE("Create ZMQ client with address: %s", zmq_address_with_port.c_str());
+    return std::make_shared<ZmqClient>(zmq_address_with_port);
 }
 
 bool swss::get_feature_status(std::string feature, bool default_value)

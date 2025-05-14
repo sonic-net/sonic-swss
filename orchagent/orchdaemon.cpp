@@ -270,7 +270,6 @@ bool OrchDaemon::init()
         { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
     };
     auto enable_route_zmq = get_feature_status("orch_route_zmq_enabled", false);
-    enable_route_zmq = false;
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch, enable_route_zmq);
     gDirectory.set(gFgNhgOrch);
 
@@ -294,7 +293,8 @@ bool OrchDaemon::init()
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, nullptr);
+    auto route_zmq_sever = enable_route_zmq ? m_zmqServer : nullptr;
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_sever);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 

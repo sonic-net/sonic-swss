@@ -129,7 +129,11 @@ private:
     bool isFineGrainedConfigured;
 
     Table m_stateWarmRestartRouteTable;
-    ProducerStateTable m_routeTable;
+
+    std::shared_ptr<swss::ZmqClient> m_zmqClient = nullptr;
+
+    /* regular route table */
+    std::shared_ptr<swss::ProducerStateTable> m_routeTable = nullptr;
 
     FgPrefixOpCache m_fgPrefixAddCache;
     FgPrefixOpCache m_fgPrefixDelCache;
