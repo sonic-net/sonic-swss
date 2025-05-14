@@ -567,8 +567,9 @@ void FdbOrch::update(sai_fdb_event_t        type,
             return;
         }
 
-        /* If the existing MAC is MCLAG remote, change its type to dynamic. */
-        if (existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
+        /* If the existing MAC is MCLAG remote or VXLAN remote, change its type to dynamic. */
+        if ((existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) ||
+	   (existing_entry->second.origin == FDB_ORIGIN_VXLAN_ADVERTIZED))
         {
             if (existing_entry->second.bridge_port_id != bridge_port_id)
             {
