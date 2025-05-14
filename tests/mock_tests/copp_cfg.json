@@ -103,6 +103,10 @@
 		    "trap_ids": "src_nat_miss,dest_nat_miss",
 		    "trap_group": "queue1_group2"
 	    },
+        "neigh_miss": {
+            "trap_ids": "neigh_miss",
+            "trap_group": "queue1_group3"
+		},	
 	    "sflow": {
 		    "trap_group": "queue2_group1",
 		    "trap_ids": "sample_packet"

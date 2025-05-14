@@ -71,7 +71,8 @@ traps_to_trap_type = {
         "dest_nat_miss": "SAI_HOSTIF_TRAP_TYPE_DNAT_MISS",
         "ldp": "SAI_HOSTIF_TRAP_TYPE_LDP",
         "bfd_micro": "SAI_HOSTIF_TRAP_TYPE_BFD_MICRO",
-        "bfdv6_micro": "SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO"
+        "bfdv6_micro": "SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO",
+        "neigh_miss": "SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS"
         }
 
 copp_group_default = {
@@ -127,6 +128,16 @@ copp_group_queue1_group2 = {
         "cbs":"600",
         "red_action":"drop"
 }
+copp_group_queue1_group3 = {
+        "trap_action":"trap",
+        "trap_priority":"1",
+        "queue": "1",
+        "meter_type":"packets",
+        "mode":"sr_tcm",
+        "cir":"200",
+        "cbs":"200",
+        "red_action":"drop"
+}
 
 copp_group_queue2_group1 = {
 	"cbs": "1000",
@@ -161,6 +172,7 @@ copp_trap = {
         "udld": ["udld", copp_group_queue4_group3, "always_enabled"],
         "ip2me": ["ip2me", copp_group_queue1_group1, "always_enabled"],
         "nat": ["src_nat_miss;dest_nat_miss", copp_group_queue1_group2],
+        "neigh_miss": ["neigh_miss", copp_group_queue1_group3],
         "sflow": ["sample_packet", copp_group_queue2_group1],
         "ttl": ["ttl_error", copp_group_default]
 }
