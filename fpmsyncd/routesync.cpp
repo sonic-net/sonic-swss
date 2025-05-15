@@ -1300,14 +1300,15 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
         /* Get the weight of next hop */
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
-        if (weight)
+        if (weight == 0)
         {
-            result += to_string(weight);
+            nl_addr* nh_addr = rtnl_route_nh_get_gateway(nexthop);
+            char nh_addr_str[MAX_ADDR_SIZE + 1] = {0};
+            nl_addr2str(nh_addr, nh_addr_str, MAX_ADDR_SIZE);
+            SWSS_LOG_INFO("Using default weight of 1 for nexthop %s", nh_addr_str);
+            weight = 1; // default weight is 1
         }
-        else
-        {
-            return "";
-        }
+        result += to_string(weight);
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {

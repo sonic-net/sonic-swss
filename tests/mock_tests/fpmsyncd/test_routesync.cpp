@@ -232,3 +232,52 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
     ASSERT_EQ(value.get(), "0xc8");
 
 }
+
+auto create_nl_addr(const char* addr_str)
+{
+    nl_addr* addr;
+    nl_addr_parse(addr_str, AF_INET, &addr);
+    return unique_ptr<nl_addr, decltype(nl_addr_put)*>(addr, nl_addr_put);
+}
+
+auto create_route(const char* dst_addr_str)
+{
+    rtnl_route* route = rtnl_route_alloc();
+    auto dst_addr = create_nl_addr(dst_addr_str);
+    rtnl_route_set_dst(route, dst_addr.get());
+    rtnl_route_set_type(route, RTN_UNICAST);
+    rtnl_route_set_protocol(route, RTPROT_STATIC);
+    rtnl_route_set_family(route, AF_INET);
+    rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+    rtnl_route_set_table(route, RT_TABLE_MAIN);
+    return unique_ptr<rtnl_route, decltype(rtnl_route_put)*>(route, rtnl_route_put);
+}
+
+rtnl_nexthop* create_nexthop(const char* gateway_str)
+{
+    static int idx = 1; // interface index
+    ++idx;
+    // Create a nexthop with 0 weight
+    rtnl_nexthop* nh = rtnl_route_nh_alloc();
+    rtnl_route_nh_set_weight(nh, 0);
+    rtnl_route_nh_set_ifindex(nh, idx);
+    auto gateway_addr = create_nl_addr(gateway_str);
+    rtnl_route_nh_set_gateway(nh, gateway_addr.get());
+    return nh;
+}
+
+// Checks that when a nexthop is not assigned a weight, the default weight of 1 is used.
+TEST_F(FpmSyncdResponseTest, TestGetNextHopWt)
+{
+    auto test_route = create_route("10.1.1.0");
+
+    // Create two nexthops with 0 weight
+    rtnl_nexthop* nh1 = create_nexthop(test_gateway);
+    rtnl_nexthop* nh2 = create_nexthop(test_gateway_);
+
+    // Add new nexthops to the route
+    rtnl_route_add_nexthop(test_route.get(), nh1);
+    rtnl_route_add_nexthop(test_route.get(), nh2);
+
+    EXPECT_EQ(m_mockRouteSync.getNextHopWt(test_route.get()), "1,1");
+}
