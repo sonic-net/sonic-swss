@@ -33,6 +33,8 @@ public:
     void doTask(Consumer& consumer);
 
     void update(SubjectType, void *cntx);
+
+    bool getDebugMonitorStatus();
 private:
     // Debug Capability Reporting Functions
     void publishDropCounterCapabilities();
