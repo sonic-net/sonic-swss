@@ -102,3 +102,5 @@
 #define PORT_REUSE_THRESHOLD       "reuse_threshold"
 #define PORT_FLAP_PENALTY          "flap_penalty"
 #define PORT_MODE                  "mode"
+#define PORT_UNRELIABLE_LOS        "unreliable_los"
+
