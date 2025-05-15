@@ -67,8 +67,6 @@ extern bool gIsNatSupported;
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
 
-const string ZMQ_DEFAULT_ADDRESS = "tcp://127.0.0.1";
-
 string gMySwitchType = "";
 string gMySwitchSubType = "";
 int32_t gVoqMySwitchId = -1;
