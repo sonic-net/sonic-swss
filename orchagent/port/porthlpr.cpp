@@ -738,6 +738,20 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::main) &serdes, 
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post1) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post2) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::line_tx_fir_pre1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::line_tx_fir_pre2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::line_tx_fir_pre3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::line_tx_fir_main) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::line_tx_fir_post1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::line_tx_fir_post2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::line_tx_fir_post3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::system_tx_fir_pre1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::system_tx_fir_pre2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::system_tx_fir_pre3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::system_tx_fir_main) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::system_tx_fir_post1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::system_tx_fir_post2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::system_tx_fir_post3) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::attn) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::ob_m2lp) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::ob_alev_out) &serdes, const std::string &field, const std::string &value) const;
@@ -1129,6 +1143,104 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_POST3)
         {
             if (!this->parsePortSerdes(port.serdes.post3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINE_TX_FIR_PRE1)
+        {
+            if (!this->parsePortSerdes(port.serdes.line_tx_fir_pre1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINE_TX_FIR_PRE2)
+        {
+            if (!this->parsePortSerdes(port.serdes.line_tx_fir_pre2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINE_TX_FIR_PRE3)
+        {
+            if (!this->parsePortSerdes(port.serdes.line_tx_fir_pre3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINE_TX_FIR_MAIN)
+        {
+            if (!this->parsePortSerdes(port.serdes.line_tx_fir_main, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINE_TX_FIR_POST1)
+        {
+            if (!this->parsePortSerdes(port.serdes.line_tx_fir_post1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINE_TX_FIR_POST2)
+        {
+            if (!this->parsePortSerdes(port.serdes.line_tx_fir_post2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINE_TX_FIR_POST3)
+        {
+            if (!this->parsePortSerdes(port.serdes.line_tx_fir_post3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SYSTEM_TX_FIR_PRE1)
+        {
+            if (!this->parsePortSerdes(port.serdes.system_tx_fir_pre1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SYSTEM_TX_FIR_PRE2)
+        {
+            if (!this->parsePortSerdes(port.serdes.system_tx_fir_pre2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SYSTEM_TX_FIR_PRE3)
+        {
+            if (!this->parsePortSerdes(port.serdes.system_tx_fir_pre3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SYSTEM_TX_FIR_MAIN)
+        {
+            if (!this->parsePortSerdes(port.serdes.system_tx_fir_main, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SYSTEM_TX_FIR_POST1)
+        {
+            if (!this->parsePortSerdes(port.serdes.system_tx_fir_post1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SYSTEM_TX_FIR_POST2)
+        {
+            if (!this->parsePortSerdes(port.serdes.system_tx_fir_post2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SYSTEM_TX_FIR_POST3)
+        {
+            if (!this->parsePortSerdes(port.serdes.system_tx_fir_post3, field, value))
             {
                 return false;
             }
