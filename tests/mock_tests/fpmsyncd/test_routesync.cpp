@@ -272,8 +272,8 @@ TEST_F(FpmSyncdResponseTest, TestGetNextHopWt)
     auto test_route = create_route("10.1.1.0");
 
     // Create two nexthops with 0 weight
-    rtnl_nexthop* nh1 = create_nexthop(test_gateway);
-    rtnl_nexthop* nh2 = create_nexthop(test_gateway_);
+    rtnl_nexthop* nh1 = create_nexthop("192.168.1.1");
+    rtnl_nexthop* nh2 = create_nexthop("192.168.1.2");
 
     // Add new nexthops to the route
     rtnl_route_add_nexthop(test_route.get(), nh1);
