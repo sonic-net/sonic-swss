@@ -23,6 +23,7 @@
 #include "taskworker.h"
 #include "pbutils.h"
 #include "dashrouteorch.h"
+#include "dashmeterorch.h"
 
 using namespace std;
 using namespace swss;
@@ -46,7 +47,7 @@ static std::unordered_map<string, sai_dash_eni_mac_override_type_t> sMacOverride
     { "dst_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC}
 };
 
-DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) :
+DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tableName, zmqServer),
     m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
@@ -54,7 +55,12 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqSer
 
     m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_ENI_NAME_MAP));
+    m_eni_name_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_NAME_MAP);
+    dash_eni_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_TABLE_NAME);
+    dash_eni_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_ROUTE_TABLE_NAME);
+    dash_qos_result_table_ = make_unique<Table>(app_state_db, APP_DASH_QOS_TABLE_NAME);
+    dash_appliance_result_table_ = make_unique<Table>(app_state_db, APP_DASH_APPLIANCE_TABLE_NAME);
+    dash_routing_type_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTING_TYPE_TABLE_NAME);
 
     if (gTraditionalFlexCounter)
     {
@@ -260,11 +266,13 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string appliance_id = kfvKey(t);
         string op = kfvOp(t);
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -283,14 +291,17 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_appliance_result_table_, appliance_id, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeApplianceEntry(appliance_id))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_appliance_result_table_, appliance_id);
             }
             else
             {
@@ -342,12 +353,14 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
         dash::route_type::RoutingType routing_type;
+        result = DASH_RESULT_SUCCESS;
 
         std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
         routing_type_str = "ROUTING_TYPE_" + routing_type_str;
@@ -376,14 +389,17 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeRoutingTypeEntry(routing_type))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_routing_type_result_table_, routing_type_str);
             }
             else
             {
@@ -441,6 +457,31 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     {
         SWSS_LOG_INFO("Retry as no appliance table entry found");
         return false;
+    }
+
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
+                                     entry.metadata.v4_meter_policy_id() : "";
+    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
+                                     entry.metadata.v6_meter_policy_id() : "";
+
+    if (!v4_meter_policy.empty())
+    {
+        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);    
+        if (meter_policy_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Retry as v4 meter_policy %s not found", v4_meter_policy.c_str());
+            return false;
+        }
+    }
+    if (!v6_meter_policy.empty())
+    {
+        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);    
+        if (meter_policy_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Retry as v6 meter_policy %s not found", v6_meter_policy.c_str());
+            return false;
+        }
     }
 
     sai_object_id_t &eni_id = entry.eni_id;
@@ -501,6 +542,20 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         eni_attrs.push_back(eni_attr);
     }
 
+    if (!v4_meter_policy.empty())
+    {
+        eni_attr.id = SAI_ENI_ATTR_V4_METER_POLICY_ID;
+        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);    
+        eni_attrs.push_back(eni_attr);
+    }
+
+    if (!v6_meter_policy.empty())
+    {
+        eni_attr.id = SAI_ENI_ATTR_V6_METER_POLICY_ID;
+        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);    
+        eni_attrs.push_back(eni_attr);
+    }
+
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
                                 (uint32_t)eni_attrs.size(), eni_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -516,6 +571,15 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     addEniToFC(eni_id, eni);
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);
+
+    if (!v4_meter_policy.empty())
+    {
+        dash_meter_orch->incrMeterPolicyEniBindCount(v4_meter_policy);
+    }
+    if (!v6_meter_policy.empty())
+    {
+        dash_meter_orch->incrMeterPolicyEniBindCount(v6_meter_policy);
+    }
 
     SWSS_LOG_NOTICE("Created ENI object for %s", eni.c_str());
 
@@ -616,6 +680,21 @@ bool DashOrch::removeEniObject(const string& eni)
         }
     }
 
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
+                                     entry.metadata.v4_meter_policy_id() : "";
+    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
+                                     entry.metadata.v6_meter_policy_id() : "";
+
+    if (!v4_meter_policy.empty())
+    {
+        dash_meter_orch->decrMeterPolicyEniBindCount(v4_meter_policy);
+    }
+    if (!v6_meter_policy.empty())
+    {
+        dash_meter_orch->decrMeterPolicyEniBindCount(v6_meter_policy);
+    }
+
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);
 
     SWSS_LOG_NOTICE("Removed ENI object for %s", eni.c_str());
@@ -677,14 +756,14 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const auto& tn = consumer.getTableName();
-
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         auto t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
+        result = DASH_RESULT_SUCCESS;
         if (op == SET_COMMAND)
         {
             EniEntry entry;
@@ -702,14 +781,17 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_eni_result_table_, eni, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeEni(eni))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_eni_result_table_, eni);
             }
             else
             {
@@ -756,11 +838,13 @@ bool DashOrch::removeQosEntry(const string& qos_name)
 void DashOrch::doTaskQosTable(ConsumerBase& consumer)
 {
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string qos_name = kfvKey(t);
         string op = kfvOp(t);
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -779,14 +863,17 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_qos_result_table_, qos_name, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeQosEntry(qos_name))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_qos_result_table_, qos_name);
             }
             else
             {
@@ -904,11 +991,13 @@ bool DashOrch::removeEniRoute(const std::string& eni)
 void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
 {
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
+        result = DASH_RESULT_SUCCESS;
 
         if (op == SET_COMMAND)
         {
@@ -927,14 +1016,17 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
             }
             else
             {
+                result = DASH_RESULT_FAILURE;
                 it++;
             }
+            writeResultToDB(dash_eni_route_result_table_, eni, result);
         }
         else if (op == DEL_COMMAND)
         {
             if (removeEniRoute(eni))
             {
                 it = consumer.m_toSync.erase(it);
+                removeResultFromDB(dash_eni_route_result_table_, eni);
             }
             else
             {
