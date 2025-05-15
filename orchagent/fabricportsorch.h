@@ -56,13 +56,13 @@ private:
     bool m_debugTimerEnabled = false;
     bool m_isSwitchStatsGenerated = false;
 
-    string m_defaultPollWithErrors = "0";
-    string m_defaultPollWithNoErrors = "8";
-    string m_defaultPollWithFecErrors = "0";
-    string m_defaultPollWithNoFecErrors = "8";
-    string m_defaultConfigIsolated = "0";
-    string m_defaultIsolated = "0";
-    string m_defaultAutoIsolated = "0";
+    int m_defaultPollWithErrors = 0;
+    int m_defaultPollWithNoErrors = 8;
+    int m_defaultPollWithFecErrors = 0;
+    int m_defaultPollWithNoFecErrors = 8;
+    int m_defaultConfigIsolated = 0;
+    int m_defaultIsolated = 0;
+    int m_defaultAutoIsolated = 0;
 
     int getFabricPortList();
     void generatePortStats();
@@ -72,6 +72,13 @@ private:
     bool checkFabricPortMonState();
     void updateFabricRate();
     void createSwitchDropCounters();
+    void clearFabricCnt(int lane, bool clearIsolation);
+    void updateStateDbTable(
+        const unique_ptr<Table>& stateTable,
+        const string& key,
+        const string& field,
+        int value);
+    void isolateFabricLink(int lane, bool isolate);
 
     void doTask() override;
     void doTask(Consumer &consumer);

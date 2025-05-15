@@ -237,6 +237,16 @@ public:
     void updateRoute(const IpPrefix &pfx, bool add);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
+    void enableCachingNeighborUpdate()
+    {
+        enable_cache_neigh_updates_ = true;
+    }
+    void disableCachingNeighborUpdate()
+    {
+        enable_cache_neigh_updates_ = false;
+    }
+    void updateCachedNeighbors();
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
@@ -285,6 +295,9 @@ private:
     MuxCfgRequest request_;
     std::set<IpAddress> standalone_tunnel_neighbors_;
     std::set<IpAddress> skip_neighbors_;
+
+    bool enable_cache_neigh_updates_ = false;
+    std::vector<NeighborUpdate> cached_neigh_updates_;
 };
 
 const request_description_t mux_cable_request_description = {

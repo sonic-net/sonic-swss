@@ -34,7 +34,8 @@
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
-#define MIRROR_SESSION_DEFAULT_IP_HDR_VER 4
+#define MIRROR_SESSION_IP_HDR_VER_4     4
+#define MIRROR_SESSION_IP_HDR_VER_6     6
 #define MIRROR_SESSION_DSCP_SHIFT       2
 #define MIRROR_SESSION_DSCP_MIN         0
 #define MIRROR_SESSION_DSCP_MAX         63
@@ -380,6 +381,9 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 {
     SWSS_LOG_ENTER();
 
+    bool src_ip_initialized = false;
+    bool dst_ip_initialized = false;
+
     auto session = m_syncdMirrors.find(key);
     if (session != m_syncdMirrors.end())
     {
@@ -396,20 +400,12 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             if (fvField(i) == MIRROR_SESSION_SRC_IP)
             {
                 entry.srcIp = fvValue(i);
-                if (!entry.srcIp.isV4())
-                {
-                    SWSS_LOG_ERROR("Unsupported version of sessions %s source IP address", key.c_str());
-                    return task_process_status::task_invalid_entry;
-                }
+                src_ip_initialized = true;
             }
             else if (fvField(i) == MIRROR_SESSION_DST_IP)
             {
                 entry.dstIp = fvValue(i);
-                if (!entry.dstIp.isV4())
-                {
-                    SWSS_LOG_ERROR("Unsupported version of sessions %s destination IP address", key.c_str());
-                    return task_process_status::task_invalid_entry;
-                }
+                dst_ip_initialized = true;
             }
             else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
             {
@@ -492,6 +488,12 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             SWSS_LOG_ERROR("Failed to parse session %s attribute %s. Unknown error has been occurred", key.c_str(), fvField(i).c_str());
             return task_process_status::task_failed;
         }
+    }
+    // Entry validation as a whole
+    if (src_ip_initialized && dst_ip_initialized && entry.srcIp.getIp().family != entry.dstIp.getIp().family)
+    {
+        SWSS_LOG_ERROR("Address family of source and destination IPs is different");
+        return task_process_status::task_invalid_entry;
     }
 
     if (!isHwResourcesAvailable())
@@ -992,7 +994,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
 
         attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
-        attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
+        attr.value.u8 = session.dstIp.isV4() ? MIRROR_SESSION_IP_HDR_VER_4 : MIRROR_SESSION_IP_HDR_VER_6;
         attrs.push_back(attr);
 
         // TOS value format is the following:
@@ -1341,7 +1343,7 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         else
         {
             string alias = "";
-            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
+            session.nexthopInfo.nexthop = session.dstIp.isV4() ? NextHopKey("0.0.0.0", alias) : NextHopKey("::", alias);
         }
 
         // Update State DB Nexthop

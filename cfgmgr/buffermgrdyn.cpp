@@ -1056,14 +1056,16 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
 
     argv.emplace_back(profile.name);
     argv.emplace_back(profile.size);
+    argv.emplace_back(profile.xon);
+    argv.emplace_back(profile.xoff);
 
     if (!new_pg.empty())
     {
         argv.emplace_back(new_pg);
     }
 
-    SWSS_LOG_INFO("Checking headroom for port %s with profile %s size %s pg %s",
-                  port.c_str(), profile.name.c_str(), profile.size.c_str(), new_pg.c_str());
+    SWSS_LOG_INFO("Checking headroom for port %s with profile %s size %s xon %s xoff %s pg %s",
+                  port.c_str(), profile.name.c_str(), profile.size.c_str(), profile.xon.c_str(), profile.xoff.c_str(), new_pg.c_str());
 
     try
     {
@@ -1457,6 +1459,26 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
             if (portInfo.state != PORT_READY)
             {
                 SWSS_LOG_INFO("Nothing to be done for %s since port is not ready", key.c_str());
+                continue;
+            }
+
+            // If cable len is 0m, remove lossless PG, keep lossy PG.
+            if (cable_length == "0m" && portPg.lossless)
+            {
+                if (oldProfile.empty())
+                {
+                    SWSS_LOG_INFO("No lossless profile found for port %s when cable length is set to '0m'.", port.c_str());
+                    continue;
+                }
+
+                if (m_bufferProfileLookup.find(oldProfile) != m_bufferProfileLookup.end())
+                {
+                    m_bufferProfileLookup[oldProfile].port_pgs.erase(key);
+                }
+
+                updateBufferObjectToDb(key, oldProfile, false);
+                profilesToBeReleased.insert(oldProfile);
+                portPg.running_profile_name.clear();
                 continue;
             }
 

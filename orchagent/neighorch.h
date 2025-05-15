@@ -50,9 +50,11 @@ struct NeighborUpdate
 struct NeighborContext
 {
     NeighborEntry                       neighborEntry;              // neighbor entry to process
-    std::deque<sai_status_t>            object_statuses;            // bulk statuses
+    std::deque<sai_status_t>            object_statuses;            // entity bulk statuses for neighbors
     MacAddress                          mac;                        // neighbor mac
     bool                                bulk_op = false;            // use bulker (only for mux use for now)
+    sai_object_id_t                     next_hop_id;                // next hop id
+    sai_status_t                        nexthop_status;             // next hop status
 
     NeighborContext(NeighborEntry neighborEntry)
         : neighborEntry(neighborEntry)
@@ -73,7 +75,7 @@ public:
 
     bool hasNextHop(const NextHopKey&);
     bool isNeighborResolved(const NextHopKey&);
-    bool addNextHop(const NextHopKey&);
+    bool addNextHop(NeighborContext& ctx);
     bool removeMplsNextHop(const NextHopKey&);
 
     sai_object_id_t getNextHopId(const NextHopKey&);
@@ -120,8 +122,10 @@ private:
     std::set<NextHopKey> m_neighborToResolve;
 
     EntityBulker<sai_neighbor_api_t> gNeighBulker;
+    ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
 
     bool removeNextHop(const IpAddress&, const string&);
+    bool processBulkAddNextHop(NeighborContext&);
 
     bool addNeighbor(NeighborContext& ctx);
     bool removeNeighbor(NeighborContext& ctx, bool disable = false);

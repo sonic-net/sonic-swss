@@ -28,10 +28,16 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     uname -r | grep generic
     python3 --version
     ```
+    **Note:** Make sure that `uname -r | grep generic` outputs something. It is necessary to run a generic image in order to add the `team` module
+    to the kernel. To install a generic image, you can use the following command (you can adjust the version of the image):
+    ```
+    sudo apt install linux-image-5.15.0-107-generic linux-headers-5.15.0-107-generic linux-modules-5.15.0-107-generic linux-modules-extra-5.15.0-107-generic
+    ```
+    After installing the generic image, you should either remove all other installed images, or select the new image during the boot process (safer option).
 
-2. [Install Docker CE](https://docs.docker.com/install/linux/docker-ce/ubuntu/). Be sure to follow the [post-install instructions](https://docs.docker.com/install/linux/linux-postinstall/) so that you don't need sudo privileges to run docker commands.
+3. [Install Docker CE](https://docs.docker.com/install/linux/docker-ce/ubuntu/). Be sure to follow the [post-install instructions](https://docs.docker.com/install/linux/linux-postinstall/) so that you don't need sudo privileges to run docker commands.
 
-3. Install the external dependencies needed to run the tests.
+4. Install the external dependencies needed to run the tests.
 
     ```
     sudo modprobe team
@@ -51,7 +57,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     ```
     If you want to run DASH testcases, please download and install the latest ubuntu20.04 [dependencies](https://dev.azure.com/mssonic/build/_build?definitionId=1055&_a=summary&repositoryFilter=158&branchFilter=11237%2C11237%2C11237%2C11237%2C11237) of DASH from Azp.
 
-4. Install `swsscommon`.
+5. Install `swsscommon`.
 
     ```
     sudo dpkg -i libswsscommon_1.0.0_amd64.deb python3-swsscommon_1.0.0_amd64.deb
@@ -62,7 +68,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     - Downloading the latest build from Azure:
       - [Ubuntu 20.04](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&definitionId=9&artifactName=sonic-swss-common.amd64.ubuntu20_04)
 
-5. Load the `docker-sonic-vs.gz` file into docker. You can get the image by:
+6. Load the `docker-sonic-vs.gz` file into docker. You can get the image by:
     - [Building it from scratch](https://github.com/sonic-net/sonic-buildimage)
     - Downloading the latest build from Azure:
       - [docker-sonic-vs-asan.gz](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs-asan.gz)
@@ -222,4 +228,14 @@ For those developing new features for SWSS or the DVS framework, you might find 
 
 - Currently when pytest is run using `--force-flaky` and the last test case fails, then pytest tears down the module before retrying the failed test case and invokes the module setup again to run the failed test case. This is a known issue with [flaky](https://github.com/box/flaky/issues/128) and [pytest](https://github.com/pytest-dev/pytest-rerunfailures/issues/51).
     
-    Because of this issue, all the logs are lost except for the last test case as modules are torn down and set up again. The workaround for this is to include a dummy test case that always passes at the end of all test files/modules. 
+    Because of this issue, all the logs are lost except for the last test case as modules are torn down and set up again. The workaround for this is to include a dummy test case that always passes at the end of all test files/modules.
+
+- Too many open files
+
+    If some tests end with the error "Too many open files", you should check the maximum number of open files that are permitted on your system:
+    ```
+    ulimit -a | grep "open files"
+    ```
+    You can increase it by executing this command: `ulimit -n 8192`. Feel free to change `8192`. This value worked fine for me.
+
+    **Note:** This change is only valid for the current terminal session. If you want a persistent change, append `ulimit -n 8192` to `~/.bashrc`.

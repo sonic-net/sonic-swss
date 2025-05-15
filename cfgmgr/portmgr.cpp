@@ -46,7 +46,14 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
     }
     else
     {
-        throw runtime_error(cmd_str + " : " + res);
+        // This failure can happen on PortChannels during system startup.  A PortChannel enslaves
+        // members before a default MTU is set on the port (set in this file, not via the config!).
+        // Therefore this error is always emitted on startup for portchannel members.
+        // In theory we shouldn't log in this case, the correct fix is to detect the
+        // port is part of a portchannel and not even try this but that is rejected for
+        // possible performance implications.
+        SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed (isPortStateOk=true) with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
     }
     return true;
 }
@@ -244,6 +251,15 @@ void PortMgr::doTask(Consumer &consumer)
                 }
             }
 
+            if (!portOk)
+            {
+                // Port configuration is handled by the orchagent. If the configuration is written to the APP DB using
+                // multiple Redis write commands, the orchagent may receive a partial configuration and create a port
+                // with incorrect settings.
+                field_values.emplace_back("mtu", mtu);
+                field_values.emplace_back("admin_status", admin_status);
+            }
+
             if (field_values.size())
             {
                 writeConfigToAppDb(alias, field_values);
@@ -253,12 +269,10 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
 
+
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-
-
-
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);

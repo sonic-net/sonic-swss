@@ -903,3 +903,34 @@ class TestBufferMgrDyn(object):
             self.config_db.delete_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
             self.app_db.delete_entry("BUFFER_PG_TABLE_SET", "")
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+
+    def test_bufferPoolPercentage(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        try:
+            self.config_db.delete_field('BUFFER_POOL', 'ingress_lossless_pool', 'size')
+        except Exception as e:
+            pass
+
+        try:
+            percentage = 75
+            margin = 1
+
+            re_pool_size = "ingress_lossless_pool:([0-9]+)"
+            _, original_output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            original_size = int(re.match(re_pool_size, original_output).group(1))
+
+            original_ingress_lossless_pool = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            ingress_lossless_pool = original_ingress_lossless_pool
+            ingress_lossless_pool['percentage'] = str(percentage)
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', ingress_lossless_pool)
+
+            _, percentage_output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            percentage_size = int(re.match(re_pool_size, percentage_output).group(1))
+
+            real_percentage = percentage_size * 100 / original_size
+            assert abs(percentage - real_percentage) < margin
+        finally:
+            self.config_db.delete_entry('BUFFER_POOL', 'ingress_lossless_pool')
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)
