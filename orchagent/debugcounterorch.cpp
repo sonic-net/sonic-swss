@@ -779,6 +779,11 @@ void DebugCounterOrch::createDropCounter(const string& counter_name, const strin
     }
 }
 
+bool DebugCounterOrch::getDebugMonitorStatus()
+{
+    return debug_monitor_enabled;
+}
+
 // Debug Counter Configuration Helper Functions START HERE -----------------------------------------
 
 // parseDropReasonUpdate takes a key from CONFIG_DB and returns the 1) the counter name being targeted and
