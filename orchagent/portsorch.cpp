@@ -1221,11 +1221,14 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
 
         if (cit.tpid.is_set)
         {
-            sai_attribute_t attr;
-            attr.id = SAI_PORT_ATTR_TPID;
-            attr.value.u16 = cit.tpid.value;
-            attrList.push_back(attr);
-            p.m_tpid = cit.tpid.value;
+            if (cit.tpid.value != DEFAULT_TPID)
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_PORT_ATTR_TPID;
+                attr.value.u16 = cit.tpid.value;
+                attrList.push_back(attr);
+                p.m_tpid = cit.tpid.value;
+            }
         }
 
         if (cit.pfc_asym.is_set)
