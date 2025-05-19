@@ -718,6 +718,7 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid,
                                      {
                                          {QUEUE_COUNTER_ID_LIST,
+                                          "SAI_QUEUE_STAT_TRIM_PACKETS,"
                                           "SAI_QUEUE_STAT_DROPPED_BYTES,SAI_QUEUE_STAT_DROPPED_PACKETS,"
                                           "SAI_QUEUE_STAT_BYTES,SAI_QUEUE_STAT_PACKETS"
                                          }
