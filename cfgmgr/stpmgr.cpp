@@ -939,6 +939,7 @@ int StpMgr::allocL2Instance(uint32_t vlan_id)
     return idx;
 }
 
+
 void StpMgr::deallocL2Instance(uint32_t vlan_id)
 {
     int idx = 0;
