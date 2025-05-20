@@ -8,9 +8,6 @@
 
 #include <macsecorch.h>
 
-//B4C
-////#define DASH_METER_COUNTER_ID_LIST "DASH_METER_COUNTER_ID_LIST"
-
 using std::shared_ptr;
 using std::string;
 using std::unordered_map;

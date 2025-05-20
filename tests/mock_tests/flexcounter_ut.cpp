@@ -1118,7 +1118,7 @@ namespace flexcounter_test
         tmp_entry.eni_id = 0x7008000000021;
         m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
 
-        /* Should create ENI Counter stats for existing ENI's */
+        /* Should create Meter Counter stats for existing ENI's */
         m_DashMeterOrch->handleMeterFCStatusUpdate(true);
         m_DashMeterOrch->doTask(*(m_DashMeterOrch->m_meter_fc_update_timer));
         ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));

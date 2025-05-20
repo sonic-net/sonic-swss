@@ -30,14 +30,6 @@ extern bool gTraditionalFlexCounter;
 // To be deleted after addition to sonic-swss-common/common/schema.h
 #define COUNTERS_METER_ENI_NAME_MAP "COUNTERS_METER_ENI_NAME_MAP"
 
-#if 0 // To be deleted
-const vector<sai_meter_bucket_entry_stat_t> meter_bucket_entry_stat_ids =
-{
-    SAI_METER_BUCKET_ENTRY_STAT_OUTBOUND_BYTES,
-    SAI_METER_BUCKET_ENTRY_STAT_INBOUND_BYTES
-};
-#endif
-
 
 DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     m_meter_stat_manager(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
@@ -46,7 +38,6 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, Dash
     m_dash_orch(dash_orch)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_ERROR("gsm dbg31");
 
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_meter_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_METER_ENI_NAME_MAP));
@@ -62,7 +53,6 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, Dash
     auto executorT = new ExecutableTimer(m_meter_fc_update_timer, this, "METER_FLEX_COUNTER_UPD_TIMER");
     Orch::addExecutor(executorT);
 
-#if 1
     /* Fetch the meter bucket counter Ids */
     m_meter_counter_stats.clear();
     auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_METER_BUCKET_ENTRY);
@@ -71,14 +61,6 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, Dash
         auto counter_id = static_cast<sai_meter_bucket_entry_stat_t>(stat_enum);
         m_meter_counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(counter_id));
     }
-#else
-    /* To be deleted.*/
-    m_meter_counter_stats.clear();
-    for (const auto& it: meter_bucket_entry_stat_ids)
-    {
-        m_meter_counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(it));
-    }
-#endif
 }
 
 sai_object_id_t DashMeterOrch::getMeterPolicyOid(const string& meter_policy) const
@@ -671,8 +653,6 @@ void DashMeterOrch::removeEniFromMeterFC(sai_object_id_t oid, const string &name
         m_meter_stat_work_queue.erase(oid);
         return;
     }
-
-    // Deleting eni_name_map key is done in DashOrch
 
     m_meter_eni_name_table->hdel("", name);
     m_meter_stat_manager.clearCounterIdList(oid);
