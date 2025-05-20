@@ -213,6 +213,11 @@ std::string PortHelper::getAutonegStr(const PortConfig &port) const
     return this->getFieldValueStr(port, PORT_AUTONEG);
 }
 
+std::string PortHelper::getUnreliableLosStr(const PortConfig &port) const
+{
+    return this->getFieldValueStr(port, PORT_UNRELIABLE_LOS);
+}
+
 std::string PortHelper::getPortInterfaceTypeStr(const PortConfig &port) const
 {
     return this->getFieldValueStr(port, PORT_INTERFACE_TYPE);
@@ -388,6 +393,31 @@ bool PortHelper::parsePortAutoneg(PortConfig &port, const std::string &field, co
 
     return true;
 }
+
+
+bool PortHelper::parsePortUnreliableLos(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    const auto &cit = portModeMap.find(value);
+    if (cit == portModeMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+
+    port.serdes.unreliable_los.value = cit->second;
+    port.serdes.unreliable_los.is_set = true;
+
+    return true;
+}
+
 
 bool PortHelper::parsePortAdvSpeeds(PortConfig &port, const std::string &field, const std::string &value) const
 {
@@ -1022,6 +1052,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_LINK_TRAINING)
         {
             if (!this->parsePortLinkTraining(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_UNRELIABLE_LOS)
+        {
+            if (!this->parsePortUnreliableLos(port, field, value))
             {
                 return false;
             }
