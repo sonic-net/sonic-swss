@@ -35,14 +35,14 @@ from swsscommon.swsscommon import (
 eni_counter_group_meta = {
     'key': 'ENI',
     'group_name': 'ENI_STAT_COUNTER',
-    'name_map': 'COUNTERS_ENI_NAME_MAP',
+    'name_map': 'COUNTERS_METER_ENI_NAME_MAP',
     'post_test': 'post_eni_counter_test'
 }
 
 meter_counter_group_meta = {
     'key': 'DASH_METER',
     'group_name': 'METER_STAT_COUNTER',
-    'name_map': 'COUNTERS_ENI_NAME_MAP',
+    'name_map': 'COUNTERS_METER_ENI_NAME_MAP',
     'post_test': 'post_meter_counter_test'
 }
 

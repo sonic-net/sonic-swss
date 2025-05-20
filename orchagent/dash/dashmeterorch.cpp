@@ -9,6 +9,8 @@
 #include "taskworker.h"
 #include "pbutils.h"
 #include "crmorch.h"
+#include "sai.h"
+#include "saiextensions.h"
 #include "saihelper.h"
 
 using namespace std;
@@ -25,34 +27,15 @@ extern bool gTraditionalFlexCounter;
 
 #define METER_FLEX_COUNTER_UPD_INTERVAL 1
 
-//1234567
-#if 1 //B4C-->1
+// To be deleted after addition to sonic-swss-common/common/schema.h
+#define COUNTERS_METER_ENI_NAME_MAP "COUNTERS_METER_ENI_NAME_MAP"
+
+#if 0 // To be deleted
 const vector<sai_meter_bucket_entry_stat_t> meter_bucket_entry_stat_ids =
 {
     SAI_METER_BUCKET_ENTRY_STAT_OUTBOUND_BYTES,
     SAI_METER_BUCKET_ENTRY_STAT_INBOUND_BYTES
 };
-#else
-const vector<sai_eni_stat_t> meter_bucket_entry_stat_ids =
-{
-    SAI_ENI_STAT_RX_BYTES,
-    SAI_ENI_STAT_RX_PACKETS
-};
-#endif
-
-
-#if 0
-std::unordered_set<std::string> DashMeterOrch::generateMeterCounterStats()
-{
-    std::unordered_set<std::string> counter_stats;
-
-    for (const auto& it: meter_bucket_entry_stat_ids)
-    {
-        //counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(it));
-        counter_stats.emplace(sai_serialize_eni_stat(it));
-    }
-    return counter_stats;
-}
 #endif
 
 
@@ -66,7 +49,7 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, Dash
     SWSS_LOG_ERROR("gsm dbg31");
 
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_ENI_NAME_MAP));
+    m_meter_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_METER_ENI_NAME_MAP));
     m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
 
     if (gTraditionalFlexCounter)
@@ -79,17 +62,23 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, Dash
     auto executorT = new ExecutableTimer(m_meter_fc_update_timer, this, "METER_FLEX_COUNTER_UPD_TIMER");
     Orch::addExecutor(executorT);
 
+#if 1
     /* Fetch the meter bucket counter Ids */
+    m_meter_counter_stats.clear();
+    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_METER_BUCKET_ENTRY);
+    for (auto &stat_enum: stat_enum_list)
+    {
+        auto counter_id = static_cast<sai_meter_bucket_entry_stat_t>(stat_enum);
+        m_meter_counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(counter_id));
+    }
+#else
+    /* To be deleted.*/
     m_meter_counter_stats.clear();
     for (const auto& it: meter_bucket_entry_stat_ids)
     {
-#if 1 //B4C-->1
         m_meter_counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(it));
-        //m_meter_counter_stats = DashMeterOrch::generateMeterCounterStats();
-#else
-        m_meter_counter_stats.emplace(sai_serialize_eni_stat(it));
-#endif
     }
+#endif
 }
 
 sai_object_id_t DashMeterOrch::getMeterPolicyOid(const string& meter_policy) const
@@ -685,18 +674,10 @@ void DashMeterOrch::removeEniFromMeterFC(sai_object_id_t oid, const string &name
 
     // Deleting eni_name_map key is done in DashOrch
 
-    m_eni_name_table->hdel("", name);
+    m_meter_eni_name_table->hdel("", name);
     m_meter_stat_manager.clearCounterIdList(oid);
     SWSS_LOG_INFO("Unregistering FC for ENI %s, oid %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
-
-#if 0
-void DashMeterOrch::refreshMeterFCStats(bool install)
-{
-    DashOrch *dash_orch = gDirectory.get<DashOrch*>();
-    dash_orch->refreshMeterFCStats(install);
-}
-#endif
 
 void DashMeterOrch::handleMeterFCStatusUpdate(bool enabled)
 {
@@ -731,12 +712,10 @@ void DashMeterOrch::doTask(SelectableTimer &timer)
         const auto id = sai_serialize_object_id(it->first);
         if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
         {
-            // TBD.. ENI_NAME_MAP entry is added/deleted by DashOrch Code.
-
             SWSS_LOG_INFO("Registering FC for ENI %s, oid %s", it->second.c_str(), id.c_str());
             std::vector<FieldValueTuple> eniNameFvs;
             eniNameFvs.emplace_back(it->second, id);
-            m_eni_name_table->set("", eniNameFvs);
+            m_meter_eni_name_table->set("", eniNameFvs);
 
             m_meter_stat_manager.setCounterIdList(it->first, CounterType::DASH_METER, m_meter_counter_stats);
             it = m_meter_stat_work_queue.erase(it);

@@ -20,14 +20,6 @@
 #include "dash_api/meter_policy.pb.h"
 #include "dash_api/meter_rule.pb.h"
 
-///// To be deleted after sonic-swss-common/common/schema.h fix
-#if 0 //B4C-->0
-#define APP_DASH_METER_POLICY_TABLE_NAME    "DASH_METER_POLICY_TABLE"
-#define APP_DASH_METER_RULE_TABLE_NAME      "DASH_METER_RULE_TABLE"
-#define DASH_METER_COUNTER_ID_LIST "DASH_METER_COUNTER_ID_LIST"
-#endif
-///// End..To be deleted after sonic-swss-common/common/schema.h fix
-
 #define METER_STAT_COUNTER_FLEX_COUNTER_GROUP "METER_STAT_COUNTER"
 #define METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
@@ -117,7 +109,7 @@ private:
     FlexCounterManager m_meter_stat_manager;
     std::unordered_set<std::string> m_meter_counter_stats;
     std::map<sai_object_id_t, std::string> m_meter_stat_work_queue;
-    std::unique_ptr<swss::Table> m_eni_name_table;
+    std::unique_ptr<swss::Table> m_meter_eni_name_table;
     std::unique_ptr<swss::Table> m_vid_to_rid_table;
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
