@@ -2782,9 +2782,6 @@ class TestVnetOrch(object):
 
         time.sleep(2)
 
-        import pdb
-        pdb.set_trace()
-
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
         check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
         check_remove_routes_advertisement(dvs, "200.100.1.0/24")
