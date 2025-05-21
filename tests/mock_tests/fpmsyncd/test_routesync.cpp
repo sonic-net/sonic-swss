@@ -904,3 +904,13 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
 
     rtnl_route_put(test_route);
 }
+
+TEST_F(FpmSyncdResponseTest, RouteResponseOnNoProto)
+{
+    // Expect the message to zebra is sent
+    EXPECT_CALL(m_mockFpm, send(_)).Times(0);
+
+    m_routeSync.onRouteResponse("1.0.0.0/24", {
+        {"err_str", "SWSS_RC_SUCCESS"},
+    });
+}
