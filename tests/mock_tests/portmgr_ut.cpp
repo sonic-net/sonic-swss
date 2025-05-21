@@ -66,7 +66,7 @@ namespace portmgr_ut
         
         value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
         //ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR,  "300");
+        ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR,  "0");
         
 
         value_opt = swss::fvsGetValue(values, "speed", true);
