@@ -56,6 +56,11 @@ const char state_db_key_delimiter  = '|';
 
 const int default_orch_pri = 0;
 
+// The maximum size of swss.rec we allow before suppressing recordings until
+// logrotate runs. Logrotate is configured with 2MB size limit and we will use
+// 6MB size limit for internal check.
+const int SWSS_LOG_FILESIZE = 6291456;  // 6 MB
+
 typedef enum
 {
     task_success,
@@ -295,6 +300,9 @@ public:
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
+    /* TODO: refactor recording */
+    static void recordTuple(ConsumerBase &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
+
     void dumpPendingTasks(std::vector<std::string> &ts);
 
     /**
@@ -305,6 +313,8 @@ protected:
     ConsumerMap m_consumerMap;
 
     Orch();
+    static void logfileReopen();
+    std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
     std::set<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
     unsigned long generateBitMapFromIdsStr(const std::string &idsStr);

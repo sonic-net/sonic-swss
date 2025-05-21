@@ -220,9 +220,12 @@ class MirrorSessionManagerTest : public ::testing::Test
         return mirror_session_manager_.enqueue(APP_P4RT_MIRROR_SESSION_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        return mirror_session_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+     if (failure_before) {
+       mirror_session_manager_.drainWithNotExecuted();
+       return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+     }
+     return mirror_session_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -329,7 +332,7 @@ class MirrorSessionManagerTest : public ::testing::Test
     }
 
     StrictMock<MockSaiMirror> mock_sai_mirror_;
-    MockResponsePublisher publisher_;
+  StrictMock<MockResponsePublisher> publisher_;
     P4OidMapper p4_oid_mapper_;
     p4orch::MirrorSessionManager mirror_session_manager_;
 };
@@ -360,7 +363,11 @@ TEST_F(MirrorSessionManagerTest, SuccessfulEnqueueAndDrain)
                                                               swss::IpAddress(kDstIp1), swss::MacAddress(kSrcMac1),
                                                               swss::MacAddress(kDstMac1))))))
         .WillOnce(DoAll(SetArgPointee<0>(kMirrorSessionOid), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -443,7 +450,11 @@ TEST_F(MirrorSessionManagerTest, SuccessfulEnqueueAndDrain)
                                                                             std::vector<sai_attribute_t>({attr})))))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
     ASSERT_NE(mirror_entry, nullptr);
@@ -463,7 +474,11 @@ TEST_F(MirrorSessionManagerTest, SuccessfulEnqueueAndDrain)
     Enqueue(app_db_entry);
     // Set up mock call.
     EXPECT_CALL(mock_sai_mirror_, remove_mirror_session(Eq(kMirrorSessionOid))).WillOnce(Return(SAI_STATUS_SUCCESS));
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
     EXPECT_EQ(mirror_entry, nullptr);
@@ -487,7 +502,11 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailForInvalidAppDbEntryMatchFiled)
         std::string(APP_P4RT_MIRROR_SESSION_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -509,7 +528,11 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailForUnknownOp)
         std::string(APP_P4RT_MIRROR_SESSION_TABLE_NAME) + kTableKeyDelimiter + j.dump(), "unknown_op", fvs);
 
     Enqueue(app_db_entry);
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -531,7 +554,11 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailForInvalidAppDbEntryFieldValue)
         std::string(APP_P4RT_MIRROR_SESSION_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -557,7 +584,11 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailForUnknownAppDbEntryFieldValue)
         std::string(APP_P4RT_MIRROR_SESSION_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -579,9 +610,13 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailForIncompleteAppDbEntry)
         std::string(APP_P4RT_MIRROR_SESSION_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs_missing_tos);
 
     Enqueue(app_db_entry);
-    Drain();
-
-    // Check the added entry.
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
+    
+// Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
     EXPECT_EQ(mirror_entry, nullptr);
 }
@@ -601,7 +636,11 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailForUnknownPort)
         std::string(APP_P4RT_MIRROR_SESSION_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -631,7 +670,11 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailWhenCreateSaiCallFails)
                                                               swss::IpAddress(kDstIp1), swss::MacAddress(kSrcMac1),
                                                               swss::MacAddress(kDstMac1))))))
         .WillOnce(Return(SAI_STATUS_FAILURE));
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -661,14 +704,22 @@ TEST_F(MirrorSessionManagerTest, DrainShouldFailWhenDeleteSaiCallFails)
                                                               swss::IpAddress(kDstIp1), swss::MacAddress(kSrcMac1),
                                                               swss::MacAddress(kDstMac1))))))
         .WillOnce(DoAll(SetArgPointee<0>(kMirrorSessionOid), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     fvs = {};
     app_db_entry = {std::string(APP_P4RT_MIRROR_SESSION_TABLE_NAME) + kTableKeyDelimiter + j.dump(), DEL_COMMAND, fvs};
 
     Enqueue(app_db_entry);
     EXPECT_CALL(mock_sai_mirror_, remove_mirror_session(Eq(kMirrorSessionOid))).WillOnce(Return(SAI_STATUS_FAILURE));
-    Drain();
+  EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));  
 
     // Check entry still exists.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -870,7 +921,11 @@ TEST_F(MirrorSessionManagerTest, UpdateFailureShouldNotChangeExistingEntry)
     // Set up mock call.
     EXPECT_CALL(mock_sai_mirror_, create_mirror_session(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kMirrorSessionOid), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+      EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -911,7 +966,11 @@ TEST_F(MirrorSessionManagerTest, UpdateFailureShouldNotChangeExistingEntry)
         .WillOnce(Return(SAI_STATUS_FAILURE))
         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
-    Drain();
+      EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
 
     mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
     ASSERT_NE(mirror_entry, nullptr);
@@ -937,7 +996,11 @@ TEST_F(MirrorSessionManagerTest, UpdateRecoveryFailureShouldRaiseCriticalState)
     // Set up mock call.
     EXPECT_CALL(mock_sai_mirror_, create_mirror_session(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kMirrorSessionOid), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+      EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Check the added entry.
     auto mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
@@ -984,7 +1047,11 @@ TEST_F(MirrorSessionManagerTest, UpdateRecoveryFailureShouldRaiseCriticalState)
         .WillOnce(Return(SAI_STATUS_FAILURE));
     // TODO: Expect critical state.
 
-    Drain();
+      EXPECT_CALL(publisher_,
+               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                       Eq(kfvFieldsValues(app_db_entry)),
+                       Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
 
     mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
     ASSERT_NE(mirror_entry, nullptr);
