@@ -3,6 +3,7 @@ import time
 
 from swsscommon import swsscommon
 
+
 class TestIcmpEcho(object):
     def setup_db(self, dvs):
         dvs.setup_db()
