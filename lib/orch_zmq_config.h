@@ -26,11 +26,6 @@ std::shared_ptr<ZmqServer> create_zmq_server(std::string zmq_address, std::strin
 
 bool get_feature_status(std::string feature, bool default_value);
 
-std::shared_ptr<swss::ZmqClient> create_zmq_client(std::string feature, bool default_value);
-
-std::shared_ptr<swss::ProducerStateTable> createProducerStateTable(DBConnector *db, const std::string &tableName, std::shared_ptr<swss::ZmqClient> zmqClient);
-
-std::shared_ptr<swss::ProducerStateTable> createProducerStateTable(RedisPipeline *pipeline, const std::string &tableName, bool buffered, std::shared_ptr<swss::ZmqClient> zmqClient);
 }
 
 #endif /* SWSS_ORCH_ZMQ_CONFIG_H */
