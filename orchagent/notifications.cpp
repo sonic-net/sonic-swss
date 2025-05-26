@@ -52,6 +52,18 @@ void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification
     // which causes concurrency access to the DB
 }
 
+void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data)
+{
+    // don't use this event handler, because it runs by libsairedis in a separate thread
+    // which causes concurrency access to the DB
+}
+
+void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data)
+{
+    // don't use this event handler, because it runs by libsairedis in a separate thread
+    // which causes concurrency access to the DB
+}
+
 void on_switch_shutdown_request(sai_object_id_t switch_id)
 {
     SWSS_LOG_ENTER();
