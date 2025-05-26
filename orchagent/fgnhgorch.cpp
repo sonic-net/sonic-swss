@@ -22,29 +22,18 @@ extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 
-FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, bool enableRouteZmq) :
+FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         Orch(db, tableNames),
+        m_zmqClient(create_zmq_client("orch_route_zmq_enabled", false)),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
-        m_stateWarmRestartRouteTable(stateDb, STATE_FG_ROUTE_TABLE_NAME)
+        m_stateWarmRestartRouteTable(stateDb, STATE_FG_ROUTE_TABLE_NAME),
+        m_routeTable(createProducerStateTable(appDb, APP_ROUTE_TABLE_NAME, m_zmqClient))
 {
     SWSS_LOG_ENTER();
     isFineGrainedConfigured = false;
     gPortsOrch->attach(this);
-
-    swss::ProducerStateTable *producerStateTablePtr = nullptr;
-    if (enableRouteZmq) {
-        m_zmqClient = swss::create_zmq_client(ZMQ_LOCAL_ADDRESS);
-        SWSS_LOG_NOTICE("FgNhgOrch initialize ZMQ client : %s", ZMQ_LOCAL_ADDRESS);
-
-        producerStateTablePtr = new swss::ZmqProducerStateTable(appDb, APP_ROUTE_TABLE_NAME, *m_zmqClient);
-    }
-    else {
-        producerStateTablePtr = new swss::ProducerStateTable(appDb, APP_ROUTE_TABLE_NAME);
-    }
-
-    m_routeTable = std::shared_ptr<swss::ProducerStateTable>(producerStateTablePtr);
 }
 
 

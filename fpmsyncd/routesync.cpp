@@ -146,9 +146,13 @@ static decltype(auto) makeNlAddr(const T& ip)
 
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
+    m_zmqClient(create_zmq_client("orch_route_zmq_enabled", false)),
+    m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
+    m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
+    m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
@@ -156,25 +160,6 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
-
-    auto enable_route_zmq = get_feature_status("orch_route_zmq_enabled", false);
-    ProducerStateTable *routetablePtr = nullptr;
-    ProducerStateTable *labelRoutetablePtr = nullptr;
-    if (enable_route_zmq) {
-        m_zmqClient = create_zmq_client(ZMQ_LOCAL_ADDRESS);
-        SWSS_LOG_NOTICE("RouteSync initialize ZMQ client : %s", ZMQ_LOCAL_ADDRESS);
-
-        routetablePtr = new ZmqProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, *m_zmqClient);
-        labelRoutetablePtr = new ZmqProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, *m_zmqClient);
-    }
-    else {
-        routetablePtr = new ProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true);
-        labelRoutetablePtr = new ProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true);
-    }
-
-    m_routeTable = shared_ptr<swss::ProducerStateTable>(routetablePtr);
-    m_label_routeTable = shared_ptr<swss::ProducerStateTable>(labelRoutetablePtr);
-    m_warmStartHelper = make_shared<WarmStartHelper>(pipeline, routetablePtr, APP_ROUTE_TABLE_NAME, "bgp", "bgp");
 }
 
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
@@ -792,7 +777,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
      * Upon arrival of a delete msg we could either push the change right away,
      * or we could opt to defer it if we are going through a warm-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper->inProgress();
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
 
     if (nlmsg_type == RTM_DELROUTE)
     {
@@ -810,7 +795,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper->insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(kfv);
             return;
         }
     }
@@ -897,7 +882,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
         const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                            SET_COMMAND,
                                                            fvVector);
-        m_warmStartHelper->insertRefreshMap(kfv);
+        m_warmStartHelper.insertRefreshMap(kfv);
     }
     return;
 }
@@ -1100,7 +1085,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    bool warmRestartInProgress = m_warmStartHelper->inProgress();
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
 
     if (nlmsg_type == RTM_DELROUTE)
     {
@@ -1121,7 +1106,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(routeTableKey,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper->insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(kfv);
             return;
         }
     }
@@ -1172,7 +1157,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 
             const KeyOpFieldsValuesTuple kfv =
                 std::make_tuple(routeTableKey, SET_COMMAND, fvVectorRoute);
-            m_warmStartHelper->insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(kfv);
         }
     }
 
@@ -1621,7 +1606,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
      * Upon arrival of a delete msg we could either push the change right away,
      * or we could opt to defer it if we are going through a warm-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper->inProgress();
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
 
     if (nlmsg_type == RTM_DELROUTE)
     {
@@ -1639,7 +1624,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper->insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(kfv);
             return;
         }
     }
@@ -1761,7 +1746,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                     const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                                     DEL_COMMAND,
                                                                     fvVector);
-                    m_warmStartHelper->insertRefreshMap(kfv);
+                    m_warmStartHelper.insertRefreshMap(kfv);
                 }
                 return;
             }
@@ -1833,7 +1818,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                            SET_COMMAND,
                                                            fvVector);
-        m_warmStartHelper->insertRefreshMap(kfv);
+        m_warmStartHelper.insertRefreshMap(kfv);
     }
 }
 
@@ -2622,9 +2607,9 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
         markRoutesOffloaded(applStateDb);
     }
 
-    if (m_warmStartHelper->inProgress())
+    if (m_warmStartHelper.inProgress())
     {
-        m_warmStartHelper->reconcile();
+        m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
     }
 }

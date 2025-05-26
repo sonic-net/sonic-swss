@@ -5,8 +5,6 @@
 #include "producerstatetable.h"
 #include "logger.h"
 #include "orch_zmq_config.h"
-#include "zmqclient.h"
-#include "zmqproducerstatetable.h"
 
 using namespace std;
 using namespace swss;
@@ -22,21 +20,11 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
     DBConnector db("APPL_DB", 0);
-    std::shared_ptr<ProducerStateTable> producerStateTablePtr = nullptr;
-    std::shared_ptr<ZmqClient> zmqClient = nullptr;
 
-    auto enable_route_zmq = get_feature_status("orch_route_zmq_enabled", false);
-    if (enable_route_zmq) {
-        zmqClient = create_zmq_client(ZMQ_LOCAL_ADDRESS);
-        SWSS_LOG_NOTICE("routeresync initialize ZMQ client : %s", ZMQ_LOCAL_ADDRESS);
-
-        auto ptr = new ZmqProducerStateTable(&db, APP_ROUTE_TABLE_NAME, *zmqClient);
-        producerStateTablePtr = std::shared_ptr<swss::ProducerStateTable>(ptr);
-    }
-    else {
-        auto ptr = new ProducerStateTable(&db, APP_ROUTE_TABLE_NAME);
-        producerStateTablePtr = std::shared_ptr<swss::ProducerStateTable>(ptr);
-    }
+    // When the feature `orch_route_zmq_enabled` is enabled, the following code creates a `ZmqProducerStateTable`. 
+    // When the feature is disabled, it creates a `ProducerStateTable` instead.
+    std::shared_ptr<ZmqClient> zmqClient = create_zmq_client("orch_route_zmq_enabled", false);
+    std::shared_ptr<ProducerStateTable> r = createProducerStateTable(&db, APP_ROUTE_TABLE_NAME, zmqClient);
 
     if (argc != 2)
     {
@@ -47,13 +35,13 @@ int main(int argc, char **argv)
     std::string op = std::string(argv[1]);
     if (op == "stop")
     {
-        producerStateTablePtr->del("resync");
+        r->del("resync");
     }
     else if (op == "start")
     {
         FieldValueTuple fv("nexthop", "0.0.0.0");
         std::vector<FieldValueTuple> fvVector = { fv };
-        producerStateTablePtr->set("resync", fvVector);
+        r->set("resync", fvVector);
     }
     else
     {

@@ -77,7 +77,7 @@ public:
         m_fpmInterface = nullptr;
     }
 
-    shared_ptr<WarmStartHelper> m_warmStartHelper;
+    WarmStartHelper  m_warmStartHelper;
 
 private:
     /* ZMQ client */

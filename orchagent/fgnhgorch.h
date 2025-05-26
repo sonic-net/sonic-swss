@@ -104,7 +104,7 @@ typedef map<string, NextHopIndexMap> WarmBootRecoveryMap;
 class FgNhgOrch : public Orch, public Observer
 {
 public:
-    FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, bool enableRouteZmq = false);
+    FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
 
     void update(SubjectType type, void *cntx);
     bool isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
@@ -131,8 +131,6 @@ private:
     Table m_stateWarmRestartRouteTable;
 
     std::shared_ptr<swss::ZmqClient> m_zmqClient = nullptr;
-
-    /* regular route table */
     std::shared_ptr<swss::ProducerStateTable> m_routeTable = nullptr;
 
     FgPrefixOpCache m_fgPrefixAddCache;
