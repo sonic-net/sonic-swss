@@ -269,6 +269,7 @@ bool OrchDaemon::init()
         { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
         { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
     };
+
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
 
