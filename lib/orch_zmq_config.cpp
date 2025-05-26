@@ -1,9 +1,18 @@
 #include <iostream>
 #include <fstream>
+#include <regex>
 
+#include "dbconnector.h"
+#include "logger.h"
 #include "orch_zmq_config.h"
 
 #define ZMQ_TABLE_CONFIGFILE       "/etc/swss/orch_zmq_tables.conf"
+
+// ZMQ none IPV6 address with port, for example: tcp://127.0.0.1:5555 tcp://localhost:5555
+const std::regex ZMQ_NONE_IPV6_ADDRESS_WITH_PORT("\\w+:\\/\\/[^:]+:\\d+");
+
+// ZMQ IPV6 address with port, for example: tcp://[fe80::fb7:c6df:9d3a:3d7b]:5555
+const std::regex ZMQ_IPV6_ADDRESS_WITH_PORT("\\w+:\\/\\/\\[.*\\]+:\\d+");
 
 std::set<std::string> swss::load_zmq_tables()
 {
@@ -22,10 +31,8 @@ std::set<std::string> swss::load_zmq_tables()
     return tables;
 }
 
-
-std::shared_ptr<swss::ZmqClient> swss::create_zmq_client(std::string zmq_address)
+int swss::get_zmq_port()
 {
-    // swssconfig running inside swss contianer, so need get ZMQ port according to namespace ID.
     auto zmq_port = ORCH_ZMQ_PORT;
     if (const char* nsid = std::getenv("NAMESPACE_ID"))
     {
@@ -33,10 +40,30 @@ std::shared_ptr<swss::ZmqClient> swss::create_zmq_client(std::string zmq_address
         zmq_port += atoi(nsid) + 1;
     }
 
-    auto zmq_address_with_port = zmq_address + ":" + std::to_string(zmq_port);
+    return zmq_port;
+}
 
-    SWSS_LOG_NOTICE("Create ZMQ client with address: %s", zmq_address_with_port.c_str());
-    return std::make_shared<ZmqClient>(zmq_address_with_port);
+std::shared_ptr<swss::ZmqClient> swss::create_zmq_client(std::string zmq_address, std::string vrf)
+{
+    // swssconfig running inside swss contianer, so need get ZMQ port according to namespace ID.
+    auto zmq_port = get_zmq_port();
+    zmq_address = zmq_address + ":" + std::to_string(zmq_port);
+    SWSS_LOG_NOTICE("Create ZMQ server with address: %s, vrf: %s", zmq_address.c_str(), vrf.c_str());
+    return std::make_shared<ZmqClient>(zmq_address, vrf);
+}
+
+std::shared_ptr<swss::ZmqServer> swss::create_zmq_server(std::string zmq_address, std::string vrf)
+{
+    // TODO: remove this check after orchagent.sh migrate to pass ZMQ address without port
+    if (!std::regex_search(zmq_address, ZMQ_NONE_IPV6_ADDRESS_WITH_PORT)
+            && !std::regex_search(zmq_address, ZMQ_IPV6_ADDRESS_WITH_PORT))
+    {
+        auto zmq_port = get_zmq_port();
+        zmq_address = zmq_address + ":" + std::to_string(zmq_port);
+    }
+
+    SWSS_LOG_NOTICE("Create ZMQ server with address: %s, vrf: %s", zmq_address.c_str(), vrf.c_str());
+    return std::make_shared<ZmqServer>(zmq_address, vrf);
 }
 
 bool swss::get_feature_status(std::string feature, bool default_value)
@@ -53,7 +80,7 @@ bool swss::get_feature_status(std::string feature, bool default_value)
     return *enabled == "true";
 }
 
-std::shared_ptr<swss::ZmqClient> swss::create_zmq_client(std::string feature, bool default_value)
+std::shared_ptr<swss::ZmqClient> swss::create_local_zmq_client(std::string feature, bool default_value)
 {
     auto enable = get_feature_status(feature, default_value);
     if (enable) {

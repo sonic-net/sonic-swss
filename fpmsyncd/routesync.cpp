@@ -146,7 +146,7 @@ static decltype(auto) makeNlAddr(const T& ip)
 
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_zmqClient(create_zmq_client("orch_route_zmq_enabled", false)),
+    m_zmqClient(create_local_zmq_client("orch_route_zmq_enabled", false)),
     m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
     m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
