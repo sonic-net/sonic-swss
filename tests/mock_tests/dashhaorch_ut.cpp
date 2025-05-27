@@ -7,6 +7,8 @@
 #include "pbutils.h"
 using namespace ::testing;
 
+extern redisReply *mockReply;
+
 EXTERN_MOCK_FNS
 
 namespace dashhaorch_ut 
@@ -14,6 +16,12 @@ namespace dashhaorch_ut
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_ha, ha_set, ha_scope);
 
     using namespace mock_orch_test;
+
+    class DashHaOrchTestable : public DashHaOrch
+    {
+    public:
+        void doTask(swss::NotificationConsumer &consumer) { DashHaOrch::doTask(consumer); }
+    };
 
     class DashHaOrchTest : public MockOrchTest
     {
@@ -344,6 +352,60 @@ namespace dashhaorch_ut
             );
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
+
+        void HaSetEvent(sai_ha_set_event_t event_type)
+        {
+            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+
+            sai_ha_set_event_data_t event;
+            memset(&event, 0, sizeof(event));
+            event.ha_set_id = m_dashHaOrch->getHaScopeEntries().begin()->second.ha_scope_id;
+            event.event_type = event_type;
+
+            std::string data = sai_serialize_ha_set_event_ntf(1, &event);
+
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT, data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            auto exec = static_cast<Notifier *>(m_dashHaOrch->getExecutor("HA_SET_NOTIFICATIONS"));
+            auto consumer = exec->getNotificationConsumer();
+            consumer->readData();
+            static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*consumer);
+            mockReply = nullptr;
+        }
+
+        void HaScopeEvent(sai_ha_scope_event_t event_type,
+                        sai_dash_ha_role_t ha_role,
+                        sai_dash_ha_state_t ha_state)
+        {
+            std::string op = SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT;
+            std::string data;
+            std::vector<FieldValueTuple> values;
+
+            uint32_t count = 1;
+            sai_ha_scope_event_data_t event;
+            event.ha_scope_id = m_dashHaOrch->getHaScopeEntries().begin()->second.ha_scope_id;
+            event.event_type = event_type;
+            event.ha_role = ha_role;
+            event.ha_state = ha_state;
+            data = sai_serialize_ha_scope_event_ntf(count, &event);
+
+            auto notificationsDb = std::make_shared<DBConnector>("ASIC_DB", 0);
+            NotificationProducer producer(notificationsDb.get(), "NOTIFICATIONS");
+            producer.send(op, data, values);
+
+            static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*m_dashHaOrch->getHaScopeNotificationConsumer());
+        }
     };
 
     TEST_F(DashHaOrchTest, AddRemoveHaSet)
@@ -441,22 +503,20 @@ namespace dashhaorch_ut
         CreateHaScope();
         EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
 
-        SetHaScopeHaRole();
-        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
-
-        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_UNSPECIFIED);
-        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
-
-        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_DEAD);
-        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
-
-        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_STANDBY);
-        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDBY);
-
-        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_STANDALONE);
-        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDALONE);
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
 
         SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE);
+
+        // Ha Scope role in memory won't change until receiving ha scope event
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+        
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED, 
+                     SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE,
+                     SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION
+                    );
+
         EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
 
         RemoveHaScope();
@@ -467,6 +527,11 @@ namespace dashhaorch_ut
     {
         CreateHaSet();
         CreateHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
         SetHaScopeHaRole();
 
         EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
@@ -506,5 +571,25 @@ namespace dashhaorch_ut
 
         HaSetScopeUnspecified();
         CreateHaScope();
+    }
+
+    TEST_F(DashHaOrchTest, HaEvents)
+    {
+        CreateHaSet();
+        CreateHaScope();
+        HaSetEvent(SAI_HA_SET_EVENT_DP_CHANNEL_UP);
+
+        swss::DBConnector stateDb("STATE_DB", 0);
+        swss::Table table(&stateDb, "DASH_HA_SET_STATE_TABLE");
+        std::vector<std::string> keys;
+
+        table.getKeys(keys);
+        ASSERT_TRUE(std::find(keys.begin(), keys.end(), "HA_SET_1") != keys.end());
+
+        std::vector<FieldValueTuple> values;
+        ASSERT_TRUE(table.get("HA_SET_1", values));
+        ASSERT_EQ(values[0].first, "last_updated_time");
+        ASSERT_EQ(values[1].first, "dp_channel_is_alive");
+        ASSERT_EQ(values[1].second, "up");
     }
 }

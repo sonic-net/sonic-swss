@@ -65,6 +65,7 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_haSetNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto haSetNotificatier = new Notifier(m_haSetNotificationConsumer, this, "HA_SET_NOTIFICATIONS");
+
     m_haScopeNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto haScopeNotificatier = new Notifier(m_haScopeNotificationConsumer, this, "HA_SCOPE_NOTIFICATIONS");
 

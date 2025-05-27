@@ -33,10 +33,6 @@ struct HaScopeEntry
 typedef std::map<std::string, HaSetEntry> HaSetTable;
 typedef std::map<std::string, HaScopeEntry> HaScopeTable;
 
-std::time_t getNowTime(){
-    return std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-}
-
 template <typename T>
 bool in(T value, std::initializer_list<T> list) {
     return std::find(list.begin(), list.end(), value) != list.end();
@@ -47,7 +43,7 @@ class DashHaOrch : public ZmqOrch
 public:
     DashHaOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
 
-private:
+protected:
     HaSetTable m_ha_set_entries;
     HaScopeTable m_ha_scope_entries;
 
@@ -72,6 +68,9 @@ private:
 
     std::string getHaSetObjectKey(const sai_object_id_t ha_set_id);
     std::string getHaScopeObjectKey(const sai_object_id_t ha_scope_id);
+    std::time_t getNowTime(){
+        return std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    };
 
     std::unique_ptr<swss::Table> dash_ha_set_result_table_;
     std::unique_ptr<swss::Table> dash_ha_scope_result_table_;
@@ -86,6 +85,8 @@ private:
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
+    swss::NotificationConsumer* getHaSetNotificationConsumer() { return m_haSetNotificationConsumer; }
+    swss::NotificationConsumer* getHaScopeNotificationConsumer() { return m_haScopeNotificationConsumer; }
 };
 
 #endif // DASHHAORCH_H
