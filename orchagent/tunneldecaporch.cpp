@@ -838,7 +838,7 @@ bool TunnelDecapOrch::addDecapTunnel(
     status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0)
         {
             SWSS_LOG_WARN("SAI_API_TUNNEL (create SAI_TUNNEL_TYPE_IPINIP): unsupported (%d) for tunnel %s (%d).", (int)status, key.c_str(), (int)tunnel_id);
 
@@ -986,7 +986,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntry(
     sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(&tunnel_term_table_entry_id, gSwitchId, (uint32_t)tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0)
         {
             SWSS_LOG_WARN("SAI_API_TUNNEL (create SAI_TUNNEL_TYPE_IPINIP): unsupported (%d) for tunnel %s with IP %s.", (int)status, tunnel_name.c_str(), dst_ip.to_string().c_str());
             return false;
