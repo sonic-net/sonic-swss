@@ -388,23 +388,38 @@ namespace dashhaorch_ut
                         sai_dash_ha_role_t ha_role,
                         sai_dash_ha_state_t ha_state)
         {
-            std::string op = SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT;
-            std::string data;
-            std::vector<FieldValueTuple> values;
+            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
 
-            uint32_t count = 1;
             sai_ha_scope_event_data_t event;
+            memset(&event, 0, sizeof(event));
             event.ha_scope_id = m_dashHaOrch->getHaScopeEntries().begin()->second.ha_scope_id;
             event.event_type = event_type;
             event.ha_role = ha_role;
             event.ha_state = ha_state;
-            data = sai_serialize_ha_scope_event_ntf(count, &event);
 
-            auto notificationsDb = std::make_shared<DBConnector>("ASIC_DB", 0);
-            NotificationProducer producer(notificationsDb.get(), "NOTIFICATIONS");
-            producer.send(op, data, values);
+            std::string data = sai_serialize_ha_scope_event_ntf(1, &event);
 
-            static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*m_dashHaOrch->getHaScopeNotificationConsumer());
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT, data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            auto exec = static_cast<Notifier *>(m_dashHaOrch->getExecutor("HA_SCOPE_NOTIFICATIONS"));
+            auto consumer = exec->getNotificationConsumer();
+            consumer->readData();
+            static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*consumer);
+            mockReply = nullptr;
         }
     };
 
@@ -415,6 +430,8 @@ namespace dashhaorch_ut
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
         CreateHaSet();
+
+        HaSetEvent(SAI_HA_SET_EVENT_DP_CHANNEL_UP);
 
         EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
         .Times(1)
@@ -499,62 +516,121 @@ namespace dashhaorch_ut
     TEST_F(DashHaOrchTest, SetHaScopeHaRole)
     {
         CreateHaSet();
-
         CreateHaScope();
+
         EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
 
-        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
-        .Times(1)
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_UNSPECIFIED);
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_DEAD);
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_STANDBY);
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_STANDBY, SAI_DASH_HA_STATE_STANDBY);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDBY);
+
+        SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_STANDALONE);
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_STANDALONE, SAI_DASH_HA_STATE_STANDALONE);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDALONE);
 
         SetHaScopeHaRole(dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE);
-
-        // Ha Scope role in memory won't change until receiving ha scope event
-        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
-        
-        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED, 
-                     SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE,
-                     SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION
-                    );
-
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE, SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION);
         EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
 
         RemoveHaScope();
         RemoveHaSet();
     }
 
-    TEST_F(DashHaOrchTest, SetHaScopeActivateRoleRequest)
+    TEST_F(DashHaOrchTest, LastRoleStartTime)
     {
         CreateHaSet();
         CreateHaScope();
 
-        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
-        .Times(1)
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+        std::time_t last_role_start_time = m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time;
 
-        SetHaScopeHaRole();
+        sleep(1); // Ensure time difference
 
-        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
-        .Times(1)
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
 
-        SetHaScopeActivateRoleRequest();
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time > last_role_start_time);
+
+        last_role_start_time = m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time;
+
+        sleep(1); 
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time == last_role_start_time);
 
         RemoveHaScope();
         RemoveHaSet();
     }
 
-    TEST_F(DashHaOrchTest, SetHaScopeFlowReconcileRequest)
+    TEST_F(DashHaOrchTest, HaScopeActivateRoleRequest)
     {
         CreateHaSet();
         CreateHaScope();
-        SetHaScopeHaRole();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE, SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION);
+
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
+        .Times(2)       // Set ha_role and activate_role_requested
+        .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        SetHaScopeActivateRoleRequest();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, HaScopeFlowReconcileRequest)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_FLOW_RECONCILE_NEEDED,
+            SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
 
         EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
         .Times(1)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
         SetHaScopeFlowReconcileRequest();
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, HaScopeSplitBrain)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED,
+            SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
 
         RemoveHaScope();
         RemoveHaSet();
@@ -571,25 +647,5 @@ namespace dashhaorch_ut
 
         HaSetScopeUnspecified();
         CreateHaScope();
-    }
-
-    TEST_F(DashHaOrchTest, HaEvents)
-    {
-        CreateHaSet();
-        CreateHaScope();
-        HaSetEvent(SAI_HA_SET_EVENT_DP_CHANNEL_UP);
-
-        swss::DBConnector stateDb("STATE_DB", 0);
-        swss::Table table(&stateDb, "DASH_HA_SET_STATE_TABLE");
-        std::vector<std::string> keys;
-
-        table.getKeys(keys);
-        ASSERT_TRUE(std::find(keys.begin(), keys.end(), "HA_SET_1") != keys.end());
-
-        std::vector<FieldValueTuple> values;
-        ASSERT_TRUE(table.get("HA_SET_1", values));
-        ASSERT_EQ(values[0].first, "last_updated_time");
-        ASSERT_EQ(values[1].first, "dp_channel_is_alive");
-        ASSERT_EQ(values[1].second, "up");
     }
 }

@@ -85,8 +85,6 @@ protected:
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
-    swss::NotificationConsumer* getHaSetNotificationConsumer() { return m_haSetNotificationConsumer; }
-    swss::NotificationConsumer* getHaScopeNotificationConsumer() { return m_haScopeNotificationConsumer; }
 };
 
 #endif // DASHHAORCH_H
