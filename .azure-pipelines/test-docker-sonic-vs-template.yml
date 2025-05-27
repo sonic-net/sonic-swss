@@ -97,19 +97,27 @@ jobs:
 
   - script: |
       set -ex
+      # install packages for vs test
+      sudo pip3 install pytest flaky exabgp docker redis lcov_cobertura
+
+    # install other dependencies
+      sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
+          bridge-utils \
+          vlan \
+          libzmq3-dev \
+          libzmq5 \
+          libboost-serialization1.74.0 \
+          libboost1.74-dev \
+          libboost-dev \
+          libhiredis0.14 \
+          libyang-dev \
+
       sudo .azure-pipelines/build_and_install_module.sh
 
-      sudo apt-get install -y libhiredis0.14 libyang0.16
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb 
+      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
       sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || apt-get install -f
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
-
-      # install packages for vs test
-      sudo apt-get install -y net-tools bridge-utils vlan
-      sudo apt-get install -y python3-pip
-      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0 requests==2.31.0
-      sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
 
   - script: |
