@@ -14,6 +14,7 @@
 #include "routeorch.h"
 #include "macsecorch.h"
 #include "dash/dashorch.h"
+#include "dash/dashmeterorch.h"
 #include "flowcounterrouteorch.h"
 #include "warm_restart.h"
 
@@ -46,6 +47,7 @@ extern sai_object_id_t gSwitchId;
 #define ENI_KEY                     "ENI"
 #define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
+#define DASH_METER_KEY              "DASH_METER"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -71,6 +73,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"DASH_METER", METER_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
@@ -110,6 +113,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    DashMeterOrch* dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -243,6 +247,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (dash_orch && (key == ENI_KEY))
                     {
                         dash_orch->handleFCStatusUpdate((value == "enable"));
+                    }
+                    if (dash_meter_orch && (key == DASH_METER_KEY))
+                    {
+                        dash_meter_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
