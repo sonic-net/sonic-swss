@@ -84,6 +84,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -130,8 +131,9 @@ jobs:
       project: ${{ parameters.buildimage_artifact_project }}
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
+      runVersion: 'specific'
+      pipelineId: 845414
+      # runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
@@ -141,8 +143,9 @@ jobs:
       project: ${{ parameters.buildimage_artifact_project }}
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
+      runVersion: 'specific'
+      pipelineId: 845414
+      # runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/debs/${{ parameters.debian_version }}/framework_*.deb'
     displayName: "Download sonic-buildimage sonic-framework package"

@@ -72,6 +72,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -98,7 +99,7 @@ jobs:
   - script: |
       set -ex
       # install packages for vs test
-      sudo pip3 install pytest flaky exabgp docker redis lcov_cobertura
+      sudo pip3 install attrs pytest flaky exabgp distro docker redis requests==2.31.0 lcov_cobertura
 
       # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
