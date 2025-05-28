@@ -1,6 +1,8 @@
 #include "hftelorch.h"
 #include "hftelutils.h"
 
+#include "notifications.h"
+
 #include <swss/schema.h>
 #include <swss/redisutility.h>
 #include <swss/stringutility.h>
@@ -50,7 +52,7 @@ namespace swss
         }
         else
         {
-            SWSS_LOG_THROW("Invalid stream state %s", buffer.c_str());
+            SWSS_LOG_THROW("Invalid stream state %s for high frequency telemetry", buffer.c_str());
         }
     }
 
@@ -77,6 +79,15 @@ HFTelOrch::HFTelOrch(
 
     m_asic_notification_consumer = make_shared<NotificationConsumer>(&m_asic_db, "NOTIFICATIONS");
     auto notifier = new Notifier(m_asic_notification_consumer.get(), this, "TAM_TEL_TYPE_STATE");
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY;
+    attr.value.ptr = (void *)on_tam_tel_type_config_change;
+    if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY");
+        throw runtime_error("HFTelOrch initialization failure (failed to set tam tel type config change notify)");
+    }
+
     Orch::addExecutor(notifier);
 }
 
@@ -98,7 +109,7 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     auto counter_itr = HFTelOrch::SUPPORT_COUNTER_TABLES.find(msg.m_table_name);
     if (counter_itr == HFTelOrch::SUPPORT_COUNTER_TABLES.end())
     {
-        SWSS_LOG_WARN("The counter table %s is not supported by stream telemetry", msg.m_table_name);
+        SWSS_LOG_WARN("The counter table %s is not supported by high frequency telemetry", msg.m_table_name);
         return;
     }
 
@@ -130,10 +141,10 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
 
         if (!profile->canBeUpdated(counter_itr->second))
         {
-            // TODO: Here is a potential issue, we may need to retry the task.
+            // TODO: Here is a potential issue, we might need to retry the task.
             // Because the Syncd is generating the configuration(template),
             // we cannot update the monitor objects at this time.
-            SWSS_LOG_WARN("The profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name);
+            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name);
             continue;
         }
 
@@ -151,6 +162,18 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
         }
         profile->tryCommitConfig(counter_itr->second);
     }
+}
+
+bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_stat_st_capability_list_t stats_st_capability;
+    stats_st_capability.count = 0;
+    stats_st_capability.list = nullptr;
+    sai_status_t status = sai_query_stats_st_capability(switch_id, SAI_OBJECT_TYPE_PORT, &stats_st_capability);
+
+    return status == SAI_STATUS_SUCCESS || status == SAI_STATUS_BUFFER_OVERFLOW;
 }
 
 task_process_status HFTelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)
@@ -181,15 +204,7 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
         profile->setPollInterval(poll_interval);
     }
 
-    // // Map the profile to types
-    // // This profile may be inserted by group table
-    // for (auto type : profile->getObjectTypes())
-    // {
-    //     m_type_profile_mapping[type].insert(profile);
-    //     profile->tryCommitConfig(type);
-    // }
-
-    SWSS_LOG_NOTICE("The profile %s is set (stream_state: %s, poll_interval: %u)",
+    SWSS_LOG_NOTICE("The high frequency telemetry profile %s is set (stream_state: %s, poll_interval: %u)",
                     profile_name.c_str(),
                     state == SAI_TAM_TEL_TYPE_STATE_START_STREAM ? "enable" : "disable",
                     poll_interval);
@@ -217,17 +232,9 @@ task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
         return task_process_status::task_need_retry;
     }
 
-    // auto profile = profile_itr->second;
-    // for (auto type : profile->getObjectTypes())
-    // {
-    //     // TODO: Assume the group table has been deleted, Don't need to commit the config again
-    //     // profile->tryCommitConfig(type);
-    //     m_type_profile_mapping[type].erase(profile);
-    //     m_state_telemetry_session.del(profile_name + "|" + HFTelUtils::sai_type_to_group_name(type));
-    // }
     m_name_profile_mapping.erase(profile_itr);
 
-    SWSS_LOG_NOTICE("The profile %s is deleted", profile_name.c_str());
+    SWSS_LOG_NOTICE("The high frequency telemetry profile %s is deleted", profile_name.c_str());
 
     return task_process_status::task_success;
 }
@@ -267,11 +274,19 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
         profile->setStatsIDs(group_name, object_counters);
     }
 
+    if (profile->getStreamState(type) != SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
+    {
+        SWSS_LOG_WARN("The high frequency telemetry group %s:%s is not in the stop stream state, it means no new configuration needs to be applied",
+                    profile_name.c_str(),
+                    group_name.c_str());
+        return task_process_status::task_success;
+    }
+
     profile->tryCommitConfig(type);
 
     m_type_profile_mapping[type].insert(profile);
 
-    SWSS_LOG_NOTICE("The group %s with profile %s is set (object_names: %s, object_counters: %s)",
+    SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is set (object_names: %s, object_counters: %s)",
                     group_name.c_str(),
                     profile_name.c_str(),
                     arg_object_names ? arg_object_names->c_str() : "",
@@ -288,7 +303,7 @@ task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, co
 
     if (!profile)
     {
-        SWSS_LOG_WARN("The profile %s is not found", profile_name.c_str());
+        SWSS_LOG_WARN("The high frequency telemetry profile %s is not found", profile_name.c_str());
         return task_process_status::task_success;
     }
 
@@ -299,13 +314,11 @@ task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, co
         return task_process_status::task_need_retry;
     }
 
-    // Assumption: We don't need to update the config if the group is being deleted
-    // profile->tryCommitConfig(type);
-
+    profile->clearGroup(group_name);
     m_type_profile_mapping[type].erase(profile);
     m_state_telemetry_session.del(profile_name + "|" + group_name);
 
-    SWSS_LOG_NOTICE("The group %s with profile %s is deleted", group_name.c_str(), profile_name.c_str());
+    SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is deleted", group_name.c_str(), profile_name.c_str());
 
     return task_process_status::task_success;
 }
@@ -404,14 +417,14 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
         }
         else
         {
-            SWSS_LOG_THROW("Unexpected state %d", state);
+            SWSS_LOG_THROW("Unexpected state %d for high frequency telemetry", state);
         }
 
 
-        // values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
-        // auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
-        //                                                 { return boost::lexical_cast<std::string>(n); });
-        // values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
+        values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
+        auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
+                                                        { return boost::lexical_cast<std::string>(n); });
+        values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
 
 
         values.emplace_back("session_type", "ipfix");
@@ -421,7 +434,7 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
         m_state_telemetry_session.set(profile.first + "|" + HFTelUtils::sai_type_to_group_name(type), values);
 
-        SWSS_LOG_NOTICE("The group %s with profile %s is ready", 
+        SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is ready",
                         HFTelUtils::sai_type_to_group_name(type).c_str(),
                         profile.first.c_str());
 

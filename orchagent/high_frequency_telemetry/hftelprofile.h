@@ -18,13 +18,6 @@
 
 using CounterNameCache = std::unordered_map<sai_object_type_t, std::unordered_map<std::string, sai_object_id_t>>;
 
-// struct HFTelGroup
-// {
-//     // Object names and label IDs
-//     std::unordered_map<std::string, std::uint16_t> m_objects;
-//     std::set<sai_stat_id_t> m_stats_ids;
-// };
-
 class HFTelProfile
 {
 public:
@@ -44,6 +37,7 @@ public:
     const std::string& getProfileName() const;
     void setStreamState(sai_tam_tel_type_state_t state);
     void setStreamState(sai_object_type_t object_type, sai_tam_tel_type_state_t state);
+    sai_tam_tel_type_state_t getStreamState(sai_object_type_t object_type) const;
     void notifyConfigReady(sai_object_type_t object_type);
     sai_tam_tel_type_state_t getTelemetryTypeState(sai_object_type_t object_type) const;
     sai_guard_t getTAMTelTypeGuard(sai_object_id_t tam_tel_type_obj) const;
@@ -57,14 +51,14 @@ public:
     bool canBeUpdated() const;
     bool canBeUpdated(sai_object_type_t object_type) const;
     bool isEmpty() const;
+    void clearGroup(const std::string &group_name);
 
     const std::vector<std::uint8_t> &getTemplates(sai_object_type_t object_type) const;
-    // const std::vector<std::string> getObjectNames(sai_object_type_t object_type) const;
-    // const std::vector<std::uint16_t> getObjectLabels(sai_object_type_t object_type) const;
+    const std::vector<std::string> getObjectNames(sai_object_type_t object_type) const;
+    const std::vector<std::uint16_t> getObjectLabels(sai_object_type_t object_type) const;
     std::pair<std::vector<std::string>, std::vector<std::string>> getObjectNamesAndLabels(sai_object_type_t object_type) const;
     std::vector<sai_object_type_t> getObjectTypes() const;
 
-    // void loadGroupFromCfgDB(swss::Table &group_tbl);
     void loadCounterNameCache(sai_object_type_t object_type);
     bool tryCommitConfig(sai_object_type_t object_type);
 

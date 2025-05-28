@@ -67,7 +67,7 @@ TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
-HFTelOrch *gSTelOrch;
+HFTelOrch *gHFTOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -822,13 +822,20 @@ bool OrchDaemon::init()
     TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
     m_orchList.push_back(twamp_orch);
 
-
-    const vector<string> stel_tables = {
-        CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
-        CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
-    };
-    gSTelOrch = new HFTelOrch(m_configDb, m_stateDb, stel_tables);
-    m_orchList.push_back(gSTelOrch);
+    if (HFTelOrch::isSupportedHFTel(gSwitchId))
+    {
+        const vector<string> stel_tables = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
+        };
+        gHFTOrch = new HFTelOrch(m_configDb, m_stateDb, stel_tables);
+        m_orchList.push_back(gHFTOrch);
+        SWSS_LOG_NOTICE("High Frequency Telemetry is supported on this platform");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("High Frequency Telemetry is not supported on this platform");
+    }
 
     if (WarmStart::isWarmStart())
     {

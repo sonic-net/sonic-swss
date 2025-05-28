@@ -25,48 +25,55 @@ public:
         const std::string &group_name,
         const std::set<std::string> &object_counters);
     static sai_stats_mode_t get_stats_mode(sai_object_type_t object_type, sai_stat_id_t stat_id);
-    // static std::uint16_t get_sai_label(const std::string &object_name);
 };
 
 #define HFTELUTILS_ADD_SAI_OBJECT_LIST(obj, attr_id, inserted_obj, api_type_name, api_name, obj_type_name) \
-    { \
-        sai_attribute_t attr; \
-        auto obj_list = HFTelUtils::get_sai_object_list( \
-            obj, \
-            attr_id, \
-            api_type_name, \
-            sai_## api_name ## _api->get_ ## obj_type_name ## _attribute); \
-        obj_list.push_back(inserted_obj); \
-        attr.id = attr_id; \
-        attr.value.objlist.count = static_cast<uint32_t>(obj_list.size()); \
-        attr.value.objlist.list = obj_list.data(); \
-        handleSaiSetStatus( \
-            api_type_name, \
-            sai_ ## api_name ## _api->set_ ## obj_type_name ## _attribute( \
-                obj, \
-                &attr)); \
+    {                                                                                                      \
+        sai_attribute_t attr;                                                                              \
+        auto obj_list = HFTelUtils::get_sai_object_list(                                                   \
+            obj,                                                                                           \
+            attr_id,                                                                                       \
+            api_type_name,                                                                                 \
+            sai_##api_name##_api->get_##obj_type_name##_attribute);                                        \
+        obj_list.push_back(inserted_obj);                                                                  \
+        attr.id = attr_id;                                                                                 \
+        attr.value.objlist.count = static_cast<uint32_t>(obj_list.size());                                 \
+        attr.value.objlist.list = obj_list.data();                                                         \
+        sai_status_t status = sai_##api_name##_api->set_##obj_type_name##_attribute(                       \
+            obj,                                                                                           \
+            &attr);                                                                                        \
+        if (status != SAI_STATUS_SUCCESS)                                                                  \
+        {                                                                                                  \
+            handleSaiSetStatus(                                                                            \
+                api_type_name,                                                                             \
+                status);                                                                                   \
+        }                                                                                                  \
     }
 
 #define HFTELUTILS_DEL_SAI_OBJECT_LIST(obj, attr_id, removed_obj, api_type_name, api_name, obj_type_name) \
-    { \
-        sai_attribute_t attr; \
-        auto obj_list = HFTelUtils::get_sai_object_list( \
-            obj, \
-            attr_id, \
-            api_type_name, \
-            sai_ ## api_name ## _api->get_ ## obj_type_name ## _attribute); \
-        obj_list.erase( \
-            std::remove( \
-                obj_list.begin(), \
-                obj_list.end(), \
-                removed_obj), \
-            obj_list.end()); \
-        attr.id = attr_id; \
-        attr.value.objlist.count = static_cast<uint32_t>(obj_list.size()); \
-        attr.value.objlist.list = obj_list.data(); \
-        handleSaiSetStatus( \
-            api_type_name, \
-            sai_ ## api_name ## _api->set_ ## obj_type_name ## _attribute( \
-                obj, \
-                &attr)); \
+    {                                                                                                     \
+        sai_attribute_t attr;                                                                             \
+        auto obj_list = HFTelUtils::get_sai_object_list(                                                  \
+            obj,                                                                                          \
+            attr_id,                                                                                      \
+            api_type_name,                                                                                \
+            sai_##api_name##_api->get_##obj_type_name##_attribute);                                       \
+        obj_list.erase(                                                                                   \
+            std::remove(                                                                                  \
+                obj_list.begin(),                                                                         \
+                obj_list.end(),                                                                           \
+                removed_obj),                                                                             \
+            obj_list.end());                                                                              \
+        attr.id = attr_id;                                                                                \
+        attr.value.objlist.count = static_cast<uint32_t>(obj_list.size());                                \
+        attr.value.objlist.list = obj_list.data();                                                        \
+        sai_status_t status = sai_##api_name##_api->set_##obj_type_name##_attribute(                      \
+            obj,                                                                                          \
+            &attr);                                                                                       \
+        if (status != SAI_STATUS_SUCCESS)                                                                 \
+        {                                                                                                 \
+            handleSaiSetStatus(                                                                           \
+                api_type_name,                                                                            \
+                status);                                                                                  \
+        }                                                                                                 \
     }

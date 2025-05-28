@@ -85,83 +85,103 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
         return;
     }
 
-    if (stats->second == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
+    do
     {
-        if (state == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
+        if (stats->second == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
         {
-            if (!isMonitoringObjectReady(type))
+            if (state == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
             {
-                return;
+                if (!isMonitoringObjectReady(type))
+                {
+                    return;
+                }
+                // Clearup the previous templates
+                m_sai_tam_tel_type_templates.erase(type);
             }
-            // Clearup the previous templates
-            m_sai_tam_tel_type_templates.erase(type);
+            else if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
+            {
+                if (m_sai_tam_tel_type_templates.find(type) == m_sai_tam_tel_type_templates.end())
+                {
+                    // The template isn't ready
+                    return;
+                }
+                if (!isMonitoringObjectReady(type))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                break;
+            }
         }
-        else if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
+        else if (stats->second == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
         {
-            if (m_sai_tam_tel_type_templates.find(type) == m_sai_tam_tel_type_templates.end())
+            if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
             {
-                // The template isn't ready
-                return;
+                // Nothing to do
             }
-            if (!isMonitoringObjectReady(type))
+            else if (state == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
             {
-                return;
+                // TODO: Implement the transition from started to config generating in Phase2
+                SWSS_LOG_THROW("Transfer from start to create config hasn't been implemented yet");
+            }
+            else
+            {
+                break;
+            }
+        }
+        else if (stats->second == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
+        {
+            if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
+            {
+                // Nothing to do
+            }
+            else if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
+            {
+                // Nothing to do
+            }
+            else
+            {
+                break;
             }
         }
         else
         {
-            goto failed_state_transfer;
+            SWSS_LOG_THROW("Unknown state %d", stats->second);
         }
-    }
-    else if (stats->second == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
-    {
-        if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
-        {
-            // Nothing to do
-        }
-        else if (state == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
-        {
-            // TODO: Implement the transition from started to config generating in Phase2
-            SWSS_LOG_THROW("Transfer from start to create config hasn't been implemented yet");
-        }
-        else
-        {
-            goto failed_state_transfer;
-        }
-    }
-    else if (stats->second == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
-    {
-        if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
-        {
-            // Nothing to do
-        }
-        else if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
-        {
-            // Nothing to do
-        }
-        else
-        {
-            goto failed_state_transfer;
-        }
-    }
-    else
-    {
-        SWSS_LOG_THROW("Unknown state %d", stats->second);
-    }
 
-    sai_attribute_t attr;
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_STATE;
-    attr.value.s32 = state;
-    handleSaiSetStatus(
-        SAI_API_TAM,
-        sai_tam_api->set_tam_tel_type_attribute(*type_itr->second, &attr));
+        sai_attribute_t attr;
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_STATE;
+        attr.value.s32 = state;
+        auto status = sai_tam_api->set_tam_tel_type_attribute(*type_itr->second, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            handleSaiSetStatus(SAI_API_TAM, status);
+        }
 
-    stats->second = state;
+        stats->second = state;
+        return;
 
-    return;
+    } while(false);
 
-failed_state_transfer:
     SWSS_LOG_THROW("Invalid state transfer from %d to %d", stats->second, state);
+}
+
+sai_tam_tel_type_state_t HFTelProfile::getStreamState(sai_object_type_t object_type) const
+{
+    SWSS_LOG_ENTER();
+    auto itr = m_sai_tam_tel_type_objs.find(object_type);
+    if (itr == m_sai_tam_tel_type_objs.end())
+    {
+        return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+    }
+    auto state_itr = m_sai_tam_tel_type_states.find(itr->second);
+    if (state_itr == m_sai_tam_tel_type_states.end())
+    {
+        return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+    }
+    return state_itr->second;
 }
 
 void HFTelProfile::notifyConfigReady(sai_object_type_t object_type)
@@ -244,9 +264,11 @@ void HFTelProfile::setPollInterval(uint32_t poll_interval)
         sai_attribute_t attr;
         attr.id = SAI_TAM_REPORT_ATTR_REPORT_INTERVAL;
         attr.value.u32 = m_poll_interval;
-        handleSaiSetStatus(
-            SAI_API_TAM,
-            sai_tam_api->set_tam_report_attribute(*report.second, &attr));
+        sai_status_t status = sai_tam_api->set_tam_report_attribute(*report.second, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            handleSaiSetStatus(SAI_API_TAM, status);
+        }
     }
 }
 
@@ -255,6 +277,7 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
     SWSS_LOG_ENTER();
 
     sai_object_type_t sai_object_type = HFTelUtils::group_name_to_sai_type(group_name);
+
     auto itr = m_groups.lower_bound(sai_object_type);
 
     if (itr == m_groups.end() || itr->first != sai_object_type)
@@ -279,8 +302,6 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
 
     // TODO: In the phase 2, we don't need to stop the stream before update the object names
     setStreamState(sai_object_type, SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
-
-    // undeployCounterSubscriptions(sai_object_type);
 }
 
 void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &object_counters)
@@ -414,6 +435,31 @@ bool HFTelProfile::isEmpty() const
     return m_groups.empty();
 }
 
+void HFTelProfile::clearGroup(const std::string &group_name)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_type_t sai_object_type = HFTelUtils::group_name_to_sai_type(group_name);
+
+    auto itr = m_groups.find(sai_object_type);
+    if (itr != m_groups.end())
+    {
+        for (const auto &obj : itr->second.getObjects())
+        {
+            delObjectSAIID(sai_object_type, obj.first.c_str());
+        }
+        m_groups.erase(itr);
+    }
+    m_sai_tam_tel_type_templates.erase(sai_object_type);
+    m_sai_tam_tel_type_states.erase(m_sai_tam_tel_type_objs[sai_object_type]);
+    m_sai_tam_tel_type_objs.erase(sai_object_type);
+    m_sai_tam_report_objs.erase(sai_object_type);
+    m_sai_tam_counter_subscription_objs.erase(sai_object_type);
+    m_name_sai_map.erase(sai_object_type);
+
+    SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
+}
+
 const vector<uint8_t> &HFTelProfile::getTemplates(sai_object_type_t object_type) const
 {
     SWSS_LOG_ENTER();
@@ -421,38 +467,38 @@ const vector<uint8_t> &HFTelProfile::getTemplates(sai_object_type_t object_type)
     return m_sai_tam_tel_type_templates.at(object_type);
 }
 
-// const vector<string> HFTelProfile::getObjectNames(sai_object_type_t object_type) const
-// {
-//     SWSS_LOG_ENTER();
+const vector<string> HFTelProfile::getObjectNames(sai_object_type_t object_type) const
+{
+    SWSS_LOG_ENTER();
 
-//     vector<string> object_names;
-//     auto group = m_groups.find(object_type);
-//     if (group != m_groups.end())
-//     {
-//         object_names.reserve(group->second.getObjects().size());
-//         transform(group->second.getObjects().begin(), group->second.getObjects().end(), object_names.begin(),
-//                   [](const auto &pair)
-//                   { return pair.first; });
-//     }
+    vector<string> object_names;
+    auto group = m_groups.find(object_type);
+    if (group != m_groups.end())
+    {
+        object_names.resize(group->second.getObjects().size());
+        transform(group->second.getObjects().begin(), group->second.getObjects().end(), object_names.begin(),
+                  [](const auto &pair)
+                  { return pair.first; });
+    }
 
-//     return object_names;
-// }
+    return object_names;
+}
 
-// const vector<uint16_t> HFTelProfile::getObjectLabels(sai_object_type_t object_type) const
-// {
-//     SWSS_LOG_ENTER();
+const vector<uint16_t> HFTelProfile::getObjectLabels(sai_object_type_t object_type) const
+{
+    SWSS_LOG_ENTER();
 
-//     vector<uint16_t> object_labels;
-//     auto group = m_groups.find(object_type);
-//     if (group != m_groups.end())
-//     {
-//         object_labels.reserve(group->second.getObjects().size());
-//         transform(group->second.getObjects().begin(), group->second.getObjects().end(), object_labels.begin(),
-//                   [](const auto &pair)
-//                   { return pair.second; });
-//     }
-//     return object_labels;
-// }
+    vector<uint16_t> object_labels;
+    auto group = m_groups.find(object_type);
+    if (group != m_groups.end())
+    {
+        object_labels.resize(group->second.getObjects().size());
+        transform(group->second.getObjects().begin(), group->second.getObjects().end(), object_labels.begin(),
+                  [](const auto &pair)
+                  { return pair.second; });
+    }
+    return object_labels;
+}
 
 pair<vector<string>, vector<string>> HFTelProfile::getObjectNamesAndLabels(sai_object_type_t object_type) const
 {
@@ -479,69 +525,6 @@ vector<sai_object_type_t> HFTelProfile::getObjectTypes() const
 
     return types;
 }
-
-// void HFTelProfile::loadGroupFromCfgDB(Table &group_tbl)
-// {
-//     SWSS_LOG_ENTER();
-
-//     vector<string> keys;
-//     group_tbl.getKeys(keys);
-
-//     boost::char_separator<char> key_sep(group_tbl.getTableNameSeparator().c_str());
-//     for (const auto &key : keys)
-//     {
-//         boost::tokenizer<boost::char_separator<char>> tokens(key, key_sep);
-
-//         auto profile_name = (tokens.begin());
-//         if (profile_name == tokens.end())
-//         {
-//             SWSS_LOG_THROW("Invalid key %s in the %s", key.c_str(), group_tbl.getTableName().c_str());
-//         }
-//         if (*profile_name != m_profile_name)
-//         {
-//             // Not the profile we are interested in
-//             continue;
-//         }
-
-//         auto group_name = ++tokens.begin();
-//         if (group_name == tokens.end())
-//         {
-//             SWSS_LOG_THROW("Invalid key %s in the %s", key.c_str(), group_tbl.getTableName().c_str());
-//         }
-
-//         vector<FieldValueTuple> items;
-//         if (!group_tbl.get(key, items))
-//         {
-//             SWSS_LOG_WARN("Failed to get the stream telemetry group: %s.", key.c_str());
-//             continue;
-//         }
-
-//         auto names = fvsGetValue(items, "object_names", true);
-//         if (!names || names->empty())
-//         {
-//             // TODO: If the object names are empty, implicitly select all objects of the group
-//             SWSS_LOG_WARN("No object names in the stream telemetry group: %s", key.c_str());
-//             continue;
-//         }
-
-//         auto counters = fvsGetValue(items, "object_counters", true);
-//         if (!counters || counters->empty())
-//         {
-//             SWSS_LOG_ERROR("No object counters in the stream telemetry group: %s", key.c_str());
-//             continue;
-//         }
-
-//         vector<string> buffer;
-//         boost::split(buffer, *names, boost::is_any_of(","));
-//         set<string> object_names(buffer.begin(), buffer.end());
-//         setObjectNames(*group_name, move(object_names));
-
-//         buffer.clear();
-//         boost::split(buffer, *counters, boost::is_any_of(","));
-//         set<string> object_counters(buffer.begin(), buffer.end());
-//         setStatsIDs(*group_name, object_counters);
-//     }
-// }
 
 void HFTelProfile::loadCounterNameCache(sai_object_type_t object_type)
 {
@@ -629,7 +612,7 @@ bool HFTelProfile::isMonitoringObjectReady(sai_object_type_t object_type) const
     auto group = m_groups.find(object_type);
     if (group == m_groups.end())
     {
-        SWSS_LOG_THROW("The group for object type %s is not found", sai_serialize_object_type(object_type).c_str());
+        SWSS_LOG_THROW("The high frequency telemetry group for object type %s is not found", sai_serialize_object_type(object_type).c_str());
     }
 
     auto counters = m_sai_tam_counter_subscription_objs.find(object_type);
@@ -667,7 +650,8 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_REPORT_ATTR_TEMPLATE_REPORT_INTERVAL;
-    attr.value.u32 = 0; // Don't push the template, Because we hope the template can be proactively queried by orchagent
+    // Don't push the template, Because we hope the template can be proactively queried by orchagent
+    attr.value.u32 = 0;
     attrs.push_back(attr);
 
     if (m_poll_interval != 0)
@@ -688,7 +672,16 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
             static_cast<uint32_t>(attrs.size()),
             attrs.data()));
 
-    m_sai_tam_report_objs[object_type] = make_unique<sai_object_id_t>(sai_object);
+    m_sai_tam_report_objs[object_type] = move(
+        sai_guard_t(
+            new sai_object_id_t(sai_object),
+            [this](sai_object_id_t *p)
+            {
+                handleSaiRemoveStatus(
+                    SAI_API_TAM,
+                    sai_tam_api->remove_tam_report(*p));
+                delete p;
+            }));
 
     return sai_object;
 }
@@ -952,12 +945,23 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
     vector<uint8_t> buffer(estimated_template_size, 0);
 
     sai_attribute_t attr;
-    // attr.id = SAI_TAM_TEL_TYPE_ATTR_IPFIX_TEMPLATES;
+    attr.id = SAI_TAM_TEL_TYPE_ATTR_IPFIX_TEMPLATES;
     attr.value.u8list.count = static_cast<uint32_t>(buffer.size());
     attr.value.u8list.list = buffer.data();
-    handleSaiGetStatus(
-        SAI_API_TAM,
-        sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr));
+
+    auto status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
+    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        buffer.resize(attr.value.u8list.count);
+        attr.value.u8list.list = buffer.data();
+        status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
+    }
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_THROW("Failed to get the TAM telemetry type object %s attributes: %d",
+                       sai_serialize_object_id(tam_tel_type_obj).c_str(), status);
+    }
 
     buffer.resize(attr.value.u8list.count);
 

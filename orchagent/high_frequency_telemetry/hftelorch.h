@@ -29,6 +29,7 @@ public:
     static const std::unordered_map<std::string, sai_object_type_t> SUPPORT_COUNTER_TABLES;
 
     void locallyNotify(const CounterNameMapUpdater::Message &msg);
+    static bool isSupportedHFTel(sai_object_id_t switch_id);
 
 private:
     swss::Table m_state_telemetry_session;
