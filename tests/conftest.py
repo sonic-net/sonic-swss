@@ -376,7 +376,8 @@ class DockerVirtualSwitch:
 
         # Dynamically create a DVS container and servers
         else:
-            self.ctn_sw = self.client.containers.run("debian:jessie",
+            cr_prefix = os.environ['DEFAULT_CONTAINER_REGISTRY'].rstrip("/")
+            self.ctn_sw = self.client.containers.run(cr_prefix + "/debian:jessie",
                                                      privileged=True,
                                                      detach=True,
                                                      command="bash",
