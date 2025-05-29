@@ -8,6 +8,7 @@
 using namespace ::testing;
 
 extern redisReply *mockReply;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
 EXTERN_MOCK_FNS
 
@@ -382,6 +383,11 @@ namespace dashhaorch_ut
             consumer->readData();
             static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*consumer);
             mockReply = nullptr;
+
+            sai_redis_communication_mode_t old_mode = gRedisCommunicationMode;
+            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
+            on_ha_set_event(1, &event);
+            gRedisCommunicationMode = old_mode;
         }
 
         void HaScopeEvent(sai_ha_scope_event_t event_type,
@@ -420,6 +426,11 @@ namespace dashhaorch_ut
             consumer->readData();
             static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*consumer);
             mockReply = nullptr;
+
+            sai_redis_communication_mode_t old_mode = gRedisCommunicationMode;
+            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
+            on_ha_scope_event(1, &event);
+            gRedisCommunicationMode = old_mode;
         }
     };
 
