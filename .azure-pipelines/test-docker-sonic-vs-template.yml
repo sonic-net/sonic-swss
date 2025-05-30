@@ -179,7 +179,7 @@ jobs:
     inputs:
       testResultsFiles: '**/*_tr.xml'
       testRunTitle: vstest
-    condition: succeeded()
+    condition: and(succeeded(), ne('${{ parameters.asan }}', true))
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
