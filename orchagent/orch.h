@@ -295,6 +295,16 @@ public:
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
+    /*
+     * Called once after APPLY_VIEW in warm/fast boot scenario.
+     * Orch can override this method to perform orch specific operations after boot is finished.
+     * These operations are not meant to produce additional ASIC configuration,
+     * instead a capability fetch and STATE_DB update here is encouraged.
+     * Orch is not expected to call the base method implementation as it must remain
+     * empty for compatibility reasons.
+     */
+    virtual void onWarmBootEnd() { }
+
     void dumpPendingTasks(std::vector<std::string> &ts);
 
     /**
