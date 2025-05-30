@@ -764,7 +764,6 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                         SWSS_LOG_NOTICE("DPU is pending on role activation for %s", key.c_str());
                     }
 
-                    fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
                     break;
                 default:
                     SWSS_LOG_ERROR("Unknown HA Scope event type %d for %s", event_type, key.c_str());
