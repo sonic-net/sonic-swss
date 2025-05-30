@@ -678,15 +678,21 @@ task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void 
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
+    string s_api = sai_serialize_api(api);
+    string s_status = sai_serialize_status(status);
+
     switch (status)
     {
         case SAI_STATUS_SUCCESS:
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiGetStatus");
             return task_success;
-        case SAI_STATUS_NOT_IMPLEMENTED:
-            throw std::logic_error("SAI get function not implemented");
         default:
-            handleSaiFailure(api, "get", status);
+            /*
+             * handleSaiFailure() is not called for GET failures as it might
+             * overwhelm the system if there are too many such calls
+             */
+            SWSS_LOG_NOTICE("Encountered failure in GET operation, SAI API: %s, status: %s",
+                        s_api.c_str(), s_status.c_str());
             break;
     }
     return task_failed;
