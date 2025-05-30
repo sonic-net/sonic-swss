@@ -748,7 +748,7 @@ bool BgpGlobalStateOrch::offload_supported(bool get_ipv6)
         SWSS_LOG_ERROR("Unable to query BFD offload capability");
         return false;
     }
-    if (!capability.set_implemented)
+    if (!capability.get_implemented)
     {
         SWSS_LOG_ERROR("BFD offload type not implemented");
         return false;

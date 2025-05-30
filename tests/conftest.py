@@ -378,7 +378,11 @@ class DockerVirtualSwitch:
 
         # Dynamically create a DVS container and servers
         else:
-            self.ctn_sw = self.client.containers.run("debian:jessie",
+            if 'DEFAULT_CONTAINER_REGISTRY' in os.environ:
+                cr_prefix = os.environ['DEFAULT_CONTAINER_REGISTRY'].rstrip("/") + "/"
+            else:
+                cr_prefix = ''
+            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:jessie",
                                                      privileged=True,
                                                      detach=True,
                                                      command="bash",
@@ -429,7 +433,7 @@ class DockerVirtualSwitch:
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
         self.zmq_sock = os.path.join(self.zmq_mount, "zmq_swss_ep")
         ensure_system(f"rm -rf /var/run/redis/redis.sock")
-        ensure_system(f"ln -s {self.redis_sock} /var/run/redis/redis.sock")
+        ensure_system(f"ln -sf {self.redis_sock} /var/run/redis/redis.sock")
 
         self.reset_dbs()
 
@@ -773,6 +777,12 @@ class DockerVirtualSwitch:
     def stop_fpmsyncd(self):
         self.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
         time.sleep(1)
+
+    def disable_fpmsyncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl stop fpmsyncd'])
+
+        # Let's give fpmsyncd a chance to connect to Zebra.
+        time.sleep(5)
 
     # deps: warm_reboot
     def SubscribeAppDbObject(self, objpfx):

@@ -2032,11 +2032,11 @@ task_process_status Srv6Orch::doTaskPicContextTable(const KeyOpFieldsValuesTuple
         pci.ref_count = 0;
         for (auto i : kfvFieldsValues(tuple))
         {
-            if (fvField(i) == "nexthop")
+            if (fvField(i) == "nexthop" && fvValue(i) != "")
             {
                 pci.nexthops = tokenize(fvValue(i), ',');
             }
-            else if (fvField(i) == "vpn_sid")
+            else if (fvField(i) == "vpn_sid" && fvValue(i) != "")
             {
                 pci.sids = tokenize(fvValue(i), ',');
             }

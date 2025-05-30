@@ -74,7 +74,7 @@ struct VnetMapBulkContext
 class DashVnetOrch : public ZmqOrch
 {
 public:
-    DashVnetOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);
+    DashVnetOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
 
 private:
     DashVnetTable vnet_table_;
@@ -83,10 +83,16 @@ private:
     ObjectBulker<sai_dash_vnet_api_t> vnet_bulker_;
     EntityBulker<sai_dash_outbound_ca_to_pa_api_t> outbound_ca_to_pa_bulker_;
     EntityBulker<sai_dash_pa_validation_api_t> pa_validation_bulker_;
+    std::unique_ptr<swss::Table> dash_vnet_result_table_;
+    std::unique_ptr<swss::Table> dash_vnet_map_result_table_;
 
     void doTask(ConsumerBase &consumer);
     void doTaskVnetTable(ConsumerBase &consumer);
     void doTaskVnetMapTable(ConsumerBase &consumer);
+
+    // The following add/remove methods will return true if the provided key should be removed from the
+    // consumer (i.e. task is done and no retries are required) and false otherwise.
+    // Methods which only have one possible outcome will have return type void.
     bool addVnet(const std::string& key, DashVnetBulkContext& ctxt);
     bool addVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
     bool removeVnet(const std::string& key, DashVnetBulkContext& ctxt);
@@ -95,7 +101,7 @@ private:
     bool addOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
     void removeOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
     bool removeOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
-    bool addPaValidation(const std::string& key, VnetMapBulkContext& ctxt);
+    void addPaValidation(const std::string& key, VnetMapBulkContext& ctxt);
     bool addPaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
     void removePaValidation(const std::string& key, VnetMapBulkContext& ctxt);
     bool removePaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
