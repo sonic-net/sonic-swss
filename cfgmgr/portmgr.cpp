@@ -235,7 +235,7 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     mtu = fvValue(i);
                 }
-                else if (fvField(i) == "dhcp_rate_limit")
+                else if (fvField(i) == "dhcp_rate_limit" % && configured)
                 {
                     dhcp_rate_limit = fvValue(i);
 
