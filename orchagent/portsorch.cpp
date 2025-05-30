@@ -2152,6 +2152,47 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool overri
 
     SWSS_LOG_NOTICE("Set port %s FEC mode %d", port.m_alias.c_str(), fec_mode);
 
+    if (m_gearboxEnabled && (m_portList[port.m_alias].m_init == true) && (m_gearboxInterfaceMap.find(port.m_index) != m_gearboxInterfaceMap.end()))
+    {
+	map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
+        generateSerdesAttrMap(tx_fir_strings_system_side, m_gearboxInterfaceMap[port.m_index].tx_firs, serdes_attr);
+	if (serdes_attr.size() != 0)
+	{
+	    status = setPortSerdesAttribute(port.m_system_side_id, port.m_switch_id, serdes_attr);
+	    if (status)
+	    {
+	        SWSS_LOG_NOTICE("Set port %s system side preemphasis is success", port.m_alias.c_str());
+	    }
+	    else
+	    {
+	        SWSS_LOG_ERROR("Failed to set port %s system side pre-emphasis", port.m_alias.c_str());
+	        return false;
+	    }
+	}
+	serdes_attr.clear();
+        generateSerdesAttrMap(tx_fir_strings_line_side, m_gearboxInterfaceMap[port.m_index].tx_firs, serdes_attr);
+	if (serdes_attr.size() != 0)
+	{
+	    status = setPortSerdesAttribute(port.m_line_side_id, port.m_switch_id, serdes_attr);
+	    if (status)
+	    {
+	        SWSS_LOG_NOTICE("Set port %s line side preemphasis is success", port.m_alias.c_str());
+	    }
+	    else
+	    {
+	        SWSS_LOG_ERROR("Failed to set port %s line side pre-emphasis", port.m_alias.c_str());
+	        return false;
+	    }
+	}
+	auto lt_status = setPortLinkTraining(port, true);
+	if (lt_status != task_success)
+	{
+	    status = false;
+	    SWSS_LOG_ERROR("Failed to set LinkTraining after FEC configuration for port %s", port.m_alias.c_str());
+	    return status;
+	}
+    }
+
     return true;
 }
 
@@ -3100,8 +3141,31 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
             switch (id)
             {
                 case SAI_PORT_ATTR_FEC_MODE:
+                    sai_port_fec_mode_t sai_fec;
+                    switch (port_type)
+                    {
+                        case PHY_PORT_TYPE:
+                            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].system_fec, sai_fec))
+                            {
+                                SWSS_LOG_ERROR("Invalid system FEC mode %s", m_gearboxPortMap[port.m_index].system_fec.c_str());
+                                return false;
+                            }
+                            SWSS_LOG_NOTICE("BOX: Valid system FEC mode %s", m_gearboxPortMap[port.m_index].system_fec.c_str());
+                            attr.value.s32 = sai_fec;
+                            break;
+                        case LINE_PORT_TYPE:
+                            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].line_fec, sai_fec))
+                            {
+                                SWSS_LOG_ERROR("Invalid line FEC mode %s", m_gearboxPortMap[port.m_index].line_fec.c_str());
+                                return false;
+                            }
+                            SWSS_LOG_NOTICE("BOX: Valid line FEC mode %s", m_gearboxPortMap[port.m_index].line_fec.c_str());
+                            break;
+                        default:
+                            return false;
+                    }
                     attr.id = id;
-                    attr.value.s32 = *static_cast<sai_int32_t*>(value);
+                    attr.value.s32 = sai_fec;
                     SWSS_LOG_NOTICE("BOX: Set %s FEC_MODE %d", port.m_alias.c_str(), attr.value.s32);
                     break;
                 case SAI_PORT_ATTR_ADMIN_STATE:
@@ -3146,10 +3210,25 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
                     }
                     SWSS_LOG_NOTICE("BOX: Set %s MTU %d", port.m_alias.c_str(), attr.value.u32);
                     break;
+		case SAI_PORT_ATTR_LINK_TRAINING_ENABLE:
+                    switch (port_type)
+                    {
+                        case PHY_PORT_TYPE:
+                            attr.value.booldata = m_gearboxPortMap[port.m_index].system_training;
+                            SWSS_LOG_NOTICE("BOX: Set System training mode %d", m_gearboxPortMap[port.m_index].system_training);
+                            break;
+                        case LINE_PORT_TYPE:
+                            attr.value.booldata = m_gearboxPortMap[port.m_index].line_training;
+                            SWSS_LOG_NOTICE("BOX: Set Line training mode %d", m_gearboxPortMap[port.m_index].line_training);
+                            break;
+                        default:
+                            return false;
+                    }
+                    attr.id = id;
+                    break;
                 default:
                     return false;
             }
-
             status = sai_port_api->set_port_attribute(dest_port_id, &attr);
             if (status == SAI_STATUS_SUCCESS)
             {
@@ -3443,6 +3522,13 @@ task_process_status PortsOrch::setPortLinkTraining(const Port &port, bool state)
     }
 
     SWSS_LOG_INFO("Set LT %s to port %s", op.c_str(), port.m_alias.c_str());
+
+    if (!setGearboxPortsAttr(port, SAI_PORT_ATTR_LINK_TRAINING_ENABLE, &state))
+    {
+        SWSS_LOG_WARN("Unable to set System/Line-side Link Training for port %s", port.m_alias.c_str());
+        return task_failed;
+    }
+    SWSS_LOG_INFO("Set Link Training to System/Line Gearbox ports for port %s", port.m_alias.c_str());
 
     return task_success;
 }
@@ -9028,6 +9114,24 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
     return true;
 }
 
+bool PortsOrch::generateSerdesAttrMap(const map<string, sai_port_serdes_attr_t> &firStringToAttrMap, const map<string, string> &firValueMap, map<sai_port_serdes_attr_t, vector<uint32_t>> &serdesAttrOut)
+{
+    std::vector<uint32_t> attr_val;
+
+    for (const auto &pair : firStringToAttrMap)
+    {
+        auto it = firValueMap.find(pair.first);
+        if (it != firValueMap.end())
+        {
+            attr_val.clear();
+            getPortSerdesVal(it->second, attr_val, 10);
+            auto &vec = serdesAttrOut[pair.second];
+            vec.insert(vec.end(), attr_val.begin(), attr_val.end());
+        }
+    }
+    return true;
+}
+
 void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
@@ -9411,16 +9515,8 @@ bool PortsOrch::initGearboxPort(Port &port)
             m_gbcounterTable->set("", fields);
 
             /* Set serdes tx taps on system and line side */
-            map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
-            typedef pair<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr_pair;
-            vector<uint32_t> attr_val;
-            for (auto pair: tx_fir_strings_system_side) {
-                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
-                    attr_val.clear();
-                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
-                    serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
-                }
-            }
+	    map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
+            generateSerdesAttrMap(tx_fir_strings_system_side, m_gearboxInterfaceMap[port.m_index].tx_firs, serdes_attr);
             if (serdes_attr.size() != 0)
             {
                 if (setPortSerdesAttribute(systemPort, phyOid, serdes_attr))
@@ -9434,13 +9530,7 @@ bool PortsOrch::initGearboxPort(Port &port)
                 }
             }
             serdes_attr.clear();
-            for (auto pair: tx_fir_strings_line_side) {
-                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
-                    attr_val.clear();
-                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
-                    serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
-                }
-            }
+            generateSerdesAttrMap(tx_fir_strings_line_side, m_gearboxInterfaceMap[port.m_index].tx_firs, serdes_attr);
             if (serdes_attr.size() != 0)
             {
                 if (setPortSerdesAttribute(linePort, phyOid, serdes_attr))
