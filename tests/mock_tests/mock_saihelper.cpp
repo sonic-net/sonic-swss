@@ -273,5 +273,66 @@ namespace saihelper_test
 
         _unhook_sai_apis();
     }
+
+    TEST_F(SaihelperTest, TestAllSuccess) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        task_process_status status;
+
+        status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_SUCCESS);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiSetStatus(SAI_API_ROUTE, SAI_STATUS_SUCCESS);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, SAI_STATUS_SUCCESS);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestCreateSetResourceFailure) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        task_process_status status;
+
+        status = handleSaiCreateStatus(SAI_API_ACL, SAI_STATUS_INSUFFICIENT_RESOURCES);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        status = handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_INSUFFICIENT_RESOURCES);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        status = handleSaiCreateStatus(SAI_API_TUNNEL, SAI_STATUS_TABLE_FULL);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, SAI_STATUS_TABLE_FULL);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_NO_MEMORY);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        status = handleSaiSetStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_NO_MEMORY);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        _unhook_sai_apis();
+    }
+
 }
 
