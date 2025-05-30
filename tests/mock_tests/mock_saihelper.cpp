@@ -274,6 +274,21 @@ namespace saihelper_test
         _unhook_sai_apis();
     }
 
+    TEST_F(SaihelperTest, TestGetFailure) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        task_process_status status;
+
+        status = handleSaiGetStatus(SAI_API_FDB, SAI_STATUS_INVALID_PARAMETER);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_failed);
+        _unhook_sai_apis();
+    }
+
     TEST_F(SaihelperTest, TestAllSuccess) {
         _hook_sai_apis();
         initSwitchOrch();
@@ -328,6 +343,22 @@ namespace saihelper_test
         ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_NO_MEMORY);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestRemoveObjectInUse) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        task_process_status status;
+
+        status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_OBJECT_IN_USE);
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_need_retry);
 
