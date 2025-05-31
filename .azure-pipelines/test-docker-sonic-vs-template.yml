@@ -72,6 +72,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -152,7 +153,7 @@ jobs:
       # Run the tests in parallel and retry
       retry=3
       IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
-      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo ./run-tests.sh "$IMAGE_NAME" "$params" "TEST_MODULE" 3
+      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh "$IMAGE_NAME" "$params" "TEST_MODULE" 3
 
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
