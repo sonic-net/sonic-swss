@@ -310,6 +310,26 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
+        status = handleSaiCreateStatus(SAI_API_VLAN, SAI_STATUS_ITEM_ALREADY_EXISTS);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiSetStatus(SAI_API_ROUTE, SAI_STATUS_ITEM_ALREADY_EXISTS);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiCreateStatus(SAI_API_MIRROR, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiSetStatus(SAI_API_NEIGHBOR, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiRemoveStatus(SAI_API_LAG, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
         _unhook_sai_apis();
     }
 
