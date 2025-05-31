@@ -438,6 +438,13 @@ SaiOffloadHandlerStatus SaiOffloadSessionHandler<SaiOrchHandlerClass, T>::remove
         }
     }
 
+    // call the derived orch's remove
+    auto do_remove_status = static_cast<SaiOrchHandlerClass *>(this)->do_remove();
+    if (do_remove_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
+    {
+        return do_remove_status;
+    }
+
     return SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY;
 }
 

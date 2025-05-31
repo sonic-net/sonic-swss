@@ -351,3 +351,235 @@ class TestIcmpEcho(object):
         time.sleep(5)
         keys = self.sdb.get_keys("ICMP_ECHO_SESSION_TABLE")
         assert len(keys) == 0
+
+    def test_FailIcmpEchoSessions(self, dvs):
+        self.setup_db(dvs)
+
+        # create interfaces and add IP address
+        self.create_l3_intf("Ethernet0", "default")
+        self.create_l3_intf("Ethernet4", "default")
+        self.add_ip_address("Ethernet0", "10.0.0.0/31")
+        self.add_ip_address("Ethernet4", "10.0.1.0/31")
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+
+        icmpEchoSessions = self.get_exist_icmp_echo_session()
+
+        # Create ICMP session 1
+        fieldValues = {"session_cookie": "12345",
+                       "src_ip": "10.0.0.1", "dst_ip":"10.0.0.2", "tx_interval": "10",
+                       "rx_interval": "10", "src_mac": "01:01:02:02:03:04", "ttl" : "3",
+                       "hw_lookup": "true", "tos": "1"}
+
+        # bad key
+        key1_self = "default:Ethernet0:5000"
+        self.create_icmp_echo_session(key1_self, fieldValues)
+        time.sleep(2)
+
+        # Create should for bad key fail
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        icmpEchoSessions = self.get_exist_icmp_echo_session()
+        assert len(createdSessions) == 0
+
+        # missing dst_mac, creation should fail with proper key
+        key1_self = "default:Ethernet0:5000:"
+        self.create_icmp_echo_session(key1_self, fieldValues)
+        time.sleep(2)
+
+        # Create should fail for missing dst_mac when using non-default alias
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        icmpEchoSessions = self.get_exist_icmp_echo_session()
+        assert len(createdSessions) == 0
+
+        # add the dst_mac
+        fieldValues["hw_lookup"] = "false"
+        fieldValues["dst_mac"] = "01:23:45:aa:bb:cc"
+
+        # default alias with dst_mac should fail
+        key1_self = "default:default:5000:"
+        self.create_icmp_echo_session(key1_self, fieldValues)
+        time.sleep(2)
+
+        # Create should fail
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        icmpEchoSessions = self.get_exist_icmp_echo_session()
+        assert len(createdSessions) == 0
+
+        # unkown port alias should fail
+        key1_self = "default:Ethernet128:5000:"
+        self.create_icmp_echo_session(key1_self, fieldValues)
+        time.sleep(2)
+
+        # Create should fail
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        icmpEchoSessions = self.get_exist_icmp_echo_session()
+        assert len(createdSessions) == 0
+
+        # Remove the ICMP sessions
+        self.remove_icmp_echo_session(key1_self)
+        time.sleep(1)
+
+        # creation should pass with unsupported attrib
+        fieldValues["unknown_attrib"] = "XXXX"
+        # creation should pass after hw_lookup is set ot false
+        key1_self = "default:Ethernet0:5000:"
+        self.create_icmp_echo_session(key1_self, fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", len(icmpEchoSessions) + 1)
+
+        # Checked created ICMP ECHO session in ASIC_DB
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        icmpEchoSessions = self.get_exist_icmp_echo_session()
+        assert len(createdSessions) == 1
+
+        # self session
+        session1 = createdSessions.pop()
+        expected_adb_values = {
+            "SAI_ICMP_ECHO_SESSION_ATTR_GUID": "5000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_COOKIE": "12345",
+            "SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL": "10000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_RX_INTERVAL": "10000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_ICMP_ECHO_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_ICMP_ECHO_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_ICMP_ECHO_SESSION_ATTR_HW_LOOKUP_VALID": "false",
+            "SAI_ICMP_ECHO_SESSION_ATTR_DST_MAC_ADDRESS": "01:23:45:AA:BB:CC",
+            "SAI_ICMP_ECHO_SESSION_ATTR_TTL": "3",
+        }
+        self.check_asic_icmp_echo_session_value(session1, expected_adb_values)
+
+        # Check STATE_DB entry related to the ICMP ECHO session
+        expected_sdb_values = {"session_guid": "5000", "session_cookie": "12345",
+                               "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval": "10",
+                               "rx_interval": "10", "hw_lookup": "false"}
+        self.check_state_icmp_echo_session_value("default|Ethernet0|5000|NORMAL", expected_sdb_values)
+
+        # notification with wrong key
+        self.update_icmp_echo_session_state(dvs, session1, "Up")
+        time.sleep(2)
+
+        # Confirm ICMP ECHO session state in STATE_DB is updated as expected
+        expected_sdb_values["state"] = "Up"
+        self.check_state_icmp_echo_session_value("default|Ethernet0|5000|NORMAL", expected_sdb_values)
+
+        # Remove the ICMP sessions
+        self.remove_icmp_echo_session(key1_self)
+        self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", session1)
+
+        keys = self.sdb.get_keys("ICMP_ECHO_SESSION_TABLE")
+        assert len(keys) == 0
+
+        # RX session
+        peer_fieldValues = {"session_cookie": "12345", "src_ip": "10.0.0.1",
+                            "dst_ip":"10.0.0.2", "tx_interval": "10",
+                            "rx_interval": "10", "dst_mac": "01:23:45:aa:bb:cc",
+                            "ttl" : "10"}
+
+        key1_peer = "default:Ethernet0:6000:RX"
+        self.create_icmp_echo_session(key1_peer, peer_fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", len(icmpEchoSessions))
+
+        # Checked created ICMP ECHO session in ASIC_DB
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        assert len(createdSessions) == 1
+
+        session2 = createdSessions.pop()
+        expected_adb_values = {
+            "SAI_ICMP_ECHO_SESSION_ATTR_GUID": "6000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_COOKIE": "12345",
+            "SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL": "0",
+            "SAI_ICMP_ECHO_SESSION_ATTR_RX_INTERVAL": "10000",
+            "SAI_ICMP_ECHO_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_ICMP_ECHO_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_ICMP_ECHO_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_ICMP_ECHO_SESSION_ATTR_HW_LOOKUP_VALID": "false",
+            "SAI_ICMP_ECHO_SESSION_ATTR_DST_MAC_ADDRESS": "01:23:45:AA:BB:CC",
+            "SAI_ICMP_ECHO_SESSION_ATTR_TTL": "10",
+        }
+        self.check_asic_icmp_echo_session_value(session2, expected_adb_values)
+
+        # Check STATE_DB entry related to the ICMP ECHO session
+        expected_sdb_values = {"session_guid": "6000", "session_cookie": "12345",
+                               "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2", "tx_interval" :"0",
+                               "rx_interval": "10", "hw_lookup": "false"}
+        self.check_state_icmp_echo_session_value("default|Ethernet0|6000|RX", expected_sdb_values)
+
+        # Send ICMP ECHO session state notification to update ICMP ECHO session state
+        self.update_icmp_echo_session_state(dvs, session2, "Up")
+        time.sleep(2)
+
+        # Confirm ICMP ECHO session state in STATE_DB is updated as expected
+        expected_sdb_values["state"] = "Up"
+        self.check_state_icmp_echo_session_value("default|Ethernet0|6000|RX", expected_sdb_values)
+
+        # Failure Remove the ICMP sessions
+        self.remove_icmp_echo_session(key1_self)
+        time.sleep(1)
+
+        keys = self.sdb.get_keys("ICMP_ECHO_SESSION_TABLE")
+        assert len(keys) == 1
+
+        # Update with valid new field should fail
+        peer_fieldValues["tos"] = "2"
+
+        self.create_icmp_echo_session(key1_peer, peer_fieldValues)
+        time.sleep(1)
+
+        # Checked no new created session
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        assert len(createdSessions) == 1
+
+        del peer_fieldValues["tos"]
+
+        # Update tx_interval should fail for RX session
+        peer_fieldValues["tx_interval"] = "20"
+
+        self.create_icmp_echo_session(key1_peer, peer_fieldValues)
+        time.sleep(1)
+
+        # Checked no new created session
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        assert len(createdSessions) == 1
+
+        # check expected values did not change
+        self.check_state_icmp_echo_session_value("default|Ethernet0|6000|RX", expected_sdb_values)
+
+        del peer_fieldValues["tx_interval"]
+
+        # Update unsupported field should fail
+        peer_fieldValues["ttl"] = "1"
+
+        self.create_icmp_echo_session(key1_peer, peer_fieldValues)
+        time.sleep(1)
+
+        # Checked no new created session
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        assert len(createdSessions) == 1
+
+        # check expected values did not change
+        self.check_state_icmp_echo_session_value("default|Ethernet0|6000|RX", expected_sdb_values)
+
+        peer_fieldValues["ttl"] = "10"
+
+        # Update unknown field should fail
+        peer_fieldValues["unknown_attrib"] = "DDDD"
+
+        self.create_icmp_echo_session(key1_peer, peer_fieldValues)
+        time.sleep(1)
+
+        # Checked no new created session
+        createdSessions = self.get_exist_icmp_echo_session() - icmpEchoSessions
+        assert len(createdSessions) == 1
+
+        # check expected values did not change
+        self.check_state_icmp_echo_session_value("default|Ethernet0|6000|RX", expected_sdb_values)
+
+        del peer_fieldValues["unknown_attrib"]
+
+        session2 = createdSessions.pop()
+
+        #remove the second session
+        self.remove_icmp_echo_session(key1_peer)
+        self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", session2)
+
+        keys = self.sdb.get_keys("ICMP_ECHO_SESSION_TABLE")
+        assert len(keys) == 0

@@ -519,7 +519,7 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
     }
     else
     {
-        // this should not never happen
+        // this should never happen
         SWSS_LOG_ERROR("%s, GUID handler not found, %s", m_name.c_str(), m_key.c_str());
         return SaiOffloadHandlerStatus::FAILED_VALID_ENTRY;
     }
