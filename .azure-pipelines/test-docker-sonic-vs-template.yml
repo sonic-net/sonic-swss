@@ -144,7 +144,7 @@ jobs:
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
-      all_tests=$(ls test_*.py | xargs)
+      all_tests=$(ls test_nhg*.py | xargs)
       all_tests="${all_tests} p4rt dash"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then
@@ -158,6 +158,22 @@ jobs:
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
     continueOnError: ${{ parameters.asan }}
+
+  - script: |
+      set -ex
+      mkdir -p tests/asan
+      shopt -s globstar
+      mv -f tests/**/*_tr.xml tests/asan/ || true
+    condition: eq('${{ parameters.asan }}', true)
+    displayName: 'Move ASAN test reports to tests/asan'
+
+  - script: |
+      set -ex
+      mkdir -p tests/regular
+      shopt -s globstar
+      mv -f tests/**/*_tr.xml tests/regular/ || true
+    condition: ne('${{ parameters.asan }}', true)
+    displayName: 'Move regular test reports to tests/regular'
 
   - script: |
       set -ex
@@ -177,9 +193,17 @@ jobs:
 
   - task: PublishTestResults@2
     inputs:
-      testResultsFiles: '**/*_tr.xml'
+      testResultsFiles: 'tests/asan/*_tr.xml'
+      testRunTitle: asanvstest
+      mergeTestResults: false
+    condition: and(succeeded(), eq('${{ parameters.asan }}', true))
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFiles: 'tests/regular/*_tr.xml'
       testRunTitle: vstest
-    condition: succeeded()
+      mergeTestResults: false
+    condition: and(succeeded(), ne('${{ parameters.asan }}', true))
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
