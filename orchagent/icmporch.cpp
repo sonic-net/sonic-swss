@@ -12,9 +12,12 @@
 #include "directory.h"
 #include "notifications.h"
 #include "icmporch.h"
+#include <string>
 
 using namespace std;
 using namespace swss;
+
+const uint32_t IcmpOrch::m_max_sessions = 1024;
 
 const std::map<sai_icmp_echo_session_state_t, std::string> IcmpOrch::m_session_state_lkup =
 {
@@ -167,6 +170,13 @@ bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTup
 {
     IcmpSaiSessionHandler sai_session_handler(*this);
 
+    if (m_num_sessions == m_max_sessions)
+    {
+        SWSS_LOG_ERROR("ICMP session creation failed, limit (%u) reached", m_num_sessions);
+        // return false to retry
+        return false;
+    }
+
     // initialize the sai session handler
     auto init_status = sai_session_handler.init(sai_icmp_echo_api, key);
     if (init_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
@@ -205,6 +215,8 @@ bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTup
     IcmpSessionDataCache session_cache{session_id, sai_session_handler.get_fv_map()};
     m_icmp_session_map[key] = session_cache;
     m_icmp_session_lookup[session_id] = {state_db_key, SAI_ICMP_ECHO_SESSION_STATE_DOWN, true};
+
+    m_num_sessions++;
 
     SWSS_LOG_NOTICE("Created ICMP offload session key(%s)", key.c_str());
     return true;
@@ -284,6 +296,7 @@ bool IcmpOrch::remove_icmp_session(const string& key)
 
     m_icmp_session_map.erase(key);
     m_icmp_session_lookup.erase(icmp_session_id);
+    m_num_sessions--;
 
     SWSS_LOG_NOTICE("Removed ICMP offload session key(%s)", key.c_str());
     return true;
@@ -307,6 +320,12 @@ const std::string IcmpSaiSessionHandler::m_nexthop_switchover_fname = "nexthop_s
 const std::string IcmpSaiSessionHandler::m_session_type_normal      = "NORMAL";
 const std::string IcmpSaiSessionHandler::m_session_type_rx          = "RX";
 
+const uint32_t IcmpSaiSessionHandler::m_max_tx_interval_usec = 1200000;
+const uint32_t IcmpSaiSessionHandler::m_min_tx_interval_usec = 3000;
+const uint32_t IcmpSaiSessionHandler::m_max_rx_interval_usec = 24000000;
+const uint32_t IcmpSaiSessionHandler::m_min_rx_interval_usec = 9000;
+
+
 const std::unordered_set<std::string> IcmpSaiSessionHandler::m_update_fields = {
     m_tx_interval_fname,
     m_rx_interval_fname,
@@ -318,6 +337,22 @@ void IcmpSaiSessionHandler::handle_tx_interval_field(std::string& sval, sai_attr
 {
     sai_attribute_value_t val;
     val.u32 = time_msec_to_usec(to_uint<uint32_t>(sval));
+    if (val.u32)
+    {
+        if (val.u32 < m_min_tx_interval_usec)
+        {
+            SWSS_LOG_NOTICE("IcmpOrch resetting to min tx_interval (%u)", m_min_tx_interval_usec);
+            val.u32 = m_min_tx_interval_usec;
+            sval = to_string(m_min_tx_interval_usec/1000);
+        }
+
+        if (val.u32 > m_max_tx_interval_usec)
+        {
+            SWSS_LOG_NOTICE("IcmpOrch resetting to max tx_interval (%u)", m_max_tx_interval_usec);
+            val.u32 = m_max_tx_interval_usec;
+            sval = to_string(m_max_tx_interval_usec/1000);
+        }
+    }
     id_val_map[SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL] = val;
     fvVector.push_back({m_tx_interval_fname, sval});
 }
@@ -327,6 +362,21 @@ void IcmpSaiSessionHandler::handle_rx_interval_field(std::string& sval, sai_attr
 {
     sai_attribute_value_t val;
     val.u32 = time_msec_to_usec(to_uint<uint32_t>(sval));
+
+    if (val.u32 < m_min_rx_interval_usec)
+    {
+        SWSS_LOG_NOTICE("IcmpOrch resetting to min rx_interval (%u)", m_min_rx_interval_usec);
+        val.u32 = m_min_rx_interval_usec;
+        sval = to_string(m_min_rx_interval_usec/1000);
+    }
+
+    if (val.u32 > m_max_rx_interval_usec)
+    {
+        SWSS_LOG_NOTICE("IcmpOrch resetting to max rx_interval (%u)", m_max_rx_interval_usec);
+        val.u32 = m_max_rx_interval_usec;
+        sval = to_string(m_max_rx_interval_usec/1000);
+    }
+
     id_val_map[SAI_ICMP_ECHO_SESSION_ATTR_RX_INTERVAL] = val;
     fvVector.push_back({m_rx_interval_fname, sval});
 }

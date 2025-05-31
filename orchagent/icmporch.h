@@ -161,6 +161,12 @@ private:
     // indicates notification registration is done
     bool m_register_state_change_notif;
 
+    // keeps track of number of sessions
+    uint32_t m_num_sessions = 0;
+
+    // max number of sessions
+    static const uint32_t m_max_sessions;
+
     // map of sai icmp session state to string
     static const std::map<sai_icmp_echo_session_state_t, std::string> m_session_state_lkup;
     // map of icmp session state string to sai icmp session state
@@ -329,6 +335,11 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
     static const std::string m_nexthop_switchover_fname;
     static const std::string m_session_type_normal;
     static const std::string m_session_type_rx;
+
+    static const uint32_t m_max_tx_interval_usec;
+    static const uint32_t m_min_tx_interval_usec;
+    static const uint32_t m_max_rx_interval_usec;
+    static const uint32_t m_min_rx_interval_usec;
 };
 
 #endif /* SWSS_ICMPORCH_H */
