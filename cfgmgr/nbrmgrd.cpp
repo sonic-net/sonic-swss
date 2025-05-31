@@ -14,6 +14,11 @@
 using namespace std;
 using namespace swss;
 
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+
 #define RESTORE_NEIGH_WAIT_TIME_OUT 120
 #define RESTORE_NEIGH_WAIT_TIME_INT 10
 
