@@ -12,7 +12,8 @@ from dash_api.meter_rule_pb2 import *
 from dash_api.types_pb2 import *
 from dvslib.dvs_flex_counter import TestFlexCountersBase
 
-from dash_db import *
+from dash_db import DashDB, dash_db_module as dash_db
+from dash_db import ASIC_METER_POLICY_TABLE, ASIC_METER_RULE_TABLE, ASIC_ENI_TABLE
 from dash_configs import *
 
 import time
