@@ -403,6 +403,9 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.sdb, "LAG_TABLE")
         tbl._del("PortChannel" + channel)
         time.sleep(1)
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+        tbl._del("PortChannel" + channel)
+        time.sleep(1)
 
     def create_port_channel_member(self, channel, interface):
         tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
@@ -776,7 +779,6 @@ class TestMirror(object):
         # remove mirror session
         self.remove_mirror_session(session)
 
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_MirrorDestMoveLag(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -817,7 +819,6 @@ class TestMirror(object):
         tbl._del(table + "|" + rule)
         time.sleep(1)
 
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_AclBindMirrorPerStage(self, dvs, testlog):
         """
         This test configures mirror rules with specifying explicitely
@@ -986,7 +987,6 @@ class TestMirror(object):
         self.remove_ip_address("Ethernet32", "20.0.0.0/31")
         self.set_interface_status(dvs, "Ethernet32", "down")
 
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_AclBindMirror(self, dvs, testlog):
         self.setup_db(dvs)
 
