@@ -27,6 +27,7 @@ extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+extern Srv6Orch *gSrv6Orch;
 extern sai_object_id_t gSwitchId;
 
 #define FLEX_COUNTER_DELAY_SEC 60
@@ -46,6 +47,7 @@ extern sai_object_id_t gSwitchId;
 #define ENI_KEY                     "ENI"
 #define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
+#define SRV6_KEY                    "SRV6"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -71,6 +73,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -269,6 +272,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             gFlowCounterRouteOrch->clearRouteFlowStats();
                             m_route_flow_counter_enabled = false;
                         }
+                    }
+                    if (gSrv6Orch && (key == SRV6_KEY))
+                    {
+                        gSrv6Orch->setCountersState((value == "enable"));
                     }
 
                     gPortsOrch->flushCounters();
