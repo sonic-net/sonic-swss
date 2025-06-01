@@ -3140,71 +3140,31 @@ bool MonitorOrch::delOperation(const Request& request)
     return true;
 }
 
-VNetTunnelTermAcl::VNetTunnelTermAcl(DBConnector *cfgDb, DBConnector *appDb)
+
+TunnelTermHelper::TunnelTermHelper(DBConnector *cfgDb)
+    : ports_orch_(nullptr), intfs_orch_(nullptr)
 {
     SWSS_LOG_ENTER();
 
-    acl_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TABLE_NAME);
-    acl_table_type_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
-    acl_rule_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_RULE_TABLE_NAME);
     port_table_ = make_unique<Table>(cfgDb, CFG_PORT_TABLE_NAME);
 }
 
-void VNetTunnelTermAcl::lazyInit()
+void TunnelTermHelper::initialize()
 {
-
     SWSS_LOG_ENTER();
 
-    if (acl_table_initialized_)
-    {
-        return;
-    }
+    ports_orch_ = gDirectory.get<PortsOrch*>();
+    intfs_orch_ = gDirectory.get<IntfsOrch*>();
 
-    vector<string> match_list = {
-        MATCH_DST_IP,
-        MATCH_DST_IPV6,
-        MATCH_TUNNEL_TERM
-    };
-    string matches = std::accumulate(std::next(match_list.begin()), match_list.end(), match_list[0], concat);
-
-    vector<string> bpoint_list = {
-        BIND_POINT_TYPE_PORT,
-        BIND_POINT_TYPE_PORTCHANNEL
-    };
-    string bpoints = std::accumulate(std::next(bpoint_list.begin()), bpoint_list.end(), bpoint_list[0], concat);
-
-    vector<FieldValueTuple> fvs = {
-        {ACL_TABLE_TYPE_MATCHES, matches},
-        {ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION},
-        {ACL_TABLE_TYPE_BPOINT_TYPES, bpoints}
-    };
-
-    acl_table_type_->set(VNET_TUNNEL_TERM_ACL_TABLE_TYPE, fvs);
-    
-    std::string ports_str = "";
-    auto ports = getBindPoints();
-    if (!ports.empty())
-    {
-        ports_str = std::accumulate(std::next(ports.begin()), ports.end(), ports[0], concat);
-    }
-
-    vector<FieldValueTuple> fvs2 = {
-        {ACL_TABLE_DESCRIPTION, "Vnet Tunnel Termination ACL"},
-        {ACL_TABLE_TYPE, VNET_TUNNEL_TERM_ACL_TABLE_TYPE},
-        {ACL_TABLE_STAGE, STAGE_INGRESS},
-        {ACL_TABLE_PORTS, ports_str}
-    };
-
-    acl_table_->set(VNET_TUNNEL_TERM_ACL_TABLE, fvs2);
-
-    acl_table_initialized_ = true;
+    assert(ports_orch_);
+    assert(intfs_orch_);
 }
 
-std::vector<std::string> VNetTunnelTermAcl::getBindPoints()
+std::vector<std::string> TunnelTermHelper::getBindPoints()
 {
     std::vector<std::string> bind_points;
     std::set<std::string> internal_ports = findInternalPorts();
-    auto all_ports = gPortsOrch->getAllPorts();
+    auto all_ports = ports_orch_->getAllPorts();
 
     std::set<std::string> legitSet;
 
@@ -3242,7 +3202,7 @@ std::vector<std::string> VNetTunnelTermAcl::getBindPoints()
     return bind_points;
 }
 
-std::set<std::string> VNetTunnelTermAcl::findInternalPorts()
+std::set<std::string> TunnelTermHelper::findInternalPorts()
 {
     std::set<std::string> internal_ports;
     std::vector<std::string> all_ports;
@@ -3263,14 +3223,87 @@ std::set<std::string> VNetTunnelTermAcl::findInternalPorts()
     return internal_ports;
 }
 
+std::string TunnelTermHelper::getNbrAlias(const swss::IpAddress& ip)
+{
+    return intfs_orch_->getRouterIntfsAlias(ip);
+}
+
+std::string TunnelTermHelper::getRuleName(const string& vnet_name, const swss::IpPrefix& vip)
+{
+    return std::string(VNET_TUNNEL_TERM_ACL_TABLE) + ":" + vnet_name + "_" + vip.to_string() + "_" + VNET_TUNNEL_TERM_ACL_RULE_NAME_SUFFIX;
+}
+
+VNetTunnelTermAcl::VNetTunnelTermAcl(DBConnector *cfgDb, DBConnector *appDb)
+{
+    SWSS_LOG_ENTER();
+
+    acl_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TABLE_NAME);
+    acl_table_type_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
+    acl_rule_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_RULE_TABLE_NAME);
+
+    ctx_ = make_shared<TunnelTermHelper>(cfgDb);
+}
+
+void VNetTunnelTermAcl::lazyInit()
+{
+
+    SWSS_LOG_ENTER();
+
+    if (acl_table_initialized_)
+    {
+        return;
+    }
+
+    ctx_->initialize();
+
+    vector<string> match_list = {
+        MATCH_DST_IP,
+        MATCH_DST_IPV6,
+        MATCH_TUNNEL_TERM
+    };
+    string matches = std::accumulate(std::next(match_list.begin()), match_list.end(), match_list[0], concat);
+
+    vector<string> bpoint_list = {
+        BIND_POINT_TYPE_PORT,
+        BIND_POINT_TYPE_PORTCHANNEL
+    };
+    string bpoints = std::accumulate(std::next(bpoint_list.begin()), bpoint_list.end(), bpoint_list[0], concat);
+
+    vector<FieldValueTuple> fvs = {
+        {ACL_TABLE_TYPE_MATCHES, matches},
+        {ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION},
+        {ACL_TABLE_TYPE_BPOINT_TYPES, bpoints}
+    };
+
+    acl_table_type_->set(VNET_TUNNEL_TERM_ACL_TABLE_TYPE, fvs);
+
+    std::string ports_str = "";
+    auto ports = ctx_->getBindPoints();
+    if (!ports.empty())
+    {
+        ports_str = std::accumulate(std::next(ports.begin()), ports.end(), ports[0], concat);
+    }
+
+    vector<FieldValueTuple> fvs2 = {
+        {ACL_TABLE_DESCRIPTION, "Vnet Tunnel Termination ACL"},
+        {ACL_TABLE_TYPE, VNET_TUNNEL_TERM_ACL_TABLE_TYPE},
+        {ACL_TABLE_STAGE, STAGE_INGRESS},
+        {ACL_TABLE_PORTS, ports_str}
+    };
+
+    acl_table_->set(VNET_TUNNEL_TERM_ACL_TABLE, fvs2);
+
+    acl_table_initialized_ = true;
+}
+
 bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vip, swss::IpAddress nh_ip)
 {
     SWSS_LOG_ENTER();
 
     lazyInit();
 
-    std::string rule_name = getRuleName(vnet_name, vip);
-    std::string alias = getNbrAlias(nh_ip);
+    std::string rule_name = ctx_->getRuleName(vnet_name, vip);
+    std::string alias = ctx_->getNbrAlias(nh_ip);
 
     if (alias.empty())
     {
@@ -3293,16 +3326,6 @@ bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vi
     vnet_loc_ep_acl_rule_map_[vnet_name] = rule;
 
     return true;
-}
-
-std::string VNetTunnelTermAcl::getNbrAlias(const swss::IpAddress& ip)
-{
-    return gIntfsOrch->getRouterIntfsAlias(ip);
-}
-
-std::string VNetTunnelTermAcl::getRuleName(const string& vnet_name, const swss::IpPrefix& vip)
-{
-    return std::string(VNET_TUNNEL_TERM_ACL_TABLE) + ":" + vnet_name + "_" + vip.to_string() + "_" + VNET_TUNNEL_TERM_ACL_RULE_NAME_SUFFIX;
 }
 
 VNetLocEpAclRule VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix& vip)

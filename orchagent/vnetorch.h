@@ -432,6 +432,24 @@ typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
 typedef std::map<IpPrefix, std::map<IpAddress, MonitorSessionInfo>> MonitorSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
 
+class TunnelTermHelper
+{
+public:
+    TunnelTermHelper(DBConnector *cfgDb);
+
+    virtual void initialize();
+
+    std::vector<std::string> getBindPoints();
+    std::set<std::string> findInternalPorts();
+    std::string getNbrAlias(const swss::IpAddress& ip);
+    std::string getRuleName(const std::string& vnet_name, const swss::IpPrefix& vip);
+
+private:
+    unique_ptr<swss::Table> port_table_;
+    PortsOrch *ports_orch_;
+    IntfsOrch *intfs_orch_;
+};
+
 class VNetTunnelTermAcl
 {
 public:
@@ -446,16 +464,13 @@ public:
 protected:
 
     void lazyInit();
-    std::vector<std::string> getBindPoints();
-    std::set<std::string> findInternalPorts();
-    std::string getNbrAlias(const swss::IpAddress& ip);
-    std::string getRuleName(const std::string& vnet_name, const swss::IpPrefix& vip);
+
+    std::shared_ptr<TunnelTermHelper> ctx_;
 
     bool acl_table_initialized_ = false;
     unique_ptr<swss::ProducerStateTable> acl_table_;
     unique_ptr<swss::ProducerStateTable> acl_table_type_;
     unique_ptr<swss::ProducerStateTable> acl_rule_table_;
-    unique_ptr<swss::Table> port_table_;
     std::map<std::string, VNetLocEpAclRule> vnet_loc_ep_acl_rule_map_;
 };
 
