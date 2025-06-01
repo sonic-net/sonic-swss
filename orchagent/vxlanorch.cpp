@@ -484,7 +484,7 @@ VxlanTunnel::VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_c
    {
        vtep_ptr = tunnel_orch->getVTEP(srcIp);
        tunnel_orch->addRemoveStateTableEntry(name,srcIp, dstIp,
-                                           src, true);
+                                           src, "", true);
    }
 }
 
@@ -492,7 +492,7 @@ VxlanTunnel::~VxlanTunnel()
 {
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     tunnel_orch->addRemoveStateTableEntry(tunnel_name_,src_ip_, dst_ip_,
-                                          src_creation_, false);
+                                          src_creation_, "", false);
 }
 
 sai_object_id_t VxlanTunnel::addEncapMapperEntry(sai_object_id_t obj, uint32_t vni, tunnel_map_type_t type)
@@ -1034,7 +1034,11 @@ void VxlanTunnel::updateRemoteEndPointRefCnt(bool inc, tunnel_refcnt_t& tnl_refc
 
 void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc)
 {
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    string tunnel_name;
     tunnel_refcnt_t tnl_refcnts;
+
+    tunnel_orch->getTunnelNameFromDIP(remote_vtep, tunnel_name);
 
     auto it = tnl_users_.find(remote_vtep);
     if (inc)
@@ -1044,6 +1048,8 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
             memset(&tnl_refcnts, 0, sizeof(tunnel_refcnt_t));
             tnl_refcnts.ip_refcnt++;
             tnl_users_[remote_vtep] = tnl_refcnts;
+            auto dipaddr = IpAddress(remote_vtep);
+            tunnel_orch->addRemoveStateTableEntry(tunnel_name, src_ip_, dipaddr, TNL_CREATION_SRC_EVPN, "p2mp", true);
         }
         else
         {
@@ -1066,6 +1072,8 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
         if (it->second.ip_refcnt == 0)
         {
              tnl_users_.erase(remote_vtep);
+             auto dipaddr = IpAddress(remote_vtep);
+             tunnel_orch->addRemoveStateTableEntry(tunnel_name, src_ip_, dipaddr, TNL_CREATION_SRC_EVPN, "", false);
         }
     }
 }
@@ -1802,9 +1810,11 @@ void VxlanTunnelOrch::updateDbTunnelOperStatus(string tunnel_portname,
     m_stateVxlanTable.set(tunnel_name, fvVector);
 }
 
-void VxlanTunnelOrch::addRemoveStateTableEntry(string tunnel_name, 
-                                           IpAddress& sip, IpAddress& dip, 
-                                           tunnel_creation_src_t src, bool add)
+void VxlanTunnelOrch::addRemoveStateTableEntry(const string tunnel_name,
+                                               IpAddress& sip, IpAddress& dip,
+                                               tunnel_creation_src_t src,
+                                               const string operstatus,
+                                               bool add)
 
 {
     std::vector<FieldValueTuple> fvVector, tmpFvVector;
@@ -1830,8 +1840,15 @@ void VxlanTunnelOrch::addRemoveStateTableEntry(string tunnel_name,
           {
               fvVector.emplace_back("tnl_src", "EVPN");
           }
-  
-          fvVector.emplace_back("operstatus", "down");
+
+          if (operstatus.empty())
+          {
+              fvVector.emplace_back("operstatus", "down");
+          }
+          else
+          {
+              fvVector.emplace_back("operstatus", operstatus);
+          }
           m_stateVxlanTable.set(tunnel_name, fvVector);
           SWSS_LOG_INFO("adding tunnel %s during warmboot", tunnel_name.c_str());
       }
@@ -2549,6 +2566,8 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
         return false;
     }
 
+    tunnel_orch->addTunnelUser(end_point_ip, vni_id, vlan_id, TUNNEL_USER_IMR);
+
     auto src_vtep = vtep_ptr->getSrcIP().to_string();
     if (tunnel_orch->getTunnelPort(src_vtep,tunnelPort, true))
     {
@@ -2637,6 +2656,12 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     {
         SWSS_LOG_WARN("RemoteVniDel remove vlan member fails: vlan:%hu ip %s",
                       vlan_id, end_point_ip.c_str());
+        return false;
+    }
+
+    if (!tunnel_orch->delTunnelUser(end_point_ip, vni_id, vlan_id, TUNNEL_USER_IMR))
+    {
+        SWSS_LOG_WARN("delTunnelUser remote failed: end_point_ip:%s vni:%d vlan:%d", end_point_ip.c_str(), vni_id, vlan_id);
         return false;
     }
 
