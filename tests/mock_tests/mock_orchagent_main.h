@@ -45,6 +45,7 @@ extern MacAddress gMacAddress;
 extern MacAddress gVxlanMacAddress;
 
 extern sai_object_id_t gSwitchId;
+extern sai_object_id_t gPoeSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gUnderlayIfId;
 
