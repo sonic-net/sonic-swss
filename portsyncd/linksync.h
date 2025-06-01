@@ -3,6 +3,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "publishereventtable.h"
 #include "netmsg.h"
 
 #include <map>
@@ -20,7 +21,8 @@ public:
 
 private:
     ProducerStateTable m_portTableProducer;
-    Table m_portTable, m_statePortTable;
+    Table m_portTable;
+    PublisherEventTable m_statePortTable;
 
     std::map<unsigned int, std::string> m_ifindexNameMap;
     std::map<unsigned int, std::string> m_ifindexOldNameMap;
