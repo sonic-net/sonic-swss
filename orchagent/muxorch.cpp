@@ -1286,7 +1286,9 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
         NeighborEntry neighbor;
         MacAddress mac;
 
-        gNeighOrch->getNeighborEntry(nexthop, neighbor, mac);
+        if (!gNeighOrch->getNeighborEntry(nexthop, neighbor, mac)){
+            continue;
+        }
 
         if (isNeighborActive(neighbor.ip_address, mac, neighbor.alias))
         {
@@ -1353,6 +1355,12 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
         return ptr->isActive();
     }
 
+    if (alias == nullptr || alias == ""){
+        SWSS_LOG_ERROR("Interface alias is empty", alias.c_str());
+        // Likely not a mux interface (default to active)
+        return true;
+    }
+
     string port;
     if (!getMuxPort(mac, alias, port))
     {
@@ -1382,6 +1390,11 @@ bool MuxOrch::getMuxPort(const MacAddress& mac, const string& alias, string& por
 {
     portName = std::string();
     Port rif, port;
+
+    if (alias == nullptr || alias == ""){
+        SWSS_LOG_ERROR("Interface alias is empty", alias.c_str());
+        return false;
+    }
 
     if (!gPortsOrch->getPort(alias, rif))
     {
