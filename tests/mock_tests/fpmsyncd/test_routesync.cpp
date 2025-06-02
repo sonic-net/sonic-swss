@@ -942,6 +942,20 @@ TEST_F(FpmSyncdResponseTest, TestBlackholeRoute)
             }
         }
         EXPECT_TRUE(proto_found);
+
+        m_mockRouteSync.onLabelRouteMsg(RTM_NEWROUTE, (nl_object*)test_route);
+
+        // verify the blackhole route has protocol programmed
+        EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
+
+        proto_found = false;
+        for (const auto& fv : fvs) {
+            if (fvField(fv) == "protocol") {
+                proto_found = true;
+                EXPECT_EQ(fvValue(fv), "static");
+            }
+        }
+        EXPECT_TRUE(proto_found);
     }
 
 }
