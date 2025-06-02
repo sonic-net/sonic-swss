@@ -139,6 +139,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+    initAclGroupsBindToSwitch();
 }
 
 void SwitchOrch::initAsicSdkHealthEventNotification()
@@ -318,6 +319,54 @@ ReturnCode SwitchOrch::bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, 
                                                     << attr.id << " and acl group oid=" << acl_grp.m_saiObjectId);
     }
     return ReturnCode();
+}
+
+ReturnCode
+SwitchOrch::unbindAclGroupToSwitch(const sai_acl_stage_t &group_stage) {
+  SWSS_LOG_ENTER();
+
+  referenced_object acl_grp = {};
+  acl_grp.m_saiObjectId = SAI_NULL_OBJECT_ID;
+  return bindAclGroupToSwitch(group_stage, acl_grp);
+}
+
+ReturnCode SwitchOrch::removeAclGroup(const sai_acl_stage_t &group_stage) {
+  SWSS_LOG_ENTER();
+
+  auto group_it = m_aclGroups.find(group_stage);
+  if (group_it == m_aclGroups.end()) {
+    LOG_ERROR_AND_RETURN(ReturnCode(SAI_STATUS_INVALID_PARAMETER)
+                         << "Failed to find ACL group by stage '" << group_stage
+                         << "'");
+  }
+  CHECK_ERROR_AND_LOG_AND_RETURN(
+      sai_acl_api->remove_acl_table_group(group_it->second.m_saiObjectId),
+      "Failed to create ACL group for stage " << group_stage);
+  if (group_stage == SAI_ACL_STAGE_INGRESS ||
+      group_stage == SAI_ACL_STAGE_PRE_INGRESS ||
+      group_stage == SAI_ACL_STAGE_EGRESS) {
+    gCrmOrch->decCrmAclUsedCounter(
+        CrmResourceType::CRM_ACL_GROUP, (sai_acl_stage_t)group_stage,
+        SAI_ACL_BIND_POINT_TYPE_SWITCH, group_it->second.m_saiObjectId);
+  }
+  m_aclGroups.erase(group_stage);
+  SWSS_LOG_NOTICE(
+      "Suceeded to remove ACL group %s in stage %d ",
+      sai_serialize_object_id(group_it->second.m_saiObjectId).c_str(),
+      group_stage);
+  return ReturnCode();
+}
+
+ReturnCode SwitchOrch::removeAllAclGroups() {
+  SWSS_LOG_ENTER();
+
+  for (auto stage_it : aclStageLookup) {
+    if (m_aclGroups.find(fvValue(stage_it)) != m_aclGroups.end()) {
+      LOG_AND_RETURN_IF_ERROR(unbindAclGroupToSwitch(fvValue(stage_it)));
+      LOG_AND_RETURN_IF_ERROR(removeAclGroup(fvValue(stage_it)));
+    }
+  }
+  return ReturnCode();
 }
 
 void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
