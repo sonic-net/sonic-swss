@@ -666,6 +666,7 @@ class TestDropCounters(object):
         assert status == True
         return returned_value
     
+    @pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
     def test_add_remove_port(self, dvs, testlog):
         """
             This test verifies that debug counters are removed when we remove a port 

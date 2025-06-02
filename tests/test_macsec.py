@@ -628,6 +628,7 @@ class TestMACsec(object):
                 macsec_port_identifier))
         wpa.deinit_macsec_port(port_name)
 
+    @pytest.mark.skip(reason="Disable since we remove macsecmgrd and macsecorch.")
     def test_macsec_term_orch(self, dvs: conftest.DockerVirtualSwitch, testlog):
         port_name = "Ethernet0"
         local_mac_address = "00-15-5D-78-FF-C1"
@@ -768,6 +769,7 @@ class TestMACsec(object):
             1)
         assert(not inspector.get_macsec_port(macsec_port))
 
+    @pytest.mark.skip(reason="Disable since we remove macsecmgrd and macsecorch.")
     def test_macsec_attribute_change(self, dvs: conftest.DockerVirtualSwitch, testlog):
         port_name = "Ethernet0"
         local_mac_address = "00-15-5D-78-FF-C1"
@@ -816,6 +818,7 @@ class TestMACsec(object):
             macsec_port_identifier,
             0)
 
+    @pytest.mark.skip(reason="Disable since we remove macsecmgrd and macsecorch.")
     def test_macsec_with_portchannel(self, dvs: conftest.DockerVirtualSwitch, testlog):
 
         # Set MACsec enabled on Ethernet0
