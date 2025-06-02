@@ -1355,8 +1355,8 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
         return ptr->isActive();
     }
 
-    if (alias == nullptr || alias == ""){
-        SWSS_LOG_ERROR("Interface alias is empty", alias.c_str());
+    if (alias.empty()){
+        SWSS_LOG_ERROR("Interface alias is empty");
         // Likely not a mux interface (default to active)
         return true;
     }
@@ -1391,8 +1391,8 @@ bool MuxOrch::getMuxPort(const MacAddress& mac, const string& alias, string& por
     portName = std::string();
     Port rif, port;
 
-    if (alias == nullptr || alias == ""){
-        SWSS_LOG_ERROR("Interface alias is empty", alias.c_str());
+    if (alias.empty()){
+        SWSS_LOG_ERROR("Interface alias is empty");
         return false;
     }
 
