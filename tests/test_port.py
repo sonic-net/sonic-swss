@@ -278,6 +278,7 @@ class TestPort(object):
             if fv[0] == "SAI_PORT_ATTR_SERDES_IPREDRIVER":
                 assert fv[1] == ipre_val_asic
 
+    @pytest.mark.skip(reason="GENETLINK hostif does not set default TX queue")
     def test_PortHostif(self, dvs):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")

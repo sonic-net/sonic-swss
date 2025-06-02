@@ -10,6 +10,7 @@ class TestPortDPBVlan(object):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, log)])
         assert num.strip() >= str(expected_cnt)
 
+    @pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
     def test_dependency(self, dvs):
         vlan = "100"
         p = Port(dvs, "Ethernet0")

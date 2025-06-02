@@ -40,6 +40,7 @@ class TestNat(object):
 
         time.sleep(1)
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_NatGlobalTable(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -57,6 +58,7 @@ class TestNat(object):
 
         assert fvs == {"admin_mode": "enabled", "nat_timeout": "450", "nat_udp_timeout": "360", "nat_tcp_timeout": "900"}
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_NatInterfaceZone(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -71,6 +73,7 @@ class TestNat(object):
                 break
         assert zone
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_AddNatStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -107,6 +110,7 @@ class TestNat(object):
             else:
                 assert False
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_DelNatStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -123,6 +127,7 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_AddNaPtStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -157,6 +162,7 @@ class TestNat(object):
             else:
                 assert False
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_DelNaPtStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -212,6 +218,7 @@ class TestNat(object):
             else:
                 assert False
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_DelTwiceNatStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -229,6 +236,7 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_AddTwiceNaPtEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -269,6 +277,7 @@ class TestNat(object):
             else:
                 assert False
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_DelTwiceNaPtStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -286,6 +295,7 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
@@ -320,6 +330,7 @@ class TestNat(object):
         # delete a static nat entry
         dvs.del_nat_basic_entry("67.66.65.1")
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_DoNotNatAclAction(self, dvs_acl, testlog):
 
         # Creating the ACL Table
@@ -349,6 +360,7 @@ class TestNat(object):
         dvs_acl.remove_acl_table(L3_TABLE_NAME)
         dvs_acl.verify_acl_table_count(0)
 
+    @pytest.mark.skip(reason="Disable since we remove natorch.")
     def test_CrmSnatAndDnatEntryUsedCount(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)

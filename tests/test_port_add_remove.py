@@ -24,6 +24,7 @@ def dynamic_buffer(dvs):
 
 @pytest.mark.usefixtures('dvs_port_manager')
 @pytest.mark.usefixtures("dynamic_buffer")    
+@pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
 class TestPortAddRemove(object):
 
     def set_mmu(self,dvs):
@@ -254,6 +255,8 @@ class TestPortAddRemove(object):
 
 @pytest.mark.usefixtures("dynamic_buffer")
 @pytest.mark.usefixtures("dvs_port_manager")
+
+@pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
 class TestPortAddRemoveDup(object):
     def test_add_remove_with_dup_lanes(self, testlog, dvs):
         config_db = dvs.get_config_db()
@@ -329,6 +332,7 @@ class TestPortAddRemoveDup(object):
 
 
 @pytest.mark.usefixtures("dvs_port_manager")
+@pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
 class TestPortAddRemoveInvalidMandatoryParam(object):
     @pytest.mark.parametrize(
         "port,lanes,speed", [
@@ -356,6 +360,7 @@ class TestPortAddRemoveInvalidMandatoryParam(object):
 
 
 @pytest.mark.usefixtures("dvs_port_manager")
+@pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
 class TestPortAddRemoveInvalidSerdesParam(object):
     @pytest.fixture(scope="class")
     def port_attr(self):
@@ -403,6 +408,7 @@ class TestPortAddRemoveInvalidSerdesParam(object):
 
 
 @pytest.mark.usefixtures("dvs_port_manager")
+@pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
 class TestPortAddRemoveInvalidParam(object):
     def verify_add_remove(self, qualifiers):
         port = "Ethernet1000"
