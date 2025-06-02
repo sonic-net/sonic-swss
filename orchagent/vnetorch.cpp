@@ -869,7 +869,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     return true;
 }
 
-bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
+bool VNetRouteOrch::removeNextHopGroup(const string& vnet, IpPrefix& ip_prefix, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
 {
     SWSS_LOG_ENTER();
 
@@ -903,6 +903,13 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         if (!isLocalEndpoint(nexthop.ip_address))
         {
             vrf_obj->removeTunnelNextHop(nexthop);
+        } else
+        {
+            /* For local endpoint, we don't remove the next hop from NeighOrch,
+             * as it is not created by VNetRouteOrch. But we still need to remove
+             * the acl entry.
+            */
+            vnet_tunnel_term_acl_->removeAclRule(vnet, ip_prefix);
         }
 
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
@@ -927,8 +934,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 bool VNetRouteOrch::createNextHopGroup(const string& vnet,
                                        NextHopGroupKey& nexthops,
                                        VNetVrfObject *vrf_obj,
-                                       const string& monitoring,
-                                       const bool isLocalEp)
+                                       const string& monitoring)
 {
     SWSS_LOG_INFO("Creating nexthop group from nexthops(%s)\n", nexthops.to_string().c_str());
     if (nexthops.getSize() == 0)
@@ -938,14 +944,24 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     else if (nexthops.getSize() == 1)
     {
         NextHopKey nexthop = *nexthops.getNextHops().begin();
+        bool isLocalEp = isLocalEndpoint(nexthop.ip_address);
         if (isLocalEp && !gNeighOrch->hasNextHop(nexthop))
         {
             SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", nexthop.to_string().c_str());
             return false;
         }
         NextHopGroupInfo next_hop_group_entry;
-        next_hop_group_entry.next_hop_group_id = isLocalEp? gNeighOrch->getNextHopId(nexthop):vrf_obj->getTunnelNextHop(nexthop);
-        next_hop_group_entry.ref_count = 0;
+        if (isLocalEp)
+        {
+            gNeighOrch->increaseNextHopRefCount(nexthop);
+            next_hop_group_entry.next_hop_group_id = gNeighOrch->getNextHopId(nexthop);
+            next_hop_group_entry.ref_count = gNeighOrch->getNextHopRefCount(nexthop);
+        } else 
+        {
+            next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
+            next_hop_group_entry.ref_count = 0;
+        }
+
         if (monitoring == "custom" || nexthop_info_[vnet].find(nexthop.ip_address) == nexthop_info_[vnet].end() || nexthop_info_[vnet][nexthop.ip_address].bfd_state == SAI_BFD_SESSION_STATE_UP)
         {
             SWSS_LOG_INFO("Adding nexthop: %s to the active group", nexthop.ip_address.to_string().c_str());
@@ -955,6 +971,7 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     }
     else
     {
+        const bool isLocalEp = isLocalEndpoint(nexthops.getNextHops().begin()->ip_address);
         if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring, isLocalEp))
         {
             SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
@@ -1211,7 +1228,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 /* Clean up the newly created next hop group entry */
                 if (active_nhg.getSize() > 1)
                 {
-                    removeNextHopGroup(vnet, active_nhg, vrf_obj);
+                    removeNextHopGroup(vnet, ipPrefix, active_nhg, vrf_obj);
                 }
                 return false;
             }
@@ -1250,7 +1267,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 {
                     if (nhg.getSize() > 1)
                     {
-                        removeNextHopGroup(vnet, nhg, vrf_obj);
+                        removeNextHopGroup(vnet, ipPrefix, nhg, vrf_obj);
                     }
                     else
                     {
@@ -1261,6 +1278,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                             if (!isLocalEndpoint(nexthop.ip_address))
                             {
                                 vrf_obj->removeTunnelNextHop(nexthop);
+                            } else
+                            {
+                                vnet_tunnel_term_acl_->removeAclRule(vnet, ipPrefix);
                             }
                         }
                     }
@@ -1347,7 +1367,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             if (nhg.getSize() > 1)
             {
-                removeNextHopGroup(vnet, nhg, vrf_obj);
+                removeNextHopGroup(vnet, ipPrefix, nhg, vrf_obj);
             }
             else
             {
@@ -1360,6 +1380,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     if (!isLocalEndpoint(nexthop.ip_address))
                     {
                         vrf_obj->removeTunnelNextHop(nexthop);
+                    } else
+                    {
+                        vnet_tunnel_term_acl_->removeAclRule(vnet, ipPrefix);
                     }
                 }
             }
@@ -2461,6 +2484,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                     vrf_obj->removeTunnelNextHop(endpoint);
                     SWSS_LOG_INFO("Successfully removed nexthop: %s\n",endpoint.to_string().c_str() );
                 }
+                /* There is no need to remove Tunnel Term Acl unless the NHG is removed. */
 
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
             }
@@ -2667,7 +2691,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                     /* Clean up the newly created next hop group entry */
                     if (nhg_custom.getSize() > 1)
                     {
-                        removeNextHopGroup(vnet, nhg_custom, vrf_obj);
+                        removeNextHopGroup(vnet, prefix, nhg_custom, vrf_obj);
                     }
                     return;
                 }
@@ -2689,7 +2713,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         {
             if (active_nhg_size > 1)
             {
-                removeNextHopGroup(vnet, active_nhg, vrf_obj);
+                removeNextHopGroup(vnet, prefix, active_nhg, vrf_obj);
             }
             else
             {
@@ -2697,7 +2721,14 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                 if(active_nhg_size == 1)
                 {
                     NextHopKey nexthop(active_nhg.to_string(), true);
-                    vrf_obj->removeTunnelNextHop(nexthop);
+
+                    if (!isLocalEndpoint(nexthop.ip_address))
+                    {
+                        vrf_obj->removeTunnelNextHop(nexthop);
+                    } else
+                    {
+                        vnet_tunnel_term_acl_->removeAclRule(vnet, prefix);
+                    }
                 }
             }
         }
@@ -3302,6 +3333,14 @@ bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vi
 
     lazyInit();
 
+    VNetLocEpAclRule rule;
+
+    if (getAclRule(vnet_name, vip, rule))
+    {
+        /* If there are more than one local points for the same VIP, we will not create a new rule. */
+        return true;
+    }
+
     std::string rule_name = ctx_->getRuleName(vnet_name, vip);
     std::string alias = ctx_->getNbrAlias(nh_ip);
 
@@ -3319,22 +3358,52 @@ bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vi
 
     acl_rule_table_->set(rule_name, fvs);
 
-    VNetLocEpAclRule rule;
     rule.rule_name = rule_name;
     rule.vip = vip;
     rule.nh_ip = nh_ip;
-    vnet_loc_ep_acl_rule_map_[vnet_name] = rule;
+
+    vnet_loc_ep_acl_rule_map_[vnet_name].push_back(rule);
 
     return true;
 }
 
-VNetLocEpAclRule VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix& vip)
+bool VNetTunnelTermAcl::removeAclRule(const string vnet_name, swss::IpPrefix& vip)
+{
+    SWSS_LOG_ENTER();
+
+    VNetLocEpAclRule rule;
+
+    if (!getAclRule(vnet_name, vip, rule))
+    {
+        SWSS_LOG_ERROR("No ACL rule found for VNet %s with VIP %s", vnet_name.c_str(), vip.to_string().c_str());
+        return false;
+    }
+
+    acl_rule_table_->del(rule.rule_name);
+
+    vnet_loc_ep_acl_rule_map_[vnet_name].erase(
+        std::remove_if(vnet_loc_ep_acl_rule_map_[vnet_name].begin(),
+                       vnet_loc_ep_acl_rule_map_[vnet_name].end(),
+                       [&vip](const VNetLocEpAclRule& rule) { return rule.vip == vip; }),
+        vnet_loc_ep_acl_rule_map_[vnet_name].end());
+
+    return true;
+}
+
+bool VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix& vip, VNetLocEpAclRule& rule_found)
 {
     auto it = vnet_loc_ep_acl_rule_map_.find(vnet_name);
     if (it != vnet_loc_ep_acl_rule_map_.end())
     {
-        return it->second;
+        for (const auto& rule : it->second)
+        {
+            if (rule.vip == vip)
+            {
+                rule_found = rule;
+                return true;
+            }
+        }
     }
 
-    return VNetLocEpAclRule();
+    return false;
 }

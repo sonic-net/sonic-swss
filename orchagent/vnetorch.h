@@ -459,7 +459,7 @@ public:
     bool removeAclRule(const string vnet_name, swss::IpPrefix& vip);
     std::function<std::string(const std::string&, const std::string&)> concat =
         [](const std::string &a, const std::string &b) { return a + "," + b; };
-    VNetLocEpAclRule getAclRule(const string vnet_name, const swss::IpPrefix& vip);
+    bool getAclRule(const string vnet_name, const swss::IpPrefix& vip, VNetLocEpAclRule& rule_found);
 
 protected:
 
@@ -471,7 +471,7 @@ protected:
     unique_ptr<swss::ProducerStateTable> acl_table_;
     unique_ptr<swss::ProducerStateTable> acl_table_type_;
     unique_ptr<swss::ProducerStateTable> acl_rule_table_;
-    std::map<std::string, VNetLocEpAclRule> vnet_loc_ep_acl_rule_map_;
+    std::map<std::string, std::vector<VNetLocEpAclRule>> vnet_loc_ep_acl_rule_map_;
 };
 
 class VNetRouteOrch : public Orch2, public Subject, public Observer
@@ -503,9 +503,9 @@ private:
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false);
-    bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroup(const string&, IpPrefix&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
-                            const string& monitoring, const bool isLocalEp=false);
+                            const string& monitoring);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
 
     bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, IpPrefix&,
