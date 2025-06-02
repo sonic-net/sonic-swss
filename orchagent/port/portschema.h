@@ -101,15 +101,6 @@
 #define PORT_SUPPRESS_THRESHOLD    "suppress_threshold"
 #define PORT_REUSE_THRESHOLD       "reuse_threshold"
 #define PORT_FLAP_PENALTY          "flap_penalty"
-<<<<<<< HEAD
-<<<<<<< HEAD
 #define PORT_MODE                  "mode"
-=======
 #define PORT_MODE                  "mode"
 #define PORT_UNRELIABLE_LOS        "unreliable_los"
->>>>>>> 5dc632255a628a88bf21e80b32c2f7f75ade6dfc
-=======
-#define PORT_MODE                  "mode"
-#define PORT_UNRELIABLE_LOS        "unreliable_los"
-
->>>>>>> 1bbc0d7489d3507946e4f0561e526eed38b47365
