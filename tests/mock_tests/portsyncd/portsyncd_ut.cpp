@@ -2,7 +2,7 @@
 #include <net/if.h>
 #include <netlink/route/link.h>
 #include "mock_table.h"
-#define private public
+#define private public 
 #include "linksync.h"
 #undef private
 
@@ -52,12 +52,12 @@ void writeToApplDB(swss::ProducerStateTable &p, swss::DBConnector &cfgDb)
 }
 
 /*
-Test Fixture
+Test Fixture 
 */
 namespace portsyncd_ut
 {
     struct PortSyncdTest : public ::testing::Test
-    {
+    {   
         std::shared_ptr<swss::DBConnector> m_config_db;
         std::shared_ptr<swss::DBConnector> m_app_db;
         std::shared_ptr<swss::DBConnector> m_state_db;
@@ -65,7 +65,7 @@ namespace portsyncd_ut
         std::shared_ptr<swss::Table> m_portAppTable;
 
         virtual void SetUp() override
-        {
+        {   
             testing_db::reset();
             m_config_db = std::make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -84,12 +84,14 @@ namespace portsyncd_ut
     void populateCfgDb(swss::Table* tbl){
         /* populate config db with Eth0 and Eth4 objects */
         std::vector<swss::FieldValueTuple> vec;
-        vec.emplace_back("admin_status", "down");
+        vec.emplace_back("admin_status", "down"); 
         vec.emplace_back("index", "2");
         vec.emplace_back("lanes", "4,5,6,7");
         vec.emplace_back("mtu", "9100");
         vec.emplace_back("speed", "10000");
         vec.emplace_back("alias", "etp1");
+
+
         tbl->set("Ethernet0", vec);
         vec.pop_back();
         vec.emplace_back("alias", "etp1");
@@ -140,7 +142,7 @@ namespace portsyncd_ut
                                  int ifindex,
                                  unsigned int mtu,
                                  int master_ifindex = 0){
-
+                                
         struct rtnl_link* nl_obj =  rtnl_link_alloc();
         if (!nl_obj){
             throw std::runtime_error("netlink: rtnl_link object allocation failed");
@@ -157,7 +159,7 @@ namespace portsyncd_ut
         if (!type.empty()){
             rtnl_link_set_type(nl_obj, type.c_str());
         }
-
+        
         /* Set Link layer Address */
         struct nl_addr * ll_addr;
         int result = nl_addr_parse(ll_add.c_str(), AF_LLC, &ll_addr);
@@ -188,7 +190,7 @@ namespace portsyncd_ut
 namespace portsyncd_ut
 {
     TEST_F(PortSyncdTest, test_cacheOldIfaces)
-    {
+    {  
         if_ni_mock = populateNetDevAdvanced();
         swss::LinkSync sync(m_app_db.get(), m_state_db.get());
         ASSERT_EQ(mockCallArgs.back(), "ip link set \"Ethernet0\" down");

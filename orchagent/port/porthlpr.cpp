@@ -697,6 +697,7 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
+
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -1203,6 +1204,10 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+
+
+        
+
         else if (field == PORT_SUBPORT)
         {
             if (!this->parsePortSubport(port, field, value))
@@ -1224,6 +1229,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+
         else if (field == PORT_DAMPING_ALGO)
         {
             if (!this->parsePortLinkEventDampingAlgorithm(port, field, value))
@@ -1266,6 +1272,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+
         else if (field == PORT_MODE)
         {
             /* Placeholder to prevent warning. Not needed to be parsed here.
@@ -1307,7 +1314,9 @@ bool PortHelper::validatePortConfig(PortConfig &port) const
 
         port.admin_status.value = false;
         port.admin_status.is_set = true;
+
         port.fieldValueMap[PORT_ADMIN_STATUS] = PORT_STATUS_DOWN;
     }
+
     return true;
 }

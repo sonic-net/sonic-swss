@@ -84,33 +84,23 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     return true;
 }
 
+
 bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate_limit)
 {
     stringstream cmd;
     string res, cmd_str;
     int ret;
-    int byte_rate = stoi(dhcp_rate_limit) * DHCP_PACKET_SIZE;
+    int byte_rate = stoi(dhcp_rate_limit) * 406;
 
     if (dhcp_rate_limit != "0")
     {
-        /* tc qdisc add dev <port_name> handle ffff: ingress
-        &&
-        tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop*/
+        // tc qdisc add dev <port_name> handle ffff: ingress
+        // &&
+        // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
         cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
             << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
-        if (!ret)
-        {
-            SWSS_LOG_INFO("writing dhcp_rate_limit to appl_db");
-            return writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-        }
-        else if (!isPortStateOk(alias))
-        {
-            // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
-            SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-            return false;
-        }
     }
     else
     {
@@ -118,16 +108,24 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
-        if (ret)
-        {
-            // Log the failure and return false to indicate an issue
-            SWSS_LOG_WARN("Failed to delete ingress qdisc ");
-            return false;
-        }
     }
+    if (!ret)
+    {
 
+    }
+    else if (!isPortStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+        SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
+    else
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
     return true;
 }
+
 
 bool PortMgr::isPortStateOk(const string &alias)
 {
@@ -221,6 +219,8 @@ void PortMgr::doTask(Consumer &consumer)
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
                 dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT_STR;
+
+
                 m_portList.insert(alias);
             }
             else if (!portOk)
@@ -235,7 +235,7 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     mtu = fvValue(i);
                 }
-                else if (fvField(i) == "dhcp_rate_limit" % && configured)
+                else if (fvField(i) == "dhcp_rate_limit")
                 {
                     dhcp_rate_limit = fvValue(i);
 
@@ -244,6 +244,7 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     admin_status = fvValue(i);
                 }
+               
                 else
                 {
                     field_values.emplace_back(i);
@@ -263,37 +264,44 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 writeConfigToAppDb(alias, field_values);
             }
+
             if (!portOk)
             {
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
+
+
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
                 writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
                 field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
 
+
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
                 continue;
             }
+
             if (!mtu.empty())
             {
                 setPortMtu(alias, mtu);
                 SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
             }
+
             if (!admin_status.empty())
             {
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
+            
             if (!dhcp_rate_limit.empty())
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
+
             }
         }
         else if (op == DEL_COMMAND)

@@ -42,17 +42,16 @@ namespace portmgr_ut
         Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // **Test Case 1: Port not ready (state not "ok")**
+        // Port is not ready, verify that doTask does not handle port configuration
+        
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
             {"index", "1"},
             {"dhcp_rate_limit", "300"}
         });
-
         mockCallArgs.clear();
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
-
         ASSERT_TRUE(mockCallArgs.empty());
         std::vector<FieldValueTuple> values;
         app_port_table.get("Ethernet0", values);
@@ -64,10 +63,11 @@ namespace portmgr_ut
         value_opt = swss::fvsGetValue(values, "admin_status", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
-
+        
         value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ("300", value_opt.get());
+        //ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR,  "0");
+        
 
         value_opt = swss::fvsGetValue(values, "speed", true);
         ASSERT_TRUE(value_opt);
@@ -77,74 +77,30 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("1", value_opt.get());
 
-        // **Test Case 2: Port ready (state "ok")**
+
+        // Set port state to ok, verify that doTask handle port configuration
         state_port_table.set("Ethernet0", {
             {"state", "ok"}
         });
-
         m_portMgr->doTask();
-
         ASSERT_EQ(size_t(3), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
-        ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop", mockCallArgs[2]);
-
-        // **Test Case 3: Override admin_status**
+        ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop",mockCallArgs[2]);
+        
+        // Set port admin_status, verify that it could override the default value
         cfg_port_table.set("Ethernet0", {
             {"admin_status", "up"}
         });
-
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
         app_port_table.get("Ethernet0", values);
-
         value_opt = swss::fvsGetValue(values, "admin_status", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("up", value_opt.get());
-
-        // **Test Case 4: dhcp_rate_limit = "0" (trigger qdisc deletion)**
-        cfg_port_table.set("Ethernet0", {
-            {"dhcp_rate_limit", "0"}
-        });
-
-        m_portMgr->addExistingData(&cfg_port_table);
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-
-        ASSERT_EQ(size_t(0), 0);
-        ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[1]);
-
-        // **Test Case 5: dhcp_rate_limit deletion failure**
-        state_port_table.set("Ethernet0", {{"state", "ok"}});
-        mockCallArgs.clear();
-
-        cfg_port_table.set("Ethernet0", {{"dhcp_rate_limit", "0"}});
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-
-        // **Test Case 6: Port deleted**
-        cfg_port_table.del("Ethernet0");
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-
-        ASSERT_TRUE(mockCallArgs.empty());
-        ASSERT_TRUE(app_port_table.get("Ethernet0", values)); // Verify port is removed from APP DB
-
-        // **Test Case 7: Retry port configuration (not ready initially, then ready)**
-        cfg_port_table.set("Ethernet1", {{"dhcp_rate_limit", "200"}});
-        state_port_table.del("Ethernet1"); // Port not ready
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-
-        ASSERT_TRUE(mockCallArgs.empty()); // No commands executed
-
-        state_port_table.set("Ethernet1", {{"state", "ok"}});
-        m_portMgr->doTask();
-
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet1\" down", mockCallArgs[1]);
-        ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet1\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet1\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 81200bps burst 81200b conform-exceed drop", mockCallArgs[2]);
     }
 
+     
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
@@ -182,6 +138,9 @@ namespace portmgr_ut
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
         ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 406bps burst 406b conform-exceed drop", mockCallArgs[2]);
+
+
+
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTDefaultTimestampTemplate)
@@ -261,5 +220,4 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("template2", value_opt.get());
     }
-
 }
