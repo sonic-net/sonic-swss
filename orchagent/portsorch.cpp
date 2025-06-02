@@ -823,6 +823,21 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         removeDefaultBridgePorts();
     }
 
+    // Enable fdb event notifications after all ports are removed from default 1Q bridge
+    // If fdb entry is learnt before this point, reference count will be incremented and
+    // the port will not be removed from the bridge
+    if (gMySwitchType != "dpu")
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+        attr.value.ptr = (void *)on_fdb_event;
+        if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY attribute");
+            throw runtime_error("PortsOrch initialization failure (failed to set fdb event notify)");
+        }
+    }
+
     /* Add port oper status notification support */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
@@ -3253,6 +3268,21 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     return rc;
 }
 
+task_process_status PortsOrch::setPortUnreliableLOS(Port &port, bool enabled)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+    attr.id = SAI_PORT_ATTR_UNRELIABLE_LOS;
+    attr.value.booldata = enabled;
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+    return task_success;
+}
+
 task_process_status PortsOrch::setPortAdvSpeeds(Port &port, std::set<sai_uint32_t> &speed_list)
 {
     SWSS_LOG_ENTER();
@@ -4613,6 +4643,27 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         );
                     }
                 }
+
+                if (pCfg.serdes.unreliable_los.is_set)
+                {
+                        auto status = setPortUnreliableLOS(p, pCfg.serdes.unreliable_los.value);
+                        if (status != task_success)
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s unreliable from %d to %d",
+                                p.m_alias.c_str(), p.m_unreliable_los, pCfg.serdes.unreliable_los.value
+                            );
+                            p.m_unreliable_los = false;
+                        } else {
+
+                            p.m_unreliable_los = pCfg.serdes.unreliable_los.value;
+                            SWSS_LOG_INFO(
+                                "Set port %s unreliable los to %s",
+                                p.m_alias.c_str(), m_portHlpr.getUnreliableLosStr(pCfg).c_str()
+                            );
+                        }
+                        m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
+                } 
 
                 if (pCfg.adv_interface_types.is_set)
                 {
