@@ -1643,7 +1643,7 @@ void MuxOrch::update(SubjectType type, void *cntx)
                 }
                 catch (const std::exception& e)
                 {
-                    SWSS_LOG_ERROR("Exception caught while updating neighbor");
+                    SWSS_LOG_ERROR("Exception caught while updating neighbor. Error: %s", e.what());
                 }
             }
             break;
@@ -1657,7 +1657,7 @@ void MuxOrch::update(SubjectType type, void *cntx)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught while updating FDB");
+                SWSS_LOG_ERROR("Exception caught while updating FDB. Error: %s", e.what());
             }
             break;
         }
