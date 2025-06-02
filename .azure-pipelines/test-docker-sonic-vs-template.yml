@@ -210,3 +210,8 @@ jobs:
     displayName: "Check ASAN reports"
     condition: eq('${{ parameters.asan }}', true)
     continueOnError: true
+
+  - script: |
+      sudo apt-get -o DPkg::Lock::Timeout=600 install -y python-is-python3
+
+    displayName: "Install temporary workaround to add a symlink to python 3"
