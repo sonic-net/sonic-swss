@@ -272,12 +272,12 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+                //writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
-                field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
+                //field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
 
 
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
