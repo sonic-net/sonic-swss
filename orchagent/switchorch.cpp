@@ -1396,6 +1396,11 @@ void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& value
      m_switchTable.set("switch", values);
 }
 
+void SwitchOrch::get_switch_capability(const std::string& capability, std::string& val)
+{
+     m_switchTable.hget("switch", capability, val);
+}
+
 void SwitchOrch::querySwitchPortEgressSampleCapability()
 {
     vector<FieldValueTuple> fvVector;
@@ -1520,12 +1525,12 @@ void SwitchOrch::setSwitchIcmpOffloadCapability()
     bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ICMP_ECHO_SESSION_STATE_CHANGE_NOTIFY);
     if (supported == false)
     {
-        SWSS_LOG_INFO("Icmp Echo oflload not supported");
+        SWSS_LOG_NOTICE("Icmp Echo Offload not supported");
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "false");
     }
     else
     {
-        SWSS_LOG_INFO("Icmp Echo oflload supported");
+        SWSS_LOG_NOTICE("Icmp Echo Offload supported");
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "true");
     }
     set_switch_capability(fvVector);

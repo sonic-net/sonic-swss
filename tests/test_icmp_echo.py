@@ -11,6 +11,8 @@ class TestIcmpEcho(object):
         self.adb = dvs.get_asic_db()
         self.sdb = dvs.get_state_db()
         self.cdb = dvs.get_config_db()
+        # Set switch icmp offload capability
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'ICMP_OFFLOAD_CAPABLE', 'true')
 
     def get_exist_icmp_echo_session(self):
         return set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION"))

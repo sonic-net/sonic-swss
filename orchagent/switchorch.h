@@ -42,6 +42,7 @@ public:
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
+    void get_switch_capability(const std::string& capability, std::string& val);
     bool querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
     bool checkPfcDlrInitEnable() { return m_PfcDlrInitEnable; }
     void set_switch_pfc_dlr_init_capability();

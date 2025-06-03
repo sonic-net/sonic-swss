@@ -40,7 +40,6 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
-    auto icmpStateNotifier = new Notifier(m_icmpStateNotificationConsumer, this, "ICMP_STATE_NOTIFICATIONS");
 
     // Clean up state database ICMP entries
     vector<string> keys;
@@ -52,6 +51,7 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
         m_stateIcmpSessionTable.del(alias);
     }
 
+    auto icmpStateNotifier = new Notifier(m_icmpStateNotificationConsumer, this, "ICMP_STATE_NOTIFICATIONS");
     Orch::addExecutor(icmpStateNotifier);
 }
 
