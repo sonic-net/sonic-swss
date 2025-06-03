@@ -39,8 +39,8 @@ struct NhgBase;
 
 struct NextHopGroupEntry
 {
-    NextHopGroupEntry()
-        :next_hop_group_id(0),
+    NextHopGroupEntry() :
+        next_hop_group_id(SAI_NULL_OBJECT_ID),
         ref_count(0),
         nh_member_install_count(0),
         eligible_for_default_route_nh_swap(false),
