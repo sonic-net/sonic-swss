@@ -265,6 +265,8 @@ void PortMgr::doTask(Consumer &consumer)
                 writeConfigToAppDb(alias, field_values);
             }
 
+            
+
             if (!portOk)
             {
                 SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
