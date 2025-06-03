@@ -1288,6 +1288,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
 
         if (!gNeighOrch->getNeighborEntry(nexthop, neighbor, mac))
         {
+            // Not able to get neighbor entry, so skip.
             SWSS_LOG_NOTICE("Neighbor entry for nexthop %s not found.",
                             nexthop.to_string().c_str());
             continue;
@@ -1358,13 +1359,6 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
         return ptr->isActive();
     }
 
-    if (alias.empty())
-    {
-        SWSS_LOG_WARN("Interface alias is empty");
-        // Likely not a mux interface (default to active)
-        return true;
-    }
-
     string port;
     if (!getMuxPort(mac, alias, port))
     {
@@ -1394,12 +1388,6 @@ bool MuxOrch::getMuxPort(const MacAddress& mac, const string& alias, string& por
 {
     portName = std::string();
     Port rif, port;
-
-    if (alias.empty())
-    {
-        SWSS_LOG_WARN("Interface alias is empty");
-        return false;
-    }
 
     if (!gPortsOrch->getPort(alias, rif))
     {
@@ -1649,14 +1637,28 @@ void MuxOrch::update(SubjectType type, void *cntx)
             }
             else
             {
-                updateNeighbor(*update);
+                try
+                {
+                    updateNeighbor(*update);
+                }
+                catch (const std::exception& e)
+                {
+                    SWSS_LOG_ERROR("Exception caught while updating neighbor");
+                }
             }
             break;
         }
         case SUBJECT_TYPE_FDB_CHANGE:
         {
             FdbUpdate *update = static_cast<FdbUpdate *>(cntx);
-            updateFdb(*update);
+            try
+            {
+                updateFdb(*update);
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_ERROR("Exception caught while updating FDB");
+            }
             break;
         }
         default:
