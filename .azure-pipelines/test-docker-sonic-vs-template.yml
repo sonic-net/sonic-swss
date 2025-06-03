@@ -99,7 +99,7 @@ jobs:
   - script: |
       set -ex
       # install packages for vs test
-      sudo pip3 install pytest flaky exabgp docker redis lcov_cobertura
+      sudo pip3 install pytest flaky exabgp docker redis==5.0.0 lcov_cobertura
 
       # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
