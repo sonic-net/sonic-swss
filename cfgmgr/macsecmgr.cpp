@@ -503,14 +503,11 @@ task_process_status MACsecMgr::enableMACsec(
         return task_need_retry;
     }
 
-    // Create MKA Session object
-    auto port = m_macsec_ports.emplace(
-        std::piecewise_construct,
-        std::make_tuple(port_name),
-        std::make_tuple());
-    if (!port.second)
+    // Handle existing macsec profile
+    auto port_itr = m_macsec_ports.find(port_name);
+    if (port_itr != m_macsec_ports.end())
     {
-        if (port.first->second.profile_name == profile_name)
+        if (port_itr->second.profile_name == profile_name)
         {
             SWSS_LOG_NOTICE(
                 "The MACsec profile '%s' on the port '%s' has been loaded",
@@ -523,7 +520,7 @@ task_process_status MACsecMgr::enableMACsec(
             SWSS_LOG_NOTICE(
                 "The MACsec profile '%s' on the port '%s' "
                 "will be replaced by the MACsec profile '%s'",
-                port.first->second.profile_name.c_str(),
+                port_itr->second.profile_name.c_str(),
                 port_name.c_str(),
                 profile_name.c_str());
             auto result = disableMACsec(port_name, port_attr);
@@ -533,6 +530,11 @@ task_process_status MACsecMgr::enableMACsec(
             }
         }
     }
+    // Create MKA Session object
+    auto port = m_macsec_ports.emplace(
+        std::piecewise_construct,
+        std::make_tuple(port_name),
+        std::make_tuple());
     auto & session = port.first->second;
     session.profile_name = profile_name;
     ostringstream ostream;
