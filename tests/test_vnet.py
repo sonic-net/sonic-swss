@@ -67,9 +67,10 @@ class TestVnetOrch(object):
         self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
 
     def add_neighbor(self, interface, ip, mac):
-        tbl = swsscommon.Table(self.cdb.db_connection, "NEIGH")
-        fvs = swsscommon.FieldValuePairs([("neigh", mac)])
-        tbl.set(interface + "|" + ip, fvs)
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEIGH_TABLE")
+        fvs = swsscommon.FieldValuePairs([("neigh", mac),
+                                          ("family", "IPv4")])
+        tbl.set(interface + ":" + ip, fvs)
         time.sleep(1)
 
     def create_route_entry(self, key, pairs):
@@ -1707,7 +1708,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-   Test 19 - Test for 2 priority vnet tunnel routes with overlapping primary secondary ECMP nexthop group.
+    Test 19 - Test for 2 priority vnet tunnel routes with overlapping primary secondary ECMP nexthop group.
     '''
     def test_vnet_orch_19(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -1865,7 +1866,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-   Test 20 - Test for Single enpoint priority vnet tunnel routes. Test primary secondary switchover.
+    Test 20 - Test for Single enpoint priority vnet tunnel routes. Test primary secondary switchover.
     '''
     def test_vnet_orch_20(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -2676,7 +2677,7 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet8", "up")
 
         # add neighbor for direcetly connected endpoint
-        self.add_neighbor("Ethernet8", "9.1.0.1/32", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', loc_ep="true,false")
@@ -2743,7 +2744,8 @@ class TestVnetOrch(object):
             for key in nh_fvs.keys():
                 if key == 'SAI_NEXT_HOP_ATTR_IP':
                     nexthops[nh_fvs[key]] = nhid
-        assert len(nexthops.keys()) == 1
+        # nexthop from diectly connected endpoint should NOT be removed
+        assert len(nexthops.keys()) == 2
 
         route = get_created_entries(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, vnet_obj.routes, 1)
         check_object(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, route[0],
