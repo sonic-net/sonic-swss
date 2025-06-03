@@ -905,6 +905,62 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
     rtnl_route_put(test_route);
 }
 
+TEST_F(FpmSyncdResponseTest, TestBlackholeRoute)
+{
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+    Table label_route_table(m_db.get(), APP_LABEL_ROUTE_TABLE_NAME);
+    auto createRoute = [](const char* prefix, uint8_t prefixlen) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_BLACKHOLE);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, RT_TABLE_UNSPEC);
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    // create a route
+    const char* test_destipprefix = "10.1.1.0";
+    rtnl_route* test_route = createRoute(test_destipprefix, 24);
+
+    const char* test_destipprefix2 = "20.1.1.0";
+    rtnl_route* test_route2 = createRoute(test_destipprefix2, 24);
+    {
+
+        m_mockRouteSync.onRouteMsg(RTM_NEWROUTE, (nl_object*)test_route, nullptr);
+
+        // verify the blackhole route has protocol programmed
+        vector<FieldValueTuple> fvs;
+        EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
+
+        bool proto_found = false;
+        for (const auto& fv : fvs) {
+            if (fvField(fv) == "protocol") {
+                proto_found = true;
+                EXPECT_EQ(fvValue(fv), "static");
+            }
+        }
+        EXPECT_TRUE(proto_found);
+
+        m_mockRouteSync.onLabelRouteMsg(RTM_NEWROUTE, (nl_object*)test_route2);
+
+        // verify the blackhole route has protocol programmed
+        EXPECT_TRUE(label_route_table.get(test_destipprefix2, fvs));
+
+        proto_found = false;
+        for (const auto& fv : fvs) {
+            if (fvField(fv) == "protocol") {
+                proto_found = true;
+                EXPECT_EQ(fvValue(fv), "static");
+            }
+        }
+        EXPECT_TRUE(proto_found);
+    }
+}
 auto create_nl_addr(const char* addr_str)
 {
     nl_addr* addr;
