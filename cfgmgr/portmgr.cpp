@@ -272,7 +272,7 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
+               // writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
                 /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
