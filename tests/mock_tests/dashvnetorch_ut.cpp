@@ -90,6 +90,16 @@ namespace dashvnetorch_test
         RemoveVnet();
     }
 
+    TEST_F(DashVnetOrchTest, AddVnetMapMissingVnetFails)
+    {
+        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetMap();
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
+            .Times(0);
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries)
+            .Times(0);
+    }
+
     TEST_F(DashVnetOrchTest, AddExistingOutboundCaToPaSuccessful)
     {
         AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN); 
@@ -101,6 +111,17 @@ namespace dashvnetorch_test
         EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
             .Times(1).WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         AddVnetMap(); 
+        int actualUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA);
+        EXPECT_EQ(expectedUsed, actualUsed);
+    }
+
+    TEST_F(DashVnetOrchTest, RemoveNonexistVnetMapFails)
+    {
+        int expectedUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA);
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries)
+            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveVnetMap(); 
         int actualUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA);
         EXPECT_EQ(expectedUsed, actualUsed);
     }
@@ -124,6 +145,23 @@ namespace dashvnetorch_test
         EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries)
             .Times(1).WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         AddVnetMap();
+        int actualUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION);
+        EXPECT_EQ(expectedUsed, actualUsed);
+    }
+
+    TEST_F(DashVnetOrchTest, RemovePaValidationInUseFails)
+    {
+        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+        AddVnetMap();
+
+        int expectedUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION);
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_OBJECT_IN_USE};
+
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, remove_pa_validation_entries)
+            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveVnet();
+
         int actualUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION);
         EXPECT_EQ(expectedUsed, actualUsed);
     }
