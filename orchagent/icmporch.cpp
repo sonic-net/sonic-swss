@@ -12,10 +12,13 @@
 #include "directory.h"
 #include "notifications.h"
 #include "icmporch.h"
+#include "switchorch.h"
 #include <string>
 
 using namespace std;
 using namespace swss;
+
+extern SwitchOrch *gSwitchOrch;
 
 const uint32_t IcmpOrch::m_max_sessions = 1024;
 
@@ -37,6 +40,15 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
     m_register_state_change_notif{false}
 {
     SWSS_LOG_ENTER();
+
+    // check the capability
+    std::string offload_capable;
+    gSwitchOrch->get_switch_capability("ICMP_OFFLOAD_CAPABLE", offload_capable);
+    if (offload_capable != "true")
+    {
+        SWSS_LOG_NOTICE("ICMP offload not supported");
+        return;
+    }
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
