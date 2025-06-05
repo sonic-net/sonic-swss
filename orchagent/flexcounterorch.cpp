@@ -270,8 +270,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_route_flow_counter_enabled = false;
                         }
                     }
-
-                    gPortsOrch->flushCounters();
+                    // Check for null for gPortsOrch before flush. For fabric mode, its not initialized.
+                    if(gPortsOrch) {
+                        gPortsOrch->flushCounters();
+		    }
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
                     if (gPortsOrch && gPortsOrch->isGearboxEnabled())
