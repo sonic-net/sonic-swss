@@ -643,6 +643,18 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     break;
             }
             break;
+        case SAI_API_TAM:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in TAM create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
         default:
             switch (status)
             {
@@ -782,6 +794,21 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
                     return task_success;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        case SAI_API_TAM:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    return task_success;
+                case SAI_STATUS_ITEM_NOT_FOUND:
+                    SWSS_LOG_WARN("SAI_STATUS_ITEM_NOT_FOUND is not expected in handleSaiRemoveStatus");
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in TAM remove operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     handleSaiFailure(true);
                     break;
