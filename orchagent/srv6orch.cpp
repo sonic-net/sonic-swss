@@ -303,6 +303,10 @@ bool Srv6Orch::initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_
     attr.value.s32 = dscp_mode;
     tunnel_attrs.push_back(attr);
 
+    attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+    attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+    tunnel_attrs.push_back(attr);
+
     status = sai_tunnel_api->create_tunnel(&tunnel.tunnel_oid, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
