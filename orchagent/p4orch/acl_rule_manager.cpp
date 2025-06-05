@@ -32,6 +32,8 @@ extern sai_hostif_api_t *sai_hostif_api;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern P4Orch *gP4Orch;
+extern sai_object_id_t gVirtualRouterId;
+extern IntfsOrch *gIntfsOrch;
 
 namespace p4orch
 {
@@ -2057,6 +2059,86 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
     acl_rule.match_fvs = std::move(old_acl_rule.match_fvs);
     m_aclRuleTables[acl_rule.acl_table_name][acl_rule.acl_rule_key] = std::move(acl_rule);
     return ReturnCode();
+}
+
+ReturnCode AclRuleManager::addDefaultAclRuleInPreIngressTable(
+    const std::string &table_name) {
+  SWSS_LOG_ENTER();
+
+  const std::string cLoopbackAlias = "Loopback0";
+  const auto *acl_table =
+      gP4Orch->getAclTableManager()->getAclTable(table_name);
+  if (acl_table == nullptr) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "ACL table " << QuotedVar(table_name)
+                         << " was not found when creating default ACL rule in "
+                            "PreIngress table.");
+  }
+  std::vector<sai_attribute_t> acl_entry_attrs;
+  sai_attribute_t acl_entry_attr;
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
+  acl_entry_attr.value.oid = acl_table->table_oid;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  // Priority: max uint32
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
+  acl_entry_attr.value.u32 = 0x7FFFFFFF;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
+  acl_entry_attr.value.booldata = true;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  // Match: DIP = Loopback IP
+  const auto &intfs_table = gIntfsOrch->getSyncdIntfses();
+  const auto &lo_intfs_iter = intfs_table.find(cLoopbackAlias);
+  if (lo_intfs_iter == intfs_table.end()) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "Loopback interface with alias "
+                         << QuotedVar(cLoopbackAlias)
+                         << " was not found in IntfsOrch.");
+  }
+  if (lo_intfs_iter->second.ip_addresses.empty() ||
+      lo_intfs_iter->second.ip_addresses.size() > 1) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+        << "Loopback interface with alias " << QuotedVar(cLoopbackAlias)
+        << " should have and only have 1 ip prefix defined in IntfsOrch, but "
+        << lo_intfs_iter->second.ip_addresses.size() << " was found.");
+  }
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6;
+  memcpy(acl_entry_attr.value.aclfield.data.ip6,
+         lo_intfs_iter->second.ip_addresses.begin()->getIp().getV6Addr(),
+         sizeof(sai_ip6_t));
+  memcpy(acl_entry_attr.value.aclfield.mask.ip6,
+         swss::IpAddress("ffff:ffff:ffff:ffff::").getV6Addr(),
+         sizeof(sai_ip6_t));
+  acl_entry_attr.value.aclfield.enable = true;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  // Action: SET_VRF = default VRF
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF;
+  acl_entry_attr.value.aclaction.parameter.oid = gVirtualRouterId;
+  acl_entry_attr.value.aclaction.enable = true;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  sai_object_id_t acl_entry_oid;
+  auto sai_status = sai_acl_api->create_acl_entry(
+      &acl_entry_oid, gSwitchId, (uint32_t)acl_entry_attrs.size(),
+      acl_entry_attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    ReturnCode status = ReturnCode(sai_status)
+                        << "Failed to create ACL entry in table "
+                        << QuotedVar(table_name);
+    SWSS_LOG_ERROR("%s SAI_STATUS: %s", status.message().c_str(),
+                   sai_serialize_status(sai_status).c_str());
+    return status;
+  }
+
+  SWSS_LOG_NOTICE(
+      "Suceeded to create default ACL rule in PRE_INGRESS table %s : %s",
+      table_name.c_str(), sai_serialize_object_id(acl_entry_oid).c_str());
+  return ReturnCode();
 }
 
 std::string AclRuleManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
