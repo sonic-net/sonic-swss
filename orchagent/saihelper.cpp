@@ -334,7 +334,7 @@ void initSaiRedis()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set communication mode, rv:%d", status);
-        exit(EXIT_FAILURE);
+        return handleSaiFailure(SAI_API_SWITCH, "set", status);
     }
 
     auto record_filename = Recorder::Instance().sairedis.getFile();
@@ -352,7 +352,7 @@ void initSaiRedis()
         {
             SWSS_LOG_ERROR("Failed to set SAI Redis recording output folder to %s, rv:%d",
                 record_location.c_str(), status);
-            exit(EXIT_FAILURE);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status);
         }
 
         attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_FILENAME;
@@ -364,7 +364,7 @@ void initSaiRedis()
         {
             SWSS_LOG_ERROR("Failed to set SAI Redis recording logfile to %s, rv:%d",
                 record_filename.c_str(), status);
-            exit(EXIT_FAILURE);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status);
         }
 
     }
@@ -378,7 +378,7 @@ void initSaiRedis()
     {
         SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
             Recorder::Instance().sairedis.isRecord() ? "enable" : "disable", status);
-        exit(EXIT_FAILURE);
+        return handleSaiFailure(SAI_API_SWITCH, "set", status);
     }
 
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC)
@@ -391,7 +391,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
-            exit(EXIT_FAILURE);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status);
         }
     }
 
@@ -409,7 +409,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
-            exit(EXIT_FAILURE);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status);
         }
 
         SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
@@ -422,7 +422,7 @@ void initSaiRedis()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %" PRIx64, status, gSwitchId);
-        exit(EXIT_FAILURE);
+        return handleSaiFailure(SAI_API_SWITCH, "set", status);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
@@ -436,7 +436,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
-            exit(EXIT_FAILURE);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status);
         }
 
         SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
@@ -1044,7 +1044,7 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
 
     if (!info)
     {
-        SWSS_LOG_WARN("Metadata info query failed, invalid object: %d", object_type);
+        SWSS_LOG_ERROR("Metadata info query failed, invalid object: %d", object_type);
         return stat_list;
     }
 
