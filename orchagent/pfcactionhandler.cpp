@@ -344,58 +344,19 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 
     // Egress table/rule creation
     table_type = TABLE_TYPE_PFCWD;
-
-    // Use shared egress acl table for BRCM DNX platform.
-    string platform = getenv("platform") ? getenv("platform") : "";
-    string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
-    shared_egress_acl_table = (platform == BRCM_PLATFORM_SUBSTRING &&
-                               sub_platform == BRCM_DNX_PLATFORM_SUBSTRING);
-
-    if (shared_egress_acl_table)
+    m_strEgressTable = "EgressTable_PfcWdAclHandler_" + queuestr;
+    found = m_aclTables.find(m_strEgressTable);
+    if (found == m_aclTables.end())
     {
-        Port p;
-        if (!gPortsOrch->getPort(port, p))
-        {
-            SWSS_LOG_ERROR("Failed to get port structure from port oid 0x%" PRIx64, port);
-            return;
-        }
-        m_strEgressRule = "Egress_Rule_PfcWdAclHandler_" + p.m_alias + "_" + queuestr;
-        m_strEgressTable = "EgressTable_PfcWdAclHandler";
-        found = m_aclTables.find(m_strEgressTable);
-        if (found == m_aclTables.end())
-        {
-            // First time of handling PFC, create ACL table and also ACL rule.
-            createPfcAclTable(port, m_strEgressTable, false);
-            shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strEgressRule, m_strEgressTable);
-            createPfcAclRule(newRule, queueId, m_strEgressTable, port);
-        }
-        else
-        {
-            // ACL table already exists. Add ACL rule if needed.
-            AclRule* rule = gAclOrch->getAclRule(m_strEgressTable, m_strEgressRule);
-            if (rule == nullptr)
-            {
-                shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strEgressRule, m_strEgressTable);
-                createPfcAclRule(newRule, queueId, m_strEgressTable, port);
-            }
-        }
+        // First time of handling PFC for this queue, create ACL table, and bind
+        createPfcAclTable(port, m_strEgressTable, false);
+        shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strEgressTable);
+        createPfcAclRule(newRule, queueId, m_strEgressTable, port);
     }
     else
     {
-        m_strEgressTable = "EgressTable_PfcWdAclHandler_" + queuestr;
-        found = m_aclTables.find(m_strEgressTable);
-        if (found == m_aclTables.end())
-        {
-            // First time of handling PFC for this queue, create ACL table, and bind
-            createPfcAclTable(port, m_strEgressTable, false);
-            shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strEgressTable);
-            createPfcAclRule(newRule, queueId, m_strEgressTable, port);
-        }
-        else
-        {
-            // Otherwise just bind ACL table with the port
-            found->second.bind(port);
-        }
+        // Otherwise just bind ACL table with the port
+        found->second.bind(port);
     }
 }
 
@@ -421,20 +382,8 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
         gAclOrch->updateAclRule(m_strIngressTable, m_strRule, MATCH_IN_PORTS, &port, RULE_OPER_DELETE);
     } 
 
-    if (shared_egress_acl_table)
-    {
-        rule = gAclOrch->getAclRule(m_strEgressTable, m_strEgressRule);
-        if (rule == nullptr)
-        {
-            SWSS_LOG_THROW("Egress ACL Rule does not exist for rule %s", m_strEgressRule.c_str());
-        }
-        gAclOrch->removeAclRule(m_strEgressTable, m_strEgressRule);
-    }
-    else
-    {
-        auto found = m_aclTables.find(m_strEgressTable);
-        found->second.unbind(port);
-    }
+    auto found = m_aclTables.find(m_strEgressTable);
+    found->second.unbind(port);
 }
 
 void PfcWdAclHandler::clear()
@@ -469,11 +418,7 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
         return;
     }
 
-    // Link port only for ingress ACL table or unshared egress ACL table.
-    if (ingress || !shared_egress_acl_table)
-    {
-        aclTable.link(port);
-    }
+    aclTable.link(port);
 
     if (ingress) 
     {
@@ -507,24 +452,18 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t q
     attr_value = to_string(queueId);
     rule->validateAddMatch(attr_name, attr_value);
 
-    // Add MATCH_IN_PORTS as match criteria for ingress table and MATCH_OUT_PORT as match creiteria for shared egress table.
-    if (strTable == INGRESS_TABLE_DROP || shared_egress_acl_table)
+    // Add MATCH_IN_PORTS as match criteria for ingress table
+    if (strTable == INGRESS_TABLE_DROP) 
     {
         Port p;
-        if (strTable == INGRESS_TABLE_DROP) 
-        {
-            attr_name = MATCH_IN_PORTS;
-        }
-        else if (shared_egress_acl_table) {
-            attr_name = MATCH_OUT_PORT;
-        }
-    
+        attr_name = MATCH_IN_PORTS;
+
         if (!gPortsOrch->getPort(portOid, p))
         {
             SWSS_LOG_ERROR("Failed to get port structure from port oid 0x%" PRIx64, portOid);
             return;
         }
-    
+
         attr_value = p.m_alias;
         rule->validateAddMatch(attr_name, attr_value);
     }
