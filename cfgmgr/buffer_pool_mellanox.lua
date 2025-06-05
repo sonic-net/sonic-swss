@@ -69,7 +69,9 @@ local function iterate_all_items(all_items, check_lossless)
             if string.len(range) == 1 then
                 size = 1
             else
-                size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
+                -- Extract start and end numbers from the range (e.g., "8-15")
+                local start_num, end_num = string.match(range, "(%d+)-(%d+)")
+                size = tonumber(end_num) - tonumber(start_num) + 1
             end
             profiles[profile_name] = profile_ref_count + size
             if port_set_8lanes[port] and ingress_profile_is_lossless[profile_name] == false then
