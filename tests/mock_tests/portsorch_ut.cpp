@@ -3093,6 +3093,60 @@ namespace portsorch_test
         ts.clear();
     }
 
+    /* This test passes an incorrect LAG entry and verifies that this entry is not
+     * erased from the consumer table.
+     */
+    TEST_F(PortsOrchTest, LagMemberCanNotBeLocated)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        /*
+         * Next we will prepare some configuration data to be consumed by PortsOrch
+         * 32 Ports, 1 LAG, 1 port is an invalid LAG member.
+         */
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        lagTable.set("PortChannel999",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+
+        // Add invalid lag member
+        lagMemberTable.set(
+            std::string("InvalidLagMember") + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
+            { {"status", "enabled"} });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // verify there is a pending task to do.
+        vector<string> ts;
+        auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        ts.clear();
+        consumer->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty());
+    }
+
     /* This test checks that a LAG member validation happens on orchagent level
      * and no SAI call is executed in case a port requested to be a LAG member
      * is already a LAG member.
