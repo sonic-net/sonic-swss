@@ -946,8 +946,8 @@ class TestMuxTunnelBase():
             self.add_route(dvs, route_B_ipv4, ipv4_nexthops)
             self.add_route(dvs, route_B_ipv6, ipv6_nexthops)
 
-            self.multi_nexthop_test_vlan_neighbor_update(self, appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv4)
-            self.multi_nexthop_test_vlan_neighbor_update(self, appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv6)
+            self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv4)
+            self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv6)
 
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs)
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs)
