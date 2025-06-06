@@ -10,6 +10,8 @@
 #include "crmorch.h"
 #include "subscriberstatetable.h"
 #include "redisutility.h"
+#include "flex_counter_manager.h"
+#include "flow_counter_handler.h"
 
 using namespace std;
 using namespace swss;
@@ -21,6 +23,9 @@ using namespace swss;
 #define LOCATOR_DEFAULT_FUNC_LEN "16"
 #define LOCATOR_DEFAULT_ARG_LEN "0"
 
+#define SRV6_FLEX_COUNTER_UPDATE_TIMER 1
+#define SRV6_STAT_COUNTER_POLLING_INTERVAL_MS 10000
+
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t  gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -31,6 +36,7 @@ extern sai_router_interface_api_t* sai_router_intfs_api;
 
 extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
+extern bool gTraditionalFlexCounter;
 
 const map<string, sai_my_sid_entry_endpoint_behavior_t> end_behavior_map =
 {
@@ -89,6 +95,222 @@ static bool mySidDscpModeToSai(const string& mode, sai_tunnel_dscp_mode_t& sai_m
     return false;
 }
 
+Srv6Orch::Srv6Orch(DBConnector *cfgDb, DBConnector *applDb, const vector<TableConnector>& tables, SwitchOrch *switchOrch, VRFOrch *vrfOrch, NeighOrch *neighOrch):
+    Orch(tables),
+    m_vrfOrch(vrfOrch),
+    m_switchOrch(switchOrch),
+    m_neighOrch(neighOrch),
+    m_sidTable(applDb, APP_SRV6_SID_LIST_TABLE_NAME),
+    m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME),
+    m_piccontextTable(applDb, APP_PIC_CONTEXT_TABLE_NAME),
+    m_mysidCfgTable(cfgDb, CFG_SRV6_MY_SID_TABLE_NAME),
+    m_locatorCfgTable(cfgDb, CFG_SRV6_MY_LOCATOR_TABLE_NAME),
+    m_counter_manager(SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, SRV6_STAT_COUNTER_POLLING_INTERVAL_MS, false)
+{
+    m_neighOrch->attach(this);
+
+    initializeCounters();
+}
+
+Srv6Orch::~Srv6Orch()
+{
+    m_neighOrch->detach(this);
+}
+
+void Srv6Orch::initializeCounters()
+{
+    m_mysid_counters_supported = queryMySidCountersCapability();
+    if (!m_mysid_counters_supported)
+    {
+        SWSS_LOG_INFO("SRv6 counters are not supported on this platform");
+        return;
+    }
+
+    m_asic_db = make_shared<DBConnector>("ASIC_DB", 0);
+    m_counter_db = make_shared<DBConnector>("COUNTERS_DB", 0);
+    m_mysid_counters_table = make_unique<Table>(m_counter_db.get(), COUNTERS_SRV6_NAME_MAP);
+
+    if (gTraditionalFlexCounter)
+    {
+        m_vid_to_rid_table = make_unique<Table>(m_asic_db.get(), "VIDTORID");
+    }
+
+    m_counter_update_timer = new SelectableTimer(timespec { .tv_sec = SRV6_FLEX_COUNTER_UPDATE_TIMER , .tv_nsec = 0 });
+    auto et = new ExecutableTimer(m_counter_update_timer, this, "SRV6_FLEX_COUNTER_UPDATE_TIMER");
+    Orch::addExecutor(et);
+}
+
+bool Srv6Orch::queryMySidCountersCapability() const
+{
+    sai_attr_capability_t capability;
+    sai_status_t status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MY_SID_ENTRY, SAI_MY_SID_ENTRY_ATTR_COUNTER_ID, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query SRv6 MySID entry attribute SAI_MY_SID_ENTRY_ATTR_COUNTER_ID %d", status);
+        return false;
+    }
+
+    return capability.set_implemented && capability.create_implemented;
+}
+
+
+bool Srv6Orch::getMySidCountersEnabled() const
+{
+    return m_mysid_counters_enabled;
+}
+
+bool Srv6Orch::getMySidCountersSupported() const
+{
+    return m_mysid_counters_supported;
+}
+
+IpAddress Srv6Orch::getMySidAddress(const sai_my_sid_entry_t& sai_entry) const
+{
+    ip_addr_t ip_addr = {};
+    ip_addr.family = AF_INET6;
+    memcpy(&ip_addr.ip_addr.ipv6_addr, sai_entry.sid, sizeof(ip_addr.ip_addr.ipv6_addr));
+
+    return IpAddress(ip_addr);
+}
+
+string Srv6Orch::getMySidCounterKey(const sai_my_sid_entry_t& sai_entry) const
+{
+    auto mysid_addr = getMySidAddress(sai_entry).to_string();
+    auto locator_cfg = getMySidEntryLocatorCfg(sai_entry);
+    return getMySidPrefix(mysid_addr, locator_cfg);
+}
+
+bool Srv6Orch::addMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid)
+{
+    SWSS_LOG_ENTER();
+
+    if (!FlowCounterHandler::createGenericCounter(counter_oid))
+    {
+        SWSS_LOG_ERROR("Failed to create SAI counter for SRv6 MySID entry");
+        return false;
+    }
+
+    auto key = getMySidCounterKey(sai_entry);
+    vector<FieldValueTuple> fvs = {
+        {key, sai_serialize_object_id(counter_oid)}
+    };
+
+    m_mysid_counters_table->set("", fvs);
+
+    auto was_empty = m_pending_counters.empty();
+    m_pending_counters[counter_oid] = key;
+
+    if (was_empty)
+    {
+        m_counter_update_timer->start();
+    }
+
+    return true;
+}
+
+void Srv6Orch::removeMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid)
+{
+    SWSS_LOG_ENTER();
+
+    if (counter_oid == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+
+    auto key = getMySidCounterKey(sai_entry);
+
+    m_mysid_counters_table->hdel("", key);
+
+    auto was_pending = m_pending_counters.erase(counter_oid) == 1;
+    if (!was_pending)
+    {
+        SWSS_LOG_INFO("Unregistering SRv6 counter for %s, oid %s", key.c_str(), sai_serialize_object_id(counter_oid).c_str());
+        m_counter_manager.clearCounterIdList(counter_oid);
+    }
+
+    FlowCounterHandler::removeGenericCounter(counter_oid);
+    counter_oid = SAI_NULL_OBJECT_ID;
+}
+
+void Srv6Orch::setMySidEntryCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t counter_oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_MY_SID_ENTRY_ATTR_COUNTER_ID;
+    attr.value.oid = counter_oid;
+
+    auto status = sai_srv6_api->set_my_sid_entry_attribute(&sai_entry, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set my_sid entry counter oid to %s, rc: %s", sai_serialize_object_id(counter_oid).c_str(), sai_serialize_status(status).c_str());
+    }
+}
+
+void Srv6Orch::setCountersState(bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    if (!getMySidCountersSupported())
+    {
+        SWSS_LOG_WARN("Ignoring SRv6 counters state change as they are not supported on this platform");
+        return;
+    }
+
+    if (enable == m_mysid_counters_enabled)
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Setting SRv6 MySID counters state to %s", enable ? "enabled" : "disabled");
+
+    for (auto& mysid : srv6_my_sid_table_)
+    {
+        const auto& sai_entry = mysid.second.entry;
+        auto &counter_oid = mysid.second.counter;
+
+        if (enable)
+        {
+            addMySidCounter(sai_entry, counter_oid);
+            setMySidEntryCounter(sai_entry, counter_oid);
+        } else {
+            setMySidEntryCounter(sai_entry, SAI_NULL_OBJECT_ID);
+            removeMySidCounter(sai_entry, counter_oid);
+        }
+    }
+
+    m_mysid_counters_enabled = enable;
+}
+
+void Srv6Orch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    string value;
+    for (auto it = m_pending_counters.begin(); it != m_pending_counters.end();)
+    {
+        const auto oid = sai_serialize_object_id(it->first);
+        if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", oid, value))
+        {
+            SWSS_LOG_INFO("Registering SRv6 counter for %s, oid %s", it->second.c_str(), oid.c_str());
+
+            unordered_set<string> counter_stats;
+            FlowCounterHandler::getGenericCounterStatIdList(counter_stats);
+            m_counter_manager.setCounterIdList(it->first, CounterType::SRV6, counter_stats);
+            it = m_pending_counters.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (m_pending_counters.empty())
+    {
+        m_counter_update_timer->stop();
+    }
+}
+
 MySidLocatorCfg Srv6Orch::getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_entry) const
 {
     return {
@@ -97,6 +319,12 @@ MySidLocatorCfg Srv6Orch::getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_
         sai_entry.function_len,
         sai_entry.args_len,
     };
+}
+
+
+string Srv6Orch::getMySidPrefix(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg) const
+{
+    return my_sid_addr + "/" + to_string(locator_cfg.block_len + locator_cfg.node_len + locator_cfg.func_len);
 }
 
 bool Srv6Orch::getLocatorCfgFromDb(const string& locator, MySidLocatorCfg& cfg)
@@ -201,7 +429,7 @@ void Srv6Orch::mySidCfgCacheRefresh()
 
 bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode)
 {
-    auto my_sid_prefix = my_sid_addr + "/" + to_string(locator_cfg.block_len + locator_cfg.node_len + locator_cfg.func_len);
+    auto my_sid_prefix = getMySidPrefix(my_sid_addr, locator_cfg);
 
     auto cfg_cache = my_sid_dscp_cfg_cache_.equal_range(my_sid_prefix);
     if (cfg_cache.first == my_sid_dscp_cfg_cache_.end())
@@ -1360,6 +1588,20 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     sai_status_t status = SAI_STATUS_SUCCESS;
     if (!entry_exists)
     {
+        sai_object_id_t counter_oid = SAI_NULL_OBJECT_ID;
+        if (getMySidCountersSupported() && getMySidCountersEnabled())
+        {
+            auto ok = addMySidCounter(my_sid_entry, counter_oid);
+            if (!ok)
+            {
+                return false;
+            }
+
+            attr.id = SAI_MY_SID_ENTRY_ATTR_COUNTER_ID;
+            attr.value.oid = counter_oid;
+            attributes.push_back(attr);
+        }
+
         status = sai_srv6_api->create_my_sid_entry(&my_sid_entry, (uint32_t) attributes.size(), attributes.data());
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -1367,6 +1609,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
           return false;
         }
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
+        srv6_my_sid_table_[key_string].counter = counter_oid;
     }
     else
     {
@@ -1419,6 +1662,7 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
         return false;
     }
     sai_my_sid_entry_t my_sid_entry = srv6_my_sid_table_[my_sid_string].entry;
+    sai_object_id_t& counter = srv6_my_sid_table_[my_sid_string].counter;
 
     SWSS_LOG_NOTICE("MySid Delete: sid %s", my_sid_string.c_str());
     status = sai_srv6_api->remove_my_sid_entry(&my_sid_entry);
@@ -1429,6 +1673,7 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     }
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
 
+    removeMySidCounter(my_sid_entry, counter);
 
     auto endBehavior = srv6_my_sid_table_[my_sid_string].endBehavior;
     /* Decrease VRF refcount */

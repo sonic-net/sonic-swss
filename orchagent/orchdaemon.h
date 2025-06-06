@@ -44,6 +44,7 @@
 #include "macsecorch.h"
 #include "p4orch/p4orch.h"
 #include "bfdorch.h"
+#include "icmporch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
 #include "twamporch.h"
