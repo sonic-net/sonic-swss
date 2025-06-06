@@ -763,7 +763,7 @@ class TestMuxTunnelBase():
         '''
 
         print("Test delete while mux ports are standby")
-        print("Create route with mux ports: %s in states: %s" % (str(mux_ports), str(states)))
+        print("Create route with mux ports: %s in states: %s" % (str(mux_ports), str([STANDBY, STANDBY])))
         # Set mux states to standby
         for i,port in enumerate(mux_ports):
             self.set_mux_state(appdb, port, STANDBY)
