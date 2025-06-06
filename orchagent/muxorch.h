@@ -173,6 +173,7 @@ const request_description_t mux_cfg_request_description = {
                 { "soc_ipv4", REQ_T_IP_PREFIX },
                 { "soc_ipv6", REQ_T_IP_PREFIX },
                 { "cable_type", REQ_T_STRING },
+                { "prober_type", REQ_T_STRING },
             },
             { }
 };
