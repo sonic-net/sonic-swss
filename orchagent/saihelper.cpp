@@ -567,8 +567,8 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-     switch (status)
-     {
+    switch (status)
+    {
         case SAI_STATUS_SUCCESS:
         case SAI_STATUS_ITEM_NOT_FOUND:
         case SAI_STATUS_ADDR_NOT_FOUND:
@@ -585,8 +585,8 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
         default:
             handleSaiFailure(api, "create", status);
             break;
-      }
-      return task_failed;
+    }
+    return task_failed;
 }
 
 task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
