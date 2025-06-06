@@ -50,6 +50,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::HOSTIF_TRAP,     FLOW_COUNTER_ID_LIST },
     { CounterType::ROUTE,           FLOW_COUNTER_ID_LIST },
     { CounterType::ENI,             ENI_COUNTER_ID_LIST },
+    { CounterType::SRV6,            SRV6_COUNTER_ID_LIST },
 };
 
 FlexManagerDirectory g_FlexManagerDirectory;

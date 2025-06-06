@@ -318,11 +318,6 @@ int main(int argc, char **argv)
         {
             cout << "Connection lost, reconnecting..." << endl;
         }
-        catch (const exception& e)
-        {
-            cout << "Exception \"" << e.what() << "\" had been thrown in daemon" << endl;
-            return 0;
-        }
     }
 
     return 1;

@@ -2529,6 +2529,14 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
         return;
     }
 
+    // When a route is programmed without FRR knowledge protocol will be empty.
+    if (protocol.empty())
+    {
+        SWSS_LOG_NOTICE("Received response for prefix %s(%s) without protol, ignoring ",
+            prefix.to_string().c_str(), vrfName.c_str());
+        return;
+    }
+
     auto routeObject = makeUniqueWithDestructor(rtnl_route_alloc(), rtnl_route_put);
     auto dstAddr = makeNlAddr(prefix);
 
