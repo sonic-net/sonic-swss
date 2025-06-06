@@ -103,6 +103,7 @@ orchagent_SOURCES = \
             macsecorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
+            icmporch.cpp \
             srv6orch.cpp \
             response_publisher.cpp \
             nvgreorch.cpp \
@@ -114,9 +115,11 @@ orchagent_SOURCES = \
             dash/dashvnetorch.cpp \
             dash/dashaclorch.cpp \
             dash/dashaclgroupmgr.cpp \
+            dash/dashmeterorch.cpp \
             dash/dashtagmgr.cpp \
             dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
+            dash/dashhaorch.cpp \
             twamporch.cpp \
             stporch.cpp
 

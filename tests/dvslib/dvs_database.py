@@ -4,7 +4,7 @@ FIXME:
     - Reference DBs by name rather than ID/socket
     - Add support for ProducerStateTable
 """
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from swsscommon import swsscommon
 from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig

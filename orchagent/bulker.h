@@ -383,6 +383,18 @@ struct SaiBulkerTraits<sai_neighbor_api_t>
 };
 
 template<>
+struct SaiBulkerTraits<sai_dash_meter_api_t>
+{
+    using entry_t = sai_object_id_t;
+    using api_t = sai_dash_meter_api_t;
+    using create_entry_fn = sai_create_meter_rule_fn;
+    using remove_entry_fn = sai_remove_meter_rule_fn;
+    using set_entry_attribute_fn = sai_set_meter_rule_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_object_create_fn;
+    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+};
+
+template<>
 struct SaiBulkerTraits<sai_dash_vnet_api_t>
 {
     using entry_t = sai_object_id_t;
@@ -1272,6 +1284,15 @@ inline ObjectBulker<sai_dash_vnet_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_
 {
     create_entries = api->create_vnets;
     remove_entries = api->remove_vnets;
+}
+
+template <>
+inline ObjectBulker<sai_dash_meter_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_meter_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_meter_rules;
+    remove_entries = api->remove_meter_rules;
 }
 
 template <>

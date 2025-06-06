@@ -24,7 +24,7 @@ parameters:
   type: string
   default: '$(BUILD_BRANCH)'
 
-- name: sonic_buildimage_ubuntu20_04
+- name: sonic_buildimage_ubuntu22_04
   type: string
   default: '$(BUILD_BRANCH)'
 
@@ -44,8 +44,9 @@ jobs:
 - job:
   displayName: vstest
   timeoutInMinutes: ${{ parameters.timeout }}
-  ${{ if parameters.archive_gcov }}:
-    variables:
+  variables:
+    isAsan: ${{ parameters.asan }}
+    ${{ if parameters.archive_gcov }}:
       DIFF_COVER_CHECK_THRESHOLD: 80
       DIFF_COVER_ENABLE: 'true'
       DIFF_COVER_COVERAGE_FILES: Cobertura.xml
@@ -68,27 +69,28 @@ jobs:
       source: specific
       project: build
       pipeline: Azure.sonic-swss-common
-      artifact: sonic-swss-common.amd64.ubuntu20_04
+      artifact: sonic-swss-common.amd64.ubuntu22_04
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
-      pipeline: sonic-net.sonic-buildimage-ubuntu20.04
-      artifact: sonic-buildimage.amd64.ubuntu20_04
+      pipeline: sonic-net.sonic-buildimage-ubuntu22.04
+      artifact: sonic-buildimage.amd64.ubuntu22_04
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.sonic_buildimage_ubuntu20_04 }}'
+      runBranch: 'refs/heads/${{ parameters.sonic_buildimage_ubuntu22_04 }}'
       path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download sonic buildimage ubuntu20.04 deb packages"
+    displayName: "Download sonic buildimage ubuntu22.04 deb packages"
 
   - script: |
         set -ex
         # Install .NET CORE
         curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-        sudo apt-add-repository https://packages.microsoft.com/ubuntu/20.04/prod
+        sudo apt-add-repository https://packages.microsoft.com/ubuntu/22.04/prod
         sudo apt-get update
         sudo apt-get install -y dotnet-sdk-8.0
         sudo dotnet tool install dotnet-reportgenerator-globaltool --tool-path /usr/bin 2>&1 | tee log.log || grep 'already installed' log.log
@@ -97,19 +99,27 @@ jobs:
 
   - script: |
       set -ex
+      # install packages for vs test
+      sudo pip3 install pytest flaky exabgp docker redis lcov_cobertura
+
+      # install other dependencies
+      sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
+          bridge-utils \
+          vlan \
+          libzmq3-dev \
+          libzmq5 \
+          libboost-serialization1.74.0 \
+          libboost1.74-dev \
+          libboost-dev \
+          libhiredis0.14 \
+          libyang-dev \
+
       sudo .azure-pipelines/build_and_install_module.sh
 
-      sudo apt-get install -y libhiredis0.14 libyang0.16
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb 
+      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
       sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || apt-get install -f
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
-
-      # install packages for vs test
-      sudo apt-get install -y net-tools bridge-utils vlan
-      sudo apt-get install -y python3-pip
-      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0 requests==2.31.0
-      sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
 
   - script: |
@@ -144,11 +154,16 @@ jobs:
       # Run the tests in parallel and retry
       retry=3
       IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
-      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo ./run-tests.sh "$IMAGE_NAME" "$params" "TEST_MODULE" 3
+      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh "$IMAGE_NAME" "$params" "TEST_MODULE" 3
 
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
     continueOnError: ${{ parameters.asan }}
+
+  - script: |
+      echo "##vso[task.setvariable variable=TestsRun]Yes"
+    condition: succeededOrFailed()
+    displayName: 'Record Test Status'
 
   - script: |
       set -ex
@@ -170,7 +185,7 @@ jobs:
     inputs:
       testResultsFiles: '**/*_tr.xml'
       testRunTitle: vstest
-    condition: succeeded()
+    condition: and(eq(variables['TestsRun'], 'Yes'), ne(variables['isAsan'], 'true'))
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
@@ -201,3 +216,8 @@ jobs:
     displayName: "Check ASAN reports"
     condition: eq('${{ parameters.asan }}', true)
     continueOnError: true
+
+  - script: |
+      sudo apt-get -o DPkg::Lock::Timeout=600 install -y python-is-python3
+
+    displayName: "Install temporary workaround to add a symlink to python 3"

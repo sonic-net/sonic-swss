@@ -378,7 +378,11 @@ class DockerVirtualSwitch:
 
         # Dynamically create a DVS container and servers
         else:
-            self.ctn_sw = self.client.containers.run("debian:jessie",
+            if 'DEFAULT_CONTAINER_REGISTRY' in os.environ:
+                cr_prefix = os.environ['DEFAULT_CONTAINER_REGISTRY'].rstrip("/") + "/"
+            else:
+                cr_prefix = ''
+            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:jessie",
                                                      privileged=True,
                                                      detach=True,
                                                      command="bash",
@@ -429,7 +433,7 @@ class DockerVirtualSwitch:
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
         self.zmq_sock = os.path.join(self.zmq_mount, "zmq_swss_ep")
         ensure_system(f"rm -rf /var/run/redis/redis.sock")
-        ensure_system(f"ln -s {self.redis_sock} /var/run/redis/redis.sock")
+        ensure_system(f"ln -sf {self.redis_sock} /var/run/redis/redis.sock")
 
         self.reset_dbs()
 
