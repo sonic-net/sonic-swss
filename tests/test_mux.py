@@ -757,6 +757,32 @@ class TestMuxTunnelBase():
 
         self.del_route(dvs, route)
 
+    def multi_nexthop_test_neighbor_delete_standby(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops, macs):
+        '''
+        Tests neighbors getting deleted while mux ports are standby
+        '''
+
+        print("Test delete while mux ports are standby")
+        print("Create route with mux ports: %s in states: %s" % (str(mux_ports), str([STANDBY, STANDBY])))
+        # Set mux states to standby
+        for i,port in enumerate(mux_ports):
+            self.set_mux_state(appdb, port, STANDBY)
+
+        # Add route
+        self.add_route(dvs, route, nexthops)
+
+        # delete both neighbors and ensure that the route is still pointing to tunnel
+        for nexthop in nexthops:
+            self.del_neighbor(dvs, nexthop)
+            self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, [STANDBY, STANDBY])
+
+        # add both neighbors back and ensure that the route is still pointing to tunnel
+        for i,nexthop in enumerate(nexthops):
+            self.add_neighbor(dvs, nexthop, macs[i])
+            self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, [STANDBY, STANDBY])
+
+        self.del_route(dvs, route)
+
     def multi_nexthop_test_neighbor_add(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops, macs):
         '''
         Tests adding neighbors for a route with multiple nexthops
@@ -829,6 +855,8 @@ class TestMuxTunnelBase():
             self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_nexthop=non_mux_ipv4)
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
+            self.multi_nexthop_test_neighbor_delete_standby(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs)
+            self.multi_nexthop_test_neighbor_delete_standby(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs)
 
             # Testing mux neighbors that do not match mux configured ip
             self.add_route(dvs, route_ipv4, [self.SERV1_IPV4, mux_neighbor_ipv4])
