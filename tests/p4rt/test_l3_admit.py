@@ -11,7 +11,6 @@ class TestP4RTL3Admit(object):
         self._p4rt_l3_admit_obj = l3_admit.P4RtL3AdmitWrapper()
 
         self._p4rt_l3_admit_obj.set_up_databases(dvs)
-        )
 
     @pytest.mark.skip(reason="sairedis vs MY MAC support is not ready")
     def test_DefaultL3AdmitAddDeletePass(self, dvs, testlog):

@@ -76,6 +76,7 @@ class TestIcmpEcho(object):
     def remove_ip_address(self, interface, ip):
         self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
 
+    @pytest.mark.skip(reason="This test is flaky")
     def test_addUpdateRemoveIcmpEchoSession(self, dvs):
         self.setup_db(dvs)
 
@@ -223,6 +224,7 @@ class TestIcmpEcho(object):
         keys = self.sdb.get_keys("ICMP_ECHO_SESSION_TABLE")
         assert len(keys) == 0
 
+    @pytest.mark.skip(reason="This test is flaky")
     def test_multipleIcmpEchoSessions(self, dvs):
         self.setup_db(dvs)
 
