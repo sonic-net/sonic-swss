@@ -301,6 +301,7 @@ const char *RouteSync::mySidAction2Str(uint32_t action)
 bool RouteSync::parseEncapSrv6VpnRoute(struct rtattr *tb, uint32_t &pic_id,
                                uint32_t &nhg_id)
 {
+    cout << "[UT DEBUG] parseEncapSrv6VpnRoute" << endl;
     struct rtattr *tb_encap[256] = {};
 
     parseRtAttrNested(tb_encap, 256, tb);
@@ -308,6 +309,7 @@ bool RouteSync::parseEncapSrv6VpnRoute(struct rtattr *tb, uint32_t &pic_id,
     if (tb_encap[ROUTE_ENCAP_SRV6_PIC_ID])
         pic_id = *((uint32_t *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_PIC_ID]));
     else {
+        cout << "Return false because of no pic_id" << endl;
         return false;
     }
 
@@ -315,6 +317,7 @@ bool RouteSync::parseEncapSrv6VpnRoute(struct rtattr *tb, uint32_t &pic_id,
     if (tb_encap[ROUTE_ENCAP_SRV6_NH_ID])
         nhg_id = *((uint32_t *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_NH_ID]));
     else {
+        cout << "Return false because of no nhg_id" << endl;
         return false;
     }
     SWSS_LOG_INFO("pic_id:%d nhg_id:%d ", pic_id,
@@ -957,6 +960,7 @@ bool RouteSync::getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
                                struct rtattr *tb[], uint32_t &pic_id,
                                uint32_t &nhg_id)
 {
+    cout << "[UT Debug] getSrv6VpnRouteNextHop" << endl;
     uint16_t encap = 0;
 
     if (!tb[RTA_MULTIPATH])
@@ -970,6 +974,7 @@ bool RouteSync::getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
             *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) ==
                 NH_ENCAP_SRV6_ROUTE)
         {
+            cout << "Call parseEncapSrv6VpnRoute" << endl;
             return parseEncapSrv6VpnRoute(tb[RTA_ENCAP], pic_id, nhg_id);
         }
         SWSS_LOG_DEBUG("Rx MsgType:%d encap:%d pic_id:%d nhg_id:%d",
@@ -981,9 +986,11 @@ bool RouteSync::getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
     {
         /* This is a multipath route */
         SWSS_LOG_NOTICE("Multipath SRv6 routes aren't supported");
+        cout << "Return false because of multipath srv6 routes" << endl;
         return false;
     }
 
+    cout << "Return false at the bottom" << endl;
     return false;
 }
 
@@ -1440,6 +1447,8 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
 
 void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
 {
+    cout << "[UT DEBUG] onSrv6VpnRouteMsg begins" << endl;
+
     struct rtmsg *rtm;
     struct rtattr *tb[RTA_MAX + 1];
     void *dest = NULL;
@@ -1460,6 +1469,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
     {
         SWSS_LOG_ERROR(
             "Received an invalid SRv6 route: missing RTA_DST attribute");
+        cout << "Found tb[RTA_DST] is NULL and return" << endl;
         return;
     }
 
@@ -1472,8 +1482,10 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
             SWSS_LOG_ERROR(
                 "Received an invalid SRv6 route: prefix len %d is out of range",
                 rtm->rtm_dst_len);
+            cout << "Return because of AF_INET rtm_dst_len" << endl;
             return;
         }
+        cout << "Normal dst len for AF_INET" << endl;
         memcpy(dstaddr, dest, IPV4_MAX_BYTE);
         dst_len = rtm->rtm_dst_len;
     }
@@ -1484,8 +1496,10 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
             SWSS_LOG_ERROR(
                 "Received an invalid SRv6 route: prefix len %d is out of range",
                 rtm->rtm_dst_len);
+            cout << "Return because of AF_INET6 rtm_dst_len" << endl;
             return;
         }
+        cout << "Normal dst len for AF_INET6" << endl;
         memcpy(dstaddr, dest, IPV6_MAX_BYTE);
         dst_len = rtm->rtm_dst_len;
     }
@@ -1494,6 +1508,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
         SWSS_LOG_ERROR(
             "Received an invalid SRv6 route: invalid address family %d",
             rtm->rtm_family);
+        cout << "Return because of invalid address family" << endl;
         return;
     }
 
@@ -1505,10 +1520,12 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
     /* Table corresponding to route. */
     if (tb[RTA_TABLE])
     {
+        cout << "Has RTA_TABLE" << endl;
         vrf_index = *(int *)RTA_DATA(tb[RTA_TABLE]);
     }
     else
     {
+        cout << "NOT have RTA_TABLE" << endl;
         vrf_index = rtm->rtm_table;
     }
 
@@ -1517,6 +1534,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
         if (!getIfName(vrf_index, routeTableKey, IFNAMSIZ))
         {
             SWSS_LOG_ERROR("Fail to get the VRF name (ifindex %u)", vrf_index);
+            cout << "Return because of failing to get the VRF name" << endl;
             return;
         }
         /*
@@ -1526,6 +1544,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
         {
             SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", routeTableKey,
                            vrf_index);
+            cout << "Return because of invalid Vrf name" << endl;
             return;
         }
         routeTableKey[strlen(routeTableKey)] = ':';
@@ -1534,12 +1553,14 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
     if ((rtm->rtm_family == AF_INET && dst_len == IPV4_MAX_BITLEN) ||
         (rtm->rtm_family == AF_INET6 && dst_len == IPV6_MAX_BITLEN))
     {
+        cout << "[UT Debug] dst len is up to max" << endl;
         snprintf(routeTableKey + strlen(routeTableKey),
                  sizeof(routeTableKey) - strlen(routeTableKey), "%s",
                  destipprefix);
     }
     else
     {
+        cout << "[UT Debug] dest len is less than limitation" << endl;
         snprintf(routeTableKey + strlen(routeTableKey),
                  sizeof(routeTableKey) - strlen(routeTableKey), "%s/%u",
                  destipprefix, dst_len);
@@ -1552,6 +1573,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
     {
         SWSS_LOG_ERROR("Unknown message-type: %d for %s", nlmsg_type,
                        destipprefix);
+        cout << "Return because of Unknown message-type" << endl;
         return;
     }
 
@@ -1562,8 +1584,10 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
         case RTN_PROHIBIT:
             SWSS_LOG_ERROR(
                 "RTN_BLACKHOLE route not expected (%s)", destipprefix);
+            cout << "Return because of BLACKHOLE" << endl;
             return;
         case RTN_UNICAST:
+            cout << "Continue the processing" << endl;
             break;
 
         case RTN_MULTICAST:
@@ -1571,9 +1595,11 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
         case RTN_LOCAL:
             SWSS_LOG_NOTICE(
                 "BUM routes aren't supported yet (%s)", destipprefix);
+            cout << "Return because of BUM" << endl;
             return;
 
         default:
+            cout << "Return because of default" << endl;
             return;
     }
 
@@ -1581,8 +1607,10 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
     uint32_t nhg_id;
     bool ret;
 
+    cout << "Call getSrv6VpnRouteNextHop" << endl;
     ret = getSrv6VpnRouteNextHop(h, len, tb, pic_id, nhg_id);
     if(!ret){
+        cout << "Return because of no ret" << endl;
         return ;
     }
 
@@ -1590,6 +1618,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
 
     if (nlmsg_type == RTM_DELSRV6VPNROUTE)
     {
+        cout << "[UT DEBUG] DELSRV6VPNROUTE" << endl;
         if (!warmRestartInProgress)
         {
             m_routeTable.del(routeTableKey);
@@ -1610,11 +1639,13 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
     }
     else if (nlmsg_type == RTM_NEWSRV6VPNROUTE)
     {
+        cout << "[UT DEBUG] NEWSRV6VPNROUTE" << endl;
         auto nhg_it = m_nh_groups.find(nhg_id);
         auto pic_it = m_nh_groups.find(pic_id);
         if(nhg_it == m_nh_groups.end() || pic_it == m_nh_groups.end())
         {
              SWSS_LOG_ERROR("Can not find pic or nexthop for vpn route :%s", routeTableKey);
+            cout << "Return because of can not find pic or nexthop for vpn route" << endl;
             return ;
         }
 
@@ -1622,6 +1653,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
         NextHopGroup &pic = pic_it->second;
         if(nhg.group.size() == 0)
         {
+            cout << "nhg.group.size == 0" << endl;
             vector<FieldValueTuple> fvVector;
             struct NextHopField nhField;
             getPicContextGroupFields(pic, nhField);
@@ -1645,11 +1677,13 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
                 FieldValueTuple wg("weight", weights.c_str());
                 fvVector.push_back(wg);
             }
+            cout << "Set the routeTable" << endl;
             m_routeTable.set(routeTableKey, fvVector);
 
             SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
         }
         else{
+            cout << "nhg.group.size > 0" << endl;
             vector<FieldValueTuple> fvVectorVpnRoute;
             FieldValueTuple pic_context_id("pic_context_id", getNextHopGroupKeyAsString(pic_id));
             fvVectorVpnRoute.push_back(pic_context_id);
@@ -1673,12 +1707,14 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
             fvVectorVpnRoute.push_back(vpn_sid);
             fvVectorVpnRoute.push_back(seg_srcs_route);
             fvVectorVpnRoute.push_back(intf);
+            cout << "Set the routeTable" << endl;
             m_routeTable.set(routeTableKey, fvVectorVpnRoute);
         }
 
 
     }
 
+    cout << "End of onSrv6VpnRouteMsg" << endl;
     return;
 }
 uint16_t RouteSync::getEncapType(struct nlmsghdr *h)
