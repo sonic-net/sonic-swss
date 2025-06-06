@@ -24,6 +24,10 @@ namespace saihelper_test
 
     bool set_comm_mode_not_supported;
     bool use_pipeline_not_supported;
+    bool record_output_dir_failure;
+    bool record_filename_failure;
+    bool record_failure;
+    bool response_timeout_failure;
     uint32_t *_sai_syncd_notifications_count;
     int32_t *_sai_syncd_notification_event;
 
@@ -38,19 +42,35 @@ namespace saihelper_test
                 {
                     return SAI_STATUS_NOT_SUPPORTED;
                 }
-                else
-                {
-                    return SAI_STATUS_SUCCESS;
-                }
                 break;
             case SAI_REDIS_SWITCH_ATTR_USE_PIPELINE:
                 if (use_pipeline_not_supported)
                 {
                     return SAI_STATUS_NOT_SUPPORTED;
                 }
-                else
+                break;
+            case SAI_REDIS_SWITCH_ATTR_RECORDING_OUTPUT_DIR:
+                if (record_output_dir_failure)
                 {
-                    return SAI_STATUS_SUCCESS;
+                    return SAI_STATUS_FAILURE;
+                }
+                break;
+            case SAI_REDIS_SWITCH_ATTR_RECORDING_FILENAME:
+                if (record_filename_failure)
+                {
+                    return SAI_STATUS_FAILURE;
+                }
+                break;
+            case SAI_REDIS_SWITCH_ATTR_RECORD:
+                if (record_failure)
+                {
+                    return SAI_STATUS_FAILURE;
+                }
+                break;
+            case SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT:
+                if (response_timeout_failure)
+                {
+                    return SAI_STATUS_FAILURE;
                 }
                 break;
             case SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD:
@@ -97,6 +117,10 @@ namespace saihelper_test
 
                 set_comm_mode_not_supported = false;
                 use_pipeline_not_supported = false;
+                record_output_dir_failure = false;
+                record_filename_failure = false;
+                record_failure = false;
+                response_timeout_failure = false;
 
                 map<string, string> profile = {
                     { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
@@ -181,6 +205,88 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         use_pipeline_not_supported = false;
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestSetRecordingOutputDirFailure) {
+        record_output_dir_failure = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
+
+        initSaiRedis();
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        record_output_dir_failure = false;
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestSetRecordingFilenameFailure) {
+        record_filename_failure = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
+
+        initSaiRedis();
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        record_filename_failure = false;
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestSetRecordFailure) {
+        record_failure = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
+
+        initSaiRedis();
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        record_failure = false;
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SaihelperTest, TestSetResponseTimeoutFailure) {
+        response_timeout_failure = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
+        (void) setenv("platform", "mellanox", 1);
+
+        initSaiRedis();
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        response_timeout_failure = false;
+        (void) unsetenv("platform");
         _unhook_sai_apis();
     }
 
