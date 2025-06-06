@@ -905,6 +905,17 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
     rtnl_route_put(test_route);
 }
 
+
+TEST_F(FpmSyncdResponseTest, RouteResponseOnNoProto)
+{
+    // Expect the message to zebra is sent
+    EXPECT_CALL(m_mockFpm, send(_)).Times(0);
+
+    m_routeSync.onRouteResponse("1.0.0.0/24", {
+        {"err_str", "SWSS_RC_SUCCESS"},
+    });
+}
+
 TEST_F(FpmSyncdResponseTest, TestBlackholeRoute)
 {
     Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
@@ -961,6 +972,7 @@ TEST_F(FpmSyncdResponseTest, TestBlackholeRoute)
         EXPECT_TRUE(proto_found);
     }
 }
+
 auto create_nl_addr(const char* addr_str)
 {
     nl_addr* addr;
