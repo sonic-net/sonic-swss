@@ -91,6 +91,7 @@ sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
 sai_dash_meter_api_t*               sai_dash_meter_api;
+sai_poe_api_t*                      sai_poe_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -246,6 +247,7 @@ void initSaiApi()
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
+    sai_api_query(SAI_API_POE,                  (void **)&sai_poe_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -289,6 +291,7 @@ void initSaiApi()
     sai_log_set(SAI_API_TWAMP,                  SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TAM,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_STP,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_POE,                    SAI_LOG_LEVEL_NOTICE);
 }
 
 void initFlexCounterTables()
@@ -550,6 +553,35 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     gGearboxOids.push_back(phyOid);
 
+    return status;
+}
+
+sai_status_t initSaiPoeApi(sai_object_id_t &switchOid)
+{
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    SWSS_LOG_ENTER();
+
+    attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_TYPE;
+    attr.value.u32 = SAI_SWITCH_TYPE_POE;
+    attrs.push_back(attr);
+
+    /* Must be last Attribute */
+    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+    attr.value.u64 = 1;
+    attrs.push_back(attr);
+
+    status = sai_switch_api->create_switch(&switchOid, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("poe: Failed to create switch");
+    }
     return status;
 }
 
