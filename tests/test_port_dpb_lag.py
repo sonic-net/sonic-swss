@@ -33,6 +33,7 @@ class TestPortDPBLag(object):
         tbl._del("PortChannel" + channel + ":" + interface)
         time.sleep(1)
 
+    @pytest.mark.skip(reason="Standalone port deletion is not yet supported in pins")
     def test_dependency(self, dvs):
         dvs.setup_db()
         lag = "0001"

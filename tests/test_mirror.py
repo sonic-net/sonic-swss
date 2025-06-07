@@ -264,6 +264,7 @@ class TestMirror(object):
         tbl._del("Vlan" + vlan + ":" + mac)
         time.sleep(1)
 
+    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def _test_MirrorToVlanAddRemove(self, dvs, testlog, v6_encap=False):
         """
         This test covers basic mirror session creation and removal operation
