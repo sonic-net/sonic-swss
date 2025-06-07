@@ -709,3 +709,7 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> 
 void PortsOrch::doTask(swss::SelectableTimer &timer)
 {
 }
+
+void PortsOrch::onWarmBootEnd()
+{
+}
