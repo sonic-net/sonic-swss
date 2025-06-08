@@ -49,9 +49,27 @@ APP_DB_TO_PROTOBUF_MAP = {
     swsscommon.APP_DASH_TUNNEL_TABLE_NAME: Tunnel
 }
 
-@pytest.fixture(scope='module')
+
+def del_all_keys(dash_db):
+    for table_name in APP_DB_TO_PROTOBUF_MAP.keys():
+        keys = dash_db.get_app_db_keys(table_name)
+        for key in keys:
+            dash_db.remove_app_db_entry(table_name, key)
+
+
+@pytest.fixture
 def dash_db(dvs):
-    return DashDB(dvs)
+    dash_db = DashDB(dvs)
+    yield dash_db
+    del_all_keys(dash_db)
+
+
+@pytest.fixture(scope="module")
+def dash_db_module(dvs):
+    dash_db = DashDB(dvs)
+    yield dash_db
+    del_all_keys(dash_db)
+
 
 def to_string(value):
     if isinstance(value, bool):
@@ -124,7 +142,6 @@ class DashDB(object):
         table[key] = {'pb': pb_string}
 
     def remove_app_db_entry(self, table_name, *key_parts):
-        # key, _ = self.parse_key_value(args) 
         key = ":".join(key_parts)
         table = ProducerStateTable(self.dvs.get_app_db().db_connection, table_name)
         del table[key]
@@ -186,7 +203,11 @@ class DashDB(object):
                 attr_to_sai_object_map[attrs[attribute]] = key
         return attr_to_sai_object_map
 
-    def get_keys(self, table_name):
+    def get_app_db_keys(self, table_name):
+        table = Table(self.dvs.get_app_db().db_connection, table_name)
+        return table.get_keys()
+
+    def get_asic_db_keys(self, table_name):
         table = Table(self.dvs.get_asic_db().db_connection, table_name)
         return table.get_keys()
 

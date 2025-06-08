@@ -29,8 +29,10 @@ from swsscommon.swsscommon import (
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
+
 @pytest.fixture(autouse=True)
-def common_setup_teardown(dash_db: DashDB):
+def common_setup_teardown(dash_db: DashDB, dvs):
+    dvs.runcmd("swssloglevel -l INFO -c orchagent") 
     dash_db.set_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID, APPLIANCE_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1, VNET_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID, ENI_CONFIG)
@@ -41,16 +43,7 @@ def common_setup_teardown(dash_db: DashDB):
 
     yield
 
-    dash_db.remove_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID)
-    dash_db.remove_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1)
-    dash_db.remove_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1)
-    dash_db.remove_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP1)
-    dash_db.remove_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP2)
-    dash_db.remove_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID)
-    dash_db.remove_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1)
-    dash_db.remove_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID)
-    dash_db.remove_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK)
-    dash_db.remove_app_db_entry(APP_DASH_TUNNEL_TABLE_NAME, TUNNEL1)
+    # cleanup is handled automatically by the dash_db fixture
 
 
 def test_pl_eni_attrs(dash_db: DashDB):
