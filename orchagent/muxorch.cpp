@@ -1286,7 +1286,13 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
         NeighborEntry neighbor;
         MacAddress mac;
 
-        gNeighOrch->getNeighborEntry(nexthop, neighbor, mac);
+        if (!gNeighOrch->getNeighborEntry(nexthop, neighbor, mac))
+        {
+            // Not able to get neighbor entry, so skip.
+            SWSS_LOG_NOTICE("Neighbor entry for nexthop %s not found.",
+                            nexthop.to_string().c_str());
+            continue;
+        }
 
         if (isNeighborActive(neighbor.ip_address, mac, neighbor.alias))
         {
@@ -1631,14 +1637,28 @@ void MuxOrch::update(SubjectType type, void *cntx)
             }
             else
             {
-                updateNeighbor(*update);
+                try
+                {
+                    updateNeighbor(*update);
+                }
+                catch (const std::exception& e)
+                {
+                    SWSS_LOG_ERROR("Exception caught while updating neighbor. Error: %s", e.what());
+                }
             }
             break;
         }
         case SUBJECT_TYPE_FDB_CHANGE:
         {
             FdbUpdate *update = static_cast<FdbUpdate *>(cntx);
-            updateFdb(*update);
+            try
+            {
+                updateFdb(*update);
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_ERROR("Exception caught while updating FDB. Error: %s", e.what());
+            }
             break;
         }
         default:
