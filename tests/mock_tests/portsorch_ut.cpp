@@ -892,6 +892,7 @@ namespace portsorch_test
                 { "speed",               "100000"    },
                 { "autoneg",             "off"       },
                 { "unreliable_los",      "off"       },
+                { "apply_unreliable_los","on"        },
                 { "adv_speeds",          "all"       },
                 { "interface_type",      "none"      },
                 { "adv_interface_types", "all"       },
@@ -998,6 +999,9 @@ namespace portsorch_test
         // Verify unreliablelos
         ASSERT_TRUE(p.m_unreliable_los);
 
+        // Verify apply_unreliablelos
+        ASSERT_TRUE(p.m_apply_unreliable_los);
+
         // Verify advertised speed
         std::set<std::uint32_t> adv_speeds = { 1000, 10000, 100000 };
         ASSERT_EQ(p.m_adv_speeds, adv_speeds);
@@ -1083,6 +1087,7 @@ namespace portsorch_test
                 { "post3",         "0x10,0x12,0x11,0x13"         },
                 { "attn",          "0x80,0x82,0x81,0x83"         },
                 { "unreliable_los","off"                         },
+                { "apply_unreliable_los","off"                   },
                 { "ob_m2lp",       "0x4,0x6,0x5,0x7"             },
                 { "ob_alev_out",   "0xf,0x11,0x10,0x12"          },
                 { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
@@ -1173,6 +1178,9 @@ namespace portsorch_test
 
         // Verify unreliablelos
         ASSERT_EQ(p.m_unreliable_los, false);
+
+        // Verify apply_unreliablelos
+        ASSERT_EQ(p.m_apply_unreliable_los, false);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
