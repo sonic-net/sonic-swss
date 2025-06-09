@@ -6,6 +6,8 @@
 #include <sys/time.h>
 #include "timestamp.h"
 #include <fstream>
+#include <sstream> 
+#include "recorder.h"
 
 using namespace swss;
 
@@ -19,6 +21,19 @@ enum ConstraintType
     RETRY_CST_ECMP          // ecmp resources exhausted
 };
 
+
+inline std::ostream& operator<<(std::ostream& os, ConstraintType t) {
+    switch(t) {
+        case ConstraintType::RETRY_CST_DUMMY:   return os << "RETRY_CST_DUMMY";
+        case ConstraintType::RETRY_CST_NHG:   return os << "RETRY_CST_NHG";
+        case ConstraintType::RETRY_CST_NHG_REF:   return os << "RETRY_CST_NHG_REF";
+        case ConstraintType::RETRY_CST_PIC: return os << "RETRY_CST_PIC";
+        case ConstraintType::RETRY_CST_PIC_REF:  return os << "RETRY_CST_PIC_REF";
+        case ConstraintType::RETRY_CST_ECMP:   return os << "RETRY_CST_ECMP";
+        default:           return os << "UNKNOWN";
+    }
+}
+
 using ConstraintData = std::string;
 using Constraint = std::pair<ConstraintType, ConstraintData>;
 
@@ -26,6 +41,11 @@ const Constraint DUMMY_CONSTRAINT{RETRY_CST_DUMMY, ""};
 
 inline Constraint make_constraint(ConstraintType type, ConstraintData data = "") {
     return {type, data};
+}
+
+template<typename T, typename U>
+std::ostream& operator<<(std::ostream& os, const std::pair<T, U>& p) {
+    return os << "(" << p.first << ", " << p.second << ")";
 }
 
 typedef swss::KeyOpFieldsValuesTuple Task;
@@ -80,6 +100,9 @@ public:
         else
         {
             m_resolvedConstraints.emplace(cst.first, cst.second);
+            std::stringstream ss;
+            ss << cst << " resolution notified -> " << m_retryKeys[cst].size() << " task(s)";
+            Recorder::Instance().retry.record(ss.str());
         }
     }
 
@@ -144,10 +167,17 @@ public:
             }
         }
 
-       if (keys.empty()) {
+        std::stringstream ss;
+        ss << cst << " | " << m_executorName << " | " << tasks->size() << " retried";
+
+        if (keys.empty()) {
             m_retryKeys.erase(cst);
             m_resolvedConstraints.erase(cst);
+        } else {
+            ss << " (rest:" << keys.size() << ")";
         }
+
+        Recorder::Instance().retry.record(ss.str());
 
         return tasks;
     }
