@@ -10,12 +10,23 @@ const std::string Recorder::REC_START = "|recording started";
 const std::string Recorder::SWSS_FNAME = "swss.rec";
 const std::string Recorder::SAIREDIS_FNAME = "sairedis.rec";
 const std::string Recorder::RESPPUB_FNAME = "responsepublisher.rec";
-
+const std::string Recorder::RETRY_FNAME = "retry.rec";
 
 Recorder& Recorder::Instance()
 {
     static Recorder m_recorder;
     return m_recorder;
+}
+
+
+RetryRec::RetryRec() 
+{
+    /* Set Default values */
+    setRecord(true);
+    setRotate(false);
+    setLocation(Recorder::DEFAULT_DIR);
+    setFileName(Recorder::RETRY_FNAME);
+    setName("Retry");
 }
 
 
