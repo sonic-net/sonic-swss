@@ -15,7 +15,7 @@
 struct DashTag {
     sai_ip_addr_family_t m_ip_version;
     std::vector<sai_ip_prefix_t> m_prefixes;
-    std::unordered_map<std::string, uint16_t> m_group_refcnt;
+    std::unordered_set<std::string> m_groups;
 };
 
 bool from_pb(const dash::tag::PrefixTag& data, DashTag& tag);

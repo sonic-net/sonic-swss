@@ -236,7 +236,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     }
     sai_object_id_t ha_set_oid = ha_set_it->second.ha_set_id;
 
-    uint32_t attr_count = 2;
+    const uint32_t attr_count = 2;
     sai_attribute_t ha_scope_attrs[attr_count]={};
     sai_status_t status;
     sai_object_id_t sai_ha_scope_oid = 0UL;

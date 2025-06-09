@@ -104,6 +104,7 @@ orchagent_SOURCES = \
             macsecorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
+            icmporch.cpp \
             srv6orch.cpp \
             response_publisher.cpp \
             nvgreorch.cpp \
