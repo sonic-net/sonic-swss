@@ -3784,7 +3784,7 @@ bool PortsOrch::initPort(const PortConfig &port)
                     port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
                 }
 
-		if (flex_counters_orch->getWredPortCountersState())
+		        if (flex_counters_orch->getWredPortCountersState())
                 {
                     auto wred_port_stats = generateCounterStats(wred_port_stat_ids, sai_serialize_port_stat);
                     wred_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, wred_port_stats);
@@ -4186,6 +4186,25 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it = m_portListLaneMap.erase(it);
                         continue;
                     }
+                    else
+                    {
+                        auto pCfg = m_lanesAliasSpeedMap[it->first];
+                        sai_uint32_t speed = 0;
+                        
+                        getPortSpeed(it->second, speed);
+                        if (pCfg.speed.is_set && speed != pCfg.speed.value)
+                        {
+                            SWSS_LOG_DEBUG("Port %" PRIx64 " speed mismatch: cfg speed %u, hw speed %u lane: %s",
+                                    it->second, 
+                                    pCfg.speed.value, 
+                                    speed,
+                                    swss::join(" ", it->first.cbegin(), it->first.cend()).c_str()
+                            );
+                            portsToRemoveList.push_back(it->second);
+                            it = m_portListLaneMap.erase(it);
+                            continue;
+                        }
+                    }
 
                     it++;
                 }
@@ -4199,11 +4218,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                // Port add comparison logic
+                // Port add comparison logic, add the ports in config DB that are not yet created in HW
                 for (auto it = m_lanesAliasSpeedMap.begin(); it != m_lanesAliasSpeedMap.end();)
                 {
                     if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
                     {
+                        SWSS_LOG_DEBUG("Port %s with speed=%u is not in port list, adding it",
+                                    it->second.key.c_str(), it->second.speed.value);
                         portsToAddList.push_back(it->second);
                         it++;
                         continue;
