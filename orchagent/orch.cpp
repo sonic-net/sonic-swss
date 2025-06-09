@@ -147,7 +147,70 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
+void Orch::createRetryCache(const std::string &executorName) {
+    if (m_retryCaches.find(executorName) == m_retryCaches.end())
+        m_retryCaches[executorName] = std::make_shared<RetryCache>(executorName);
+}
+
+RetryCache *Orch::getRetryCache(const std::string &executorName)
+{
+    if (m_retryCaches.find(executorName) == m_retryCaches.end())
+        return nullptr;
+    else
+        return m_retryCaches[executorName].get();
+}
+
+ConsumerBase* Orch::getConsumerBase(const std::string &executorName)
+{
+    if (m_consumerMap.find(executorName) == m_consumerMap.end())
+        return nullptr;
+    return dynamic_cast<ConsumerBase*>(m_consumerMap[executorName].get());
+}
+
+void ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
+    if (getOrch())
+        getOrch()->getRetryCache(getName())->cache_failed_task(task, cst);
+}
+
+void Orch::addToRetry(const std::string &executorName, const Task &task, const Constraint &cst) {
+    getRetryCache(executorName)->cache_failed_task(task, cst); 
+}
+
+size_t Orch::retryToSync(const std::string &executorName, size_t threshold)
+{
+    auto retryCache = getRetryCache(executorName);
+
+    if (!retryCache || threshold <= 0)
+        return 0;
+
+    std::unordered_set<Constraint>& constraints = retryCache->getResolvedConstraints();
+
+    size_t count = 0;
+
+    for (auto it = constraints.begin(); it != constraints.end() && count < threshold;)
+    {
+        auto cst = *it++;
+
+        auto tasks = retryCache->resolve(cst, threshold - count);
+
+        count += tasks->size();
+
+        getConsumerBase(executorName)->addToSync(tasks, true);
+
+    }
+    return count;
+}
+
+void Orch::notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst)
+{
+    retryOrch->getRetryCache(executorName)->add_resolution(cst);
+}
+
+size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry) {
+    return addToSync(*entries, onRetry);
+}
+
+void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
 {
     SWSS_LOG_ENTER();
 
@@ -156,6 +219,23 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 
     /* Record incoming tasks */
     Recorder::Instance().swss.record(dumpTuple(entry));
+
+    auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
+
+    if (retryCache)
+    {
+        auto it = retryCache->getRetryMap().find(key);
+        if (it != retryCache->getRetryMap().end()) // key exists
+        {
+            if (it->second.second == entry) // skip duplicate task
+                return;
+            
+            auto cache = retryCache->erase_stale_cache(key);
+
+            if (op == SET_COMMAND)
+                m_toSync.emplace(key, std::move(*cache));
+        }
+    }
 
     /*
     * m_toSync is a multimap which will allow one key with multiple values,
@@ -230,20 +310,16 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 
 }
 
-size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries, bool onRetry)
 {
     SWSS_LOG_ENTER();
 
     for (auto& entry: entries)
     {
-        addToSync(entry);
+        addToSync(entry, onRetry);
     }
 
     return entries.size();
-}
-
-size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries) {
-    return addToSync(*entries);
 }
 
 // TODO: Table should be const
@@ -663,8 +739,14 @@ string Orch::objectReferenceInfo(
 
 void Orch::doTask()
 {
+
+    auto threshold = gBatchSize == 0 ? 30000 : gBatchSize;
+
+    size_t count = 0;
+
     for (auto &it : m_consumerMap)
     {
+        count += retryToSync(it.first, threshold - count);
         it.second->drain();
     }
 }
