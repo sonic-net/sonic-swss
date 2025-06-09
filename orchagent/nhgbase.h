@@ -440,6 +440,13 @@ public:
         --nhg_entry.ref_count;
     }
 
+    unsigned getNhgRefCount(const string& index)
+    {
+        SWSS_LOG_ENTER();
+        auto& nhg_entry = m_syncdNextHopGroups.at(index);
+        return nhg_entry.ref_count;
+    }
+
     /* Getters / Setters. */
     static inline unsigned getSyncedNhgCount() { return NhgBase::getSyncedCount(); }
 

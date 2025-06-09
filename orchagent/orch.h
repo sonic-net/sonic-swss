@@ -26,6 +26,7 @@ extern "C" {
 #include "response_publisher.h"
 #include "recorder.h"
 #include "schema.h"
+#include "retrycache.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -174,11 +175,18 @@ public:
     /* record the tuple */
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
 
-    void addToSync(const swss::KeyOpFieldsValuesTuple &entry);
+    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
 
     // Returns: the number of entries added to m_toSync
-    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
-    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries);
+    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
+
+    /**
+     * Move a task to retry cache for future processing
+     * @param task a task tuple
+     * @param cst the constraint for the task
+     */
+    void addToRetry(const Task &task, const Constraint &cst);
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
@@ -264,6 +272,7 @@ typedef enum
 typedef std::pair<swss::DBConnector *, std::string> TableConnector;
 typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector;
 
+
 class Orch
 {
 public:
@@ -296,6 +305,25 @@ public:
     virtual void doTask(swss::SelectableTimer &timer) { }
 
     void dumpPendingTasks(std::vector<std::string> &ts);
+    
+    void createRetryCache(const std::string &executorName);
+    RetryCache* getRetryCache(const std::string &executorName);
+    ConsumerBase* getConsumerBase(const std::string &executorName);
+
+    // Add a task and its constraint to the retry cache 
+    void addToRetry(const std::string &executorName, const Task &task, const Constraint &cst);
+
+    /** Delete tasks whose constraints are resolved in this executor's retry cache , then add them back to its m_toSync.
+     * @param executorName name of the executor (actually a ConsumerBase instance)
+     * @param cst task constraint **/
+    virtual size_t retryToSync(const std::string &executorName, size_t threshold=30000);
+
+    /** Notify the executor that the constraint is already resolved
+     * @param retryOrch the orch to be notified
+     * @param executorName name of the executor to be notified
+     * @param cst the constraint that can be resolved
+     * **/
+    virtual void notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst);
 
     /**
      * @brief Flush pending responses
@@ -303,6 +331,7 @@ public:
     void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
+    RetryCacheMap m_retryCaches;
 
     Orch();
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
