@@ -967,6 +967,7 @@ namespace portsorch_test
                 { "speed",               "100000"            },
                 { "autoneg",             "on"                },
                 { "unreliable_los",      "on"                },
+                { "apply_unreliable_los","on"                },
                 { "adv_speeds",          "1000,10000,100000" },
                 { "interface_type",      "CR"                },
                 { "adv_interface_types", "CR,CR2,CR4,CR8"    },
@@ -1180,7 +1181,7 @@ namespace portsorch_test
         ASSERT_EQ(p.m_unreliable_los, false);
 
         // Verify apply_unreliablelos
-        ASSERT_EQ(p.m_apply_unreliable_los, false);
+        ASSERT_EQ(p.m_apply_unreliable_los, true);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
