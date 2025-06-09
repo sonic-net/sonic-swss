@@ -73,6 +73,11 @@ class TestVnetOrch(object):
         tbl.set(interface + ":" + ip, fvs)
         time.sleep(1)
 
+    def remove_neighbor(self, interface, ip):
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEIGH_TABLE")
+        tbl._del(interface + ":" + ip)
+        time.sleep(1)
+
     def create_route_entry(self, key, pairs):
         tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
         fvs = swsscommon.FieldValuePairs(list(pairs.items()))
@@ -2792,6 +2797,10 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
 
+        self.remove_neighbor("Ethernet8", "9.1.0.1")
+        self.remove_ip_address("Ethernet8", "9.1.0.1/32")
+        self.set_admin_status("Ethernet8", "down")
+
     '''
     Test 29 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover.
     '''
@@ -2941,6 +2950,14 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
+
+        self.remove_neighbor("Ethernet8", "9.1.0.3")
+        self.remove_ip_address("Ethernet8", "9.1.0.3/32")
+        self.set_admin_status("Ethernet8", "down")
+
+        self.remove_neighbor("Ethernet12", "9.1.0.4")
+        self.remove_ip_address("Ethernet12", "9.1.0.4/32")
+        self.set_admin_status("Ethernet12", "down")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
