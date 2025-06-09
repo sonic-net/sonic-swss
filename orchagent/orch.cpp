@@ -174,6 +174,7 @@ void ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
 }
 
 void Orch::addToRetry(const std::string &executorName, const Task &task, const Constraint &cst) {
+    Recorder::Instance().retry.record(getConsumerBase(executorName)->dumpTuple(task).append(CACHE));
     getRetryCache(executorName)->cache_failed_task(task, cst); 
 }
 
@@ -218,8 +219,11 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
     string key = kfvKey(entry);
     string op  = kfvOp(entry);
 
-    /* Record incoming tasks */
-    Recorder::Instance().swss.record(dumpTuple(entry));
+    if (!onRetry)
+        /* Record incoming tasks */
+        Recorder::Instance().swss.record(dumpTuple(entry));
+    else
+        Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
 
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
 

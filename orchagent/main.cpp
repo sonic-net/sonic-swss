@@ -62,6 +62,7 @@ extern bool gIsNatSupported;
 #define SAIREDIS_RECORD_ENABLE 0x1
 #define SWSS_RECORD_ENABLE (0x1 << 1)
 #define RESPONSE_PUBLISHER_RECORD_ENABLE (0x1 << 2)
+#define RETRY_RECORD_ENABLE (0x1 << 3)
 
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
@@ -109,6 +110,7 @@ void sighup_handler(int signo)
     /*
      * Don't do any logging since they are using mutexes.
      */
+    Recorder::Instance().retry.setRotate(true);
     Recorder::Instance().swss.setRotate(true);
     Recorder::Instance().sairedis.setRotate(true);
     Recorder::Instance().respub.setRotate(true);
@@ -361,6 +363,7 @@ int main(int argc, char **argv)
     string record_location = Recorder::DEFAULT_DIR;
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
+    string retry_rec_filename = Recorder::RETRY_FNAME;
     string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
     string vrf;
     bool   enable_zmq = false;
@@ -395,7 +398,7 @@ int main(int argc, char **argv)
             // Disable all recordings if atoi() fails i.e. returns 0 due to
             // invalid command line argument.
             record_type = atoi(optarg);
-            if (record_type < 0 || record_type > 7) 
+            if (record_type < 0 || record_type > 15) 
             {
                 usage();
                 exit(EXIT_FAILURE);
@@ -521,6 +524,13 @@ int main(int argc, char **argv)
     Recorder::Instance().respub.setLocation(record_location);
     Recorder::Instance().respub.setFileName(responsepublisher_rec_filename);
     Recorder::Instance().respub.startRec(false);
+
+    Recorder::Instance().retry.setRecord(
+        (record_type & RETRY_RECORD_ENABLE) == RETRY_RECORD_ENABLE
+    );
+    Recorder::Instance().retry.setLocation(record_location);
+    Recorder::Instance().retry.setFileName(retry_rec_filename);
+    Recorder::Instance().retry.startRec(true);
 
     // Instantiate database connectors
     DBConnector appl_db("APPL_DB", 0);
