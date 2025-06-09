@@ -272,6 +272,8 @@ typedef enum
 
 typedef std::pair<swss::DBConnector *, std::string> TableConnector;
 typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector;
+#define CACHE "| ++++ |"
+#define DECACHE "| ---- |"
 
 class Orch
 {
