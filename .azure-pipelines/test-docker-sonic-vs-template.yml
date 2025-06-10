@@ -100,7 +100,7 @@ jobs:
       # install packages for vs test
       sudo pip3 install pytest flaky exabgp docker redis lcov_cobertura
 
-    # install other dependencies
+      # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
           bridge-utils \
           vlan \
