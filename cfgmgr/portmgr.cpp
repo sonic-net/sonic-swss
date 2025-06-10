@@ -87,13 +87,20 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 
 bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate_limit)
 {
+    // If dhcp_rate_limit is not configured (empty string), do nothing
+    if (dhcp_rate_limit.empty())
+    {
+        SWSS_LOG_DEBUG("DHCP rate limit not configured for port %s, skipping TC configuration", alias.c_str());
+        return true;
+    }
+
     stringstream cmd;
     string res, cmd_str;
     int ret;
-    int byte_rate = stoi(dhcp_rate_limit) * 406;
 
     if (dhcp_rate_limit != "0")
     {
+        int byte_rate = stoi(dhcp_rate_limit) * 406;
         // tc qdisc add dev <port_name> handle ffff: ingress
         // &&
         // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
@@ -109,9 +116,10 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         cmd_str = cmd.str();
         ret = swss::exec(cmd_str, res);
     }
+
     if (!ret)
     {
-
+        return true;
     }
     else if (!isPortStateOk(alias))
     {
@@ -123,7 +131,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     {
         throw runtime_error(cmd_str + " : " + res);
     }
-    return true;
 }
 
 
@@ -228,7 +235,7 @@ void PortMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
-
+            bool dhcp_configured = false;
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -240,9 +247,10 @@ void PortMgr::doTask(Consumer &consumer)
                     dhcp_rate_limit = fvValue(i);
 
                 }
-                else if (fvField(i) == "admin_status")
+                else if (fvField(i) == "dhcp_rate_limit")
                 {
-                    admin_status = fvValue(i);
+                    dhcp_rate_limit = fvValue(i);
+                    dhcp_configured = true; // Mark that dhcp_rate_limit was explicitly configured
                 }
                
                 else
@@ -299,11 +307,10 @@ void PortMgr::doTask(Consumer &consumer)
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
             
-            if (!dhcp_rate_limit.empty())
+            if (dhcp_configured)
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
-
             }
         }
         else if (op == DEL_COMMAND)
