@@ -242,9 +242,9 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     mtu = fvValue(i);
                 }
-                else if (fvField(i) == "dhcp_rate_limit")
+                else if (fvField(i) == "admin_status")
                 {
-                    dhcp_rate_limit = fvValue(i);
+                    admin_status = fvValue(i);
 
                 }
                 else if (fvField(i) == "dhcp_rate_limit")
