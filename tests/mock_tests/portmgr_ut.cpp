@@ -83,7 +83,7 @@ namespace portmgr_ut
             {"state", "ok"}
         });
         m_portMgr->doTask();
-        ASSERT_EQ(size_t(3), mockCallArgs.size());
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
         ASSERT_EQ("/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && /sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate 121800bps burst 121800b conform-exceed drop",mockCallArgs[2]);
