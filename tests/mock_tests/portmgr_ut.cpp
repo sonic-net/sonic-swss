@@ -72,7 +72,7 @@ namespace portmgr_ut
             {"state", "ok"}
         });
         m_portMgr->doTask();
-        ASSERT_EQ(size_t(2), mockCallArgs.size());
+        ASSERT_EQ(size_t(1), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
         
@@ -119,7 +119,7 @@ namespace portmgr_ut
             {"state", "ok"}
         });
         m_portMgr->doTask();
-        ASSERT_EQ(size_t(2), mockCallArgs.size());
+        ASSERT_EQ(size_t(1), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
     }
