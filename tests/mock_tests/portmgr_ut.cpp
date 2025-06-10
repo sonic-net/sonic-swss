@@ -122,7 +122,7 @@ namespace portmgr_ut
             {"index", "1"},
             {"mtu", "1518"},
             {"admin_status", "up"}
-            ??{"dhcp_rate_limit", "1"}
+            //{"dhcp_rate_limit", "1"}
 
         });
 
