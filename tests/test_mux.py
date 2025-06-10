@@ -761,8 +761,8 @@ class TestMuxTunnelBase():
 
         print("Test deleting then creating neighbors:")
         for states in mux_states:
-            initial_states = states[:len(mux_states)/2]
-            final_states = states[len(mux_states)/2:]
+            initial_states = states[:len(mux_ports)]
+            final_states = states[len(mux_ports):]
 
             print(f"Test delete neighbors in {str(initial_states)} then creating in {str(final_states)}")
 
@@ -803,16 +803,20 @@ class TestMuxTunnelBase():
                 self.set_mux_state(appdb, port, mux_states[i])
 
             # Delete neighbor
+            print(f"Delete Neighbor on {mux_ports[0]}: {nexthops[0]}")
             self.del_neighbor(dvs, nexthops[0])
 
             # Add neighbor on other port:
+            print(f"Add Neighbor on {mux_ports[1]} in {state} state: {new_neighbor}")
             self.add_neighbor(dvs, new_neighbor, macs[1])
 
             # Check route is pointing to nexthop[1] (if Active) or tunnel nexthop
             self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, mux_states, expect_active=(state == ACTIVE))
 
             # Delete neighbor on other port:
+            print(f"Delete Neighbor on {mux_ports[1]} in {state} state: {new_neighbor}")
             self.del_neighbor(dvs, new_neighbor)
+            self.add_neighbor(dvs, nexthops[0], macs[0])
 
     def multi_nexthop_test_fdb(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops, macs):
         '''
@@ -843,7 +847,7 @@ class TestMuxTunnelBase():
         '''
         print("Test setting 0 mac neighbors for route with multiple mux nexthops")
         for nexthop in nexthops:
-            print("Triggering neighbor del for %s" % (nexthop))
+            print("Triggering neighbor unresolved for %s" % (nexthop))
             self.add_neighbor(dvs, nexthop, "00:00:00:00:00:00")
             self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, mux_ports, nexthops)
 
@@ -853,7 +857,7 @@ class TestMuxTunnelBase():
         '''
         print("Test adding neighbors for route with multiple mux nexthops")
         for i,nexthop in enumerate(nexthops):
-            print("Triggering neighbor add for %s" % (nexthop))
+            print("Triggering neighbor resolved for %s" % (nexthop))
             self.add_neighbor(dvs, nexthop, macs[i])
             self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, mux_ports, nexthops)
 
@@ -947,7 +951,7 @@ class TestMuxTunnelBase():
             self.add_route(dvs, route_B_ipv6, ipv6_nexthops)
 
             self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv4)
-            self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv6)
+            self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs, mux_neighbor_ipv6)
 
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs)
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs)
