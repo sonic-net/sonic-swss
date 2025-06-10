@@ -121,8 +121,8 @@ namespace portmgr_ut
             {"speed", "50000"},
             {"index", "1"},
             {"mtu", "1518"},
-            {"admin_status", "up"},
-            {"dhcp_rate_limit", "1"}
+            {"admin_status", "up"}
+            ??{"dhcp_rate_limit", "1"}
 
         });
 
