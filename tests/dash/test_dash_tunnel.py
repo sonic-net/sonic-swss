@@ -8,7 +8,7 @@ from swsscommon.swsscommon import (
 )
 
 import dash_configs as dc
-from dash_db import dash_db, DashDB
+from dash_db import dash_db_module, dash_db, DashDB
 from dvslib.sai_utils import assert_sai_attribute_exists
 import sai_attrs as sai
 import dash_api.route_type_pb2 as rt
@@ -123,13 +123,13 @@ def verify_sai_tunnel(dash_db, tunnel_oid, tunnel_config, prev_member_keys=None)
     )
 
 
-@pytest.fixture(scope="module", autouse=True)
-def common_setup_teardown(dvs, dash_db: DashDB):
-    dash_db.set_app_db_entry(
+@pytest.fixture(autouse=True)
+def common_setup_teardown(dash_db_module: DashDB):
+    dash_db_module.set_app_db_entry(
         APP_DASH_APPLIANCE_TABLE_NAME, dc.APPLIANCE_ID, dc.APPLIANCE_CONFIG
     )
     yield
-    dash_db.remove_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, dc.APPLIANCE_ID)
+    dash_db_module.remove_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, dc.APPLIANCE_ID)
 
 
 @pytest.fixture(autouse=True)
