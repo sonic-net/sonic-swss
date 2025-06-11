@@ -12,6 +12,8 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "subscriberstatetable.h"
+#include <net/ethernet.h>
+#include <netpacket/packet.h>
 
 using namespace swss;
 
@@ -79,6 +81,8 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
             m_cfgVoqInbandInterfaceTable = unique_ptr<Table>(new Table(cfgDb, CFG_VOQ_INBAND_INTERFACE_TABLE_NAME));
         }
     }
+
+    neighRefreshInit();
 }
 
 bool NbrMgr::isIntfStateOk(const string &alias)
@@ -625,4 +629,262 @@ bool NbrMgr::delKernelNeigh(string odev, IpAddress ip_addr)
 
     SWSS_LOG_INFO("Deleted Nbr for %s on interface %s", ip_str.c_str(), odev.c_str());
     return true;
+}
+
+unsigned long long NbrMgr::get_currtime_ms(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+    {
+        return ((((unsigned long long)ts.tv_sec) * 1000) + (((unsigned long long)ts.tv_nsec)/1000000));
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("NbrMgrCache: GetTime Failed");
+    }
+
+    return 0;
+}
+
+
+bool NbrMgr::is_time_elapsed_ms(unsigned long long time_to_chk, unsigned long long elaspe_time)
+{
+    unsigned long long curr_time_ms = 0;
+
+    curr_time_ms = get_currtime_ms();
+    if(curr_time_ms)
+    {
+        if((curr_time_ms - time_to_chk) > elaspe_time)
+            return true;
+    }
+
+    return false;
+}
+
+// Send Arp Refresh / Neigh Solicitation message periodically
+void NbrMgr::refreshTimer()
+{
+    int num_refresh = 0;
+    static int timer = 0;
+
+    timer++;
+
+    if(!(timer % NEIGH_REFRESH_INTERVAL))
+    {
+        auto it = m_neighCache.begin();
+        while (it != m_neighCache.end())
+        {
+            if (!(it->second.state & NUD_IN_TIMER))
+            {
+                it++;
+                continue;
+            }
+            if(is_time_elapsed_ms(it->second.start_time, it->second.refresh_timeout))
+            {
+                sendRefresh(it->first.ip_address , it->first.alias, it->second.mac_address);
+
+                it->second.start_time        = get_currtime_ms();
+                it->second.refresh_timeout  = get_refresh_timeout(it->first.ip_address.isV4());
+                it->second.num_refresh_sent++;
+                num_refresh++;
+
+                if(!(num_refresh % NEIGH_REFRESH_TX_THRESHOLD))
+                {
+                    SWSS_LOG_NOTICE("NbrRefresh: Neighbor Refresh Timeout - Exceeded Threshold, total sent so far - %d", num_refresh);
+                }
+            }
+            it++;
+        }
+        timer = 0;
+        SWSS_LOG_INFO("NbrRefresh: Neighbor Refresh Timeout - End, total sent - %d", num_refresh);
+    }
+
+    return;
+}
+
+bool NbrMgr::neighRefreshInit()
+{
+    //Socket to send ARP request packet
+    m_sock_fd[0] = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if(m_sock_fd[0] < 0)
+    {
+        SWSS_LOG_ERROR("NbrRefresh: Arp Refresh socket create failed %d, err(%d):%s ",m_sock_fd[0], errno, strerror(errno));
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("NbrRefresh: Arp Refresh socket created sock_fd - %d ",m_sock_fd[0]);
+
+    /*TODO: Enable after merging neigh ageout config
+    m_ipv4_arp_timeout = DEFAULT_ARP_AGEOUT;
+    m_ipv6_nd_timeout  = DEFAULT_NS_AGEOUT;
+
+    updateReferenceAgeout();
+    */
+
+    return true;
+}
+
+int NbrMgr::buildArpPkt(unsigned char* pkt, IpAddress tgt_ip, MacAddress tgt_mac, IpAddress src_ip, MacAddress src_mac)
+{
+    struct ethhdr eth_hdr;
+    struct arphdr arp_hdr;
+    uint32_t ipaddr = 0;
+    uint8_t *pkt_buff = pkt;
+
+    memset(&eth_hdr, 0x0, sizeof(eth_hdr));
+    memcpy(&eth_hdr.src, src_mac.getMac(), 6);
+    memcpy(&eth_hdr.dst, tgt_mac.getMac(), 6);
+    eth_hdr.type = htons(0x806);
+    memcpy (pkt_buff, &eth_hdr, sizeof(eth_hdr));
+
+    pkt_buff = pkt_buff + sizeof(eth_hdr);
+    memset(&arp_hdr, 0x0, sizeof(arp_hdr));
+    arp_hdr.ar_hdr = htons(0x1);
+    arp_hdr.ar_pro = htons(0x800);
+    arp_hdr.ar_hln = 6;
+    arp_hdr.ar_pln = 4;
+    arp_hdr.ar_op  = htons(0x1);
+
+    memcpy( &arp_hdr.ar_sha, src_mac.getMac(), 6);
+    ipaddr = src_ip.getV4Addr();
+    memcpy( &arp_hdr.ar_sip, (uint8_t*)(&ipaddr), 4);
+    ipaddr = tgt_ip.getV4Addr();
+    memcpy( &arp_hdr.ar_tip, (uint8_t*)(&ipaddr), 4);
+
+    memcpy(pkt_buff, &arp_hdr, sizeof(arp_hdr));
+
+    return (sizeof(eth_hdr) +sizeof(arp_hdr));
+}
+
+bool NbrMgr::sendRefresh(IpAddress ip, string ifname, MacAddress dstMac)
+{
+    MacAddress src_mac;
+    IpAddress src_ip;
+    uint8_t pkt[256];
+    int pkt_len = 0;
+    long int ret = 0;
+    uint32_t ifidx = 0;
+
+    if(ip.getIp().family != AF_INET)
+    {
+        return true;
+    }
+
+    src_mac = getIntfsMac(ifname);
+
+    ifidx = if_nametoindex(ifname.c_str());
+    if(!ifidx)
+    {
+        SWSS_LOG_ERROR("NbrRefresh: IFname to ifidx failed %s", ifname.c_str());
+        return false;
+    }
+
+    src_ip = getIntfIpAddress(ifname, ip);
+    if(src_ip == IpAddress("0.0.0.0"))
+    {
+        SWSS_LOG_ERROR("NbrRefresh: Src IP Not Found: Ifindex - %s (%d) Src-mac - %s, Tgt-ip - %s, Tgt-mac - %s ",
+                ifname.c_str(),ifidx, src_mac.to_string().c_str(), ip.to_string().c_str(), dstMac.to_string().c_str());
+
+        return false;
+    }
+
+    //TODO: Change Notice to Info
+    SWSS_LOG_NOTICE("NbrRefresh: Ifindex - %s (%d) Src-ip - %s, Src-mac - %s, Tgt-ip - %s, Tgt-mac - %s ",
+    ifname.c_str(),ifidx, src_ip.to_string().c_str(), src_mac.to_string().c_str(), ip.to_string().c_str(), dstMac.to_string().c_str());
+
+    if(ip.getIp().family == AF_INET)
+    {
+        struct sockaddr_ll dst;
+
+        //build the ARP packet
+        pkt_len =  buildArpPkt(pkt, ip, dstMac, src_ip, src_mac);
+
+        memset (&dst, 0x0, sizeof(dst));
+        dst.sll_family      = AF_PACKET;
+        dst.sll_ifindex     = ifidx;
+        dst.sll_protocol    = htons(ETH_P_ALL);
+        dst.sll_halen       = ETH_ALEN;
+        dstMac.getMac(dst.sll_addr);
+
+        ret = sendto(m_sock_fd[0], pkt, pkt_len, 0, (struct sockaddr *)&dst, sizeof(dst));
+        if(ret < 0)
+            SWSS_LOG_ERROR("NbrRefresh: Arp Send failed for IP %s intf %s, err(%d): %s", ip.to_string().c_str(), ifname.c_str(), errno, strerror(errno));
+        else
+            SWSS_LOG_DEBUG("NbrRefresh: Arp Sent for IP %s intf %s, ret %ld ", ip.to_string().c_str(), ifname.c_str(), ret);
+    }
+
+    return true;
+}
+
+MacAddress NbrMgr::getIntfsMac(const string& ifname)
+{
+    MacAddress intfMac = getSystemMac();
+
+    std::string intfName = ifname.c_str();
+    std::string res;
+    string file = "/sys/class/net/"+intfName+"/address";
+    bool exists = false;
+
+    res = readLineFromFile(file, &exists);
+    if (!exists)
+    {
+        SWSS_LOG_ERROR("NbrRefresh: intf %s doesnt exist", ifname.c_str());
+    }
+    else
+    {
+        if(!res.empty())
+        {
+            intfMac = MacAddress(res);
+        }
+        else
+        {
+            SWSS_LOG_INFO("NbrRefresh: intf %s doesnt have valid MAC", ifname.c_str());
+        }
+    }
+    return intfMac;
+}
+
+MacAddress NbrMgr::getSystemMac(void)
+{
+    return m_system_mac;
+}
+
+string NbrMgr::readLineFromFile(const string file, bool *exists)
+{
+    ifstream fp(file);
+    if (!fp.is_open())
+    {
+        SWSS_LOG_ERROR("NbrRefresh: File %s is not readable", file.c_str());
+        *exists = false;
+        return "";
+    }
+    string line="";
+    getline(fp, line);
+    if (line.empty())
+    {
+        SWSS_LOG_NOTICE("NbrRefresh: File %s is empty", file.c_str());
+    }
+    *exists = true;
+    fp.close();
+
+    return string(line);
+}
+
+
+unsigned long long NbrMgr::get_refresh_timeout(bool isV4)
+{
+    if(isV4)
+    {
+        return (((1 + rand ()) % (((TIMEOUT_MAX_PERCENT - TIMEOUT_MIN_PERCENT) * m_ref_timeout_v4 )/100)) +  ((TIMEOUT_MIN_PERCENT * m_ref_timeout_v4)/100));
+    }
+    else
+    {
+        return (((1 + rand ()) % (((TIMEOUT_MAX_PERCENT - TIMEOUT_MIN_PERCENT) * m_ref_timeout_v6 )/100)) +  ((TIMEOUT_MIN_PERCENT * m_ref_timeout_v6)/100));
+    }
+}
+
+IpAddress NbrMgr::getIntfIpAddress(string ifname, IpAddress dst_ip)
+{
+    //TODO: function defined in Interface Cache PR
+    return IpAddress("0.0.0.0");
 }
