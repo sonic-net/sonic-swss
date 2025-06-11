@@ -1225,6 +1225,7 @@ namespace portsorch_test
                 { "speed",               "100000"            },
                 { "fec",                 "rs"                },
                 { "mtu",                 "9100"              },
+                { "apply_unreliable_los","on"                },
                 { "admin_status",        "up"                }
             }
         }};
