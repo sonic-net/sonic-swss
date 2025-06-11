@@ -6,6 +6,7 @@
 #include "netmsg.h"
 #include "ipprefix.h"
 #include "dbconnector.h"
+#include "lib/orch_zmq_config.h"
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
@@ -145,12 +146,13 @@ static decltype(auto) makeNlAddr(const T& ip)
 
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
+    m_zmqClient(create_local_zmq_client("orch_route_zmq_enabled", false)),
+    m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
-    m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
+    m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
@@ -781,7 +783,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     {
         if (!warmRestartInProgress)
         {
-            m_routeTable.del(destipprefix);
+            m_routeTable->del(destipprefix);
             return;
         }
         else
@@ -862,7 +864,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 
     if (!warmRestartInProgress)
     {
-        m_routeTable.set(destipprefix, fvVector);
+        m_routeTable->set(destipprefix, fvVector);
         SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
                        destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
                        proto_str.c_str());
@@ -1091,7 +1093,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 
         if (!warmRestartInProgress)
         {
-            m_routeTable.del(routeTableKey);
+            m_routeTable->del(routeTableKey);
             m_srv6SidListTable.del(srv6SidListTableKey);
             return;
         }
@@ -1137,7 +1139,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         }
         if (!warmRestartInProgress)
         {
-            m_routeTable.set(routeTableKey, fvVectorRoute);
+            m_routeTable->set(routeTableKey, fvVectorRoute);
             SWSS_LOG_DEBUG("RouteTable set msg: %s vpn_sid: %s src_addr:%s",
                         routeTableKey, vpn_sid_str.c_str(),
                         src_addr_str.c_str());
@@ -1610,7 +1612,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     {
         if (!warmRestartInProgress)
         {
-            m_routeTable.del(destipprefix);
+            m_routeTable->del(destipprefix);
             return;
         }
         else
@@ -1648,7 +1650,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
             fvVector.push_back(proto);
-            m_routeTable.set(destipprefix, fvVector);
+            m_routeTable->set(destipprefix, fvVector);
             return;
         }
         case RTN_UNICAST:
@@ -1734,7 +1736,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                     SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
                                     destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 
-                    m_routeTable.del(destipprefix);
+                    m_routeTable->del(destipprefix);
                 }
                 else
                 {
@@ -1790,12 +1792,12 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     {
         if(nhg_id)
         {
-            m_routeTable.set(destipprefix, fvVector);
+            m_routeTable->set(destipprefix, fvVector);
             SWSS_LOG_INFO("RouteTable set msg: %s %d ", destipprefix, nhg_id);
         }
         else
         {
-            m_routeTable.set(destipprefix, fvVector);
+            m_routeTable->set(destipprefix, fvVector);
             SWSS_LOG_INFO("RouteTable set msg: %s %s %s %s", destipprefix,
                        gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
         }
@@ -1959,7 +1961,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        m_label_routeTable.del(destaddr);
+        m_label_routeTable->del(destaddr);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -1992,7 +1994,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
             fvVector.push_back(proto);
-            m_label_routeTable.set(destaddr, fvVector);
+            m_label_routeTable->set(destaddr, fvVector);
             return;
         }
         case RTN_UNICAST:
@@ -2035,7 +2037,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     }
     fvVector.push_back(mpls_pop);
 
-    m_label_routeTable.set(destaddr, fvVector);
+    m_label_routeTable->set(destaddr, fvVector);
     SWSS_LOG_INFO("LabelRouteTable set msg: %s %s %s %s", destaddr,
                   gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 }
