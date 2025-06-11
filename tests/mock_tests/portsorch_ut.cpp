@@ -2422,7 +2422,8 @@ namespace portsorch_test
 
         entries.push_back({"Ethernet0", "SET",
                            {
-                               {"fec", "rs"}
+                               {"fec", "rs"},
+                               { "apply_unreliable_los", "on"}
                            }});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(entries);
