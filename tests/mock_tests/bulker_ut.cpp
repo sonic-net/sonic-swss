@@ -4,6 +4,7 @@
 
 extern sai_route_api_t *sai_route_api;
 extern sai_neighbor_api_t *sai_neighbor_api;
+extern sai_next_hop_api_t *sai_next_hop_api;
 
 EXTERN_MOCK_FNS
 
@@ -66,6 +67,9 @@ namespace bulker_test
 
             delete sai_neighbor_api;
             sai_neighbor_api = nullptr;
+
+            delete sai_next_hop_api;
+            sai_next_hop_api = nullptr;
         }
     };
 
