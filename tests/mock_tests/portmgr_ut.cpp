@@ -311,7 +311,7 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(2), mockCallArgs.size());
          
         string expected_cmd = "/sbin/tc qdisc add dev \"Ethernet0\" handle ffff: ingress && "
-                            "/sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32"
+                            "/sbin/tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 "
                             "match ip protocol 17 0xff match ip dport 67 0xffff "
                             "police rate 40600bps burst 40600b conform-exceed drop";
         ASSERT_EQ(expected_cmd, mockCallArgs[1]);
