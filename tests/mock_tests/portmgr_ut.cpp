@@ -313,7 +313,7 @@ namespace portmgr_ut
                             "tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 "
                             "match ip protocol 17 0xff match ip dport 67 0xffff "
                             "police rate 40600bps burst 40600b conform-exceed drop";
-        ASSERT_EQ(expected_cmd, mockCallArgs[0]);
+        ASSERT_EQ(expected_cmd, mockCallArgs[1]);
         
         // Verify the value was written to APP_DB
         app_port_table.get("Ethernet0", values);
