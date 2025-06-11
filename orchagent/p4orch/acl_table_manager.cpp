@@ -503,6 +503,12 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
         LOG_ERROR_AND_RETURN(
             status.prepend("Failed to create ACL table with key " + QuotedVar(app_db_entry.acl_table_name)));
     }
+    // Add the default rule in PRE_INGRESS table
+    if (acl_table_definition.stage == SAI_ACL_STAGE_PRE_INGRESS) {
+       gP4Orch->getAclRuleManager()
+          ->addDefaultAclRuleInPreIngressTable(
+              acl_table_definition.acl_table_name);
+    }
     return status;
 }
 
