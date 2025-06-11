@@ -1,6 +1,7 @@
 #include "table.h"
 #include "producerstatetable.h"
 #include "producertable.h"
+#include "publishereventtable.h"
 #include <set>
 #include <memory>
 
@@ -99,6 +100,14 @@ namespace swss
         }
     }
 
+    void PublisherEventTable::set(const std::string &key,
+                    const std::vector<FieldValueTuple> &values,
+                    const std::string &op,
+                    const std::string &prefix)
+    {
+        Table::set(key, values, op, prefix);
+    }
+
     void Table::getKeys(std::vector<std::string> &keys)
     {
         keys.clear();
@@ -116,7 +125,12 @@ namespace swss
             table->second.erase(key);
         }
     }
-    
+
+    void PublisherEventTable::del(const std::string &key, const std::string& /* op */, const std::string& /*prefix*/)
+    {
+        Table::del(key);
+    }
+
     void ProducerStateTable::set(const std::string &key,
                                  const std::vector<FieldValueTuple> &values,
                                  const std::string &op,

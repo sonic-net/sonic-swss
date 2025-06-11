@@ -3,6 +3,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "publishereventtable.h"
 #include "orch.h"
 
 #include <map>
@@ -30,7 +31,8 @@ public:
 private:
     ProducerStateTable m_appIntfTableProducer;
     Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable;
-    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
+    Table m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
+    PublisherEventTable m_statePortTable;
     Table m_neighTable;
 
     SubIntfMap m_subIntfList;
