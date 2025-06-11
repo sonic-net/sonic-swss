@@ -308,7 +308,7 @@ namespace portmgr_ut
         m_portMgr->doTask();
         
         // Verify the TC commands for DHCP rate limiting
-        ASSERT_EQ(size_t(1), mockCallArgs.size());
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
         string expected_cmd = "tc qdisc add dev \"Ethernet0\" handle ffff: ingress && "
                             "tc filter add dev \"Ethernet0\" protocol ip parent ffff: prio 1 u32 "
                             "match ip protocol 17 0xff match ip dport 67 0xffff "
