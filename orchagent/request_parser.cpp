@@ -197,6 +197,9 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
             case REQ_T_UINT_LIST:
                 attr_item_uint_list_[fvField(*i)] = parseUintList(fvValue(*i));
                 break;
+            case REQ_T_BOOL_LIST:
+                attr_item_bool_list_[fvField(*i)] = parseBoolList(fvValue(*i));
+                break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
         }
@@ -361,6 +364,25 @@ sai_packet_action_t Request::parsePacketAction(const std::string& str)
     }
 
     return found->second;
+}
+
+vector<bool> Request::parseBoolList(const std::string& str)
+{
+    try
+    {
+        vector<bool> res;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            res.emplace_back(parseBool(substr));
+        }
+        return res;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid boolean list: ") + str);
+    }
 }
 
 vector<IpAddress> Request::parseIpAddressList(const std::string& str)

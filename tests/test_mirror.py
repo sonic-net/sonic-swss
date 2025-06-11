@@ -403,6 +403,9 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.sdb, "LAG_TABLE")
         tbl._del("PortChannel" + channel)
         time.sleep(1)
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+        tbl._del("PortChannel" + channel)
+        time.sleep(1)
 
     def create_port_channel_member(self, channel, interface):
         tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")

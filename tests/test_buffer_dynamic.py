@@ -905,7 +905,7 @@ class TestBufferMgrDyn(object):
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
 
 
-    def test_bufferPoolPercentage(self, dvs, testlog):
+    def test_bufferPoolCalculation(self, dvs, testlog):
         self.setup_db(dvs)
 
         try:
@@ -914,6 +914,7 @@ class TestBufferMgrDyn(object):
             pass
 
         try:
+            # Test 1: Test the buffer pool calculation with a percentage
             percentage = 75
             margin = 1
 
@@ -931,6 +932,45 @@ class TestBufferMgrDyn(object):
 
             real_percentage = percentage_size * 100 / original_size
             assert abs(percentage - real_percentage) < margin
+
+            # Test 2: Test the buffer pool calculation with a port with multiple queues
+            # Store existing Ethernet0 entries for restoration
+            original_eth0_entries = {}
+            eth0_keys = self.config_db.get_keys('BUFFER_QUEUE')
+            for key in eth0_keys:
+                if key.startswith('Ethernet0|'):
+                    original_eth0_entries[key] = self.config_db.get_entry('BUFFER_QUEUE', key)
+                    self.config_db.delete_entry('BUFFER_QUEUE', key)
+
+            # Startup port
+            dvs.port_admin_set('Ethernet0', 'up')
+
+            # Create buffer profile
+            self.config_db.update_entry('BUFFER_PROFILE', 'egress_test_profile',
+                                      {'dynamic_th': '0',
+                                       'pool': 'egress_lossy_pool',
+                                       'size': '16384'})
+
+            # Create buffer queue entries
+            self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|0-7', {'profile': 'egress_test_profile'})
+            self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|8-12', {'profile': 'egress_test_profile'})
+            self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|13-19', {'profile': 'egress_test_profile'})
+
+            # Run lua script and check output
+            _, output = dvs.runcmd("redis-cli --eval /usr/share/swss/buffer_pool_vs.lua")
+            assert re.search(r"debug:BUFFER_PROFILE_TABLE:egress_test_profile:16384:20", output), "Profile reference count not found in output"
+
         finally:
+            # Remove objects in reverse order
+            self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|13-19')
+            self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|8-12')
+            self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|0-7')
+            self.config_db.delete_entry('BUFFER_PROFILE', 'egress_test_profile')
+            dvs.port_admin_set('Ethernet0', 'down')
+
+            # Restore original Ethernet0 entries
+            for key, value in original_eth0_entries.items():
+                self.config_db.update_entry('BUFFER_QUEUE', key, value)
+
             self.config_db.delete_entry('BUFFER_POOL', 'ingress_lossless_pool')
             self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)
