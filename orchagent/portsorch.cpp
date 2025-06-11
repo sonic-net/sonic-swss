@@ -4668,7 +4668,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (pCfg.apply_port_unreliable_los.is_set)
 		{       
 			/* after the unreliable_los apply flag is set in APPL_DB, mark the m_apply_unreliable_los flag to set the unlos setting upon
-			 * a Port flap */
+                         * a Port flap */
                         p.m_apply_unreliable_los = true;
                         p.m_apply_unreliable_los_interface_type = pCfg.apply_port_unreliable_los.intf_type;
                         m_portList[p.m_alias] = p;
