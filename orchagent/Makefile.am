@@ -67,6 +67,7 @@ orchagent_SOURCES = \
             copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
+            buffer/bufferhelper.cpp \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
@@ -80,6 +81,8 @@ orchagent_SOURCES = \
             saiattr.cpp \
             switch/switch_capabilities.cpp \
             switch/switch_helper.cpp \
+            switch/trimming/capabilities.cpp \
+            switch/trimming/helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
             pfcactionhandler.cpp \

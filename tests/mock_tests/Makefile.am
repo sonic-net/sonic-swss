@@ -97,6 +97,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \
                 $(top_srcdir)/orchagent/tunneldecaporch.cpp \
                 $(top_srcdir)/orchagent/qosorch.cpp \
+                $(top_srcdir)/orchagent/buffer/bufferhelper.cpp \
                 $(top_srcdir)/orchagent/bufferorch.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
@@ -110,6 +111,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/saiattr.cpp \
                 $(top_srcdir)/orchagent/switch/switch_capabilities.cpp \
                 $(top_srcdir)/orchagent/switch/switch_helper.cpp \
+                $(top_srcdir)/orchagent/switch/trimming/capabilities.cpp \
+                $(top_srcdir)/orchagent/switch/trimming/helper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
