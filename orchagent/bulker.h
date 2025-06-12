@@ -1225,8 +1225,8 @@ private:
         }
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
-        sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
-            , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
+        sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data(),
+                               SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("ObjectBulker.flush setting_entries %zu\n", count);

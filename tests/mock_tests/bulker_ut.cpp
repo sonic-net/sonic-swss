@@ -37,10 +37,7 @@ namespace bulker_test
 
             ASSERT_EQ(sai_next_hop_api, nullptr);
             sai_next_hop_api = new sai_next_hop_api_t();
-        }
 
-        void PostSetUp()
-        {
             INIT_SAI_API_MOCK(next_hop);
             MockSaiApis();
             old_object_create = sai_next_hop_api->create_next_hops;
@@ -51,17 +48,14 @@ namespace bulker_test
             sai_next_hop_api->set_next_hops_attribute = mock_set_next_hops_attribute;
         }
 
-        void PreTearDown()
+        void TearDown() override
         {
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(next_hop);
             sai_next_hop_api->create_next_hops = old_object_create;
             sai_next_hop_api->remove_next_hops = old_object_remove;
             sai_next_hop_api->set_next_hops_attribute = old_object_set_attribute;
-        }
 
-        void TearDown() override
-        {
             delete sai_route_api;
             sai_route_api = nullptr;
 
@@ -219,10 +213,12 @@ namespace bulker_test
         // Create bulker
         ObjectBulker<sai_next_hop_api_t> gNextHopBulker(sai_next_hop_api, 0x0, 1000);
         vector<sai_attribute_t> next_hop_attrs;
+        vector<sai_object_id_t> next_hop_ids = {0x101, 0x102};
+        vector<sai_status_t> statuses;
         sai_attribute_t next_hop_attr;
-        sai_object_id_t next_hop_id_0 = 0x0;
-        sai_object_id_t next_hop_id_1 = 0x1;
-        std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+        sai_object_id_t next_hop_id_0;
+        sai_object_id_t next_hop_id_1;
+        std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
 
         // Create 2 next hops
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
@@ -238,7 +234,7 @@ namespace bulker_test
         next_hop_attr.value.oid = 0x0;
         next_hop_attrs.push_back(next_hop_attr);
 
-        gNextHopBulker.create_entry(&next_hop_id_0 , (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
+        gNextHopBulker.create_entry(&next_hop_id_0, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
         next_hop_attrs.clear();
 
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
@@ -254,11 +250,14 @@ namespace bulker_test
         next_hop_attr.value.oid = 0x0;
         next_hop_attrs.push_back(next_hop_attr);
 
-        gNextHopBulker.create_entry(&next_hop_id_1 , (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
+        gNextHopBulker.create_entry(&next_hop_id_1, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
         next_hop_attrs.clear();
 
         EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(next_hop_ids.begin(), next_hop_ids.end()),
+                SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                Return(SAI_STATUS_SUCCESS)));
         gNextHopBulker.flush();
 
         // Update the nexthops
@@ -280,7 +279,6 @@ namespace bulker_test
         gNextHopBulker.flush();
 
         // Delete the nexthops
-        vector<sai_status_t> statuses;
         statuses.emplace_back();
         gNextHopBulker.remove_entry(&statuses.back(), next_hop_id_0);
         statuses.emplace_back();
