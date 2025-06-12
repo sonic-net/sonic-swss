@@ -273,12 +273,18 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_route_flow_counter_enabled = false;
                         }
                     }
+
                     if (gSrv6Orch && (key == SRV6_KEY))
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
                     }
 
-                    gPortsOrch->flushCounters();
+                    // Check for null for gPortsOrch before flush. For fabric mode, its not initialized.
+                    if (gPortsOrch)
+                    {
+                        gPortsOrch->flushCounters();
+                    }
+
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
                     if (gPortsOrch && gPortsOrch->isGearboxEnabled())
