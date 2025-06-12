@@ -779,7 +779,6 @@ void HFTelProfile::initTelemetry()
     sai_object_id_t sai_tam_collector_obj = m_sai_tam_collector_obj;
 
     // Create TAM telemetry object
-    sai_object = m_sai_tam_collector_obj;
     attr.id = SAI_TAM_TELEMETRY_ATTR_COLLECTOR_LIST;
     attr.value.objlist.count = 1;
     attr.value.objlist.list = &sai_tam_collector_obj;
@@ -792,11 +791,27 @@ void HFTelProfile::initTelemetry()
             gSwitchId, static_cast<uint32_t>(attrs.size()),
             attrs.data()));
 
+    HFTELUTILS_ADD_SAI_OBJECT_LIST(
+        m_sai_tam_obj,
+        SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST,
+        sai_object,
+        SAI_API_TAM,
+        tam,
+        tam);
+
     m_sai_tam_telemetry_obj = move(
         sai_guard_t(
             new sai_object_id_t(sai_object),
-            [](sai_object_id_t *p)
+            [=](sai_object_id_t *p)
             {
+                HFTELUTILS_DEL_SAI_OBJECT_LIST(
+                    m_sai_tam_obj,
+                    SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST,
+                    *p,
+                    SAI_API_TAM,
+                    tam,
+                    tam);
+
                 handleSaiRemoveStatus(
                     SAI_API_TAM,
                     sai_tam_api->remove_tam_telemetry(*p));
