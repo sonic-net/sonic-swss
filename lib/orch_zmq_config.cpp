@@ -5,6 +5,7 @@
 #include "dbconnector.h"
 #include "logger.h"
 #include "orch_zmq_config.h"
+#include <stdio.h>
 
 #define ZMQ_TABLE_CONFIGFILE       "/etc/swss/orch_zmq_tables.conf"
 
@@ -72,10 +73,12 @@ bool swss::get_feature_status(std::string feature, bool default_value)
     auto enabled = config_db.hget("DEVICE_METADATA|localhost", feature);
     if (!enabled)
     {
+        printf("Not found feature %s status, return default value.\n", feature.c_str());
         SWSS_LOG_NOTICE("Not found feature %s status, return default value.", feature.c_str());
         return default_value;
     }
 
+    printf("Get feature %s status: %s\n", feature.c_str(), enabled->c_str());
     SWSS_LOG_NOTICE("Get feature %s status: %s", feature.c_str(), enabled->c_str());
     return *enabled == "true";
 }
