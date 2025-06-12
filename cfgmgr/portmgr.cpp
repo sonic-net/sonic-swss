@@ -90,7 +90,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     // If dhcp_rate_limit is not configured (empty string), do nothing
     if (dhcp_rate_limit.empty())
     {
-        SWSS_LOG_DEBUG("DHCP rate limit not configured for port %s, skipping TC configuration", alias.c_str());
+        //SWSS_LOG_DEBUG("DHCP rate limit not configured for port %s, skipping TC configuration", alias.c_str());
         return true;
     }
 
@@ -121,12 +121,12 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     {
         return true;
     }
-    else if (!isPortStateOk(alias))
-    {
-        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
-        SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-        return false;
-    }
+    // else if (!isPortStateOk(alias))
+    // {
+    //     // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+    //     //SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+    //     return false;
+    // }
     else
     {
         throw runtime_error(cmd_str + " : " + res);
