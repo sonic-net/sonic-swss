@@ -12,7 +12,7 @@
 #include "zmqorch.h"
 #undef protected
 
-#define MAX_RETRY = 10
+#define MAX_RETRY     10
 
 using namespace std;
 
