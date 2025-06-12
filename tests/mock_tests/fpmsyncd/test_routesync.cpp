@@ -5,6 +5,7 @@
 #include "mock_table.h"
 #define private public
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/fpmlink.h"
 #undef private
 
 #include <arpa/inet.h>
@@ -17,6 +18,7 @@
 
 using namespace swss;
 using namespace testing;
+using namespace ut_fpmsyncd;
 
 #define MAX_PAYLOAD 1024
 
@@ -831,7 +833,7 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
 
         vector<FieldValueTuple> fvs;
         EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
-        EXPECT_EQ(fvs.size(), 3);
+        EXPECT_EQ(fvs.size(), 4);
         for (const auto& fv : fvs) {
             if (fvField(fv) == "nexthop") {
                 EXPECT_EQ(fvValue(fv), test_gateway);
@@ -839,6 +841,8 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
                 EXPECT_EQ(fvValue(fv), "Ethernet1");
             } else if (fvField(fv) == "protocol") {
                 EXPECT_EQ(fvValue(fv), "static");
+            } else if (fvField(fv) == "nexthop_group") {
+                EXPECT_EQ(fvValue(fv), "");
             }
         }
     }
@@ -1020,4 +1024,485 @@ TEST_F(FpmSyncdResponseTest, TestGetNextHopWt)
     rtnl_route_add_nexthop(test_route.get(), nh2);
 
     EXPECT_EQ(m_mockRouteSync.getNextHopWt(test_route.get()), "1,1");
+}
+
+
+TEST_F(FpmSyncdResponseTest, TestOnSrv6VpnRouteMsg_Add_NHG)
+{
+    cout << "[UT Debug] TestOnSrv6VpnRouteMsg_Add_NHG begins" << endl;
+
+    std::string dst_prefix = "2001:db8::/64";
+    std::string encap_src = "2001:db8::1";
+    std::string vpn_sid = "2001:db8::2";
+    uint16_t vrf_table_id = 100;
+    uint32_t pic_id = 67;
+    uint32_t nhg_id = 12;
+
+    // Create IpAddress and IpPrefix Object
+    IpAddress _encap_src_obj = IpAddress(encap_src);
+    IpAddress _vpn_sid_obj = IpAddress(vpn_sid);
+    IpPrefix _dst_obj = IpPrefix(dst_prefix);
+
+    // Create Srv6 Vpn route netlink msg
+    struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(
+        RTM_NEWSRV6VPNROUTE,
+        &_dst_obj,
+        &_encap_src_obj,
+        &_vpn_sid_obj,
+        vrf_table_id,
+        64,
+        AF_INET6,
+        RTN_UNICAST,
+        nhg_id,
+        pic_id);
+    if (!nl_obj) {
+        ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+        return;
+    }
+
+    // Mock using getIfName to return vrfname
+    EXPECT_CALL(m_mockRouteSync, getIfName(vrf_table_id, _, _))
+        .Times(2)
+        .WillRepeatedly(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Vrf100", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    /* for case: not found pic_it or nhg_it
+     * nothing to check and would return.
+     */
+    cout << "[UT Debug] Test pic_it/nhg_it not found" << endl;
+    m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj->n, nl_obj->n.nlmsg_len);
+
+    // Construct PIC Group
+    NextHopGroup pic_group(pic_id, encap_src, "sr0");
+    pic_group.vpn_sid = vpn_sid;
+    pic_group.seg_src = encap_src;
+    m_mockRouteSync.m_nh_groups.insert({pic_id, pic_group});
+
+    // Construct NHG
+    vector<pair<uint32_t, uint8_t>> nhg_data;
+    nhg_data.push_back(make_pair(1, 1));
+    NextHopGroup nh_group(nhg_id, nhg_data);
+    nh_group.nexthop = "fe80::1";
+    nh_group.intf = "eth0";
+    m_mockRouteSync.m_nh_groups.insert({nhg_id, nh_group});
+
+    // Call the target function
+    m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj->n, nl_obj->n.nlmsg_len);
+
+    // Check whether use the m_routeTable.set
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+    std::vector<FieldValueTuple> fvs;
+    std::string key = "Vrf100:" + dst_prefix;
+
+    //EXPECT_TRUE(route_table.get(key, fvs));
+    bool found = route_table.get(key, fvs);
+    std::cout << "[UT Debug] Route table get(" << key << ") returned: "
+              << (found ? "true" : "false") << std::endl;
+
+    EXPECT_TRUE(found);
+
+    /* Print the fvs */
+    for (const auto& fv : fvs) {
+        std::cout << "Field: " << fvField(fv) << ", Value: " << fvValue(fv) << std::endl;
+    }
+
+    for (const auto& fv : fvs) {
+        if (fvField(fv) == "pic_context_id") {
+            EXPECT_EQ(fvValue(fv), "67");
+        } else if (fvField(fv) == "nexthop_group") {
+            EXPECT_EQ(fvValue(fv), "12");
+        }
+    }
+
+    // Check whether use the m_nexthop_groupTable.set
+    Table nhg_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
+    std::vector<FieldValueTuple> fvs_nhg;
+    std::string key_nhg = m_mockRouteSync.getNextHopGroupKeyAsString(nhg_id);
+
+    bool found_nhg = nhg_table.get(key_nhg.c_str(), fvs_nhg);
+    std::cout << "[UT Debug] NHG table get (" << key_nhg << ") returned: "
+              << (found_nhg ? "true" : "false") << std::endl;
+
+    EXPECT_TRUE(found_nhg);
+
+    /* Print the fvs_nhg*/
+    for (const auto& fv_nhg : fvs_nhg) {
+        std::cout << "Field: " << fvField(fv_nhg) << ", Value: " << fvValue(fv_nhg) << std::endl;
+    }
+
+    for (const auto& fv_nhg : fvs_nhg) {
+        if (fvField(fv_nhg) == "seg_src") {
+            EXPECT_EQ(fvValue(fv_nhg), "2001:db8::1");
+        }
+    }
+
+    // Free the memory
+    free(nl_obj);
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnSrv6VpnRouteMsg_NH)
+{
+    cout << "[UT Debug] TestOnSrv6VpnRouteMsg_Add_Single begins" << endl;
+    std::string dst_prefix = "2001:db8:1::/64";
+    std::string encap_src = "2001:db8:1::1";
+    std::string vpn_sid = "2001:db8:1::2";
+    uint16_t vrf_table_id = 101;
+    uint32_t pic_id = 89;
+    uint32_t nhg_id = 34;
+
+    /* Create IpAddress and IpPrefix Object */
+    IpAddress _encap_src_obj = IpAddress(encap_src);
+    IpAddress _vpn_sid_obj = IpAddress(vpn_sid);
+    IpPrefix _dst_obj = IpPrefix(dst_prefix);
+
+    /* Mock using getIfName to return vrfname */
+    EXPECT_CALL(m_mockRouteSync, getIfName(vrf_table_id, _, _))
+        .Times(11)
+        .WillRepeatedly(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Vrf101", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    /*-----------------------------------------------*/
+    /* Test 1: Create and process ADD message for NH */
+    /*-----------------------------------------------*/
+    {
+        cout << "[UT Debug] Test 1: Create and process ADD msg for NH" << endl;
+
+        /* Create Srv6 Vpn route netlink msg with ADD cmd */
+        struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(
+            RTM_NEWSRV6VPNROUTE,
+            &_dst_obj,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            vrf_table_id,
+            64,
+            AF_INET6,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!nl_obj) {
+            ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+            return;
+        }
+
+        /* Construct PIC Group */
+        NextHopGroup pic_group(pic_id, encap_src, "sr0");
+        pic_group.vpn_sid = vpn_sid;
+        pic_group.seg_src = encap_src;
+        m_mockRouteSync.m_nh_groups.insert({pic_id, pic_group});
+
+        /* Construct NHG with no group */
+        NextHopGroup nh_group(nhg_id, "fe80::2", "eth1");
+        nh_group.nexthop = "fe80::2";
+        nh_group.intf = "eth1";
+        m_mockRouteSync.m_nh_groups.insert({nhg_id, nh_group});
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj->n, nl_obj->n.nlmsg_len);
+
+        /* Check whether use the m_routeTable.set */
+        Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+        std::vector<FieldValueTuple> fvs;
+        std::string key = "Vrf101:" + dst_prefix;
+
+        bool found = route_table.get(key, fvs);
+        std::cout << "[UT Debug] Route table get(" << key << ") returned: "
+                    << (found ? "true" : "false") << std::endl;
+
+        EXPECT_TRUE(found);
+
+        /* Print the fvs */
+        for (const auto& fv : fvs) {
+            std::cout << "Field: " << fvField(fv) << ", Value: " << fvValue(fv) << std::endl;
+        }
+
+        for (const auto& fv : fvs) {
+            if (fvField(fv) == "nexthop") {
+                EXPECT_EQ(fvValue(fv), "2001:db8:1::1");
+            } else if (fvField(fv) == "vpn_sid") {
+                EXPECT_EQ(fvValue(fv), "2001:db8:1::2");
+            } else if (fvField(fv) == "seg_src") {
+                EXPECT_EQ(fvValue(fv), "2001:db8:1::1");
+            } else if (fvField(fv) == "ifname") {
+                EXPECT_EQ(fvValue(fv), "eth1");
+            }
+        }
+
+        /* Free the memory */
+        free(nl_obj);
+    }
+
+    /*-----------------------------------------------*/
+    /* Test 2: Create and process DEL message for NH */
+    /*-----------------------------------------------*/
+    {
+        cout << "[UT Debug] Test 2: Create and process DEL msg for NH" << endl;
+
+        /* Create Srv6 Vpn route netlink msg with DEL cmd */
+        struct nlmsg *del_nl_obj = create_srv6_vpn_route_nlmsg(
+            RTM_DELSRV6VPNROUTE,
+            &_dst_obj,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            vrf_table_id,
+            64,
+            AF_INET6,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!del_nl_obj) {
+            ADD_FAILURE() << "Failed to create SRv6 DEL Route message";
+            return;
+        }
+
+        /* Currently only consider the non-WarmRestart case */
+
+        /* Call the target function for DEL */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&del_nl_obj->n, del_nl_obj->n.nlmsg_len);
+
+        /* Check whether use the m_routeTable.set */
+        Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+        std::vector<FieldValueTuple> fvs;
+        std::string key = "Vrf101:" + dst_prefix;
+
+        /* Check whether the route was deleted */
+        bool found = route_table.get(key, fvs);
+        std::cout << "[UT Debug] Route table after delete get(" << key << ") returned: "
+                    << (found ? "true" : "false") << std::endl;
+
+        EXPECT_FALSE(found);
+
+        free(del_nl_obj);
+    }
+
+    /*-----------------------------*/
+    /* Test 3: Test other branches */
+    /*-----------------------------*/
+    // Case 1: no DST
+    {
+        cout << "[UT Debug] Test 3 Case 1: Add msg, no DST" << endl;
+
+        /* Create a route message without RTA_DST */
+        struct nlmsg *nl_obj_no_dst = create_srv6_vpn_route_nlmsg(
+            RTM_NEWSRV6VPNROUTE,
+            nullptr,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            vrf_table_id,
+            64,
+            AF_INET6,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!nl_obj_no_dst) {
+            ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+            return;
+        }
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj_no_dst->n, nl_obj_no_dst->n.nlmsg_len);
+
+        /* No need to check anything, free the memory */
+        free(nl_obj_no_dst);
+    }
+
+    // Case 2: AF_INET6 with too large dst bitlen
+    {
+        cout << "[UT Debug] Test 3 Case 2: Add msg, AF_INET6 dst bitlen > 128" << endl;
+
+        /* Create a route message with too large dst bitlen */
+        struct nlmsg *nl_obj_large_bitlen = create_srv6_vpn_route_nlmsg(
+            RTM_NEWSRV6VPNROUTE,
+            &_dst_obj,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            vrf_table_id,
+            130,
+            AF_INET6,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!nl_obj_large_bitlen) {
+            ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+            return;
+        }
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj_large_bitlen->n, nl_obj_large_bitlen->n.nlmsg_len);
+
+        /* No need to check anything, free the memory */
+        free(nl_obj_large_bitlen);
+    }
+
+    // Case 3: AF_INET6 with max dst bitlen
+    {
+        cout << "[UT Debug] Test 3 Case 3: Add msg, AF_INET6 dst bitlen == 128" << endl;
+
+        /* Create a route message with max dst bitlen */
+        struct nlmsg *nl_obj_max_bitlen = create_srv6_vpn_route_nlmsg(
+            RTM_NEWSRV6VPNROUTE,
+            &_dst_obj,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            vrf_table_id,
+            128,
+            AF_INET6,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!nl_obj_max_bitlen) {
+            ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+            return;
+        }
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj_max_bitlen->n, nl_obj_max_bitlen->n.nlmsg_len);
+
+        /* No need to check anything, free the memory */
+        free(nl_obj_max_bitlen);
+    }
+
+    // Case 4: wrong nlmsg_type, neither RTM_NEWSRV6VPNROUTE nor RTM_DELSRV6VPNROUTE
+    {
+        cout << "[UT Debug] Test 3 Case 4: Wrong nlmsg_type, neither RTM_NEWSRV6VPNROUTE nor RTM_DELSRV6VPNROUTE" << endl;
+
+        /* Create a route message with wrong nlmsg_type */
+        struct nlmsg *nl_obj_wrong_nlmsg_type = create_srv6_vpn_route_nlmsg(
+            RTM_NEWSRV6LOCALSID,
+            &_dst_obj,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            vrf_table_id,
+            64,
+            AF_INET6,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!nl_obj_wrong_nlmsg_type) {
+            ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+            return;
+        }
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj_wrong_nlmsg_type->n, nl_obj_wrong_nlmsg_type->n.nlmsg_len);
+
+        /* No need to check anything, free the memory */
+        free(nl_obj_wrong_nlmsg_type);
+    }
+
+    // Case 5: wrong rtm_type
+    {
+        cout << "[UT Debug] Test 3 Case 5: Wrong rtm_type, check in loop" << endl;
+
+        /* List of rtm_types to test */
+        int types_to_test[] = {
+            RTN_BLACKHOLE,
+            RTN_UNREACHABLE,
+            RTN_PROHIBIT,
+            RTN_MULTICAST,
+            RTN_BROADCAST,
+            RTN_LOCAL,
+            __RTN_MAX       // default case
+        };
+
+        for (int rtm_type : types_to_test) {
+            struct nlmsg *nl_obj_wrong_rtm_type = create_srv6_vpn_route_nlmsg(
+                RTM_NEWSRV6VPNROUTE,
+                &_dst_obj,
+                &_encap_src_obj,
+                &_vpn_sid_obj,
+                vrf_table_id,
+                64,
+                AF_INET6,
+                static_cast<uint8_t>(rtm_type),
+                nhg_id,
+                pic_id);
+            if (!nl_obj_wrong_rtm_type) {
+                ADD_FAILURE() << "Failed to create SRv6 VPN Route message with type " << rtm_type;
+                continue;
+            }
+
+            cout << "[UT Debug] Testing rtm_type: " << rtm_type << endl;
+            /* Call the target function */
+            m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj_wrong_rtm_type->n, nl_obj_wrong_rtm_type->n.nlmsg_len);
+
+            /* No need to check anything, free the memory */
+            free(nl_obj_wrong_rtm_type);
+        }
+    }
+
+    // Case 6: invalid rtm_family
+    {
+        cout << "[UT Debug] Test 3 case 6: Invalid rtm_family" << endl;
+
+        /* Create a route message with invalid rtm_family */
+        struct nlmsg *nl_obj_invalid_rtm_family = create_srv6_vpn_route_nlmsg(
+            RTM_NEWSRV6VPNROUTE,
+            &_dst_obj,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            vrf_table_id,
+            64,
+            AF_LOCAL,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!nl_obj_invalid_rtm_family) {
+            ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+            return;
+        }
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj_invalid_rtm_family->n, nl_obj_invalid_rtm_family->n.nlmsg_len);
+
+        /* No need to check anything, free the memory */
+        free(nl_obj_invalid_rtm_family);
+    }
+
+    // Case 7: create RTA_TABLE
+    {
+        cout << "[UT Debug] Test 3 case 7: create RTA_TABLE" << endl;
+
+        /* Create a route message with RTA_TABLE */
+        struct nlmsg *nl_obj_RTA_TABLE = create_srv6_vpn_route_nlmsg(
+            RTM_NEWSRV6VPNROUTE,
+            &_dst_obj,
+            &_encap_src_obj,
+            &_vpn_sid_obj,
+            257,    // set vrf_table_id > 256
+            64,
+            AF_INET6,
+            RTN_UNICAST,
+            nhg_id,
+            pic_id);
+        if (!nl_obj_RTA_TABLE) {
+            ADD_FAILURE() << "Failed to create SRv6 VPN Route message";
+            return;
+        }
+
+        /* Mock using getIfName to return vrfname, vrf_table_id == 257 */
+        EXPECT_CALL(m_mockRouteSync, getIfName(257, _, _))
+            .WillOnce(DoAll(
+                [](int32_t, char* ifname, size_t size) {
+                    strncpy(ifname, "Vrf257", size);
+                    ifname[size-1] = '\0';
+                },
+                Return(true)
+            ));
+
+        /* Call the target function */
+        m_mockRouteSync.onSrv6VpnRouteMsg(&nl_obj_RTA_TABLE->n, nl_obj_RTA_TABLE->n.nlmsg_len);
+
+        /* No need to check anything, free the memory */
+        free(nl_obj_RTA_TABLE);
+    }
 }

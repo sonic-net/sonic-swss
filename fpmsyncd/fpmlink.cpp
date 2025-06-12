@@ -33,6 +33,11 @@ void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
         rta = RTA_NEXT(rta, len);
     }
 }
+void netlink_parse_rtattr_nested(struct rtattr **tb, int max,
+				 const struct rtattr *rta)
+{
+	netlink_parse_rtattr(tb, max, (struct rtattr *)RTA_DATA(rta), (int)RTA_PAYLOAD(rta));
+}
 
 bool FpmLink::isRawProcessing(struct nlmsghdr *h)
 {
@@ -281,7 +286,17 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
             /* EVPN Type5 Add route processing */
             processRawMsg(nl_hdr);
         }
-	else if(nl_hdr->nlmsg_type == RTM_NEWNEXTHOP || nl_hdr->nlmsg_type == RTM_DELNEXTHOP)
+        else if(nl_hdr->nlmsg_type == RTM_NEWSRV6VPNROUTE || nl_hdr->nlmsg_type == RTM_DELSRV6VPNROUTE)
+        {
+            /* rtnl api dont support RTM_NEWNEXTHOP/RTM_DELNEXTHOP yet. Processing as raw message*/
+            processRawMsg(nl_hdr);
+        }
+	    else if(nl_hdr->nlmsg_type == RTM_NEWNEXTHOP || nl_hdr->nlmsg_type == RTM_DELNEXTHOP)
+        {
+            /* rtnl api dont support RTM_NEWNEXTHOP/RTM_DELNEXTHOP yet. Processing as raw message*/
+            processRawMsg(nl_hdr);
+        }
+        else if(nl_hdr->nlmsg_type == RTM_NEWPICCONTEXT || nl_hdr->nlmsg_type == RTM_DELPICCONTEXT)
         {
             /* rtnl api dont support RTM_NEWNEXTHOP/RTM_DELNEXTHOP yet. Processing as raw message*/
             processRawMsg(nl_hdr);
