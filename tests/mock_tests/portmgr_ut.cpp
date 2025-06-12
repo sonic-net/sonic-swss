@@ -330,7 +330,7 @@ namespace portmgr_ut
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
         
-        ASSERT_EQ(size_t(1), mockCallArgs.size());
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[0]);
         
         // Verify empty string is written to APP_DB when rate limit is 0
