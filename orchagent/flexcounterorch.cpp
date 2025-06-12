@@ -283,7 +283,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (gPortsOrch)
                     {
                         gPortsOrch->flushCounters();
-		    }
+                    }
 
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
