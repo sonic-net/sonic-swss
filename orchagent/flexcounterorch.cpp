@@ -271,7 +271,8 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                     }
                     // Check for null for gPortsOrch before flush. For fabric mode, its not initialized.
-                    if(gPortsOrch) {
+                    if (gPortsOrch)
+                    {
                         gPortsOrch->flushCounters();
 		    }
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
