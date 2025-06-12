@@ -531,6 +531,8 @@ void BufferMgr::doTask(Consumer &consumer)
             }
             else if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME)
             {
+                bool admin_status_found = false;
+
                 for (auto i : kfvFieldsValues(t))
                 {
                     if (fvField(i) == "speed")
@@ -540,7 +542,16 @@ void BufferMgr::doTask(Consumer &consumer)
                     if (fvField(i) == "admin_status")
                     {
                         m_portStatusLookup[port] = fvValue(i);
+                        admin_status_found = true;
                     }
+                }
+                
+                // Ensure admin_status is set to "down" if not received
+                if (!admin_status_found)
+                {
+                    /* CONFIG_DB producer may not always generate admin_status field for down ports. */
+                    SWSS_LOG_INFO("admin_status is not available for port %s, assuming default down", port.c_str());
+                    m_portStatusLookup[port] = "down";
                 }
 
                 if (m_speedLookup.count(port) != 0)
