@@ -9,15 +9,32 @@ from swsscommon import swsscommon
 
 @pytest.mark.usefixtures('dvs_lag_manager')
 class TestPortchannel(object):
+    def update_port_state(self, dvs, port_id, state):
+        #|n|port_state_change|[{"port_id":"oid:0x1000000000008","port_state":"SAI_PORT_OPER_STATUS_UP"}]|
+
+        port_sai_state = {"down":       "SAI_PORT_OPER_STATUS_DOWN",
+                         "up":          "SAI_PORT_OPER_STATUS_UP"}
+
+        ntf = swsscommon.NotificationProducer(swsscommon.DBConnector(0, dvs.redis_sock, 0), "NOTIFICATIONS")
+        fvp = swsscommon.FieldValuePairs()
+        ntf_data = "[{\"port_id\":\""+port_id+"\",\"port_state\":\""+port_sai_state[state]+"\"}]"
+        ntf.send("port_state_change", ntf_data, fvp)
+
     def test_Portchannel(self, dvs, testlog):
 
         # create port channel
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         ps = swsscommon.ProducerStateTable(db, "LAG_TABLE")
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "1500")])
 
         ps.set("PortChannel0001", fvs)
 
+        # set port-channel oper status
+        tbl_app = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "1500"),("oper_status", "up")])
+        tbl_app.set("PortChannel0001", fvs)
+        
         # create port channel member
         ps = swsscommon.ProducerStateTable(db, "LAG_MEMBER_TABLE")
         fvs = swsscommon.FieldValuePairs([("status", "enabled")])
@@ -133,6 +150,8 @@ class TestPortchannel(object):
         for portchannel in portchannelNamesAuto:
             tbl.set(portchannel[0], fvs)
 
+        time.sleep(1)
+
         fvs_no_lacp_key = swsscommon.FieldValuePairs(
             [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up")])
         tbl.set(portchannelNames[0][0], fvs_no_lacp_key)
@@ -144,6 +163,7 @@ class TestPortchannel(object):
         fvs_set_number_lacp_key = swsscommon.FieldValuePairs(
             [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up"), ("lacp_key", "564")])
         tbl.set(portchannelNames[2][0], fvs_set_number_lacp_key)
+
         time.sleep(1)
 
         # Add members to PortChannels
@@ -403,7 +423,7 @@ class TestPortchannel(object):
 
         # remove port channel
         tbl = swsscommon.Table(cdb, "PORTCHANNEL")
-        tbl._del("PortChannel0002")
+        tbl._del("PortChannel002")
         time.sleep(1)
 
     def test_portchannel_member_netdev_oper_status(self, dvs, testlog):
@@ -451,6 +471,200 @@ class TestPortchannel(object):
         assert status is True
         fvs = dict(fvs)
         assert fvs['netdev_oper_status'] == 'up'
+
+        # remove port-channel members
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL_MEMBER")
+        tbl._del("PortChannel111|Ethernet0")
+        tbl._del("PortChannel111|Ethernet4")
+
+        # remove port-channel
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL")
+        tbl._del("PortChannel111")
+
+        # wait for port-channel deletion
+        time.sleep(1)
+
+    def test_portchannel_collection_distribution(self, dvs, testlog):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+        # create port-channel
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
+        tbl.set("PortChannel111", fvs)
+
+        # set port-channel oper status
+        tbl_app = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
+        tbl_app.set("PortChannel111", fvs)
+
+        # add members to port-channel
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("PortChannel111|Ethernet0", fvs)
+        tbl.set("PortChannel111|Ethernet4", fvs)
+
+        # wait for port-channel netdev creation
+        time.sleep(1)
+
+        # create port channel member
+        lagm_tbl = swsscommon.ProducerStateTable(app_db, "LAG_MEMBER_TABLE")
+        fvs = swsscommon.FieldValuePairs([("status", "enabled")])
+
+        lagm_tbl.set("PortChannel111:Ethernet0", fvs)
+        lagm_tbl.set("PortChannel111:Ethernet4", fvs)
+
+        # set netdev oper status
+        (exitcode, _) = dvs.runcmd("ip link set up dev Ethernet0")
+        assert exitcode == 0, "ip link set failed"
+
+        (exitcode, _) = dvs.runcmd("ip link set up dev Ethernet4")
+        assert exitcode == 0, "ip link set failed"
+
+        (exitcode, _) = dvs.runcmd("ip link set dev PortChannel111 carrier on")
+        assert exitcode == 0, "ip link set failed"
+
+        # notify port up
+        self.update_port_state(dvs, dvs.asicdb.portnamemap["Ethernet0"], "up")
+        self.update_port_state(dvs, dvs.asicdb.portnamemap["Ethernet4"], "up")
+        time.sleep(1)
+
+        # check asic db
+        asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        lagtbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lags = lagtbl.getKeys()
+        assert len(lags) == 1
+
+        lagmtbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lagms = lagmtbl.getKeys()
+        assert len(lagms) == 2
+
+        # expecting both members are enabled
+        for lagm in lagms:
+            (status, fvs) = lagmtbl.get(lagm)
+            fvs = dict(fvs)
+            assert status
+
+            assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "false"
+            assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "false"
+
+        # set port-channel oper status down, expecting both members are disabled
+        tbl_app = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "down")])
+        tbl_app.set("PortChannel111", fvs)
+
+        time.sleep(1)
+
+        for lagm in lagms:
+            (status, fvs) = lagmtbl.get(lagm)
+            fvs = dict(fvs)
+            assert status
+
+            assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "true"
+            assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "true"
+
+        # set port-channel oper status up, expecting both members are enabled
+        tbl_app = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
+        tbl_app.set("PortChannel111", fvs)
+
+        time.sleep(1)
+
+        for lagm in lagms:
+            (status, fvs) = lagmtbl.get(lagm)
+            fvs = dict(fvs)
+            assert status
+
+            assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "false"
+            assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "false"
+
+        # set port-channel member Ethernet0 oper status down, expecting Ethernet0 disabled
+        # Ethernet0 oper status
+        print("update port state")
+        self.update_port_state(dvs, dvs.asicdb.portnamemap["Ethernet0"], "down")
+        time.sleep(1)
+
+        for lagm in lagms:
+            (status, fvs) = lagmtbl.get(lagm)
+            fvs = dict(fvs)
+            assert status
+
+            assert "SAI_LAG_MEMBER_ATTR_PORT_ID" in fvs
+            if dvs.asicdb.portoidmap[fvs.pop("SAI_LAG_MEMBER_ATTR_PORT_ID")] == "Ethernet0":
+                assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "true"
+                assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "true"
+            else:
+                assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "false"
+                assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "false"
+
+
+        # set port-channel oper status down, expecting both Ethernet0 and Ethernet4 are disabled
+        tbl_app = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "down")])
+        tbl_app.set("PortChannel111", fvs)
+
+        time.sleep(1)
+
+        for lagm in lagms:
+            (status, fvs) = lagmtbl.get(lagm)
+            fvs = dict(fvs)
+            assert status
+
+            assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "true"
+            assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "true"
+
+        # set port-channel oper status up, expecting Ethernet0 is disabled because of its status
+        tbl_app = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
+        tbl_app.set("PortChannel111", fvs)
+        time.sleep(1)
+
+        for lagm in lagms:
+            (status, fvs) = lagmtbl.get(lagm)
+            fvs = dict(fvs)
+            assert status
+
+            assert "SAI_LAG_MEMBER_ATTR_PORT_ID" in fvs
+            if dvs.asicdb.portoidmap[fvs.pop("SAI_LAG_MEMBER_ATTR_PORT_ID")] == "Ethernet0":
+                assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "true"
+                assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "true"
+            else:
+                assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "false"
+                assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+                assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "false"
+
+
+        #notify Ethernet0 oper up, expecting collection/dsitribution enabled
+        self.update_port_state(dvs, dvs.asicdb.portnamemap["Ethernet0"], "up")
+        time.sleep(1)
+
+        for lagm in lagms:
+            (status, fvs) = lagmtbl.get(lagm)
+            fvs = dict(fvs)
+            assert status
+
+            assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "false"
+            assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+            assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "false"
+
 
         # remove port-channel members
         tbl = swsscommon.Table(config_db, "PORTCHANNEL_MEMBER")
