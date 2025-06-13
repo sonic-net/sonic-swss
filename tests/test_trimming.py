@@ -64,7 +64,7 @@ def queueCounters(dvs):
 
 @pytest.mark.usefixtures("dvs_switch_manager")
 @pytest.mark.usefixtures("testlog")
-class TestTrimmingBasicFlows:
+class TestTrimmingFlows:
     @pytest.fixture(scope="class")
     def switchData(self):
         trimlogger.info("Initialize switch data")
@@ -84,6 +84,8 @@ class TestTrimmingBasicFlows:
 
         trimlogger.info("Deinitialize switch data")
 
+
+class TestTrimmingBasicFlows(TestTrimmingFlows):
     @pytest.mark.parametrize(
         "attrDict,saiAttrDict", [
             pytest.param(
@@ -123,6 +125,206 @@ class TestTrimmingBasicFlows:
             sai_switch_id=switchId,
             sai_qualifiers=sai_attr_dict
         )
+
+
+@pytest.mark.usefixtures("genericConfig")
+@pytest.mark.usefixtures("restoreConfig")
+class TestTrimmingNegativeFlows(TestTrimmingFlows):
+    @pytest.fixture(scope="class")
+    def genericConfig(self, switchData):
+        trimlogger.info("Add generic configuration")
+
+        switchId = switchData["id"]
+
+        attr_dict = {
+            "size": "100",
+            "dscp_value": "10",
+            "queue_index": "1"
+        }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "100",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": "10",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "1"
+        }
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        yield
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        trimlogger.info("Verify generic configuration")
+
+    @pytest.fixture(scope="function")
+    def restoreConfig(self, switchData, request):
+        switchId = switchData["id"]
+
+        attrDict = request.getfixturevalue("attrDict")
+        saiAttrDict = request.getfixturevalue("saiAttrDict")
+
+        yield
+
+        attr_dict = {}
+
+        if attrDict.size is not None:
+            attr_dict = {
+                "size": "100"
+            }
+
+        if attrDict.dscp is not None:
+            attr_dict = {
+                "dscp_value": "10"
+            }
+
+        if attrDict.queue is not None:
+            attr_dict = {
+                "queue_index": "1"
+            }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {}
+
+        if saiAttrDict.size is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "100"
+            }
+
+        if saiAttrDict.dscp is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": "10"
+            }
+
+        if saiAttrDict.queue is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
+                "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "1"
+            }
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        trimlogger.info("Verify configuration rollback: {}".format(str(attrDict)))
+
+    @pytest.mark.parametrize(
+        "attrDict,saiAttrDict", [
+            pytest.param(
+                TrimmingTuple(size="", dscp=None, queue=None),
+                TrimmingTupleSai(size="100", dscp=None, mode=None, queue=None),
+                id="size-empty"
+            ),
+            pytest.param(
+                TrimmingTuple(size="-1", dscp=None, queue=None),
+                TrimmingTupleSai(size="100", dscp=None, mode=None, queue=None),
+                id="size-min-1"
+            ),
+            pytest.param(
+                TrimmingTuple(size="4294967296", dscp=None, queue=None),
+                TrimmingTupleSai(size="100", dscp=None, mode=None, queue=None),
+                id="size-max+1"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp="", queue=None),
+                TrimmingTupleSai(size=None, dscp="10", mode=None, queue=None),
+                id="dscp-empty"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp="-1", queue=None),
+                TrimmingTupleSai(size=None, dscp="10", mode=None, queue=None),
+                id="dscp-min-1"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp="64", queue=None),
+                TrimmingTupleSai(size=None, dscp="10", mode=None, queue=None),
+                id="dscp-max+1"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp=None, queue=""),
+                TrimmingTupleSai(size=None, dscp=None, mode=SAI_QUEUE_MODE_DICT["static"], queue="1"),
+                id="queue-empty"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp=None, queue="-1"),
+                TrimmingTupleSai(size=None, dscp=None, mode=SAI_QUEUE_MODE_DICT["static"], queue="1"),
+                id="queue-min-1"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp=None, queue="256"),
+                TrimmingTupleSai(size=None, dscp=None, mode=SAI_QUEUE_MODE_DICT["static"], queue="1"),
+                id="queue-max+1"
+            )
+        ]
+    )
+    def test_TrimNegValueOutOfBound(self, switchData, attrDict, saiAttrDict):
+        switchId = switchData["id"]
+
+        attr_dict = {}
+
+        if attrDict.size is not None:
+            attr_dict = {
+                "size": attrDict.size
+            }
+
+        if attrDict.dscp is not None:
+            attr_dict = {
+                "dscp_value": attrDict.dscp
+            }
+
+        if attrDict.queue is not None:
+            attr_dict = {
+                "queue_index": attrDict.queue
+            }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {}
+
+        if saiAttrDict.size is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": saiAttrDict.size
+            }
+
+        if saiAttrDict.dscp is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": saiAttrDict.dscp
+            }
+
+        if saiAttrDict.queue is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": saiAttrDict.mode,
+                "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": saiAttrDict.queue
+            }
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
 
 @pytest.mark.usefixtures("dvs_buffer_manager")
 @pytest.mark.usefixtures("dvs_queue_manager")
