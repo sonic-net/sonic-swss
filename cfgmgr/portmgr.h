@@ -14,6 +14,7 @@ namespace swss {
 #define DEFAULT_ADMIN_STATUS_STR    "down"
 #define DEFAULT_MTU_STR             "9100"
 #define DEFAULT_DHCP_RATE_LIMIT_STR ""
+#define PACKET_SIZE                 406
 
 class PortMgr : public Orch
 {

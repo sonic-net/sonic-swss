@@ -100,10 +100,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 
     if (dhcp_rate_limit != "0")
     {
-        int byte_rate = stoi(dhcp_rate_limit) * 406;
-        // tc qdisc add dev <port_name> handle ffff: ingress
-        // &&
-        // tc filter add dev <port_name> protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate <byte_rate>bps burst <byte_rate>b conform-exceed drop
+        int byte_rate = stoi(dhcp_rate_limit) * PACKET_SIZE;
         cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
             << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
         cmd_str = cmd.str();
@@ -121,12 +118,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     {
         return true;
     }
-    // else if (!isPortStateOk(alias))
-    // {
-    //     // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
-    //     //SWSS_LOG_WARN("Setting dhcp_rate_limit to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-    //     return false;
-    // }
     else
     {
         throw runtime_error(cmd_str + " : " + res);
@@ -282,14 +273,10 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
-                //writeConfigToAppDb(alias, "dhcp_rate_limit", dhcp_rate_limit);
-                /* Retry setting these params after the netdev is created */
+                
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
-                //field_values.emplace_back("dhcp_rate_limit", dhcp_rate_limit);
-
-
                 it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
                 it++;
                 continue;
