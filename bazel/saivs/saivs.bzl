@@ -1,7 +1,6 @@
 """libsaivs cc_import setup"""
 
 def _impl(repository_ctx):
-
     # headers are at /usr/include/*.h
     # from dpkg -L libsaivs3-dev
     hdrs_path = "/usr/include/"

@@ -66,6 +66,6 @@ build:portsyncd_tests_opts --define=portsyncd_tests_opts=true
 build:portsyncd_tests_opts --linkopt='-Wl,-wrap,if_nameindex'
 build:portsyncd_tests_opts --linkopt='-Wl,-wrap,if_freenameindex'
 build --experimental_cc_shared_library
-build --remote_cache=https://storage.googleapis.com/gpins-swss-bazel-cache
+build --remote_cache=https://storage.googleapis.com/gpins-bazel-cache
 build --google_default_credentials
 build --remote_upload_local_results=false

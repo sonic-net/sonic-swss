@@ -1,7 +1,6 @@
 """libzmq cc_import setup"""
 
 def _impl(repository_ctx):
-
     # headers are at /usr/include/*.h
     # from dpkg -L libzmq3-dev
     hdrs_path = "/usr/include/"

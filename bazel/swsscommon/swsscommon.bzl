@@ -1,7 +1,6 @@
 """SWSS Common Import Setup"""
 
 def _impl(repository_ctx):
-
     hdrs_path = "/usr/include/swss"
     repository_ctx.symlink(hdrs_path, "bazel/swsscommon/swss_hdrs")
     so_path = "/usr/lib/x86_64-linux-gnu/libswsscommon.so"

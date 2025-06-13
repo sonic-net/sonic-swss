@@ -1,7 +1,6 @@
 """libsaimetadata cc_import setup"""
 
 def _impl(repository_ctx):
-
     hdrs_path = "/usr/include/sai"
     repository_ctx.symlink(hdrs_path, "bazel/saimetadata/saimetadata_hdrs")
     so_path = "/usr/lib/x86_64-linux-gnu/libsaimetadata.so"

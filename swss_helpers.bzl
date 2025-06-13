@@ -1,4 +1,5 @@
 """Helpers for building SWSS."""
+
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
 
 DebugInfo = provider(
@@ -19,7 +20,7 @@ def _strip_binary_and_extract_debug_impl(ctx):
     # objcopy_path = ctx.toolchains["@bazel_tools//tools/cpp:toolchain_type"].cc.objcopy_executable
     objcopy_path = "/usr/bin/objcopy"
     if not objcopy_path:
-         fail("Could not find objcopy executable in C++ toolchain")
+        fail("Could not find objcopy executable in C++ toolchain")
 
     args = ctx.actions.args()
     args.add(input_binary.path)
@@ -31,11 +32,11 @@ def _strip_binary_and_extract_debug_impl(ctx):
     input_files = depset(
         transitive = [
             depset([input_binary]),
-        ]
+        ],
     )
 
     ctx.actions.run_shell(
-        mnemonic="objcopy",
+        mnemonic = "objcopy",
         inputs = input_files,
         outputs = [stripped_binary_out, debug_symbols_out],
         arguments = [args],
@@ -93,15 +94,15 @@ strip_binary_and_extract_debug = rule(
     attrs = {
         "src": attr.label(
             mandatory = True,
-            allow_single_file = True, # Expects the output file from cc_binary
+            allow_single_file = True,  # Expects the output file from cc_binary
             doc = "The original binary file target (e.g., cc_binary).",
         ),
     },
     toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
     outputs = {
         # The key becomes accessible via ctx.outputs.<key> in the implementation
-        "stripped_binary": "%{name}.stripped", # File named like the rule instance (e.g., "orchagent")
-        "debug_symbols": "%{name}.debug", # File named <rule_name>.debug (e.g., "orchagent.debug")
+        "stripped_binary": "%{name}.stripped",  # File named like the rule instance (e.g., "orchagent")
+        "debug_symbols": "%{name}.debug",  # File named <rule_name>.debug (e.g., "orchagent.debug")
     },
     doc = "Extracts compressed debug symbols to a .debug file, strips the binary, and adds a gnu_debuglink.",
 )
@@ -126,8 +127,8 @@ def create_pkg_files_of_stripped_binaries(name, targets):
     for target in targets:
         target_name = Label(target).name + "_stripped"
         _create_stripped_binary_with_debug(
-            name=target_name,
-            target=target,
+            name = target_name,
+            target = target,
         )
 
     binaries = [Label(target).name for target in targets]
@@ -138,7 +139,7 @@ def create_pkg_files_of_stripped_binaries(name, targets):
 
     pkg_files(
         name = name + ".stripped",
-        srcs = [binary + "_stripped.stripped"  for binary in binaries],
+        srcs = [binary + "_stripped.stripped" for binary in binaries],
         renames = rename_map,
         attributes = pkg_attributes(
             group = "root",
@@ -170,9 +171,9 @@ def add_debug_to_copts():
     return select({
         "//:debug_mode": ["-ggdb -DDEBUG"],
         "//conditions:default": ["-g"],
-    })
+    })  #remove this
 
-def add_gcovpreload_to_linkopts(): #remove this
+def add_gcovpreload_to_linkopts():
     return select({
         "//:enable_gcov": [],
         "//conditions:default": [],

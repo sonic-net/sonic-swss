@@ -1,7 +1,6 @@
 """libjansson cc_import setup"""
 
 def _impl(repository_ctx):
-
     hdrs_path = "/usr/include/jansson.h"
     repository_ctx.symlink(hdrs_path, "bazel/jansson/jansson_hdrs/jansson.h")
     hdrs_config_path = "/usr/include/jansson_config.h"
