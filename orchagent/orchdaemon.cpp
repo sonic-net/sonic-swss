@@ -1286,6 +1286,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_orch);
     addOrchList(dash_tunnel_orch);
     addOrchList(dash_meter_orch);
+    addOrchList(dash_ha_orch);
 
     return true;
 }
