@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 #include <stdlib.h>
 #include <string>
+#include <unistd.h>
 #include "schema.h"
 #include "ut_helper.h"
 #include "orch_zmq_config.h"
@@ -8,7 +9,6 @@
 
 #define protected public
 #include "orch.h"
-#include "zmqorch.h"
 #include "zmqorch.h"
 #undef protected
 
