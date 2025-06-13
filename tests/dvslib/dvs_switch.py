@@ -57,7 +57,7 @@ class DVSSwitch:
         """
         self.get_switch_ids(expected)
 
-    def verify_switch_generic(
+    def verify_switch(
         self,
         sai_switch_id: str,
         sai_qualifiers: Dict[str, str]
@@ -68,49 +68,4 @@ class DVSSwitch:
             sai_switch_id: The specific switch id to check in ASIC DB.
             sai_qualifiers: The expected set of SAI qualifiers to be found in ASIC DB.
         """
-        entry = self.asic_db.wait_for_entry(self.ADB_SWITCH, sai_switch_id)
-
-        for k, v in entry.items():
-            if k == "NULL":
-                continue
-            elif k in sai_qualifiers:
-                if k == "SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM":
-                    assert sai_qualifiers[k] == v
-                elif k == "SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM":
-                    assert sai_qualifiers[k] == v
-                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE":
-                    assert sai_qualifiers[k] == v
-                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE":
-                    assert sai_qualifiers[k] == v
-                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE":
-                    assert sai_qualifiers[k] == v
-                elif k == "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX":
-                    assert sai_qualifiers[k] == v
-            else:
-                assert False, "Unknown SAI qualifier: key={}, value={}".format(k, v)
-
-    def verify_switch(
-        self,
-        sai_switch_id: str,
-        sai_qualifiers: Dict[str, str],
-        strict: bool = False
-    ) -> None:
-        """Verify that switch object has correct ASIC DB representation.
-
-        Args:
-            sai_switch_id: The specific switch id to check in ASIC DB.
-            sai_qualifiers: The expected set of SAI qualifiers to be found in ASIC DB.
-            strict: Specifies whether verification should be strict
-        """
-        if strict:
-            self.verify_switch_generic(sai_switch_id, sai_qualifiers)
-            return
-
-        entry = self.asic_db.wait_for_entry(self.ADB_SWITCH, sai_switch_id)
-
-        attr_dict = {
-            **entry,
-            **sai_qualifiers
-        }
-
-        self.verify_switch_generic(sai_switch_id, attr_dict)
+        self.asic_db.wait_for_field_match(self.ADB_SWITCH, sai_switch_id, sai_qualifiers)
