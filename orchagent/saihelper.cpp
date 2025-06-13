@@ -567,15 +567,22 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
+    string s_api = sai_serialize_api(api);
+    string s_status = sai_serialize_status(status);
+
     switch (status)
     {
         case SAI_STATUS_SUCCESS:
+            return task_success;
         case SAI_STATUS_ITEM_NOT_FOUND:
         case SAI_STATUS_ADDR_NOT_FOUND:
         case SAI_STATUS_OBJECT_IN_USE:
-            SWSS_LOG_WARN("Status %d is not expected in handleSaiCreateStatus", status);
+            SWSS_LOG_WARN("Status %s is not expected for create operation, SAI API: %s",
+                            s_status.c_str(), s_api.c_str());
             return task_success;
         case SAI_STATUS_ITEM_ALREADY_EXISTS:
+            SWSS_LOG_NOTICE("Returning success for create operation, SAI API: %s, status: %s",
+                                s_api.c_str(), s_status.c_str());
             return task_success;
         case SAI_STATUS_INSUFFICIENT_RESOURCES:
         case SAI_STATUS_TABLE_FULL:
@@ -602,11 +609,16 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
+    string s_api = sai_serialize_api(api);
+    string s_status = sai_serialize_status(status);
+
     switch (status)
     {
         case SAI_STATUS_SUCCESS:
+            return task_success;
         case SAI_STATUS_OBJECT_IN_USE:
-            SWSS_LOG_WARN("Status %d is not expected in handleSaiSetStatus", status);
+            SWSS_LOG_WARN("Status %s is not expected for set operation, SAI API: %s",
+                            s_status.c_str(), s_api.c_str());
             return task_success;
         case SAI_STATUS_ITEM_ALREADY_EXISTS:
         case SAI_STATUS_ITEM_NOT_FOUND:
@@ -616,6 +628,8 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
              * which can potentially lead to conditions where ITEM_NOT_FOUND can
              * be returned. This needs special handling in muxorch/routeorch.
              */
+            SWSS_LOG_NOTICE("Returning success for set operation, SAI API: %s, status: %s",
+                                s_api.c_str(), s_status.c_str());
             return task_success;
         case SAI_STATUS_INSUFFICIENT_RESOURCES:
         case SAI_STATUS_TABLE_FULL:
@@ -643,18 +657,25 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
+    string s_api = sai_serialize_api(api);
+    string s_status = sai_serialize_status(status);
+
     switch (status)
     {
         case SAI_STATUS_SUCCESS:
+            return task_success;
         case SAI_STATUS_ITEM_ALREADY_EXISTS:
         case SAI_STATUS_INSUFFICIENT_RESOURCES:
         case SAI_STATUS_TABLE_FULL:
         case SAI_STATUS_NO_MEMORY:
         case SAI_STATUS_NV_STORAGE_FULL:
-            SWSS_LOG_WARN("Status %d is not expected in handleSaiRemoveStatus", status);
+            SWSS_LOG_WARN("Status %s is not expected for remove operation, SAI API: %s",
+                            s_status.c_str(), s_api.c_str());
             return task_success;
         case SAI_STATUS_ITEM_NOT_FOUND:
         case SAI_STATUS_ADDR_NOT_FOUND:
+            SWSS_LOG_NOTICE("Returning success for remove operation, SAI API: %s, status: %s",
+                                s_api.c_str(), s_status.c_str());
             return task_success;
         case SAI_STATUS_OBJECT_IN_USE:
             return task_need_retry;
@@ -684,7 +705,6 @@ task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void 
     switch (status)
     {
         case SAI_STATUS_SUCCESS:
-            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiGetStatus");
             return task_success;
         default:
             /*
