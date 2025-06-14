@@ -472,7 +472,15 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
+        status = handleSaiSetStatus(SAI_API_NEXT_HOP, SAI_STATUS_OBJECT_IN_USE);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
         status = handleSaiRemoveStatus(SAI_API_LAG, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiRemoveStatus(SAI_API_PORT, SAI_STATUS_ITEM_ALREADY_EXISTS);
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
