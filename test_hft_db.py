@@ -103,6 +103,7 @@ def check_asic_db(groups=[(1,1)]):
 
     assert len(asic_db["tam"]) == 1, "Expected one tam"
     assert "SAI_TAM_BIND_POINT_TYPE_PORT" in list(asic_db["tam"].values())[0]["SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST"], "Expected tam to have bind point type list"
+    assert "ASIC_STATE:SAI_OBJECT_TYPE_TAM_TELEMETRY:" + ":".join(list(asic_db["tam"].values())[0]["SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST"].split(":")[1:3]) in asic_db["tam_telemetry"], "Expected tam to reference tam telemetry"
 
     counters_number = sum([group[0] * group[1] for group in groups])
 
