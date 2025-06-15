@@ -370,15 +370,9 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
     consumer.pop(op, data, values);
 
-    if (&consumer != m_asic_notification_consumer.get())
-    {
-        SWSS_LOG_ERROR("Unknown consumer");
-        return;
-    }
-
     if (op != SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE)
     {
-        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        SWSS_LOG_DEBUG("Unknown operation type %s for HFTel Orch", op.c_str());
         return;
     }
 
