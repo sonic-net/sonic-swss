@@ -52,6 +52,7 @@ cfgmgr/portmgrd
 cfgmgr/sflowmgrd
 cfgmgr/teammgrd
 cfgmgr/vlanmgrd
+cfgmgr/poemgrd
 cfgmgr/vrfmgrd
 cfgmgr/vxlanmgrd
 cfgmgr/natmgrd
