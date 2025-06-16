@@ -99,19 +99,19 @@ TEST(ZmqOrchTest, CreateZmqClient)
 TEST(ZmqOrchTest, GetFeatureStatus)
 {
     DBConnector config_db("CONFIG_DB", 0);
-    config_db.hset("DEVICE_METADATA|localhost", "TEST_FEATURE", "true");
-    auto enabled = swss::get_feature_status("TEST_FEATURE", false);
+    config_db.hset("DEVICE_METADATA|localhost", ORCH_NORTHBOND_DASH_ZMQ_ENABLED, "true");
+    auto enabled = swss::get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, false);
     EXPECT_TRUE(enabled);
 
-    config_db.hdel("DEVICE_METADATA|localhost", "TEST_FEATURE");
-    enabled = swss::get_feature_status("TEST_FEATURE", false);
+    config_db.hdel("DEVICE_METADATA|localhost", ORCH_NORTHBOND_DASH_ZMQ_ENABLED);
+    enabled = swss::get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, false);
     EXPECT_FALSE(enabled);
 
-    config_db.hset("DEVICE_METADATA|localhost", "TEST_FEATURE", "false");
-    enabled = swss::get_feature_status("TEST_FEATURE", true);
+    config_db.hset("DEVICE_METADATA|localhost", ORCH_NORTHBOND_DASH_ZMQ_ENABLED, "false");
+    enabled = swss::get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, true);
     EXPECT_FALSE(enabled);
 
-    config_db.hdel("DEVICE_METADATA|localhost", "TEST_FEATURE");
-    enabled = swss::get_feature_status("TEST_FEATURE", true);
+    config_db.hdel("DEVICE_METADATA|localhost", ORCH_NORTHBOND_DASH_ZMQ_ENABLED);
+    enabled = swss::get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, true);
     EXPECT_TRUE(enabled);
 }

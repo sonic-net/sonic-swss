@@ -1226,7 +1226,7 @@ bool DpuOrchDaemon::init()
 
     // Enable Dash ZMQ with CONFIG_DB flag
     ZmqServer *dash_zmq_server = nullptr;
-    if (get_feature_status("orch_dash_zmq_enabled", true))
+    if (get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, true))
     {
         SWSS_LOG_NOTICE("Dash ZMQ enabled.");
         dash_zmq_server = m_zmqServer;
