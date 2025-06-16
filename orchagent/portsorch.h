@@ -23,7 +23,6 @@
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
-#define MAX_MACSEC_SECTAG_SIZE 32
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
@@ -369,6 +368,7 @@ private:
     bool m_cmisModuleAsicSyncSupported = false;
 
     void doTask() override;
+    void onWarmBootEnd() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doSendToIngressPortTask(Consumer &consumer);
@@ -387,10 +387,13 @@ private:
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
 
-    bool initializePort(Port &port);
-    void initializePriorityGroups(Port &port);
-    void initializePortBufferMaximumParameters(Port &port);
-    void initializeQueues(Port &port);
+    bool initializePorts(std::vector<Port>& ports);
+
+    void initializePriorityGroupsBulk(std::vector<Port>& ports);
+    void initializeQueuesBulk(std::vector<Port>& ports);
+    void initializePortHostTxReadyBulk(std::vector<Port>& ports);
+
+    void initializePortBufferMaximumParameters(const Port &port);
     void initializeSchedulerGroups(Port &port);
     void initializeVoqs(Port &port);
 
@@ -411,7 +414,14 @@ private:
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
 
     sai_status_t removePort(sai_object_id_t port_id);
-    bool initPort(const PortConfig &port);
+    bool initExistingPort(const PortConfig &port);
+
+    bool initPortsBulk(std::vector<Port>& ports);
+
+    void registerPort(Port &p);
+
+    void postPortInit(const Port &p);
+    
     void deInitPort(string alias, sai_object_id_t port_id);
 
     void initPortCapAutoNeg(Port &port);
@@ -561,7 +571,7 @@ private:
     auto getPortConfigState() const -> port_config_state_t;
     void setPortConfigState(port_config_state_t value);
 
-    bool addPortBulk(const std::vector<PortConfig> &portList);
+    bool addPortBulk(const std::vector<PortConfig> &portList, std::vector<Port>& addedPorts);
     bool removePortBulk(const std::vector<sai_object_id_t> &portList);
 
     /* Prototypes for Path Tracing */
