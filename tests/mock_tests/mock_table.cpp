@@ -156,6 +156,51 @@ namespace swss
         }
     }
 
+    int64_t DBConnector::hdel(const std::string &key, const std::string &field)
+    {
+        auto &table = gDB[getDbId()][key];
+        auto key_iter = table.find("");
+        if (key_iter == table.end())
+        {
+            return 0;
+        }
+
+        int removed = 0;
+        auto attrs = key_iter->second;
+        std::vector<FieldValueTuple> new_attrs;
+        for (auto attr_iter : attrs)
+        {
+            if (attr_iter.first == field)
+            {
+                removed += 1;
+                continue;
+            }
+
+            new_attrs.push_back(attr_iter);
+        }
+
+        table[""] = new_attrs;
+
+        return removed;
+    }
+
+    void DBConnector::hset(const std::string &key, const std::string &field, const std::string &value)
+    {
+        FieldValueTuple fvp(field, value);
+        std::vector<FieldValueTuple> attrs = { fvp };
+
+        auto &table = gDB[getDbId()][key];
+        auto iter = table.find("");
+        if (iter == table.end())
+        {
+            table[""] = attrs;
+        }
+        else
+        {
+            merge_values(iter->second, attrs);
+        }
+    }
+
     void ProducerTable::set(const std::string &key,
                             const std::vector<FieldValueTuple> &values,
                             const std::string &op,
