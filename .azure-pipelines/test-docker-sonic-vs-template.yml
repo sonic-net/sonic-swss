@@ -44,8 +44,9 @@ jobs:
 - job:
   displayName: vstest
   timeoutInMinutes: ${{ parameters.timeout }}
-  ${{ if parameters.archive_gcov }}:
-    variables:
+  variables:
+    isAsan: ${{ parameters.asan }}
+    ${{ if parameters.archive_gcov }}:
       DIFF_COVER_CHECK_THRESHOLD: 80
       DIFF_COVER_ENABLE: 'true'
       DIFF_COVER_COVERAGE_FILES: Cobertura.xml
@@ -159,6 +160,11 @@ jobs:
     continueOnError: ${{ parameters.asan }}
 
   - script: |
+      echo "##vso[task.setvariable variable=TestsRun]Yes"
+    condition: succeededOrFailed()
+    displayName: 'Record Test Status'
+
+  - script: |
       set -ex
       reportgenerator -reporttypes:Cobertura -reports:tests/*coverage.xml -targetdir:.
       mkdir $(Build.ArtifactStagingDirectory)/gcov
@@ -178,7 +184,7 @@ jobs:
     inputs:
       testResultsFiles: '**/*_tr.xml'
       testRunTitle: vstest
-    condition: succeeded()
+    condition: and(eq(variables['TestsRun'], 'Yes'), ne(variables['isAsan'], 'true'))
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
