@@ -1224,11 +1224,11 @@ bool DpuOrchDaemon::init()
     SWSS_LOG_NOTICE("DpuOrchDaemon init...");
     OrchDaemon::init();
 
-    // Enable Dash ZMQ with CONFIG_DB flag
+    // Enable the gNMI service to send DASH events to orchagent via the ZMQ channel.
     ZmqServer *dash_zmq_server = nullptr;
     if (get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, true))
     {
-        SWSS_LOG_NOTICE("Dash ZMQ enabled.");
+        SWSS_LOG_NOTICE("Enable the gNMI service to send DASH events to orchagent via the ZMQ channel.");
         dash_zmq_server = m_zmqServer;
     }
 
