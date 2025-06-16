@@ -15,6 +15,9 @@
  */
 #define ZMQ_LOCAL_ADDRESS               "tcp://localhost"
 
+/*
+ * Feature flag to enable the gNMI service to send DASH events to orchagent via the ZMQ channel.
+ */
 #define ORCH_NORTHBOND_DASH_ZMQ_ENABLED "orch_northbond_dash_zmq_enabled"
 
 namespace swss {
