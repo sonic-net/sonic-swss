@@ -306,8 +306,8 @@ bool BfdOrch::register_bfd_state_change_notification(void)
 
 void BfdOrch::updateNextHopId(string alias, IpAddress peer_address, sai_object_id_t next_hop_id)
 {
-    SWSS_LOG_NOTICE("BFD: update nexthop id, next hop %s on %s, next_hop_id %lu",
-                    peer_address.to_string().c_str(), alias.c_str(), next_hop_id);
+    SWSS_LOG_NOTICE("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
+                    peer_address.to_string().c_str(), alias.c_str(), static_cast<unsigned long long>(next_hop_id));
 
     const string key = get_app_db_key("default", alias, peer_address);
     if (bfd_inject_next_hop_lookup.find(key) == bfd_inject_next_hop_lookup.end())
@@ -548,7 +548,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
             attrs.emplace_back(attr);
             bfd_inject_next_hop.next_hop_id = attr.value.oid;
             inject_next_hop = true;
-            SWSS_LOG_NOTICE("BFD: create bfd session using nexthop_id %lu", next_hop_id);
+            SWSS_LOG_NOTICE("BFD: create bfd session using nexthop_id %llu", static_cast<unsigned long long>(next_hop_id));
         } else {
             Port port;
             if (!gPortsOrch->getPort(alias, port))
