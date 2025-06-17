@@ -72,6 +72,7 @@ sai_srv6_api_t**            sai_srv6_api;;
 sai_l2mc_group_api_t*       sai_l2mc_group_api;
 sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
+sai_icmp_echo_api_t*        sai_icmp_echo_api;
 sai_my_mac_api_t*           sai_my_mac_api;
 sai_generic_programmable_api_t* sai_generic_programmable_api;
 sai_dash_appliance_api_t*           sai_dash_appliance_api;
@@ -85,9 +86,11 @@ sai_dash_eni_api_t*                 sai_dash_eni_api;
 sai_dash_vip_api_t*                 sai_dash_vip_api;
 sai_dash_direction_lookup_api_t*    sai_dash_direction_lookup_api;
 sai_dash_tunnel_api_t*              sai_dash_tunnel_api;
+sai_dash_ha_api_t*                  sai_dash_ha_api;
 sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
+sai_dash_meter_api_t*               sai_dash_meter_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -224,6 +227,7 @@ void initSaiApi()
     sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
     sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
+    sai_api_query(SAI_API_ICMP_ECHO,            (void **)&sai_icmp_echo_api);
     sai_api_query(SAI_API_MY_MAC,               (void **)&sai_my_mac_api);
     sai_api_query(SAI_API_GENERIC_PROGRAMMABLE, (void **)&sai_generic_programmable_api);
     sai_api_query((sai_api_t)SAI_API_DASH_APPLIANCE,            (void**)&sai_dash_appliance_api);
@@ -233,10 +237,12 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION,        (void**)&sai_dash_pa_validation_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_ROUTING,     (void**)&sai_dash_outbound_routing_api);
     sai_api_query((sai_api_t)SAI_API_DASH_INBOUND_ROUTING,      (void**)&sai_dash_inbound_routing_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_METER,                (void**)&sai_dash_meter_api);
     sai_api_query((sai_api_t)SAI_API_DASH_ENI,                  (void**)&sai_dash_eni_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
     sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL,               (void**)&sai_dash_tunnel_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_HA,                   (void**)&sai_dash_ha_api);
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
@@ -277,6 +283,7 @@ void initSaiApi()
     sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_COUNTER,                SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BFD,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_ICMP_ECHO,              SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MY_MAC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_GENERIC_PROGRAMMABLE,   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TWAMP,                  SAI_LOG_LEVEL_NOTICE);
@@ -630,6 +637,25 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     return task_success;
                 case SAI_STATUS_ITEM_ALREADY_EXISTS:
                     return task_success;
+                case SAI_STATUS_TABLE_FULL:
+                    return task_need_retry;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        case SAI_API_ICMP_ECHO:
+            switch(status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                    /*
+                     * Offload table resource maybe a shared resource,
+                     * avoid abort when icmp offload table is full.
+                     */
                 case SAI_STATUS_TABLE_FULL:
                     return task_need_retry;
                 default:

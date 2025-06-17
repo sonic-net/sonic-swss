@@ -10,7 +10,7 @@ from dash_api.route_type_pb2 import *
 from dash_api.types_pb2 import *
 from dvslib.dvs_flex_counter import TestFlexCountersBase
 
-from dash_db import *
+from dash_db import ASIC_DASH_APPLIANCE_TABLE, ASIC_DIRECTION_LOOKUP_TABLE, ASIC_ENI_ETHER_ADDR_MAP_TABLE, ASIC_ENI_TABLE, ASIC_INBOUND_ROUTING_TABLE, ASIC_OUTBOUND_CA_TO_PA_TABLE, ASIC_OUTBOUND_ROUTING_GROUP_TABLE, ASIC_OUTBOUND_ROUTING_TABLE, ASIC_PA_VALIDATION_TABLE, ASIC_VIP_TABLE, ASIC_VNET_TABLE, DashDB, dash_db_module as dash_db
 from dash_configs import *
 
 import time
@@ -40,7 +40,7 @@ class TestDash(TestFlexCountersBase):
         pb.vni = int(vni)
         pb.guid.value = bytes.fromhex(uuid.UUID(guid).hex)
         dash_db.create_vnet(vnet, {"pb": pb.SerializeToString()})
-        keys = dash_db.get_keys(ASIC_VNET_TABLE)
+        keys = dash_db.get_asic_db_keys(ASIC_VNET_TABLE)
         time.sleep(2)
         assert len(keys) == 0, "VNET wrongly pushed to SAI before DASH Appliance"
         dash_db.remove_vnet(vnet)
@@ -92,7 +92,7 @@ class TestDash(TestFlexCountersBase):
         pb.local_region_id = int(self.local_region_id)
         dash_db.create_appliance(dupl_appliance_id, {"pb": pb.SerializeToString()})
         time.sleep(2)
-        keys = dash_db.get_keys(ASIC_DASH_APPLIANCE_TABLE)
+        keys = dash_db.get_asic_db_keys(ASIC_DASH_APPLIANCE_TABLE)
         assert len(keys) == 1, "duplicate DASH Appliance entry wrongly pushed to SAI"
         dash_db.remove_appliance(dupl_appliance_id)
 
@@ -162,6 +162,7 @@ class TestDash(TestFlexCountersBase):
         self.mac_address = "F4:93:9F:EF:C4:7E"
         self.routing_type = "vnet_encap"
         self.underlay_ip = "101.1.2.3"
+        self.vnet_map_metering_class_or = "222"
         route_type_msg = RouteType()
         route_action = RouteTypeItem()
         route_action.action_name = "action1"
@@ -172,6 +173,7 @@ class TestDash(TestFlexCountersBase):
         pb = VnetMapping()
         pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
+        pb.metering_class_or = int(self.vnet_map_metering_class_or)
         pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
         pb.use_dst_vni = False
 
@@ -183,6 +185,7 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP", attrs, self.underlay_ip)
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC", attrs, self.mac_address)
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION", attrs, "SAI_DASH_ENCAPSULATION_NVGRE")
+        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_METER_CLASS_OR", attrs, self.vnet_map_metering_class_or)
 
         vnet_pa_validation_maps = dash_db.wait_for_asic_db_keys(ASIC_PA_VALIDATION_TABLE)
         pa_validation_attrs = dash_db.get_asic_db_entry(ASIC_PA_VALIDATION_TABLE, vnet_pa_validation_maps[0])
@@ -199,10 +202,14 @@ class TestDash(TestFlexCountersBase):
         self.ip = "10.1.0.0/24"
         self.action_type = "vnet_direct"
         self.overlay_ip = "10.0.0.6"
+        self.outbound_metering_class_or = "333"
+        self.outbound_metering_class_and = "369"
         pb = Route()
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
         pb.vnet_direct.vnet = self.vnet
         pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
+        pb.metering_class_or = int(self.outbound_metering_class_or)
+        pb.metering_class_and = int(self.outbound_metering_class_and)
         dash_db.create_route(self.group_id, self.ip, {"pb": pb.SerializeToString()})
 
         outbound_routing_entries = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_ROUTING_TABLE)
@@ -210,6 +217,8 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION", routing_attrs, "SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT")
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP", routing_attrs, self.overlay_ip)
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID", routing_attrs)
+        assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR", routing_attrs, self.outbound_metering_class_or)
+        assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND", routing_attrs, self.outbound_metering_class_and)
 
     def test_outbound_routing_dependency(self, dash_db: DashDB):
         vnet = "Vnet2"
@@ -231,7 +240,7 @@ class TestDash(TestFlexCountersBase):
         dash_db.create_route(group_id, prefix2, {"pb": pb.SerializeToString()})
 
         time.sleep(2)
-        keys = dash_db.get_keys(ASIC_OUTBOUND_ROUTING_TABLE)
+        keys = dash_db.get_asic_db_keys(ASIC_OUTBOUND_ROUTING_TABLE)
         # Outbound routes for prefix1 and prefix2 are not ready before Vnet2 creation
         assert len(keys) == 1
 
@@ -257,7 +266,7 @@ class TestDash(TestFlexCountersBase):
         dash_db.create_eni_route(self.mac_string, {"pb": pb.SerializeToString()})
 
         enis = dash_db.wait_for_asic_db_keys(ASIC_ENI_TABLE)
-        outbound_routing_group_entries = dash_db.get_keys(ASIC_OUTBOUND_ROUTING_GROUP_TABLE)
+        outbound_routing_group_entries = dash_db.get_asic_db_keys(ASIC_OUTBOUND_ROUTING_GROUP_TABLE)
         dash_db.wait_for_asic_db_field(ASIC_ENI_TABLE, enis[0], "SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID", outbound_routing_group_entries[0])
 
     def test_inbound_routing(self, dash_db: DashDB):
@@ -269,38 +278,23 @@ class TestDash(TestFlexCountersBase):
         self.pa_validation = "true"
         self.priority = "1"
         self.protocol = "0"
+        self.inbound_metering_class_or = "444"
+        self.inbound_metering_class_and = "468"
         pb = RouteRule()
         pb.pa_validation = True
         pb.priority = int(self.priority)
         pb.protocol = int(self.protocol)
         pb.vnet = self.vnet
+        pb.metering_class_or = int(self.inbound_metering_class_or)
+        pb.metering_class_and = int(self.inbound_metering_class_and)
 
         dash_db.create_inbound_routing(self.mac_string, self.vni, self.ip, {"pb": pb.SerializeToString()})
 
         inbound_routing_entries = dash_db.wait_for_asic_db_keys(ASIC_INBOUND_ROUTING_TABLE)
         attrs = dash_db.get_asic_db_entry(ASIC_INBOUND_ROUTING_TABLE, inbound_routing_entries[0])
         assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION", attrs, "SAI_INBOUND_ROUTING_ENTRY_ACTION_TUNNEL_DECAP_PA_VALIDATE")
-
-    def test_cleanup(self, dash_db: DashDB):
-        self.vnet = "Vnet1"
-        self.mac_string = "F4939FEFC47E"
-        self.group_id = ROUTE_GROUP1
-        self.vni = "3251"
-        self.sip = "10.1.1.1"
-        self.dip = "10.1.0.0/24"
-        self.ip2 = "10.1.1.2"
-        self.appliance_id = "100"
-        self.routing_type = "vnet_encap"
-        dash_db.remove_inbound_routing(self.mac_string, self.vni, self.sip)
-        dash_db.remove_route(self.group_id, self.dip)
-        dash_db.remove_route_group(self.group_id)
-        dash_db.remove_eni_route(self.mac_string)
-        dash_db.remove_vnet_mapping(self.vnet, self.sip)
-        dash_db.remove_vnet_mapping(self.vnet, self.ip2)
-        dash_db.remove_routing_type(self.routing_type)
-        dash_db.remove_eni(self.mac_string)
-        dash_db.remove_vnet(self.vnet)
-        dash_db.remove_appliance(self.appliance_id)
+        assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR", attrs, self.inbound_metering_class_or)
+        assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND", attrs, self.inbound_metering_class_and)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down

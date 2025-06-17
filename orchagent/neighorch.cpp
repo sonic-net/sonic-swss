@@ -23,6 +23,7 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
+extern string gMyHostName;
 
 const int neighorch_pri = 30;
 
@@ -1861,7 +1862,9 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        if(gIntfsOrch->isLocalSystemPortIntf(alias))
+        size_t pos = alias.find('|');
+        std::string port_hostname = (pos != std::string::npos) ? alias.substr(0, pos) : alias;
+        if(gIntfsOrch->isLocalSystemPortIntf(alias) || (gMySwitchType == "voq" && gMyHostName == port_hostname))
         {
             //Synced local neighbor. Skip
             it = consumer.m_toSync.erase(it);

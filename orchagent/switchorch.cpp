@@ -154,6 +154,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchHashDefaults();
+    setSwitchIcmpOffloadCapability();
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
@@ -1413,6 +1414,11 @@ void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& value
      m_switchTable.set("switch", values);
 }
 
+void SwitchOrch::get_switch_capability(const std::string& capability, std::string& val)
+{
+     m_switchTable.hget("switch", capability, val);
+}
+
 void SwitchOrch::querySwitchPortEgressSampleCapability()
 {
     vector<FieldValueTuple> fvVector;
@@ -1525,6 +1531,27 @@ void SwitchOrch::querySwitchHashDefaults()
     {
         SWSS_LOG_WARN("Failed to get switch LAG hash OID");
     }
+}
+
+void SwitchOrch::setSwitchIcmpOffloadCapability()
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fvVector;
+    // icmp echo offload does not support capability attribute,
+    //  we depend on its notification capability
+    bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ICMP_ECHO_SESSION_STATE_CHANGE_NOTIFY);
+    if (supported == false)
+    {
+        SWSS_LOG_NOTICE("Icmp Echo Offload not supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "false");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Icmp Echo Offload supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
 }
 
 bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
