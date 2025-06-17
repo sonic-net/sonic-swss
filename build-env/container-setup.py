@@ -3,17 +3,14 @@ import requests
 import json
 import subprocess
 
-import hashlib
 import os
-import shutil
-import tarfile
 from pathlib import Path
 
 
 SAIREDIS = 'sonic-sairedis'
 COMMON = 'sonic-common-libs'
-SWSSCOMMON  = 'sonic-swsscommon'
-BUILDIMAGE= 'sonic-buildimage'
+SWSSCOMMON = 'sonic-swsscommon'
+BUILDIMAGE = 'sonic-buildimage'
 VPP = 'sonic-platform-vpp'
 
 pipeline_id_map = {
@@ -45,6 +42,7 @@ pipeline_out_file_map = {
 build_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds?definitions={}&branchName=refs/heads/{}&resultFilter=succeeded&statusFilter=completed&maxBuildsPerDefinition=1&queryOrder=finishTimeDescending'
 artifact_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds/{}/artifacts?artifactName={}&api-version=5.1'
 
+
 def get_latest_build(pipeline, branch):
     url = build_url.format(pipeline_id_map[pipeline], branch)
     print(url)
@@ -55,8 +53,9 @@ def get_latest_build(pipeline, branch):
         print(url)
         res = requests.get(url)
         build_info = json.loads(res.content)
-    
+
     return build_info['value'][0]['id']
+
 
 def get_artifact_url(pipeline, build_id, debian_version):
     if pipeline in [SAIREDIS, SWSSCOMMON]:
@@ -69,6 +68,7 @@ def get_artifact_url(pipeline, build_id, debian_version):
     artifact_info = json.loads(res.content)
     return artifact_info['resource']['downloadUrl']
 
+
 def download_artifact(pipeline, filename, branch, debian_version):
     build_id = get_latest_build(pipeline, branch)
     download_url = get_artifact_url(pipeline, build_id, debian_version)
@@ -78,12 +78,14 @@ def download_artifact(pipeline, filename, branch, debian_version):
         content = requests.get(download_url, stream=True).content
         out_file.write(content)
 
+
 def get_all_artifacts(dest_dir, branch, debian_version):
     for pipeline, filename in pipeline_out_file_map.items():
         print("Getting artifact {}".format(pipeline))
         dest_file = os.path.join(dest_dir, filename)
         download_artifact(pipeline, dest_file, branch, debian_version)
         print("Finished getting artifact {}".format(pipeline))
+
 
 def main(branch, debian_version):
     try:
@@ -104,7 +106,6 @@ def main(branch, debian_version):
             if "common-lib" in filename:
                 cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/bullseye/libproto.*deb$' | xargs unzip -o -j {filename}"]
                 subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
-                
 
         available_debs = subprocess.run(["ls", work_dir], cwd=work_dir, capture_output=True, text=True).stdout
         debs_to_install = deb_files_regex
@@ -112,11 +113,12 @@ def main(branch, debian_version):
             debs_to_install += dash_deb_regex
 
         cmd = "env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i {}".format(" ".join(debs_to_install))
-        subprocess.run(cmd, shell=True, cwd=work_dir, stdout=subprocess.DEVNULL)
+        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
 
         return
     except Exception:
         raise
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('SWSS Build Setup')

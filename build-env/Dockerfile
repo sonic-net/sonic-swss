@@ -19,4 +19,5 @@ RUN chmod 0440 /etc/sudoers.d/${USER}
 RUN sed -i -E 's/^#?PermitRootLogin.*$/PermitRootLogin yes/g' /etc/ssh/sshd_config
 RUN echo "* soft nofile 2048" >> /etc/security/limits.conf
 
+USER ${USER}
 CMD ["service", "ssh", "start", "-D"]
