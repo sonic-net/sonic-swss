@@ -47,7 +47,7 @@ static std::unordered_map<string, sai_dash_eni_mac_override_type_t> sMacOverride
     { "dst_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC}
 };
 
-static std::unordered_map<dash::eni::EniMode, sai_dash_eni_mode_t> eniModeMap =
+static const std::unordered_map<dash::eni::EniMode, sai_dash_eni_mode_t> eniModeMap =
 {
     { dash::eni::MODE_VM, SAI_DASH_ENI_MODE_VM },
     { dash::eni::MODE_FNIC, SAI_DASH_ENI_MODE_FNIC }
