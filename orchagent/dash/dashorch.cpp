@@ -47,6 +47,12 @@ static std::unordered_map<string, sai_dash_eni_mac_override_type_t> sMacOverride
     { "dst_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC}
 };
 
+static std::unordered_map<dash::eni::EniMode, sai_dash_eni_mode_t> eniModeMap =
+{
+    { dash::eni::MODE_VM, SAI_DASH_ENI_MODE_VM },
+    { dash::eni::MODE_FNIC, SAI_DASH_ENI_MODE_FNIC }
+};
+
 DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tableName, zmqServer),
     m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
@@ -554,6 +560,21 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         eni_attr.id = SAI_ENI_ATTR_V6_METER_POLICY_ID;
         eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);    
         eni_attrs.push_back(eni_attr);
+    }
+
+    if (entry.metadata.has_eni_mode()) {
+        auto it = eniModeMap.find(entry.metadata.eni_mode());
+        eni_attr.id = SAI_ENI_ATTR_DASH_ENI_MODE;
+        if (it != eniModeMap.end())
+        {
+            eni_attr.value.u32 = it->second;
+            eni_attrs.push_back(eni_attr);
+        } else {
+            // Default to VM mode if not specified
+            eni_attr.value.u32 = SAI_DASH_ENI_MODE_VM;
+            eni_attrs.push_back(eni_attr);
+            SWSS_LOG_ERROR("Invalid ENI mode %s for ENI %s, defaulting to VM mode", dash::eni::EniMode_Name(entry.metadata.eni_mode()).c_str(), eni.c_str());
+        }
     }
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
