@@ -568,13 +568,12 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         if (it != eniModeMap.end())
         {
             eni_attr.value.u32 = it->second;
-            eni_attrs.push_back(eni_attr);
         } else {
             // Default to VM mode if not specified
             eni_attr.value.u32 = SAI_DASH_ENI_MODE_VM;
-            eni_attrs.push_back(eni_attr);
             SWSS_LOG_ERROR("Invalid ENI mode %s for ENI %s, defaulting to VM mode", dash::eni::EniMode_Name(entry.metadata.eni_mode()).c_str(), eni.c_str());
         }
+        eni_attrs.push_back(eni_attr);
     }
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
