@@ -530,11 +530,11 @@ int main(int argc, char **argv)
     shared_ptr<ZmqServer> zmq_server = nullptr;
     if (zmq_server_address.empty())
     {
-        SWSS_LOG_NOTICE("ZMQ disabled");
+        SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been disabled.");
     }
     else
     {
-        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
         zmq_server = create_zmq_server(zmq_server_address, vrf);
     }
 

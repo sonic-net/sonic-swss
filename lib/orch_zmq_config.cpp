@@ -69,8 +69,19 @@ std::shared_ptr<swss::ZmqServer> swss::create_zmq_server(std::string zmq_address
 
 bool swss::get_feature_status(std::string feature, bool default_value)
 {
-    swss::DBConnector config_db("CONFIG_DB", 0);
-    auto enabled = config_db.hget("DEVICE_METADATA|localhost", feature);
+    std::shared_ptr<std::string> enabled = nullptr;
+
+    try
+    {
+        swss::DBConnector config_db("CONFIG_DB", 0);
+        enabled = config_db.hget("DEVICE_METADATA|localhost", feature);
+    }
+    catch (const std::runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Not found feature %s failed with exception: %s", feature.c_str(), e.what());
+        return default_value;
+    }
+
     if (!enabled)
     {
         SWSS_LOG_NOTICE("Not found feature %s status, return default value.", feature.c_str());

@@ -1,6 +1,7 @@
 #include "table.h"
 #include "producerstatetable.h"
 #include "producertable.h"
+#include "mock_table.h"
 #include <set>
 #include <memory>
 
@@ -145,6 +146,12 @@ namespace swss
     std::shared_ptr<std::string> DBConnector::hget(const std::string &key, const std::string &field)
     {
         std::string value;
+
+        if (field == HGET_THROW_EXCEPTION_FIELD_NAME)
+        {
+            throw std::runtime_error("HGET failed, unexpected reply type, memory exception");
+        }
+
         if (_hget(getDbId(), key, "", field, value))
         {
             std::shared_ptr<std::string> ptr(new std::string(value));

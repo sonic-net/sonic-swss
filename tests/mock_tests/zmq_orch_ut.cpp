@@ -6,6 +6,7 @@
 #include "ut_helper.h"
 #include "orch_zmq_config.h"
 #include "dbconnector.h"
+#include "mock_table.h"
 
 #define protected public
 #include "orch.h"
@@ -114,4 +115,16 @@ TEST(ZmqOrchTest, GetFeatureStatus)
     config_db.hdel("DEVICE_METADATA|localhost", ORCH_NORTHBOND_DASH_ZMQ_ENABLED);
     enabled = swss::get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, true);
     EXPECT_TRUE(enabled);
+}
+
+TEST(ZmqOrchTest, GetFeatureStatusException)
+{
+    DBConnector config_db("CONFIG_DB", 0);
+    config_db.hset("DEVICE_METADATA|localhost", HGET_THROW_EXCEPTION_FIELD_NAME, "false");
+    auto enabled = swss::get_feature_status(HGET_THROW_EXCEPTION_FIELD_NAME, true);
+    EXPECT_TRUE(enabled);
+
+    config_db.hset("DEVICE_METADATA|localhost", HGET_THROW_EXCEPTION_FIELD_NAME, "true");
+    enabled = swss::get_feature_status(HGET_THROW_EXCEPTION_FIELD_NAME, false);
+    EXPECT_FALSE(enabled);
 }
