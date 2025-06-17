@@ -19,10 +19,41 @@ EXTERN_MOCK_FNS
 
 namespace dashorch_test
 {
+    DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
     using namespace mock_orch_test;
-    class DashOrchTest : public MockDashOrchTest {};
+    using ::testing::DoAll;
+    using ::testing::Return;
+    using ::testing::SetArgPointee;
+    using ::testing::SaveArg;
+    using ::testing::Invoke;
+    using ::testing::InSequence;
+    class DashOrchTest : public MockDashOrchTest {
+        void ApplySaiMock()
+        {
+            INIT_SAI_API_MOCK(dash_eni);
+            MockSaiApis();
+        }
 
-    TEST_F(DashOrchTest, GetNonExistRoutingType)
+        void PreTearDown() override
+        {
+            RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(dash_eni);
+        }
+
+        public:
+            void VerifyEniMode(std::vector<sai_attribute_t> &actual_attrs, sai_dash_eni_mode_t expected_mode)
+            {
+                for (auto attr : actual_attrs) {
+                    if (attr.id == SAI_ENI_ATTR_DASH_ENI_MODE) {
+                        EXPECT_EQ(attr.value.u32, expected_mode);
+                        return;
+                    }
+                }
+                FAIL() << "SAI_ENI_ATTR_DASH_ENI_MODE not found in attributes";
+            }
+    };
+
+        TEST_F(DashOrchTest, GetNonExistRoutingType)
     {   
         dash::route_type::RouteType route_type;
         bool success = m_DashOrch->getRouteTypeActions(dash::route_type::RoutingType::ROUTING_TYPE_DIRECT, route_type);
@@ -51,5 +82,57 @@ namespace dashorch_test
     {
         bool success = m_DashOrch->removeRoutingTypeEntry(dash::route_type::RoutingType::ROUTING_TYPE_DROP);
         EXPECT_TRUE(success);
+    }
+
+    TEST_F(DashOrchTest, SetEniMode)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        Table eni_table = Table(m_app_db.get(), APP_DASH_ENI_TABLE_NAME);
+        int num_attrs;
+        const sai_attribute_t* attr_start;
+        std::vector<sai_attribute_t> actual_attrs;
+
+        dash::eni::Eni eni;
+        char mac[7];
+        mac[6] = '\0';
+        std::string srcMac = "f4:93:9f:ef:c4:7e";
+        sscanf(srcMac.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+        eni.set_admin_state(dash::eni::State::STATE_ENABLED);
+        eni.set_eni_id("eni1");
+        eni.set_mac_address(mac);
+        eni.set_vnet(vnet1);
+        eni.mutable_underlay_ip()->set_ipv4(swss::IpAddress("1.2.3.4").getV4Addr());
+        eni.set_eni_mode(dash::eni::MODE_VM);
+
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(3)
+            .WillRepeatedly(
+                DoAll(
+                    SaveArg<2>(&num_attrs),
+                    SaveArg<3>(&attr_start),
+                    Invoke(old_sai_dash_eni_api, &sai_dash_eni_api_t::create_eni) // Call the original function
+
+                )
+            );
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni);
+        actual_attrs.assign(attr_start, attr_start + num_attrs);
+        VerifyEniMode(actual_attrs, SAI_DASH_ENI_MODE_VM);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
+
+        eni.set_eni_mode(dash::eni::MODE_FNIC);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni);
+        actual_attrs.clear();
+        actual_attrs.assign(attr_start, attr_start + num_attrs);
+        VerifyEniMode(actual_attrs, SAI_DASH_ENI_MODE_FNIC);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
+
+        eni.set_eni_mode(dash::eni::MODE_UNSPECIFIED);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni);
+        actual_attrs.clear();
+        actual_attrs.assign(attr_start, attr_start + num_attrs);
+        VerifyEniMode(actual_attrs, SAI_DASH_ENI_MODE_VM); // Default
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
     }
 }
