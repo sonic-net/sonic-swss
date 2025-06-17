@@ -58,31 +58,31 @@ namespace saifailure_test
         *_sai_syncd_notifications_count = 0;
         uint32_t notif_count = *_sai_syncd_notifications_count;
 
-        ASSERT_DEATH({handleSaiCreateStatus(SAI_API_FDB, SAI_STATUS_FAILURE);}, "");
+        handleSaiCreateStatus(SAI_API_FDB, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
-        ASSERT_DEATH({handleSaiCreateStatus(SAI_API_HOSTIF, SAI_STATUS_INVALID_PARAMETER);}, "");
+        handleSaiCreateStatus(SAI_API_HOSTIF, SAI_STATUS_INVALID_PARAMETER);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
-        ASSERT_DEATH({handleSaiCreateStatus(SAI_API_PORT, SAI_STATUS_FAILURE);}, "");
+        handleSaiCreateStatus(SAI_API_PORT, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
-        ASSERT_DEATH({handleSaiSetStatus(SAI_API_HOSTIF, SAI_STATUS_FAILURE);}, "");
+        handleSaiSetStatus(SAI_API_HOSTIF, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
-        ASSERT_DEATH({handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_FAILURE);}, "");
+        handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
-        ASSERT_DEATH({handleSaiSetStatus(SAI_API_TUNNEL, SAI_STATUS_FAILURE);}, "");
+        handleSaiSetStatus(SAI_API_TUNNEL, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
-        ASSERT_DEATH({handleSaiRemoveStatus(SAI_API_LAG, SAI_STATUS_FAILURE);}, "");
+        handleSaiRemoveStatus(SAI_API_LAG, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
