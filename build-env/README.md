@@ -6,6 +6,7 @@ This directory contains scripts to create a docker image which serves as a build
 
 Note: Your home directory on the host machine will be mounted to the home directory inside the container. This means that any settings in your home directory (e.g. authorized SSH keys or `.bashrc` settings) will also apply in the container and files inside your host home directory will be accessible inside the container.
 
+From this directory (`sonic-swss/build-env`):
 1. Before building the image for the first time, run the `env_init.sh` script.
 2. Build the image and start the container with `docker compose up -d swss-bookworm`.
 3. Enter the container either with `docker exec -it -u ${USER} swss-bookworm-master bash` or via SSH `ssh ${USER}@172.19.0.10`.
