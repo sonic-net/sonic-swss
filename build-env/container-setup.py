@@ -1,9 +1,9 @@
 import argparse
+import glob
 import requests
 import json
-import subprocess
-
 import os
+import subprocess
 from pathlib import Path
 
 
@@ -108,14 +108,14 @@ def main(branch, debian_version):
                 subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
 
         available_debs = subprocess.run(["ls", work_dir], cwd=work_dir, capture_output=True, text=True).stdout
-        debs_to_install = deb_files_regex
+        deb_patterns = deb_files_regex
         if 'libyang' and 'libproto' in available_debs:
-            debs_to_install += dash_deb_regex
+            deb_patterns += dash_deb_regex
 
-        cmd = "env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i {}".format(" ".join(debs_to_install))
-        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
-
-        return
+        for pattern in deb_patterns:
+            debs_to_install = glob.glob(pattern, root_dir=work_dir)
+            cmd = ["sudo", "/usr/bin/dpkg", "-i"] + debs_to_install
+            subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, env={"VPP_INSTALL_SKIP_SYSCTL": "1"})
     except Exception:
         raise
 
