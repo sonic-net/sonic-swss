@@ -150,3 +150,24 @@ sai_uint16_t to_sai(const dash::types::HaRole ha_role)
 
     return static_cast<sai_uint16_t>(sai_ha_role);
 }
+
+dash::types::HaRole to_pb(const sai_dash_ha_role_t ha_role)
+{
+    SWSS_LOG_ENTER();
+
+    switch (ha_role)
+    {
+        case SAI_DASH_HA_ROLE_DEAD:
+            return dash::types::HA_SCOPE_ROLE_DEAD;
+        case SAI_DASH_HA_ROLE_ACTIVE:
+            return dash::types::HA_SCOPE_ROLE_ACTIVE;
+        case SAI_DASH_HA_ROLE_STANDBY:
+            return dash::types::HA_SCOPE_ROLE_STANDBY;
+        case SAI_DASH_HA_ROLE_STANDALONE:
+            return dash::types::HA_SCOPE_ROLE_STANDALONE;
+        case SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE:
+            return dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE;
+        default:
+            return dash::types::HA_SCOPE_ROLE_DEAD;
+    }
+}
