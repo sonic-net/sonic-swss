@@ -109,7 +109,7 @@ def main(branch, debian_version):
 
         available_debs = subprocess.run(["ls", work_dir], cwd=work_dir, capture_output=True, text=True).stdout
         deb_patterns = deb_files_regex
-        if 'libyang' and 'libproto' in available_debs:
+        if 'libyang' in available_debs and 'libproto' in available_debs:
             deb_patterns += dash_deb_regex
 
         for pattern in deb_patterns:
