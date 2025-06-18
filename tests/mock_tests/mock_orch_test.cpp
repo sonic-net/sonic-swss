@@ -12,6 +12,7 @@ void MockOrchTest::ApplySaiMock() {}
 
 void MockOrchTest::PrepareSai()
 {
+    std::cout << "Preparing SAI for MockOrchTest" << std::endl;
     sai_attribute_t attr;
 
     attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
@@ -61,6 +62,7 @@ void MockOrchTest::PrepareSai()
 
 void MockOrchTest::SetUp()
 {
+    std::cout << "Setting up MockOrchTest" << std::endl;
     map<string, string> profile = {
         { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
         { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }

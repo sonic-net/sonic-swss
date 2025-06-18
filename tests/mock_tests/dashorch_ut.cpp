@@ -30,12 +30,14 @@ namespace dashorch_test
     class DashOrchTest : public MockDashOrchTest {
         void ApplySaiMock()
         {
+            std::cout << "Applying SAI mock for DashOrchTest" << std::endl;
             INIT_SAI_API_MOCK(dash_eni);
             MockSaiApis();
         }
 
         void PreTearDown() override
         {
+            std::cout << "Restoring SAI mock for DashOrchTest" << std::endl;
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(dash_eni);
         }
@@ -86,6 +88,7 @@ namespace dashorch_test
 
     TEST_F(DashOrchTest, SetEniMode)
     {
+        std::cout << "Start ENI mode test" << std::endl;
         CreateApplianceEntry();
         CreateVnet();
 
@@ -94,11 +97,9 @@ namespace dashorch_test
         const sai_attribute_t* attr_start;
         std::vector<sai_attribute_t> actual_attrs;
 
+        std::cout << "Constructing ENI protobuf" << std::endl;
         dash::eni::Eni eni;
-        char mac[7];
-        mac[6] = '\0';
-        std::string srcMac = "f4:93:9f:ef:c4:7e";
-        sscanf(srcMac.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+        std::string mac = "f4:93:9f:ef:c4:7e";
         eni.set_admin_state(dash::eni::State::STATE_ENABLED);
         eni.set_eni_id("eni1");
         eni.set_mac_address(mac);
@@ -106,6 +107,7 @@ namespace dashorch_test
         eni.mutable_underlay_ip()->set_ipv4(swss::IpAddress("1.2.3.4").getV4Addr());
         eni.set_eni_mode(dash::eni::MODE_VM);
 
+        std::cout << "Setting SAI API expectations" << std::endl;
         EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(3)
             .WillRepeatedly(
                 DoAll(
@@ -116,11 +118,13 @@ namespace dashorch_test
                 )
             );
 
+        std::cout << "Expecting VM mode" << std::endl;
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni);
         actual_attrs.assign(attr_start, attr_start + num_attrs);
         VerifyEniMode(actual_attrs, SAI_DASH_ENI_MODE_VM);
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
 
+        std::cout << "Expecting FNIC mode" << std::endl;
         eni.set_eni_mode(dash::eni::MODE_FNIC);
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni);
         actual_attrs.clear();
@@ -128,6 +132,7 @@ namespace dashorch_test
         VerifyEniMode(actual_attrs, SAI_DASH_ENI_MODE_FNIC);
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
 
+        std::cout << "Expecting VM mode" << std::endl;
         eni.set_eni_mode(dash::eni::MODE_UNSPECIFIED);
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni);
         actual_attrs.clear();
