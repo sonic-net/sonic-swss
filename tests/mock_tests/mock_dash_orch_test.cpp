@@ -11,7 +11,7 @@ namespace mock_orch_test
         {
             FAIL() << "Table " << table_name << " not found in dash_table_orch_map.";
         }
-        Orch* target_orch = it->second;
+        Orch* target_orch = *(it->second);
 
         auto consumer = make_unique<Consumer>(
             new swss::ConsumerStateTable(m_app_db.get(), table_name),

@@ -6,15 +6,16 @@ namespace mock_orch_test
     class MockDashOrchTest : public MockOrchTest
     {
         protected:
-            std::unordered_map<std::string, Orch*> dash_table_orch_map = {
-                {APP_DASH_VNET_TABLE_NAME, m_dashVnetOrch},
-                {APP_DASH_VNET_MAPPING_TABLE_NAME, m_dashVnetOrch},
-                {APP_DASH_APPLIANCE_TABLE_NAME, m_DashOrch},
-                {APP_DASH_ROUTING_TYPE_TABLE_NAME, m_DashOrch},
-                {APP_DASH_ROUTE_GROUP_TABLE_NAME, m_DashRouteOrch},
-                {APP_DASH_ROUTE_TABLE_NAME, m_DashRouteOrch},
-                {APP_DASH_TUNNEL_TABLE_NAME, m_DashTunnelOrch},
-                {APP_DASH_ENI_TABLE_NAME, m_DashOrch},
+            // Orchs may not be initialized yet so we need double pointers to access them once they are initialized
+            std::unordered_map<std::string, Orch**> dash_table_orch_map = {
+                {APP_DASH_VNET_TABLE_NAME, (Orch**) &m_dashVnetOrch},
+                {APP_DASH_VNET_MAPPING_TABLE_NAME, (Orch**) &m_dashVnetOrch},
+                {APP_DASH_APPLIANCE_TABLE_NAME, (Orch**) &m_DashOrch},
+                {APP_DASH_ROUTING_TYPE_TABLE_NAME, (Orch**) &m_DashOrch},
+                {APP_DASH_ROUTE_GROUP_TABLE_NAME, (Orch**) &m_DashRouteOrch},
+                {APP_DASH_ROUTE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
+                {APP_DASH_TUNNEL_TABLE_NAME, (Orch**) &m_DashTunnelOrch},
+                {APP_DASH_ENI_TABLE_NAME, (Orch**) &m_DashOrch},
             };
             void SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set = true, bool expect_empty = true);
             void CreateApplianceEntry();
