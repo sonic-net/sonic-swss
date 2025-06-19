@@ -48,6 +48,7 @@ orchagent_SOURCES = \
             $(top_srcdir)/lib/gearboxutils.cpp \
             $(top_srcdir)/lib/subintf.cpp \
             $(top_srcdir)/lib/recorder.cpp \
+            $(top_srcdir)/lib/orch_zmq_config.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
