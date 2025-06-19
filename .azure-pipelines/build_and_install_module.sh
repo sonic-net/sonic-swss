@@ -76,10 +76,10 @@ function build_and_install_kmodule()
     mkdir -p $SONIC_MODULES_DIR
     cp drivers/net/team/*.ko drivers/net/vrf.ko drivers/net/macsec.ko $SONIC_MODULES_DIR/
     depmod
-    modinfo team vrf macsec
-    modprobe team
-    modprobe vrf
-    modprobe macsec
+    sudo modinfo team vrf macsec
+    sudo modprobe team
+    sudo modprobe vrf
+    sudo modprobe macsec
 
     cd /tmp
     rm -rf $WORKDIR

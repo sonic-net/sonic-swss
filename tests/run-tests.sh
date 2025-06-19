@@ -10,5 +10,6 @@ JUNITXML=$(echo "$TESTS" | cut -d "." -f1)_tr.xml
 set -x
 for ((i=1; i<=$RETRY; i++)); do
     echo "Running the py test for tests: $TESTS, $i/$RETRY..."
-    py.test -v --force-flaky --junitxml="$JUNITXML" $PY_TEST_PARAMS --imgname="$IMAGE_NAME" $TESTS && break
+    sudo py.test -v --force-flaky --junitxml="$JUNITXML" $PY_TEST_PARAMS --imgname="$IMAGE_NAME" $TESTS &&  exit 0
 done
+exit 1
