@@ -5,7 +5,6 @@ namespace mock_orch_test
     
     void MockDashOrchTest::SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set, bool expect_empty)
     {
-        std::cout << "Setting Dash table: " << table_name << ", key: " << key << std::endl;
         auto it = dash_table_orch_map.find(table_name);
         if (it == dash_table_orch_map.end())
         {
