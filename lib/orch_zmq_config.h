@@ -20,6 +20,11 @@
  */
 #define ORCH_NORTHBOND_DASH_ZMQ_ENABLED "orch_northbond_dash_zmq_enabled"
 
+/*
+ * Feature flag to enable the fpmsyncd to send ROUTE events to orchagent via the ZMQ channel.
+ */
+#define ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED "orch_northbond_route_zmq_enabled"
+
 namespace swss {
 
 std::set<std::string> load_zmq_tables();
