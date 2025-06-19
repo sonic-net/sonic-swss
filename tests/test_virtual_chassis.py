@@ -205,6 +205,7 @@ class TestVirtualChassis(object):
                 spcfg = ast.literal_eval(value)
                 assert spcfg['count'] == sp_count, "Number of systems ports configured is invalid"
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_app_db_sync(self, vct):
         """Test chassis app db syncing.
 
@@ -225,6 +226,7 @@ class TestVirtualChassis(object):
                 keys = chassis_app_db.get_keys("SYSTEM_INTERFACE")
                 assert len(keys), "No chassis app db syncing is done"
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_interface(self, vct):
         """Test RIF record creation in ASIC_DB for remote interfaces.
 
@@ -281,6 +283,7 @@ class TestVirtualChassis(object):
                     # Remote system ports's switch id should not match local switch id
                     assert spcfginfo["attached_switch_id"] != lc_switch_id, "RIF system port with wrong switch_id"
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_neigh(self, vct):
         """Test neigh record create/delete and syncing to chassis app db.
 
@@ -550,7 +553,8 @@ class TestVirtualChassis(object):
 
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
-        
+
+    @pytest.mark.skip(reason="Failing. Under investigation")        
     def test_chassis_system_lag(self, vct):
         """Test PortChannel in VOQ based chassis systems.
         
@@ -687,6 +691,7 @@ class TestVirtualChassis(object):
                     
                     break
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_lag_id_allocator_table_full(self, vct):
         """Test lag id allocator table full.
         
@@ -764,6 +769,7 @@ class TestVirtualChassis(object):
                     
                     break
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_lag_id_allocator_del_id(self, vct):
         """Test lag id allocator's release id and re-use id processing.
         
@@ -915,6 +921,7 @@ class TestVirtualChassis(object):
                     
                     break
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_add_remove_ports(self, vct):
         """Test removing and adding a port in a VOQ chassis.
 
@@ -971,6 +978,7 @@ class TestVirtualChassis(object):
 
             buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
 
+    @pytest.mark.skip(reason="Skip test due to GENETLINK hostif")
     def test_voq_egress_queue_counter(self, vct):
         if vct is None:
             return

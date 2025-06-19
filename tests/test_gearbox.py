@@ -158,6 +158,7 @@ class TestGearbox(object):
     def test_GearboxSanity(self, gearbox, testlog):
         gearbox.SanityCheck(testlog)
 
+    @pytest.mark.skip(reason="Skip test due to GENETLINK hostif")
     def test_GearboxCounter(self, dvs, gbasic, enable_port_counter, testlog):
         counters_db = DVSDatabase(swsscommon.COUNTERS_DB, dvs.redis_sock)
         gb_counters_db = DVSDatabase(swsscommon.GB_COUNTERS_DB, dvs.redis_sock)
@@ -178,6 +179,7 @@ class TestGearbox(object):
         fvs = counters_db.wait_for_entry("COUNTERS", port_oid)
         assert fvs.get("SAI_PORT_STAT_IF_IN_ERRORS")
 
+    @pytest.mark.skip(reason="Skip test due to GENETLINK hostif")
     def test_GbAsicFEC(self, gbasic, testlog):
 
         # set fec rs on port 0 of phy 1

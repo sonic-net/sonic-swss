@@ -487,6 +487,7 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    @pytest.mark.skip(reason="All GENETLINK hostifs have the same name")
     def test_VlanHostIf(self, dvs):
 
         vlan = "2"

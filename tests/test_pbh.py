@@ -45,6 +45,7 @@ def dvs_api(request, dvs_pbh, dvs_acl):
 
 @pytest.mark.usefixtures("dvs_lag_manager")
 class TestPbhInterfaceBinding:
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhTablePortBinding(self, testlog):
         try:
             port_list = ["Ethernet0", "Ethernet4"]
@@ -68,6 +69,7 @@ class TestPbhInterfaceBinding:
             self.dvs_pbh.remove_pbh_table(PBH_TABLE_NAME)
             self.dvs_acl.verify_acl_table_count(0)
 
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhTablePortChannelBinding(self, testlog):
         try:
             # PortChannel0001
@@ -132,6 +134,7 @@ class TestPbhInterfaceBinding:
 
 @pytest.mark.usefixtures("dvs_hash_manager")
 class TestPbhBasicFlows:
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhHashFieldCreationDeletion(self, testlog):
         try:
             pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -146,6 +149,7 @@ class TestPbhBasicFlows:
             self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhHashCreationDeletion(self, testlog):
         try:
             # PBH hash field
@@ -175,6 +179,7 @@ class TestPbhBasicFlows:
             self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhTableCreationDeletion(self, testlog):
         try:
             pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
@@ -189,6 +194,7 @@ class TestPbhBasicFlows:
             self.dvs_pbh.remove_pbh_table(PBH_TABLE_NAME)
             self.dvs_acl.verify_acl_table_count(0)
 
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhRuleCreationDeletion(self, testlog):
         try:
             # PBH hash field
@@ -259,6 +265,7 @@ class TestPbhBasicFlows:
 @pytest.mark.usefixtures("dvs_hash_manager")
 @pytest.mark.xfail(reason="Failing after Bookworm/libnl 3.7.0 upgrade")
 class TestPbhBasicEditFlows:
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhRuleUpdate(self, testlog):
         try:
             # PBH hash field
@@ -362,7 +369,7 @@ class TestPbhBasicEditFlows:
             self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
-
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhRuleUpdateFlowCounter(self, dvs, testlog):
         try:
             # PBH hash field
@@ -909,12 +916,14 @@ class TestPbhExtendedFlows:
         finally:
             self.remove_rule(meta_dict, pbh_ref_count)
 
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhNvgreVxlanConfiguration(self, testlog, pbh_nvgre, pbh_vxlan):
         pass
 
 
 @pytest.mark.usefixtures("dvs_hash_manager")
 class TestPbhDependencyFlows:
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhHashCreationDeletionWithDependencies(self, testlog):
         try:
             # PBH hash
@@ -946,6 +955,7 @@ class TestPbhDependencyFlows:
             self.dvs_hash.verify_hash_count(0)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
+    @pytest.mark.skipif("PBH_SUPPORT" not in os.environ, reason="Disable since we remove pbhorch.")
     def test_PbhRuleCreationDeletionWithDependencies(self, testlog):
         try:
             # PBH hash
