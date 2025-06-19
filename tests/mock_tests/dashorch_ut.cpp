@@ -95,10 +95,7 @@ namespace dashorch_test
         std::vector<sai_attribute_t> actual_attrs;
 
         dash::eni::Eni eni;
-        char mac[7];
-        mac[6] = '\0';
-        std::string srcMac = "f4:93:9f:ef:c4:7e";
-        sscanf(srcMac.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+        std::string mac = "f4:93:9f:ef:c4:7e";
         eni.set_admin_state(dash::eni::State::STATE_ENABLED);
         eni.set_eni_id("eni1");
         eni.set_mac_address(mac);
