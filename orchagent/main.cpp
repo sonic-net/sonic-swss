@@ -23,6 +23,7 @@ extern "C" {
 #include <logger.h>
 
 #include "orchdaemon.h"
+#include "orch_zmq_config.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
 #include "notifications.h"
@@ -362,9 +363,8 @@ int main(int argc, char **argv)
     string record_location = Recorder::DEFAULT_DIR;
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
-    string zmq_server_address = "tcp://127.0.0.1:" + to_string(ORCH_ZMQ_PORT);
+    string zmq_server_address = "";
     string vrf;
-    bool   enable_zmq = false;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
@@ -457,7 +457,6 @@ int main(int argc, char **argv)
             if (optarg)
             {
                 zmq_server_address = optarg;
-                enable_zmq = true;
             }
             break;
         case 't':
@@ -530,14 +529,14 @@ int main(int argc, char **argv)
 
     // Instantiate ZMQ server
     shared_ptr<ZmqServer> zmq_server = nullptr;
-    if (enable_zmq)
+    if (zmq_server_address.empty())
     {
-        SWSS_LOG_NOTICE("Instantiate ZMQ server : %s, %s", zmq_server_address.c_str(), vrf.c_str());
-        zmq_server = make_shared<ZmqServer>(zmq_server_address.c_str(), vrf.c_str());
+        SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been disabled.");
     }
     else
     {
-        SWSS_LOG_NOTICE("ZMQ disabled");
+        SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        zmq_server = create_zmq_server(zmq_server_address, vrf);
     }
 
     // Get switch_type
