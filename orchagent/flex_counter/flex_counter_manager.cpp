@@ -234,7 +234,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
     auto counter_it = installed_counters.find(object_id);
     if (counter_it == installed_counters.end())
     {
-        SWSS_LOG_WARN("No counters found on object '%" PRIu64 "' in group '%s'.",
+        SWSS_LOG_INFO("No counters found on object '%" PRIu64 "' in group '%s'.",
                 object_id,
                 group_name.c_str());
         return;
