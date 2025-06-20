@@ -1002,7 +1002,7 @@ namespace flexcounter_test
     );
 
     using namespace mock_orch_test;
-    class EniStatFlexCounterTest : public MockOrchTest
+    class StandaloneFCTest : public MockOrchTest
     {
         virtual void PostSetUp() {
             _hook_sai_switch_api();
@@ -1013,7 +1013,7 @@ namespace flexcounter_test
         }
     };
 
-    TEST_F(EniStatFlexCounterTest, TestStatusUpdate)
+    TEST_F(StandaloneFCTest, TestEniStatusUpdate)
     {
         /* Add a mock ENI */
         EniEntry tmp_entry;
@@ -1028,5 +1028,73 @@ namespace flexcounter_test
         /* This should delete the STATS */
         m_DashOrch->handleFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestCaching)
+    {
+        mockFlexCounterOperationCallCount = 0;
+
+        /* Disable traditional FC since caching is only used for FC config through SAIREDIS channel */
+        gTraditionalFlexCounter = false;
+        FlexCounterTaggedCachedManager<void> port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, 1000, false);
+
+        // Create two port OIDs
+        sai_object_id_t port1_oid = 0x100000000000d;
+        sai_object_id_t port2_oid = 0x100000000000e;
+        sai_object_id_t port3_oid = 0x100000000000f;
+        sai_object_id_t port4_oid = 0x1000000000010;
+        // Different counter stats for each port
+        std::unordered_set<string> type1_stats = {
+            "SAI_PORT_STAT_IF_IN_OCTETS",
+            "SAI_PORT_STAT_IF_IN_ERRORS"
+        };
+        std::unordered_set<string> type2_stats = {
+            "SAI_PORT_STAT_IF_OUT_OCTETS",
+            "SAI_PORT_STAT_IF_OUT_ERRORS"
+        };
+
+        // Set counter IDs for both ports
+        port_stat_manager.setCounterIdList(port1_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port2_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port3_oid, CounterType::PORT, type2_stats);
+        port_stat_manager.setCounterIdList(port4_oid, CounterType::PORT, type1_stats);
+
+        // Flush the counters
+        port_stat_manager.flush();
+
+        /* SAIREDIS channel should have been called thrice, once for port1&port2,port3,port4 */
+        ASSERT_EQ(mockFlexCounterOperationCallCount, 3);
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port1_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port2_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port3_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_OUT_OCTETS,"
+                                          "SAI_PORT_STAT_IF_OUT_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port4_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
     }
 }

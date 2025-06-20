@@ -1384,6 +1384,8 @@ class TestSrv6MySidFpmsyncd(object):
         self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_pipe)
         self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL")
         self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL")
+        self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
+        self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
         self.verify_attribute_value(my_sid_table, my_sid_uniform, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
         self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
 
@@ -1472,6 +1474,8 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL")
         self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL")
+        self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
+        self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
 
         # Cleanup
         dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "no sid {sid_addr} locator loc1 behavior uN"')

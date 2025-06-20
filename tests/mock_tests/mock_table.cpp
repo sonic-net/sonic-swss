@@ -1,6 +1,7 @@
 #include "table.h"
 #include "producerstatetable.h"
 #include "producertable.h"
+#include "mock_table.h"
 #include <set>
 #include <memory>
 
@@ -145,6 +146,12 @@ namespace swss
     std::shared_ptr<std::string> DBConnector::hget(const std::string &key, const std::string &field)
     {
         std::string value;
+
+        if (field == HGET_THROW_EXCEPTION_FIELD_NAME)
+        {
+            throw std::runtime_error("HGET failed, unexpected reply type, memory exception");
+        }
+
         if (_hget(getDbId(), key, "", field, value))
         {
             std::shared_ptr<std::string> ptr(new std::string(value));
@@ -153,6 +160,51 @@ namespace swss
         else
         {
             return std::shared_ptr<std::string>(NULL);
+        }
+    }
+
+    int64_t DBConnector::hdel(const std::string &key, const std::string &field)
+    {
+        auto &table = gDB[getDbId()][key];
+        auto key_iter = table.find("");
+        if (key_iter == table.end())
+        {
+            return 0;
+        }
+
+        int removed = 0;
+        auto attrs = key_iter->second;
+        std::vector<FieldValueTuple> new_attrs;
+        for (auto attr_iter : attrs)
+        {
+            if (attr_iter.first == field)
+            {
+                removed += 1;
+                continue;
+            }
+
+            new_attrs.push_back(attr_iter);
+        }
+
+        table[""] = new_attrs;
+
+        return removed;
+    }
+
+    void DBConnector::hset(const std::string &key, const std::string &field, const std::string &value)
+    {
+        FieldValueTuple fvp(field, value);
+        std::vector<FieldValueTuple> attrs = { fvp };
+
+        auto &table = gDB[getDbId()][key];
+        auto iter = table.find("");
+        if (iter == table.end())
+        {
+            table[""] = attrs;
+        }
+        else
+        {
+            merge_values(iter->second, attrs);
         }
     }
 
