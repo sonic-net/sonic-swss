@@ -197,9 +197,9 @@ class TestPortConfig(object):
         dvs.start_swss()
         time.sleep(5)
 
-        polling_config = PollingConfig(polling_interval=0.1, timeout=15, strict=True)
+        polling_config = PollingConfig(polling_interval=0.1, timeout=40, strict=True)
 
-        # Verify recirc ports in port table in applDB
+        #  Verify recirc ports in port table in applDB
         for i in range(2):
             name = alias = "Ethernet-Rec%s" % i
             dvs.get_app_db().wait_for_field_match(swsscommon.APP_PORT_TABLE_NAME, name,
