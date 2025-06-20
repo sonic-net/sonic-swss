@@ -166,6 +166,32 @@ void IntfMgr::setIntfVrf(const string &alias, const string &vrfName)
     }
 }
 
+void IntfMgr::updateIpv6IntfMode(const string &alias, const string &ipv6_link_local_mode)
+{
+    stringstream cmd;
+    string res;
+
+    if (ipv6_link_local_mode == "enable")
+    {
+        cmd << IP_CMD << " sysctl -w net.ipv6.conf." << alias << ".disable_ipv6=0";
+    }
+    else if (ipv6_link_local_mode == "disable")
+    {
+        cmd << IP_CMD << " sysctl -w net.ipv6.conf." << alias << ".disable_ipv6=1";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("IPv6 link local mode is invalid: \"%s\"", ipv6_link_local_mode.c_str());
+        return;
+    }
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
 bool IntfMgr::setIntfMpls(const string &alias, const string& mpls)
 {
     stringstream cmd;
@@ -915,16 +941,26 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 if ((ipv6_link_local_mode == "enable") && (m_ipv6LinkLocalModeList.find(alias) == m_ipv6LinkLocalModeList.end()))
                 {
                     m_ipv6LinkLocalModeList.insert(alias);
+                    updateIpv6IntfMode(alias, ipv6_link_local_mode);
                     SWSS_LOG_INFO("Inserted ipv6 link local mode list for %s", alias.c_str());
                 }
                 else if ((ipv6_link_local_mode == "disable") && (m_ipv6LinkLocalModeList.find(alias) != m_ipv6LinkLocalModeList.end()))
                 {
                     m_ipv6LinkLocalModeList.erase(alias);
+                    updateIpv6IntfMode(alias, ipv6_link_local_mode);
                     delIpv6LinkLocalNeigh(alias);
                     SWSS_LOG_INFO("Erased ipv6 link local mode list for %s", alias.c_str());
                 }
                 FieldValueTuple fvTuple("ipv6_use_link_local_only", ipv6_link_local_mode);
                 data.push_back(fvTuple);
+            }
+            else
+            {
+                // If ipv6 link local mode is not set, then default to disable
+                if (m_ipv6LinkLocalModeList.find(alias) == m_ipv6LinkLocalModeList.end())
+                {
+                    updateIpv6IntfMode(alias, "disable");
+                }
             }
         }
 
@@ -1081,6 +1117,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (m_ipv6LinkLocalModeList.find(alias) != m_ipv6LinkLocalModeList.end())
         {
             m_ipv6LinkLocalModeList.erase(alias);
+            updateIpv6IntfMode(alias, "disable");
             delIpv6LinkLocalNeigh(alias);
             SWSS_LOG_INFO("Erased ipv6 link local mode list for %s", alias.c_str());
         }
