@@ -42,7 +42,7 @@ private:
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
-    void updateIpv6IntfMode(const string &alias, const string &ipv6_link_local_mode);
+    void updateIpv6IntfMode(const std::string &alias, const std::string &ipv6_link_local_mode);
     bool setIntfMpls(const std::string &alias, const std::string &mpls);
 
     bool doIntfGeneralTask(const std::vector<std::string>& keys, std::vector<FieldValueTuple> data, const std::string& op);
