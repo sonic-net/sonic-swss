@@ -17,7 +17,7 @@ extern CrmOrch *gCrmOrch;
 extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
 
-void RouteOrch::doLabelTask(Consumer& consumer)
+void RouteOrch::doLabelTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 

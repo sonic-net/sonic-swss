@@ -299,7 +299,12 @@ bool OrchDaemon::init()
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch);
+
+    // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
+    auto enable_route_zmq = get_feature_status(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false);
+    auto route_zmq_sever = enable_route_zmq ? m_zmqServer : nullptr;
+
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_sever);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
