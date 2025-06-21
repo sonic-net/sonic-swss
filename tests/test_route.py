@@ -130,6 +130,10 @@ class TestRouteBase(object):
         dvs.servers[1].runcmd("ip address flush dev eth0")
         dvs.servers[2].runcmd("ip address flush dev eth0")
         dvs.servers[3].runcmd("ip address flush dev eth0")
+        dvs.servers[0].runcmd("ip address flush dev eth4")
+        dvs.servers[1].runcmd("ip address flush dev eth4")
+        dvs.servers[2].runcmd("ip address flush dev eth4")
+        dvs.servers[3].runcmd("ip address flush dev eth4")
 
 class TestRoute(TestRouteBase):
     """ Functionality tests for route """
