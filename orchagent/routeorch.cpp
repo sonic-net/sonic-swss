@@ -2495,6 +2495,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
         {
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                // Routeorch internal cache has an entry, but it has already been removed in sai.
+                // This can happen in dualtor when a tunnel route is removed that matches a learned route
+                // remove the entry from the cache and retry route creation
+                m_syncdRoutes.at(vrf_id).erase(ipPrefix);
+                return false;
+            }
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
             task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTE, status);

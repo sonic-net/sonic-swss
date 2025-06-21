@@ -4,6 +4,9 @@
 #define protected public
 #include "orch.h"
 #undef protected
+#define private public
+#include "routeorch.h"
+#undef private
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
