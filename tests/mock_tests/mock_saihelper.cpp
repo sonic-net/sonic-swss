@@ -14,6 +14,9 @@
 namespace saihelper_test
 {
     using namespace std;
+    using ::testing::_;
+    using ::testing::Throw;
+    using namespace testing_db;
 
     sai_switch_api_t ut_sai_switch_api;
     sai_switch_api_t *old_sai_switch_api;
@@ -95,6 +98,14 @@ namespace saihelper_test
     {
         sai_switch_api = old_sai_switch_api;
     }
+
+    class MockDBTable : public Table {
+        public:
+            MockDBTable(swss::DBConnector* db, const std::string& tableName) : Table(db, tableName) {}
+
+            MOCK_METHOD(void, set, (const std::string &key, const std::vector<FieldValueTuple> &values, const std::string &op, const std::string &prefix), (override));
+            MOCK_METHOD(void, del, (const std::string &key, const std::string &op, const std::string &prefix), (override));
+    };
 
     class SaihelperTest : public ::testing::Test
     {
@@ -537,6 +548,38 @@ namespace saihelper_test
         ASSERT_EQ(status, task_need_retry);
 
         _unhook_sai_apis();
+    }
+
+    TEST(WriteToDBTest, SetThrowsException) {
+        auto db = std::make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
+        std::unique_ptr<swss::Table> mockTable = std::make_unique<MockDBTable>(db.get(), "APP_DASH_APPLIANCE_TABLE_NAME");
+        std::string key = "testKey";
+        uint32_t res = 1;
+        std::string version = "v1";
+
+        auto* mock = dynamic_cast<MockDBTable*>(mockTable.get());
+        ASSERT_NE(mock, nullptr);
+
+        // Simulate set() throwing an exception
+        EXPECT_CALL(*mock, set(_, _, _, _))
+            .WillOnce(Throw(std::runtime_error("Set failed")));
+
+        writeResultToDB(mockTable, key, res, version);
+    }
+
+    TEST(RemoveFromDBTest, DelThrowsException) {
+        auto db = std::make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
+        std::unique_ptr<swss::Table> mockTable = std::make_unique<MockDBTable>(db.get(), "APP_DASH_APPLIANCE_TABLE_NAME");
+        std::string key = "testKey";
+
+        auto* mock = dynamic_cast<MockDBTable*>(mockTable.get());
+        ASSERT_NE(mock, nullptr);
+
+        // Simulate del() throwing an exception
+        EXPECT_CALL(*mock, del(_, _, _))
+            .WillOnce(Throw(std::runtime_error("Del failed")));
+
+        removeResultFromDB(mockTable, key);
     }
 
 }
