@@ -76,6 +76,8 @@ typedef struct {
     // port_pgs - stores pgs referencing this profile
     // An element will be added or removed when a PG added or removed
     port_pg_set_t port_pgs;
+    // packet trimming control
+    std::string packet_discard_action;
 } buffer_profile_t;
 
 typedef struct {
