@@ -201,7 +201,7 @@ class TestMuxTunnelBase():
         else:
             appdb.wait_for_deleted_keys(self.APP_TUNNEL_ROUTE_TABLE_NAME, destinations)
 
-    def check_neigh_in_asic_db(self, asicdb, ip, expected=True):
+    def check_neigh_in_asic_db(self, asicdb, ip, expected=True, check_no_host_route=True):
         rif_oid = self.get_vlan_rif_oid(asicdb)
         switch_oid = self.get_switch_oid(asicdb)
         neigh_key_map = {
@@ -216,7 +216,12 @@ class TestMuxTunnelBase():
 
             for key in nbr_keys:
                 if ip in key:
-                    return key
+                    if check_no_host_route:
+                        fvs = asicdb.get_entry(self.ASIC_NEIGH_TABLE, key)
+                        assert fvs.get("SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE") == "true"
+                        return key
+                    else:
+                        return key
 
         else:
             asicdb.wait_for_deleted_keys(self.ASIC_NEIGH_TABLE, [expected_key])
@@ -274,7 +279,7 @@ class TestMuxTunnelBase():
     def check_route_nexthop(self, dvs_route, asicdb, route, nexthop, tunnel=False):
         route_key = dvs_route.check_asicdb_route_entries([route])
         route_nexthop_oid = self.get_route_nexthop_oid(route_key[0], asicdb)
-        
+
         if tunnel:
             assert route_nexthop_oid == nexthop
             return
@@ -369,27 +374,43 @@ class TestMuxTunnelBase():
             self.add_neighbor(dvs, neigh_info.ipv6, "00:00:00:00:11:11")
             neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
             neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+            dvs_route.check_asicdb_route_entries(
+                [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
+            )
+            rtv4_keys = dvs_route.check_asicdb_route_entries([neigh_info.ipv4+self.IPV4_MASK])
+            rtv6_keys = dvs_route.check_asicdb_route_entries([neigh_info.ipv6+self.IPV6_MASK])
+            self.check_nexthop_in_asic_db(asicdb, rtv4_keys[0])
+            self.check_nexthop_in_asic_db(asicdb, rtv6_keys[0])
 
         try:
             self.set_mux_state(appdb, "Ethernet0", "standby")
             self.wait_for_mux_state(dvs, "Ethernet0", "standby")
 
+            # Number of NH = Neighbor NHs + 1 tunnel NH,
+            # also populates the tunnel_nh_id
+            expected_nhs = (len(neighbor_list) * 2) + 1
+            self.check_tnl_nexthop_in_asic_db(asicdb, expected_nhs)
+
             for neigh_info in neighbor_list:
-                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv4_key)
-                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv6_key)
+                # neighbor should not be removed
+                ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+                assert ipv4_key == neigh_info.ipv4_key
+                ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+                assert ipv6_key == neigh_info.ipv6_key
                 dvs_route.check_asicdb_route_entries(
                     [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
                 )
+                self.check_nexthop_in_asic_db(asicdb, rtv4_keys[0], True)
+                self.check_nexthop_in_asic_db(asicdb, rtv6_keys[0], True)
 
             self.set_mux_state(appdb, "Ethernet0", "active")
             self.wait_for_mux_state(dvs, "Ethernet0", "active")
 
             for neigh_info in neighbor_list:
-                dvs_route.check_asicdb_deleted_route_entries(
-                    [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
-                )
                 neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+                self.check_nexthop_in_asic_db(asicdb, rtv4_keys[0])
                 neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+                self.check_nexthop_in_asic_db(asicdb, rtv6_keys[0])
 
         finally:
             for neigh_info in neighbor_list:
@@ -410,36 +431,46 @@ class TestMuxTunnelBase():
 
         existing_keys = asicdb.get_keys(self.ASIC_NEIGH_TABLE)
 
+        # neighbors must get added even for standby port
         self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
+        srv2_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
+
         self.add_neighbor(dvs, self.SERV2_IPV6, "00:00:00:00:00:02")
+        srv2_v6 = self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+
         time.sleep(1)
 
-        # In standby mode, the entry must not be added to Neigh table but Route
-        asicdb.wait_for_matching_keys(self.ASIC_NEIGH_TABLE, existing_keys)
-        dvs_route.check_asicdb_route_entries(
-            [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
+        # neighbors use no_host_route and explicit routes are added
+        rt_keys = dvs_route.check_asicdb_route_entries(
+            [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK,
+             self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
         )
 
         # The first standby route also creates as tunnel Nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb, 3)
+        self.check_tnl_nexthop_in_asic_db(asicdb, (len(rt_keys) + 1))
 
-        # Change state to Standby. This will delete Neigh and add Route
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-
-        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v4)
-        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v6)
-        dvs_route.check_asicdb_route_entries(
+        # check for local and standby nexthop
+        rt_keys_srv1 = dvs_route.check_asicdb_route_entries(
             [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK]
         )
-
-        # Change state to Active. This will add Neigh and delete Route
-        self.set_mux_state(appdb, "Ethernet4", "active")
-
-        dvs_route.check_asicdb_deleted_route_entries(
-            [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
+        rt_keys_srv2 = dvs_route.check_asicdb_route_entries(
+             [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
         )
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[0])
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[1])
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[0], True)
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[1], True)
+
+        # Change state to Standby. check NHs should point to tunnel
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[0], True)
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[1], True)
+
+        # Change state to Active. Check NHs should not point to tunnel
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[0])
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[1])
+
 
     def create_and_test_soc(self, appdb, asicdb, dvs, dvs_route):
 
@@ -455,11 +486,15 @@ class TestMuxTunnelBase():
 
         self.set_mux_state(appdb, "Ethernet0", "standby")
 
-        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_soc_v4)
+        # neighbor entry should not be removed
+        soc_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
+        assert soc_v4 == srv1_soc_v4
         dvs_route.check_asicdb_route_entries(
             [self.SERV1_SOC_IPV4+self.IPV4_MASK]
         )
         self.check_tunnel_route_in_app_db(dvs, [self.SERV1_SOC_IPV4+self.IPV4_MASK], expected=False)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 2)
+        self.check_route_nexthop(dvs_route, asicdb, self.SERV1_SOC_IPV4+self.IPV4_MASK, tunnel_nh_id, True)
 
         marker = dvs.add_log_marker()
 
@@ -484,42 +519,47 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, ip_1, "00:00:00:00:00:11")
         self.add_neighbor(dvs, ip_2, "00:00:00:00:00:12")
 
-        # ip_1 is on Active Mux, hence added to Host table
+        # Both ip_1 and ip_2 should be added as neighbors
+        # with no_host_route.
+        # ip_1 should have route pointing to neigh nh
+        # ip_2 should have route pointing to tunnel nh
         self.check_neigh_in_asic_db(asicdb, ip_1)
+        self.check_neigh_in_asic_db(asicdb, ip_2)
 
-        # ip_2 is on Standby Mux, hence added to Route table
-        dvs_route.check_asicdb_route_entries([ip_2+self.IPV6_MASK])
+        ip1_rt_key = dvs_route.check_asicdb_route_entries([ip_1+self.IPV6_MASK])
+        ip2_rt_key = dvs_route.check_asicdb_route_entries([ip_2+self.IPV6_MASK])
 
+        self.check_nexthop_in_asic_db(asicdb, ip1_rt_key[0])
+        self.check_nexthop_in_asic_db(asicdb, ip2_rt_key[0], True)
         # Check ip_1 move to standby mux, should be pointing to tunnel
         self.add_neighbor(dvs, ip_1, "00:00:00:00:00:12")
-
-        # ip_1 moved to standby Mux, hence added to Route table
-        dvs_route.check_asicdb_route_entries([ip_1+self.IPV6_MASK])
+        time.sleep(1)
+        self.check_nexthop_in_asic_db(asicdb, ip1_rt_key[0], True)
 
         # Check ip_2 move to active mux, should be host entry
         self.add_neighbor(dvs, ip_2, "00:00:00:00:00:11")
-
-        # ip_2 moved to active Mux, hence remove from Route table
-        dvs_route.check_asicdb_deleted_route_entries([ip_2+self.IPV6_MASK])
-        self.check_neigh_in_asic_db(asicdb, ip_2)
+        time.sleep(1)
+        self.check_nexthop_in_asic_db(asicdb, ip2_rt_key[0])
 
         # Simulate FDB aging out test case
         ip_3 = "192.168.0.200"
 
         self.add_neighbor(dvs, ip_3, "00:00:00:00:00:12")
+        time.sleep(1)
 
         # ip_3 is added to standby mux
-        dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+        ip3_rt_key = dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+        self.check_nexthop_in_asic_db(asicdb, ip3_rt_key[0], True)
 
         # Simulate FDB age out
         self.del_fdb(dvs, "00-00-00-00-00-12")
 
         # FDB ageout is not expected to change existing state of neighbor
-        dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+        self.check_nexthop_in_asic_db(asicdb, ip3_rt_key[0], True)
 
         # Change to active
         self.set_mux_state(appdb, "Ethernet4", "active")
-        dvs_route.check_asicdb_deleted_route_entries([ip_3+self.IPV4_MASK])
+        self.check_nexthop_in_asic_db(asicdb, ip3_rt_key[0])
 
         self.del_fdb(dvs, "00-00-00-00-00-11")
 
@@ -643,7 +683,7 @@ class TestMuxTunnelBase():
                 # Reset fdb
                 self.add_neighbor(dvs, nexthop, macs[i])
 
-    def multi_nexthop_test_toggle(self, appdb, asicdb, dvs_route, route, mux_ports, nexthops, non_mux_nexthop=None):
+    def multi_nexthop_test_toggle(self, appdb, dvs, asicdb, dvs_route, route, mux_ports, nexthops, non_mux_nexthop=None):
         '''
         Tests toggling mux state for a route with multiple nexthops
         '''
@@ -712,9 +752,9 @@ class TestMuxTunnelBase():
             self.add_route(dvs, route, new_nexthops)
 
             if nh_is_mux:
-                self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, new_muxports, new_nexthops)
+                self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, new_muxports, new_nexthops)
             else:
-                self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, new_muxports, new_nexthops, non_mux_nexthop=new_nexthop)
+                self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, new_muxports, new_nexthops, non_mux_nexthop=new_nexthop)
 
             # Reset route
             self.add_route(dvs, route, nexthops)
@@ -729,13 +769,13 @@ class TestMuxTunnelBase():
         for i,nexthop in enumerate(nexthops):
             print("Triggering route update to add: %s. new route %s -> %s" % (str(nexthop), route, nexthops[:i+1]))
             self.add_route(dvs, route, nexthops[:i+1])
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, mux_ports[:i+1], nexthops[:i+1])
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, mux_ports[:i+1], nexthops[:i+1])
 
         # Add non_mux_nexthop to route list
         if non_mux_nexthop != None:
             print("Triggering route update to add non_mux: %s. new route %s -> %s" % (str(non_mux_nexthop), route, nexthops + [non_mux_nexthop]))
             self.add_route(dvs, route, nexthops + [non_mux_nexthop])
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, mux_ports + [None], nexthops + [non_mux_nexthop], non_mux_nexthop=non_mux_nexthop)
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, mux_ports + [None], nexthops + [non_mux_nexthop], non_mux_nexthop=non_mux_nexthop)
 
         self.del_route(dvs, route)
 
@@ -748,12 +788,12 @@ class TestMuxTunnelBase():
         if non_mux_nexthop != None:
             print("Triggering route update to add non_mux: %s. new route %s -> %s" % (str(non_mux_nexthop), route, [non_mux_nexthop] + nexthops))
             self.add_route(dvs, route, [non_mux_nexthop] + nexthops)
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, [None] + mux_ports, [non_mux_nexthop] + nexthops, non_mux_nexthop=non_mux_nexthop)
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, [None] + mux_ports, [non_mux_nexthop] + nexthops, non_mux_nexthop=non_mux_nexthop)
 
         for i,nexthop in enumerate(nexthops):
             print("Triggering route update to remove: %s. new route %s -> %s" % (str(nexthop), route, nexthops[i:]))
             self.add_route(dvs, route, nexthops[i:])
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, mux_ports[i:], nexthops[i:])
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, mux_ports[i:], nexthops[i:])
 
         self.del_route(dvs, route)
 
@@ -765,7 +805,7 @@ class TestMuxTunnelBase():
         for i,nexthop in enumerate(nexthops):
             print("Triggering neighbor add for %s" % (nexthop))
             self.add_neighbor(dvs, nexthop, macs[i])
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, mux_ports, nexthops)
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, mux_ports, nexthops)
 
     def multi_nexthop_test_neighbor_del(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops):
         '''
@@ -775,7 +815,7 @@ class TestMuxTunnelBase():
         for nexthop in nexthops:
             print("Triggering neighbor del for %s" % (nexthop))
             self.add_neighbor(dvs, nexthop, "00:00:00:00:00:00")
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route, mux_ports, nexthops)
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route, mux_ports, nexthops)
 
     def create_and_test_multi_nexthop_routes(self, dvs, dvs_route, appdb, macs, new_mac, asicdb):
         '''
@@ -833,8 +873,8 @@ class TestMuxTunnelBase():
             # Testing mux neighbors that do not match mux configured ip
             self.add_route(dvs, route_ipv4, [self.SERV1_IPV4, mux_neighbor_ipv4])
             self.add_route(dvs, route_ipv6, [self.SERV1_IPV6, mux_neighbor_ipv6])
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
-            self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            self.multi_nexthop_test_toggle(appdb, dvs, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
             self.del_route(dvs,route_ipv4)
             self.del_route(dvs,route_ipv6)
 
@@ -907,6 +947,7 @@ class TestMuxTunnelBase():
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
 
+        # continue to point to standby
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
 
@@ -1282,8 +1323,11 @@ class TestMuxTunnelBase():
         """
         Checks the status of neighbor entries in APPL and ASIC DB
         """
-        if expect_route and expect_neigh:
-            pytest.fail('expect_routes and expect_neigh cannot both be True')
+        #if expect_route and expect_neigh:
+        #    pytest.fail('expect_routes and expect_neigh cannot both be True')
+        standby_state=False
+        if expect_route and expect_neigh==False:
+            standby_state=True
         app_db = dvs.get_app_db()
         asic_db = dvs.get_asic_db()
         prefix = str(ip_network(neigh_ip))
@@ -1292,10 +1336,14 @@ class TestMuxTunnelBase():
             mac=expected_mac, expect_entry=expect_route
         )
         if expect_route:
-            self.check_tnl_nexthop_in_asic_db(asic_db)
+            if expected_mac == '00:00:00:00:00:00':
+                self.check_tnl_nexthop_in_asic_db(asic_db, 1)
+            else:
+                # expected_nhs = neighbor nh + tunnel_nh
+                self.check_tnl_nexthop_in_asic_db(asic_db, 2)
             routes = dvs_route.check_asicdb_route_entries([prefix])
             for route in routes:
-                self.check_nexthop_in_asic_db(asic_db, route, standby=expect_route)
+                self.check_nexthop_in_asic_db(asic_db, route, standby=standby_state)
         else:
             dvs_route.check_asicdb_deleted_route_entries([prefix])
             self.check_neigh_in_asic_db(asic_db, neigh_ip, expected=expect_neigh)
@@ -1484,7 +1532,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         """ test IPv4 Mux tunnel creation """
 
         asicdb = dvs.get_asic_db()
-        
+
         encap_tc_to_dscp_map_id, encap_tc_to_queue_map_id, _, _ = setup
 
         self.create_and_test_peer(asicdb, encap_tc_to_dscp_map_id, encap_tc_to_queue_map_id)
@@ -1522,7 +1570,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         mac = intf_fdb_map["Ethernet0"]
 
         # get tunnel nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb, 5)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 8)
 
         self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
 
@@ -1572,6 +1620,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for step in neigh_miss_test_sequence:
             self.execute_action(step[TEST_ACTION], dvs, test_info)
             exp_result = step[EXPECTED_RESULT]
+            print(step)
             self.check_neighbor_state(
                 dvs, dvs_route, ip,
                 expect_route=exp_result[EXPECT_ROUTE],
