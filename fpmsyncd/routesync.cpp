@@ -1800,11 +1800,11 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
         if (alsv.size() == 1)
         {
-            if (alsv[0] == "eth0" || alsv[0] == "docker0")
+            if (alsv[0] == "eth0" || alsv[0] == "docker0" || alsv[0] == "eth1-midplane")
             {
-                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0 or eth1-midplane: %s %s %s",
                             destipprefix, gw_list.c_str(), intf_list.c_str());
-                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0 route: %s", destipprefix);
+                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0/eth1-midplane route: %s", destipprefix);
                 delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), ""},
                                    *m_routeTable);
                 return;
@@ -1818,9 +1818,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                 * A change in FRR behavior from version 7.2 to 7.5 causes the default route to be updated to eth0
                 * during interface up/down events. This skips routes to eth0 or docker0 to avoid such behavior.
                 */
-                if (alias == "eth0" || alias == "docker0")
+                if (alias == "eth0" || alias == "docker0" || alias == "eth1-midplane")
                 {
-                    SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                    SWSS_LOG_DEBUG("Skip routes to eth0 or docker0 or eth1-midplane: %s %s %s",
                                 destipprefix, gw_list.c_str(), intf_list.c_str());
                     continue;
                 }
@@ -1959,7 +1959,7 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
                     strcpy(if_name, ifname_unknown);
                 }
                 ifname = string(if_name);
-                if (ifname == "eth0" || ifname == "docker0")
+                if (ifname == "eth0" || ifname == "docker0" || ifname =="eth1-midplane")
                 {
                     SWSS_LOG_DEBUG("Skip routes to interface: %s id[%d]", ifname.c_str(), id);
                     return;
