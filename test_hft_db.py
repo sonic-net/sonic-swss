@@ -35,7 +35,7 @@ def get_redis_hashes(pattern):
     return result
 
 
-def create_hft_profile(name:str = "test", status:str="enable", polling_interval:int=300):
+def create_hft_profile(name:str = "test", status:str="enabled", polling_interval:int=300):
     run_cmd(f'redis-cli -n 4 hset "HIGH_FREQUENCY_TELEMETRY_PROFILE|{name}" "stream_state" "{status}" "poll_interval" "{polling_interval}"')
 
 

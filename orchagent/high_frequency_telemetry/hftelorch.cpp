@@ -42,11 +42,11 @@ namespace swss
     {
         SWSS_LOG_ENTER();
 
-        if (buffer == "enable")
+        if (buffer == "enabled")
         {
             stage = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
         }
-        else if (buffer == "disable")
+        else if (buffer == "disabled")
         {
             stage = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
         }
@@ -206,7 +206,7 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
 
     SWSS_LOG_NOTICE("The high frequency telemetry profile %s is set (stream_state: %s, poll_interval: %u)",
                     profile_name.c_str(),
-                    state == SAI_TAM_TEL_TYPE_STATE_START_STREAM ? "enable" : "disable",
+                    state == SAI_TAM_TEL_TYPE_STATE_START_STREAM ? "enabled" : "disabled",
                     poll_interval);
 
     return task_process_status::task_success;
@@ -403,11 +403,11 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
         auto state = profile.second->getTelemetryTypeState(type);
         if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
         {
-            values.emplace_back("stream_status", "enable");
+            values.emplace_back("stream_status", "enabled");
         }
         else if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
         {
-            values.emplace_back("stream_status", "disable");
+            values.emplace_back("stream_status", "disabled");
         }
         else
         {
