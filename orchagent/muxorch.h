@@ -98,6 +98,7 @@ public:
 private:
     bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
     bool addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+    bool setBulkRouteNH(std::list<MuxRouteBulkContext>& bulk_ctx_list);
 
     inline void updateTunnelRoute(NextHopKey, bool = true);
 
@@ -220,6 +221,7 @@ public:
     }
 
     MuxCable* findMuxCableInSubnet(IpAddress);
+    bool isMuxPortNeighbor(const IpAddress& nbr, const MacAddress& mac, string& alias);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
 
