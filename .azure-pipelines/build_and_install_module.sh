@@ -21,7 +21,7 @@ build_and_install_kmodule()
 {
     if sudo modprobe team 2>/dev/null && sudo modprobe vrf 2>/dev/null && sudo modprobe macsec 2>/dev/null; then
         echo "The module team, vrf and macsec exist."
-        return
+        return 0
     fi
 
     [ -z "$WORKDIR" ] && WORKDIR=$(mktemp -d)
@@ -49,11 +49,11 @@ build_and_install_kmodule()
     KERNEL_PACKAGE_VERSION=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Version: | cut -d':' -f 2))
     SOURCE_PACKAGE_VERSION=$(apt-cache showsrc "${KERNEL_PACKAGE_SOURCE}" | grep ^Version: | cut -d':' -f 2 | tr '\n' ' ')
     if ! echo "${SOURCE_PACKAGE_VERSION}" | grep "\b${KERNEL_PACKAGE_VERSION}\b"; then
-        echo "WARNING: the running kernel version (${KERNEL_PACKAGE_VERSION}) doesn't match any of the available source " \
-            "packge versions (${SOURCE_PACKAGE_VERSION}) being downloaded. There's no guarantee the module being downloaded " \
-            "can be loaded into the kernel or function correctly. If possible, please update your kernel and reboot " \
-            "your system so that it's running the matching kernel version." >&2
-        echo "Continuing with the build anyways" >&2
+        echo "ERROR: the running kernel version (${KERNEL_PACKAGE_VERSION}) doesn't match any of the available source " \
+            "package versions (${SOURCE_PACKAGE_VERSION}) being downloaded. There's no guarantee any of the available " \
+            "source packages can be loaded into the kernel or function correctly. Please update your kernel and reboot " \
+            "your system so that it's running a matching kernel version." >&2
+        return 1
     fi
     apt-get source "linux-image-unsigned-${KERNEL_RELEASE}=${KERNEL_PACKAGE_VERSION}"
 
