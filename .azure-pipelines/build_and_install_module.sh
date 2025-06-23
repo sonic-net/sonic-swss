@@ -45,8 +45,8 @@ build_and_install_kmodule()
     cp /etc/apt/sources.list /etc/apt/sources.list.bk
     sed -i "s/^# deb-src/deb-src/g" /etc/apt/sources.list
     apt-get update
-	KERNEL_PACKAGE_SOURCE=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Source: | cut -d':' -f 2))
-	KERNEL_PACKAGE_VERSION=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Version: | cut -d':' -f 2))
+    KERNEL_PACKAGE_SOURCE=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Source: | cut -d':' -f 2))
+    KERNEL_PACKAGE_VERSION=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Version: | cut -d':' -f 2))
     SOURCE_PACKAGE_VERSION=$(apt-cache showsrc "${KERNEL_PACKAGE_SOURCE}" | grep ^Version: | cut -d':' -f 2 | tr '\n' ' ')
     if ! echo "${SOURCE_PACKAGE_VERSION}" | grep "\b${KERNEL_PACKAGE_VERSION}\b"; then
         echo "WARNING: the running kernel version (${KERNEL_PACKAGE_VERSION}) doesn't match any of the available source " \
