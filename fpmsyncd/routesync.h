@@ -62,7 +62,7 @@ public:
 
     /* Helper method to set route table with warm restart support */
     void setRouteWithWarmRestart(const std::string& key, const std::vector<FieldValueTuple>& fvVector,
-                                 ProducerStateTable& table, const std::string& cmd = SET_COMMAND);
+                                 shared_ptr<ProducerStateTable> table, const std::string& cmd = SET_COMMAND);
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
