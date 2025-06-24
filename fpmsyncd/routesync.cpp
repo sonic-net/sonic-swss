@@ -6,6 +6,7 @@
 #include "netmsg.h"
 #include "ipprefix.h"
 #include "dbconnector.h"
+#include "lib/orch_zmq_config.h"
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
@@ -145,12 +146,14 @@ static decltype(auto) makeNlAddr(const T& ip)
 
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
+    // When the feature ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED is enabled, route events must be sent to orchagent via the ZMQ channel.
+    m_zmqClient(create_local_zmq_client(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false)),
+    m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
-    m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
+    m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
@@ -162,7 +165,7 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
 
 void RouteSync::setRouteWithWarmRestart(const std::string& key,
                                       const std::vector<FieldValueTuple>& fvVector,
-                                      ProducerStateTable& table,
+                                      shared_ptr<ProducerStateTable> table,
                                       const std::string& cmd)
 {
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
@@ -171,11 +174,11 @@ void RouteSync::setRouteWithWarmRestart(const std::string& key,
     {
         if (cmd == SET_COMMAND)
         {
-            table.set(key, fvVector);
+            table->set(key, fvVector);
         }
         else if (cmd == DEL_COMMAND)
         {
-            table.del(key);
+            table->del(key);
         }
     }
     else
@@ -869,7 +872,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     fvVector.push_back(vni);
     fvVector.push_back(mac);
     fvVector.push_back(proto);
-
+    
     setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
     SWSS_LOG_INFO("RouteTable set EVPN msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
                   destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
@@ -1079,6 +1082,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
     {
         string routeTableKeyStr = string(routeTableKey);
         string srv6SidListTableKey = routeTableKeyStr;
+
 
         vector<FieldValueTuple> fvVector;
         setRouteWithWarmRestart(routeTableKeyStr, fvVector, m_routeTable, DEL_COMMAND);
@@ -1570,6 +1574,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
         SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
         return;
+
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
