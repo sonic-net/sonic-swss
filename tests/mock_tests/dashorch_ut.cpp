@@ -20,7 +20,7 @@ EXTERN_MOCK_FNS
 namespace dashorch_test
 {
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
-    DEFINE_SAI_API_MOCK(dash_trusted_vni, global_trusted_vni)
+    DEFINE_SAI_ENTRY_APIS_MOCK(dash_trusted_vni, global_trusted_vni)
     using namespace mock_orch_test;
     using ::testing::DoAll;
     using ::testing::Return;
