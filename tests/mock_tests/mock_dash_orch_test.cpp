@@ -31,14 +31,19 @@ namespace mock_orch_test
         }
     }
 
-    void MockDashOrchTest::CreateApplianceEntry()
+    dash::appliance::Appliance MockDashOrchTest::BuildApplianceEntry()
     {
         swss::IpAddress sip("1.1.1.1");
         dash::appliance::Appliance appliance = dash::appliance::Appliance();
         appliance.mutable_sip()->set_ipv4(sip.getV4Addr());
         appliance.set_local_region_id(100);
         appliance.set_vm_vni(9999);
-        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        return appliance;
+    }
+
+    void MockDashOrchTest::CreateApplianceEntry()
+    {
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, BuildApplianceEntry());
     }
 
     void MockDashOrchTest::CreateVnet()

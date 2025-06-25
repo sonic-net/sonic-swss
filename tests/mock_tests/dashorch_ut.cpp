@@ -20,23 +20,27 @@ EXTERN_MOCK_FNS
 namespace dashorch_test
 {
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
+    DEFINE_SAI_API_MOCK(dash_trusted_vni, global_trusted_vni)
     using namespace mock_orch_test;
     using ::testing::DoAll;
     using ::testing::Return;
     using ::testing::SetArgPointee;
     using ::testing::SaveArg;
+    using ::testing::SaveArgPointee;
     using ::testing::Invoke;
     using ::testing::InSequence;
     class DashOrchTest : public MockDashOrchTest {
         void ApplySaiMock()
         {
             INIT_SAI_API_MOCK(dash_eni);
+            INIT_SAI_API_MOCK(dash_trusted_vni);
             MockSaiApis();
         }
 
         void PreTearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(dash_trusted_vni);
             DEINIT_SAI_API_MOCK(dash_eni);
         }
 
@@ -109,7 +113,6 @@ namespace dashorch_test
                     SaveArg<2>(&num_attrs),
                     SaveArg<3>(&attr_start),
                     Invoke(old_sai_dash_eni_api, &sai_dash_eni_api_t::create_eni) // Call the original function
-
                 )
             );
 
@@ -131,5 +134,46 @@ namespace dashorch_test
         actual_attrs.assign(attr_start, attr_start + num_attrs);
         VerifyEniMode(actual_attrs, SAI_DASH_ENI_MODE_VM); // Default
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
+    }
+
+    TEST_F(DashOrchTest, CreateApplianceTrustedVnisSingle)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis()->set_value(100);
+
+        sai_global_trusted_vni_entry_t actual_entry;
+
+        EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+            .WillOnce(
+                DoAll(
+                    SaveArgPointee<0>(&actual_entry),
+                    Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)
+                )
+            );
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, "appliance1", appliance);
+        EXPECT_EQ(actual_entry.vni_range.min, 100);
+        EXPECT_EQ(actual_entry.vni_range.max, 100);
+    }
+
+    TEST_F(DashOrchTest, CreateApplianceTrustedVnisRange)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis()->mutable_range()->set_min(500);
+        appliance.mutable_trusted_vnis()->mutable_range()->set_max(600);
+
+        sai_global_trusted_vni_entry_t actual_entry;
+
+        EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+            .WillOnce(
+                DoAll(
+                    SaveArgPointee<0>(&actual_entry),
+                    Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)
+                )
+            );
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, "appliance1", appliance);
+        EXPECT_EQ(actual_entry.vni_range.min, 500);
+        EXPECT_EQ(actual_entry.vni_range.max, 600);
     }
 }
