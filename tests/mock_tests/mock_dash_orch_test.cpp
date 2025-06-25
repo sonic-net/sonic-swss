@@ -104,4 +104,17 @@ namespace mock_orch_test
     {
         SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip1, dash::vnet_mapping::VnetMapping(), false);
     }
+
+    dash::eni::Eni MockDashOrchTest::BuildEniEntry()
+    {
+        dash::eni::Eni eni;
+        std::string mac = "f4:93:9f:ef:c4:7e";
+        eni.set_admin_state(dash::eni::State::STATE_ENABLED);
+        eni.set_eni_id(eni1);
+        eni.set_mac_address(mac);
+        eni.set_vnet(vnet1);
+        eni.mutable_underlay_ip()->set_ipv4(swss::IpAddress("1.2.3.4").getV4Addr());
+        eni.set_eni_mode(dash::eni::MODE_VM);
+        return eni;
+    }
 }

@@ -20,7 +20,7 @@ EXTERN_MOCK_FNS
 namespace dashorch_test
 {
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
-    DEFINE_SAI_ENTRY_APIS_MOCK(dash_trusted_vni, global_trusted_vni)
+    DEFINE_SAI_ENTRY_APIS_MOCK(dash_trusted_vni, global_trusted_vni, eni_trusted_vni)
     using namespace mock_orch_test;
     using ::testing::DoAll;
     using ::testing::Return;
@@ -98,15 +98,8 @@ namespace dashorch_test
         const sai_attribute_t* attr_start;
         std::vector<sai_attribute_t> actual_attrs;
 
-        dash::eni::Eni eni;
-        std::string mac = "f4:93:9f:ef:c4:7e";
-        eni.set_admin_state(dash::eni::State::STATE_ENABLED);
-        eni.set_eni_id("eni1");
-        eni.set_mac_address(mac);
-        eni.set_vnet(vnet1);
-        eni.mutable_underlay_ip()->set_ipv4(swss::IpAddress("1.2.3.4").getV4Addr());
-        eni.set_eni_mode(dash::eni::MODE_VM);
-
+        dash::eni::Eni eni = BuildEniEntry();
+        
         EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(3)
             .WillRepeatedly(
                 DoAll(
@@ -199,6 +192,79 @@ namespace dashorch_test
         EXPECT_EQ(actual_entry.vni_range.max, max_trusted_vni);
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false);
+        EXPECT_EQ(actual_entry.vni_range.min, min_trusted_vni);
+        EXPECT_EQ(actual_entry.vni_range.max, max_trusted_vni);
+    }
+
+    TEST_F(DashOrchTest, CreateRemoveEniTrustedVnisSingle)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        int trusted_vni = 200;
+        dash::eni::Eni eni = BuildEniEntry();
+        eni.mutable_trusted_vnis()->set_value(trusted_vni);
+
+        sai_eni_trusted_vni_entry_t actual_entry;
+
+        EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
+            .WillOnce(
+                DoAll(
+                    SaveArgPointee<0>(&actual_entry),
+                    Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_eni_trusted_vni_entry)
+                )
+            );
+        EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry)
+            .WillOnce(
+                DoAll(
+                    SaveArgPointee<0>(&actual_entry),
+                    Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_eni_trusted_vni_entry)
+                )
+            );
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        EXPECT_EQ(actual_entry.vni_range.min, trusted_vni);
+        EXPECT_EQ(actual_entry.vni_range.max, trusted_vni);
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false);
+        EXPECT_EQ(actual_entry.vni_range.min, trusted_vni);
+        EXPECT_EQ(actual_entry.vni_range.max, trusted_vni);
+    }
+
+    TEST_F(DashOrchTest, CreateRemoveEniTrustedVnisRange)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        int min_trusted_vni = 700;
+        int max_trusted_vni = 800;
+        dash::eni::Eni eni = BuildEniEntry();
+        eni.mutable_trusted_vnis()->mutable_range()->set_min(min_trusted_vni);
+        eni.mutable_trusted_vnis()->mutable_range()->set_max(max_trusted_vni);
+
+        sai_eni_trusted_vni_entry_t actual_entry;
+
+        EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
+            .WillOnce(
+                DoAll(
+                    SaveArgPointee<0>(&actual_entry),
+                    Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_eni_trusted_vni_entry)
+                )
+            );
+
+        EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry)
+            .WillOnce(
+                DoAll(
+                    SaveArgPointee<0>(&actual_entry),
+                    Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_eni_trusted_vni_entry)
+                )
+            );
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        EXPECT_EQ(actual_entry.vni_range.min, min_trusted_vni);
+        EXPECT_EQ(actual_entry.vni_range.max, max_trusted_vni);
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false);
         EXPECT_EQ(actual_entry.vni_range.min, min_trusted_vni);
         EXPECT_EQ(actual_entry.vni_range.max, max_trusted_vni);
     }
