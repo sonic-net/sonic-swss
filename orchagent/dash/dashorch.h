@@ -86,9 +86,11 @@ private:
     bool removeRoutingTypeEntry(const dash::route_type::RoutingType &routing_type);
     bool addEniObject(const std::string& eni, EniEntry& entry);
     bool addEniAddrMapEntry(const std::string& eni, const EniEntry& entry);
+    void addEniTrustedVnis(const EniEntry& entry);
     bool addEni(const std::string& eni, EniEntry &entry);
     bool removeEniObject(const std::string& eni);
     bool removeEniAddrMapEntry(const std::string& eni);
+    void removeEniTrustedVnis(const EniEntry& entry);
     bool removeEni(const std::string& eni);
     bool setEniAdminState(const std::string& eni, const EniEntry& entry);
     bool addQosEntry(const std::string& qos_name, const dash::qos::Qos &entry);
