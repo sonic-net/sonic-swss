@@ -29,7 +29,7 @@ pipeline_artifact_map = {
     VPP: "VPP"
 }
 
-deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang_*.deb', 'libyang-*.deb', 'python3-swsscommon*.deb', '*vpp*.deb']
+deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang_*.deb', 'python3-swsscommon*.deb', '*vpp*.deb']
 dash_deb_regex = ['libproto*.deb', 'libdash*.deb']
 
 pipeline_out_file_map = {
@@ -112,10 +112,12 @@ def main(branch, debian_version):
         if 'libyang' in available_debs and 'libproto' in available_debs:
             deb_patterns += dash_deb_regex
 
+        debs_to_install = []
         for pattern in deb_patterns:
-            debs_to_install = glob.glob(pattern, root_dir=work_dir)
-            cmd = ["sudo", "/usr/bin/dpkg", "-i"] + debs_to_install
-            subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, env={"VPP_INSTALL_SKIP_SYSCTL": "1"})
+            debs_to_install += glob.glob(pattern, root_dir=work_dir)
+
+        cmd = ["sudo", "env", "VPP_INSTALL_SKIP_SYSCTL=1", "/usr/bin/dpkg", "-i"] + debs_to_install
+        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
     except Exception:
         raise
 
