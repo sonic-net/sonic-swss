@@ -34,6 +34,7 @@ extern sai_dash_appliance_api_t* sai_dash_appliance_api;
 extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
+extern sai_dash_trusted_vni_api_t* sai_dash_trusted_vni_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
@@ -200,7 +201,50 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
     SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
+    if (entry.has_trusted_vnis())
+    {
+        addApplianceTrustedVni(entry);
+    }
+
     return true;
+}
+
+void DashOrch::addApplianceTrustedVni(const dash::appliance::Appliance &entry)
+{
+    SWSS_LOG_ENTER();
+    sai_global_trusted_vni_entry_t trusted_vni_entry;
+    sai_u32_range_t vni_range;
+    trusted_vni_entry.switch_id = gSwitchId;
+
+    if (entry.trusted_vnis().has_value())
+    {
+        vni_range.min = entry.trusted_vnis().value();
+        vni_range.max = entry.trusted_vnis().value();
+    }
+    else if (entry.trusted_vnis().has_range())
+    {
+        vni_range.min = entry.trusted_vnis().range().min();
+        vni_range.max = entry.trusted_vnis().range().max();
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Trusted VNI is not set for appliance");
+        return;
+    }
+
+    trusted_vni_entry.vni_range = vni_range;
+    sai_status_t status = sai_dash_trusted_vni_api->create_global_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_TRUSTED_VNI, status);
+        if (handle_status != task_success)
+        {
+            parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Created global trusted vni entry for appliance with range %u-%u",
+                   vni_range.min, vni_range.max);
 }
 
 bool DashOrch::removeApplianceEntry(const string& appliance_id)
