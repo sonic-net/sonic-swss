@@ -213,22 +213,11 @@ void DashOrch::addApplianceTrustedVni(const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
     sai_global_trusted_vni_entry_t trusted_vni_entry;
-    sai_u32_range_t vni_range;
     trusted_vni_entry.switch_id = gSwitchId;
-
-    if (entry.trusted_vnis().has_value())
+    sai_u32_range_t vni_range;
+    if (!to_sai(entry.trusted_vnis(), vni_range))
     {
-        vni_range.min = entry.trusted_vnis().value();
-        vni_range.max = entry.trusted_vnis().value();
-    }
-    else if (entry.trusted_vnis().has_range())
-    {
-        vni_range.min = entry.trusted_vnis().range().min();
-        vni_range.max = entry.trusted_vnis().range().max();
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Trusted VNI is not set for appliance");
+        SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
         return;
     }
 
