@@ -81,6 +81,7 @@ private:
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
     void addApplianceTrustedVni(const dash::appliance::Appliance &entry);
     bool removeApplianceEntry(const std::string& appliance_id);
+    void removeApplianceTrustedVni(const dash::appliance::Appliance &entry);
     bool addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry);
     bool removeRoutingTypeEntry(const dash::route_type::RoutingType &routing_type);
     bool addEniObject(const std::string& eni, EniEntry& entry);

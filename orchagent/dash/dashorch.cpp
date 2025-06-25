@@ -297,7 +297,40 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     appliance_entries_.erase(appliance_id);
     SWSS_LOG_NOTICE("Removed appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
+    if (entry.has_trusted_vnis())
+    {
+        removeApplianceTrustedVni(entry);
+    }
+
     return true;
+}
+
+void DashOrch::removeApplianceTrustedVni(const dash::appliance::Appliance &entry)
+{
+    SWSS_LOG_ENTER();
+    sai_global_trusted_vni_entry_t trusted_vni_entry;
+    trusted_vni_entry.switch_id = gSwitchId;
+    sai_u32_range_t vni_range;
+
+    if (!to_sai(entry.trusted_vnis(), vni_range))
+    {
+        SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
+        return;
+    } 
+
+    trusted_vni_entry.vni_range = vni_range;
+    sai_status_t status = sai_dash_trusted_vni_api->remove_global_trusted_vni_entry(&trusted_vni_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TRUSTED_VNI, status);
+        if (handle_status != task_success)
+        {
+            parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Removed global trusted vni entry for appliance with range %u-%u",
+                   vni_range.min, vni_range.max);
 }
 
 void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
