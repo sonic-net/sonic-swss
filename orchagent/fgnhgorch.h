@@ -6,6 +6,8 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "producerstatetable.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -127,7 +129,9 @@ private:
     bool isFineGrainedConfigured;
 
     Table m_stateWarmRestartRouteTable;
-    ProducerStateTable m_routeTable;
+
+    std::shared_ptr<swss::ZmqClient> m_zmqClient = nullptr;
+    std::shared_ptr<swss::ProducerStateTable> m_routeTable = nullptr;
 
     FgPrefixOpCache m_fgPrefixAddCache;
     FgPrefixOpCache m_fgPrefixDelCache;
