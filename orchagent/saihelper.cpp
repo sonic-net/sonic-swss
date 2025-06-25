@@ -1103,7 +1103,15 @@ void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& ke
         fvVector.emplace_back("version", version);
     }
 
-    table->set(key, fvVector);
+    try
+    {
+        table->set(key, fvVector);
+    }
+    catch (const exception &e)
+    {
+        SWSS_LOG_ERROR("Exception caught while writing to DB: %s", e.what());
+        return;
+    }
     SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
 }
 
@@ -1117,6 +1125,14 @@ void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string&
         return;
     }
 
-    table->del(key);
+    try
+    {
+        table->del(key);
+    }
+    catch (const exception &e)
+    {
+        SWSS_LOG_ERROR("Exception caught while removing from DB: %s", e.what());
+        return;
+    }
     SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }

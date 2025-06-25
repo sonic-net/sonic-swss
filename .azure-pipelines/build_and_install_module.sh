@@ -7,11 +7,21 @@ set -e
 
 source /etc/os-release
 
-function build_and_install_kmodule()
+trim() {
+    local var="$*"
+    # remove leading whitespace characters
+    var="${var#"${var%%[![:space:]]*}"}"
+    # remove trailing whitespace characters
+    var="${var%"${var##*[![:space:]]}"}"
+    printf '%s' "$var"
+}
+
+
+build_and_install_kmodule()
 {
     if sudo modprobe team 2>/dev/null && sudo modprobe vrf 2>/dev/null && sudo modprobe macsec 2>/dev/null; then
         echo "The module team, vrf and macsec exist."
-        return
+        return 0
     fi
 
     [ -z "$WORKDIR" ] && WORKDIR=$(mktemp -d)
@@ -35,24 +45,24 @@ function build_and_install_kmodule()
     cp /etc/apt/sources.list /etc/apt/sources.list.bk
     sed -i "s/^# deb-src/deb-src/g" /etc/apt/sources.list
     apt-get update
-    KERNEL_PACKAGE_SOURCE=$(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Source: | cut -d':' -f 2)
-    KERNEL_PACKAGE_VERSION=$(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Version: | cut -d':' -f 2)
-    SOURCE_PACKAGE_VERSION=$(apt-cache showsrc ${KERNEL_PACKAGE_SOURCE} | grep ^Version: | cut -d':' -f 2)
-    if [ ${KERNEL_PACKAGE_VERSION} != ${SOURCE_PACKAGE_VERSION} ]; then
-        echo "WARNING: the running kernel version (${KERNEL_PACKAGE_VERSION}) doesn't match the source package " \
-            "version (${SOURCE_PACKAGE_VERSION}) being downloaded. There's no guarantee the module being downloaded " \
-            "can be loaded into the kernel or function correctly. If possible, please update your kernel and reboot " \
-            "your system so that it's running the matching kernel version." >&2
-        echo "Continuing with the build anyways" >&2
+    KERNEL_PACKAGE_SOURCE=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Source: | cut -d':' -f 2))
+    KERNEL_PACKAGE_VERSION=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Version: | cut -d':' -f 2))
+    SOURCE_PACKAGE_VERSION=$(apt-cache showsrc "${KERNEL_PACKAGE_SOURCE}" | grep ^Version: | cut -d':' -f 2 | tr '\n' ' ')
+    if ! echo "${SOURCE_PACKAGE_VERSION}" | grep "\b${KERNEL_PACKAGE_VERSION}\b"; then
+        echo "ERROR: the running kernel version (${KERNEL_PACKAGE_VERSION}) doesn't match any of the available source " \
+            "package versions (${SOURCE_PACKAGE_VERSION}) being downloaded. There's no guarantee any of the available " \
+            "source packages can be loaded into the kernel or function correctly. Please update your kernel and reboot " \
+            "your system so that it's running a matching kernel version." >&2
+        return 1
     fi
-    apt-get source linux-image-unsigned-${KERNEL_RELEASE} > source.log
+    apt-get source "linux-image-unsigned-${KERNEL_RELEASE}=${KERNEL_PACKAGE_VERSION}"
 
     # Recover the original apt sources list
     cp /etc/apt/sources.list.bk /etc/apt/sources.list
     apt-get update
 
     # Build the Linux kernel module drivers/net/team and vrf
-    cd $(find . -maxdepth 1 -type d | grep -v "^.$")
+    cd ${KERNEL_PACKAGE_SOURCE}-*
     if [ -e debian/debian.env ]; then
         source debian/debian.env
         if [ -n "${DEBIAN}" -a -e ${DEBIAN}/reconstruct ]; then
