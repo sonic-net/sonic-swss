@@ -20,6 +20,11 @@
  */
 #define ORCH_NORTHBOND_DASH_ZMQ_ENABLED "orch_northbond_dash_zmq_enabled"
 
+/*
+ * Feature flag to enable the fpmsyncd to send ROUTE events to orchagent via the ZMQ channel.
+ */
+#define ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED "orch_northbond_route_zmq_enabled"
+
 namespace swss {
 
 std::set<std::string> load_zmq_tables();
@@ -32,6 +37,11 @@ std::shared_ptr<ZmqServer> create_zmq_server(std::string zmq_address, std::strin
 
 bool get_feature_status(std::string feature, bool default_value);
 
+std::shared_ptr<swss::ZmqClient> create_local_zmq_client(std::string feature, bool default_value);
+
+std::shared_ptr<swss::ProducerStateTable> createProducerStateTable(DBConnector *db, const std::string &tableName, std::shared_ptr<swss::ZmqClient> zmqClient);
+
+std::shared_ptr<swss::ProducerStateTable> createProducerStateTable(RedisPipeline *pipeline, const std::string &tableName, bool buffered, std::shared_ptr<swss::ZmqClient> zmqClient);
 }
 
 #endif /* SWSS_ORCH_ZMQ_CONFIG_H */
