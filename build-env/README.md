@@ -11,7 +11,7 @@ From this directory (`sonic-swss/build-env`):
 2. Build the image and start the container with `docker compose up -d swss-bookworm`.
 3. Enter the container either with `docker exec -it -u ${USER} swss-bookworm-master bash` or via SSH `ssh ${USER}@172.19.0.10`.
 4. Once inside the container, navigate to the unit test directory `sonic-swss/tests/mock_test` 
-5. From here, you can build and run all unit tests using `make check`. You can also run individual test binaries and debug failures using GDB. 
+5. From here, you can build and run all unit tests using `make check`. You can also build a run a specific test binary, e.g. `make tests` and then `./tests`.
     ```
     lawlee@e77fd85f06b6:~/repos/sonic-swss/tests/mock_tests$ make check
     make  check-TESTS
@@ -40,3 +40,14 @@ From this directory (`sonic-swss/build-env`):
     ```
 6. To shut down and remove the container, run `docker compose down swss-bookworm` on the host.
 7. To rebuild the container image (e.g. in case of dependency changes), run `docker compose build --pull`
+
+## Debugging Failing Tests
+
+If tests are failing unexpectedly, build artifacts may be out-of-date but not being rebuilt due to switching branches. From `tests/mock_tests`, run `make clean` and then rebuild and re-run the tests.
+
+To run individual test classes/cases, use the `--gtest_filter` flag with the test binary. E.g. to run only tests in the `DashOrchTest` class from the main set of orchagent unit tests:
+1. `cd tests/mock_tests` and `make tests` to build the test binary.
+2. `./tests --gtest_filter="DashOrchTest*"` to run this test class only. `./tests --gtest_filter="DashOrchTest.SetEniMode"` to run this test case only.
+3. `./tests --gtest_list_tests` will print all available test cases.
+
+The tests are built with debug symbols. A simple way to run a test in GDB: `gdb --args ./tests --gtest_filter="DashOrchTest*"`.
