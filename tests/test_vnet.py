@@ -2648,7 +2648,7 @@ class TestVnetOrch(object):
         vnet_obj.check_del_ipinip_tunnel(dvs, "IPINIP_SUBNET_V6")
 
     '''
-    Test 28 - Test for Single enpoint priority vnet tunnel routes. Test with local endpoint.
+    Test 28 - Test for Single endpoint priority vnet tunnel routes. Test with local endpoint.
     '''
     def test_vnet_orch_28(self, dvs, testlog):
         self.setup_db(dvs)

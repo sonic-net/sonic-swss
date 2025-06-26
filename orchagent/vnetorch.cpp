@@ -166,7 +166,7 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
 
     if (!nexthops.is_overlay_nexthop())
     {
-        SWSS_LOG_INFO("Input %s is not overlay nexthop group", nexthops.to_string().c_str());
+        SWSS_LOG_NOTICE("Input %s is not overlay nexthop group", nexthops.to_string().c_str());
         return false;
     }
 
@@ -943,7 +943,8 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
             gNeighOrch->increaseNextHopRefCount(nexthop);
             next_hop_group_entry.next_hop_group_id = gNeighOrch->getNextHopId(nexthop);
             next_hop_group_entry.ref_count = gNeighOrch->getNextHopRefCount(nexthop);
-        } else 
+        }
+        else
         {
             next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
             next_hop_group_entry.ref_count = 0;
@@ -1901,19 +1902,13 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
         auto tunnel_obj = vxlan_orch->getVxlanTunnel(tun_name);
         /*
-            Even for localenpoint, we will use tunnel source IP as local_addr of BFD session.
+            Even for local endpoints, we will use tunnel source IP as local_addr of BFD session.
         */
         IpAddress src_ip = tunnel_obj->getSrcIP();
 
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
         data.push_back(fvTuple);
-        if (isLocalEndpoint(vnet, endpoint_addr))
-        {
-            data.emplace_back("multihop", "false");
-        } else
-        {
-            data.emplace_back("multihop", "true");
-        }
+        data.emplace_back("multihop", "true");
         // The BFD sessions established by the Vnet routes with monitoring need to be brought down
         // when the device goes into TSA.  The following parameter ensures that these session are
         // brought down while transitioning to TSA and brought back up when transitioning to TSB.
@@ -2809,7 +2804,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         {
             adv_prefix = request.getAttrIpPrefix(name);
             has_adv_pfx = true;
-        } else if (name == "check_directly_connected")
+        }
+        else if (name == "check_directly_connected")
         {
             check_directly_connected = request.getAttrBool(name);
         }
@@ -2869,14 +2865,28 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
     }
 
+    /*
+    * A local endpoint is an endpoint that is directly connected, i.e., present in the neighbor table.
+    * This check ensures that for primary/backup endpoint groups, all endpoints must be either local or all remote.
+    * Partially local means that some endpoints are local and some are not. Mixing local and remote endpoints in a
+    * single group is not supported.
+    */
     if (check_directly_connected &&  (isPartiallyLocal(primary_list) || isPartiallyLocal(secondary_list) ))
     {
         SWSS_LOG_ERROR("Endpoints in Primary/backup should either all be local endpoints or no local endpoint at all.");
         return false;
     }
 
-    NextHopGroupKey nhg_primary("", primary_list.empty() || !isLocalEndpoint(vnet_name, primary_list[0]));
-    NextHopGroupKey nhg_secondary("", secondary_list.empty() || !isLocalEndpoint(vnet_name, secondary_list[0]));
+    if (check_directly_connected)
+    {
+        NextHopGroupKey nhg_primary("", primary_list.empty() || !isLocalEndpoint(vnet_name, primary_list[0]));
+        NextHopGroupKey nhg_secondary("", secondary_list.empty() || !isLocalEndpoint(vnet_name, secondary_list[0]));
+    }
+    else
+    {
+        NextHopGroupKey nhg_primary("", true);
+        NextHopGroupKey nhg_secondary("", true);
+    }
     NextHopGroupKey nhg("", true);
     map<NextHopKey, IpAddress> monitors;
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
@@ -2984,7 +2994,9 @@ bool VNetRouteOrch::isLocalEndpoint(const string&vnet, const IpAddress &ipAddr)
 {
     auto it = vnet_tunnel_route_check_directly_connected.find(vnet);
     if (it == vnet_tunnel_route_check_directly_connected.end() || !it->second)
+    {
         return false;
+    }
 
     NeighborEntry n;
     MacAddress m;
