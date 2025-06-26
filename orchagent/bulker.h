@@ -1146,8 +1146,8 @@ private:
                                                             // object_id -> object_status
     std::unordered_map<sai_object_id_t, sai_status_t *>     removing_entries;
 
-    typename Ts::bulk_create_entry_fn                       create_entries;
-    typename Ts::bulk_remove_entry_fn                       remove_entries;
+    sai_bulk_object_create_fn                               create_entries;
+    sai_bulk_object_remove_fn                               remove_entries;
     // TODO: wait until available in SAI
     //typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
 
