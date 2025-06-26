@@ -276,6 +276,20 @@ namespace std
             return seed;
         }
     };
+
+    template <>
+    struct hash<sai_outbound_port_map_port_range_entry_t>
+    {
+        size_t operator()(const sai_outbound_port_map_port_range_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.outbound_port_map_id);
+            boost::hash_combine(seed, a.dst_port_range.min);
+            boost::hash_combine(seed, a.dst_port_range.max);
+            return seed;
+        }
+    };
 }
 
 // SAI typedef which is not available in SAI 1.5
@@ -465,6 +479,19 @@ struct SaiBulkerTraits<sai_dash_tunnel_api_t>
     using api_t = sai_dash_tunnel_api_t;
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_outbound_port_map_api_t>
+{
+    // Need to bulk port map objects and port map range entries from the same DASH API
+    // entry_t, bulk_create/remove_entry_fn are only used by EntityBulker so we can use them for
+    // port map port range bulking w/o affecting port map object bulking
+    using api_t = sai_dash_outbound_port_map_api_t;
+    using entry_t = sai_outbound_port_map_port_range_entry_t;
+    using bulk_create_entry_fn = sai_bulk_create_outbound_port_map_port_range_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_outbound_port_map_port_range_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_set_outbound_port_map_port_range_entry_attribute_fn;
 };
 
 template <typename T>
@@ -921,6 +948,14 @@ inline EntityBulker<sai_dash_outbound_routing_api_t>::EntityBulker(sai_dash_outb
     set_entries_attribute = nullptr;
 }
 
+template <>
+inline EntityBulker<sai_dash_outbound_port_map_api_t>::EntityBulker(sai_dash_outbound_port_map_api_t *api, size_t max_bulk_size) : max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_port_map_port_range_entries;
+    remove_entries = api->remove_outbound_port_map_port_range_entries;
+    set_entries_attribute = nullptr;
+}
+
 template <typename T>
 class ObjectBulker
 {
@@ -1320,4 +1355,13 @@ inline ObjectBulker<sai_dash_tunnel_api_t>::ObjectBulker(SaiBulkerTraits<sai_das
             ss << "Invalid object type for sai_dash_tunnel_api_t: " << type_str;
             throw std::invalid_argument(ss.str());
     }
+}
+
+template <>
+inline ObjectBulker<sai_dash_outbound_port_map_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_outbound_port_map_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_port_maps;
+    remove_entries = api->remove_outbound_port_maps;
 }
