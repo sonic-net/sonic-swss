@@ -72,4 +72,21 @@ namespace dashportmaporch_test
 
         EXPECT_EQ(actual_removed_oid, fake_oid);
     }
+
+    TEST_F(DashPortMapOrchTest, AddDuplicatePortMap)
+    {
+        dash::outbound_port_map::OutboundPortMap port_map;
+
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps).Times(1);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map);
+    }
+
+    TEST_F(DashPortMapOrchTest, RemoveNonexistPortMap)
+    {
+        dash::outbound_port_map::OutboundPortMap port_map;
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_maps).Times(0);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map, false);
+    }
 }
