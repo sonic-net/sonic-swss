@@ -136,7 +136,6 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchHashDefaults();
-    setSwitchIcmpOffloadCapability();
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
@@ -901,6 +900,247 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
     }
 }
 
+bool SwitchOrch::setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_SIZE;
+    attr.value.u32 = trim.size.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE;
+    attr.value.u8 = trim.dscp.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE;
+    attr.value.s32 = trim.queue.mode.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX;
+    attr.value.u8 = trim.queue.index.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimming(const SwitchTrimming &trim)
+{
+    SWSS_LOG_ENTER();
+
+    auto tObj = trimHlpr.getConfig();
+    auto cfgUpd = false;
+    auto qIdxBak = false;
+
+    if (!trimCap.isSwitchTrimmingSupported())
+    {
+        SWSS_LOG_WARN("Switch trimming configuration is not supported: skipping ...");
+        return true;
+    }
+
+    if (trimCap.isSwitchTrimmingSizeSetSupported())
+    {
+        if (trim.size.is_set)
+        {
+            if (!tObj.size.is_set || (tObj.size.value != trim.size.value))
+            {
+                if (!setSwitchTrimmingSizeSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming size in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+        }
+        else
+        {
+            if (tObj.size.is_set)
+            {
+                SWSS_LOG_ERROR("Failed to remove switch trimming size configuration: operation is not supported");
+                return false;
+            }
+        }
+    }
+
+    if (trimCap.isSwitchTrimmingDscpSetSupported())
+    {
+        if (trim.dscp.is_set)
+        {
+            if (!tObj.dscp.is_set || (tObj.dscp.value != trim.dscp.value))
+            {
+                if (!setSwitchTrimmingDscpSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming DSCP in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+        }
+        else
+        {
+            if (tObj.dscp.is_set)
+            {
+                SWSS_LOG_ERROR("Failed to remove switch trimming DSCP configuration: operation is not supported");
+                return false;
+            }
+        }
+    }
+
+    if (trimCap.isSwitchTrimmingModeSetSupported())
+    {
+        if (trim.queue.mode.is_set)
+        {
+            if (!tObj.queue.mode.is_set || (tObj.queue.mode.value != trim.queue.mode.value))
+            {
+                if (!trimCap.validateQueueModeCap(trim.queue.mode.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch trimming queue mode: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchTrimmingQueueModeSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming queue mode in SAI");
+                    return false;
+                }
+
+                if (trimHlpr.isStaticQueueMode(tObj))
+                {
+                    qIdxBak = true;
+                }
+
+                cfgUpd = true;
+            }
+        }
+        else
+        {
+            if (tObj.queue.mode.is_set)
+            {
+                SWSS_LOG_ERROR("Failed to remove switch trimming queue configuration: operation is not supported");
+                return false;
+            }
+        }
+    }
+
+    if (trimCap.isSwitchTrimmingQueueSetSupported())
+    {
+        if (trim.queue.index.is_set)
+        {
+            if (!tObj.queue.index.is_set || (tObj.queue.index.value != trim.queue.index.value))
+            {
+                if (!setSwitchTrimmingQueueIndexSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming queue index in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+        }
+    }
+
+    // Don't update internal cache when config remains unchanged
+    if (!cfgUpd)
+    {
+        SWSS_LOG_NOTICE("Switch trimming in SAI is up-to-date");
+        return true;
+    }
+
+    if (qIdxBak) // Override queue index configuration during transition from static -> dynamic
+    {
+        auto cfg = trim;
+        cfg.queue.index = tObj.queue.index;
+        trimHlpr.setConfig(cfg);
+    }
+    else // Regular configuration update
+    {
+        trimHlpr.setConfig(trim);
+    }
+
+    SWSS_LOG_NOTICE("Set switch trimming in SAI");
+
+    return true;
+}
+
+void SwitchOrch::doCfgSwitchTrimmingTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        SWSS_LOG_INFO("KEY: %s, OP: %s", key.c_str(), op.c_str());
+
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("Failed to parse switch trimming key: empty string");
+            it = map.erase(it);
+            continue;
+        }
+
+        SwitchTrimming trim;
+
+        if (op == SET_COMMAND)
+        {
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+
+                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+
+                trim.fieldValueMap[fieldName] = fieldValue;
+            }
+
+            if (trimHlpr.parseConfig(trim))
+            {
+                if (!setSwitchTrimming(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming: ASIC and CONFIG DB are diverged");
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming: operation is not supported: ASIC and CONFIG DB are diverged");
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation(%s)", op.c_str());
+        }
+
+        it = map.erase(it);
+    }
+}
+
 void SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const string &severityString, const string &suppressed_category_list, bool isInitializing)
 {
     sai_status_t status;
@@ -1046,6 +1286,10 @@ void SwitchOrch::doTask(Consumer &consumer)
     {
         doCfgSwitchHashTableTask(consumer);
     }
+    else if (tableName == CFG_SWITCH_TRIMMING_TABLE_NAME)
+    {
+        doCfgSwitchTrimmingTableTask(consumer);
+    }
     else if (tableName == CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME)
     {
         doCfgSuppressAsicSdkHealthEventTableTask(consumer);
@@ -1116,22 +1360,8 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     const string &severity_str = switch_asic_sdk_health_event_severity_reverse_map.at(severity);
     const string &category_str = switch_asic_sdk_health_event_category_reverse_map.at(category);
     string description_str;
-    std::time_t t = (std::time_t)timestamp.tv_sec;
-    const std::time_t now = std::time(0);
-    const double year_in_seconds = 86400 * 365;
+    const std::time_t &t = (std::time_t)timestamp.tv_sec;
     stringstream time_ss;
-
-    /*
-     * In case vendor SAI passed a very large timestamp, put_time can cause segment fault which can not be caught by try/catch infra
-     * We check the difference between the timestamp from SAI and the current time and force to use current time if the gap is too large
-     * By doing so, we can avoid the segment fault
-     */
-    if (difftime(t, now) > year_in_seconds)
-    {
-        SWSS_LOG_ERROR("Invalid timestamp second %" PRIx64 " in received ASIC/SDK health event, reset to current time", timestamp.tv_sec);
-        t = now;
-    }
-
     time_ss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
 
     switch (data.data_type)
@@ -1396,11 +1626,6 @@ void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& value
      m_switchTable.set("switch", values);
 }
 
-void SwitchOrch::get_switch_capability(const std::string& capability, std::string& val)
-{
-     m_switchTable.hget("switch", capability, val);
-}
-
 void SwitchOrch::querySwitchPortEgressSampleCapability()
 {
     vector<FieldValueTuple> fvVector;
@@ -1513,27 +1738,6 @@ void SwitchOrch::querySwitchHashDefaults()
     {
         SWSS_LOG_WARN("Failed to get switch LAG hash OID");
     }
-}
-
-void SwitchOrch::setSwitchIcmpOffloadCapability()
-{
-    SWSS_LOG_ENTER();
-
-    vector<FieldValueTuple> fvVector;
-    // icmp echo offload does not support capability attribute,
-    //  we depend on its notification capability
-    bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ICMP_ECHO_SESSION_STATE_CHANGE_NOTIFY);
-    if (supported == false)
-    {
-        SWSS_LOG_NOTICE("Icmp Echo Offload not supported");
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "false");
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("Icmp Echo Offload supported");
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "true");
-    }
-    set_switch_capability(fvVector);
 }
 
 bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
