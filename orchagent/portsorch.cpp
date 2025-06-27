@@ -255,7 +255,8 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S13,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15,
-    SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS
+    SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
+    SAI_PORT_STAT_TRIM_PACKETS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -292,6 +293,7 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_BYTES,
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
+    SAI_QUEUE_STAT_TRIM_PACKETS
 };
 static const vector<sai_queue_stat_t> voq_stat_ids =
 {
