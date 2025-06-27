@@ -14,6 +14,8 @@
 #include "schema.h"
 #include "warm_restart.h"
 
+#include "buffer/bufferschema.h"
+
 /*
  * Some Tips
  * 1. All keys in this file are in format of APPL_DB key.
@@ -895,6 +897,10 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
             fvVector.emplace_back("xon_offset", profile.xon_offset);
         }
         fvVector.emplace_back("xoff", profile.xoff);
+    }
+    if (!profile.packet_discard_action.empty())
+    {
+        fvVector.emplace_back(BUFFER_PROFILE_PACKET_DISCARD_ACTION, profile.packet_discard_action);
     }
     fvVector.emplace_back("size", profile.size);
     fvVector.emplace_back("pool", profile.pool_name);
@@ -2650,6 +2656,10 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     profileApp.lossless = true;
                     profileApp.direction = BUFFER_INGRESS;
                 }
+            }
+            else if (field == BUFFER_PROFILE_PACKET_DISCARD_ACTION)
+            {
+                profileApp.packet_discard_action = value;
             }
             SWSS_LOG_INFO("Inserting BUFFER_PROFILE table field %s value %s", field.c_str(), value.c_str());
         }
