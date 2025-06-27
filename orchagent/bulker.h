@@ -39,6 +39,13 @@ typedef sai_status_t (*sai_bulk_set_inbound_routing_entry_attribute_fn) (
         _In_ sai_bulk_op_error_mode_t mode,
         _Out_ sai_status_t *object_statuses);
 
+typedef sai_status_t (*sai_bulk_set_outbound_port_map_port_range_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_outbound_port_map_port_range_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
     if (a.addr_family != b.addr_family) return false;
@@ -136,6 +143,15 @@ static inline bool operator==(const sai_outbound_routing_entry_t& a, const sai_o
     return a.switch_id == b.switch_id
         && a.outbound_routing_group_id == b.outbound_routing_group_id
         && a.destination == b.destination
+        ;
+}
+
+static inline bool operator==(const sai_outbound_port_map_port_range_entry_t& a, const sai_outbound_port_map_port_range_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.outbound_port_map_id == b.outbound_port_map_id
+        && a.dst_port_range.min == b.dst_port_range.min
+        && a.dst_port_range.max == b.dst_port_range.max
         ;
 }
 
@@ -491,7 +507,7 @@ struct SaiBulkerTraits<sai_dash_outbound_port_map_api_t>
     using entry_t = sai_outbound_port_map_port_range_entry_t;
     using bulk_create_entry_fn = sai_bulk_create_outbound_port_map_port_range_entry_fn;
     using bulk_remove_entry_fn = sai_bulk_remove_outbound_port_map_port_range_entry_fn;
-    using bulk_set_entry_attribute_fn = sai_set_outbound_port_map_port_range_entry_attribute_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_outbound_port_map_port_range_entry_attribute_fn;
 };
 
 template <typename T>
