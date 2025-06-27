@@ -16,6 +16,7 @@ namespace mock_orch_test
                 {APP_DASH_ROUTE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_TUNNEL_TABLE_NAME, (Orch**) &m_DashTunnelOrch},
                 {APP_DASH_ENI_TABLE_NAME, (Orch**) &m_DashOrch},
+                {APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, (Orch**) &m_dashPortMapOrch}
             };
             void SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set = true, bool expect_empty = true);
             void CreateApplianceEntry();
