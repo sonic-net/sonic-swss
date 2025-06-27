@@ -22,11 +22,17 @@ namespace mock_orch_test
         );
         target_orch->doTask(*consumer.get());
 
+        auto it2 = consumer->m_toSync.begin();
         if (expect_empty)
         {
-            auto it = consumer->m_toSync.begin();
-            EXPECT_EQ(it, consumer->m_toSync.end())
+            EXPECT_EQ(it2, consumer->m_toSync.end())
                 << "Expected consumer to be empty after operation on table " << table_name
+                << " with key " << key;
+        }
+        else
+        {
+            EXPECT_NE(it2, consumer->m_toSync.end())
+                << "Expected consumer to not be empty after operation on table " << table_name
                 << " with key " << key;
         }
     }
