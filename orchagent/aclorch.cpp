@@ -109,6 +109,7 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup = 
@@ -2015,6 +2016,12 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         {
             actionData.parameter.booldata = true;
             action_str = ACTION_DO_NOT_NAT_ACTION;
+        }
+        // handle PACKET_ACTION_DISABLE_TRIM in ACTION_PACKET_ACTION
+        else if (attr_value == PACKET_ACTION_DISABLE_TRIM)
+        {
+            actionData.parameter.booldata = true;
+            action_str = ACTION_DISABLE_TRIM;
         }
         else
         {
