@@ -11,8 +11,8 @@ struct DashPortMapBulkContext
     std::deque<sai_status_t> port_map_statuses;
 
     DashPortMapBulkContext() {}
-    DashPortMapBulkContext(const DashPortMapBulkContext&) = delete;
-    DashPortMapBulkContext(DashPortMapBulkContext&) = delete;
+    DashPortMapBulkContext(const DashPortMapBulkContext &) = delete;
+    DashPortMapBulkContext(DashPortMapBulkContext &) = delete;
 
     void clear()
     {
@@ -30,8 +30,8 @@ struct DashPortMapRangeBulkContext
     std::deque<sai_status_t> port_map_range_statuses;
 
     DashPortMapRangeBulkContext() {}
-    DashPortMapRangeBulkContext(const DashPortMapRangeBulkContext&) = delete;
-    DashPortMapRangeBulkContext(DashPortMapRangeBulkContext&) = delete;
+    DashPortMapRangeBulkContext(const DashPortMapRangeBulkContext &) = delete;
+    DashPortMapRangeBulkContext(DashPortMapRangeBulkContext &) = delete;
 
     void clear()
     {
@@ -43,7 +43,7 @@ class DashPortMapOrch : public ZmqOrch
 {
 public:
     DashPortMapOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
-    
+
 private:
     void doTask(ConsumerBase &consumer);
     void doTaskPortMapTable(ConsumerBase &consumer);
@@ -58,7 +58,7 @@ private:
     bool removePortMapRangePost(DashPortMapRangeBulkContext &ctxt);
 
     bool parsePortMapRange(const std::string &key, DashPortMapRangeBulkContext &ctxt);
-    
+
     ObjectBulker<sai_dash_outbound_port_map_api_t> port_map_bulker_;
     EntityBulker<sai_dash_outbound_port_map_api_t> port_map_range_bulker_;
 

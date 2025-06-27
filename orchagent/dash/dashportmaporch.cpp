@@ -6,21 +6,20 @@
 #include "pbutils.h"
 
 extern size_t gMaxBulkSize;
-extern sai_dash_outbound_port_map_api_t* sai_dash_outbound_port_map_api;
+extern sai_dash_outbound_port_map_api_t *sai_dash_outbound_port_map_api;
 extern sai_object_id_t gSwitchId;
 
 static const std::unordered_map<dash::outbound_port_map_range::PortMapRangeAction,
-                                sai_outbound_port_map_port_range_entry_action_t> gPortMapRangeActionMap = {
-    {dash::outbound_port_map_range::PortMapRangeAction::ACTION_SKIP_MAPPING,
-        SAI_OUTBOUND_PORT_MAP_PORT_RANGE_ENTRY_ACTION_SKIP_MAPPING},
-    {dash::outbound_port_map_range::PortMapRangeAction::ACTION_MAP_PRIVATE_LINK_SERVICE,
-        SAI_OUTBOUND_PORT_MAP_PORT_RANGE_ENTRY_ACTION_MAP_TO_PRIVATE_LINK_SERVICE}
-};
+                                sai_outbound_port_map_port_range_entry_action_t>
+    gPortMapRangeActionMap = {
+        {dash::outbound_port_map_range::PortMapRangeAction::ACTION_SKIP_MAPPING,
+         SAI_OUTBOUND_PORT_MAP_PORT_RANGE_ENTRY_ACTION_SKIP_MAPPING},
+        {dash::outbound_port_map_range::PortMapRangeAction::ACTION_MAP_PRIVATE_LINK_SERVICE,
+         SAI_OUTBOUND_PORT_MAP_PORT_RANGE_ENTRY_ACTION_MAP_TO_PRIVATE_LINK_SERVICE}};
 
-DashPortMapOrch::DashPortMapOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer) :
-    ZmqOrch(db, tables, zmqServer),
-    port_map_bulker_(sai_dash_outbound_port_map_api, gSwitchId, gMaxBulkSize),
-    port_map_range_bulker_(sai_dash_outbound_port_map_api, gMaxBulkSize)
+DashPortMapOrch::DashPortMapOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer) : ZmqOrch(db, tables, zmqServer),
+                                                                                                                                                         port_map_bulker_(sai_dash_outbound_port_map_api, gSwitchId, gMaxBulkSize),
+                                                                                                                                                         port_map_range_bulker_(sai_dash_outbound_port_map_api, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
     dash_port_map_result_table_ = std::make_unique<swss::Table>(app_state_db, APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME);
@@ -31,7 +30,7 @@ void DashPortMapOrch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
-    const auto& tn = consumer.getTableName();
+    const auto &tn = consumer.getTableName();
 
     SWSS_LOG_INFO("Table name: %s", tn.c_str());
 
@@ -57,15 +56,16 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
     uint32_t result;
 
     std::map<std::pair<std::string, std::string>,
-            DashPortMapBulkContext> toBulk;
+             DashPortMapBulkContext>
+        toBulk;
     while (it != consumer.m_toSync.end())
     {
         swss::KeyOpFieldsValuesTuple tuple = it->second;
         std::string port_map_id = kfvKey(tuple);
         std::string op = kfvOp(tuple);
         auto rc = toBulk.emplace(std::piecewise_construct,
-            std::forward_as_tuple(port_map_id, op),
-            std::forward_as_tuple());
+                                 std::forward_as_tuple(port_map_id, op),
+                                 std::forward_as_tuple());
         bool inserted = rc.second;
         auto &ctxt = rc.first->second;
         result = DASH_RESULT_SUCCESS;
@@ -110,7 +110,6 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
             SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
-
     }
 
     port_map_bulker_.flush();
@@ -184,9 +183,9 @@ bool DashPortMapOrch::addPortMap(const std::string &port_map_id, DashPortMapBulk
     attr.id = SAI_OUTBOUND_PORT_MAP_ATTR_COUNTER_ID;
     attr.value.oid = SAI_NULL_OBJECT_ID;
     attrs.push_back(attr);
-    auto& object_ids = ctxt.port_map_oids;
+    auto &object_ids = ctxt.port_map_oids;
     object_ids.emplace_back();
-    port_map_bulker_.create_entry(&object_ids.back(), (uint32_t) attrs.size(), attrs.data());
+    port_map_bulker_.create_entry(&object_ids.back(), (uint32_t)attrs.size(), attrs.data());
     SWSS_LOG_INFO("Adding port map %s to bulker", port_map_id.c_str());
     return false;
 }
@@ -195,7 +194,7 @@ bool DashPortMapOrch::addPortMapPost(const std::string &port_map_id, DashPortMap
 {
     SWSS_LOG_ENTER();
 
-    auto& object_ids = ctxt.port_map_oids;
+    auto &object_ids = ctxt.port_map_oids;
     if (object_ids.empty())
     {
         return false;
@@ -225,7 +224,7 @@ bool DashPortMapOrch::removePortMap(const std::string &port_map_id, DashPortMapB
         return true;
     }
 
-    auto& object_statuses = ctxt.port_map_statuses;
+    auto &object_statuses = ctxt.port_map_statuses;
     object_statuses.emplace_back();
     sai_object_id_t port_map_oid = port_map_table_[port_map_id];
     port_map_bulker_.remove_entry(&object_statuses.back(), port_map_oid);
@@ -238,7 +237,7 @@ bool DashPortMapOrch::removePortMapPost(const std::string &port_map_id, DashPort
 {
     SWSS_LOG_ENTER();
 
-    auto& object_statuses = ctxt.port_map_statuses;
+    auto &object_statuses = ctxt.port_map_statuses;
     if (object_statuses.empty())
     {
         return false;
@@ -254,7 +253,7 @@ bool DashPortMapOrch::removePortMapPost(const std::string &port_map_id, DashPort
             return false;
         }
         SWSS_LOG_ERROR("Failed to remove port map %s, status: %s", port_map_id.c_str(), sai_serialize_status(status).c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_PORT_MAP, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -274,15 +273,16 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
     uint32_t result;
 
     std::map<std::pair<std::string, std::string>,
-            DashPortMapRangeBulkContext> toBulk;
+             DashPortMapRangeBulkContext>
+        toBulk;
     while (it != consumer.m_toSync.end())
     {
         swss::KeyOpFieldsValuesTuple tuple = it->second;
         std::string key = kfvKey(tuple);
         std::string op = kfvOp(tuple);
         auto rc = toBulk.emplace(std::piecewise_construct,
-            std::forward_as_tuple(key, op),
-            std::forward_as_tuple());
+                                 std::forward_as_tuple(key, op),
+                                 std::forward_as_tuple());
         bool inserted = rc.second;
         auto &ctxt = rc.first->second;
         result = DASH_RESULT_FAILURE;
@@ -398,7 +398,7 @@ bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt)
 {
     SWSS_LOG_ENTER();
 
-    auto  parent_it = port_map_table_.find(ctxt.parent_map_id);
+    auto parent_it = port_map_table_.find(ctxt.parent_map_id);
     if (parent_it == port_map_table_.end())
     {
         SWSS_LOG_INFO("Parent port map %s does not exist for port map range", ctxt.parent_map_id.c_str());
@@ -434,7 +434,7 @@ bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt)
         return true;
     }
     attrs.push_back(attr);
-    
+
     attr.id = SAI_OUTBOUND_PORT_MAP_PORT_RANGE_ENTRY_ATTR_MATCH_PORT_BASE;
     attr.value.u32 = ctxt.start_port;
     attrs.push_back(attr);
@@ -443,9 +443,9 @@ bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt)
     attr.value.u32 = ctxt.metadata.backend_port_base();
     attrs.push_back(attr);
 
-    auto& object_statuses = ctxt.port_map_range_statuses;
+    auto &object_statuses = ctxt.port_map_range_statuses;
     object_statuses.emplace_back();
-    port_map_range_bulker_.create_entry(&object_statuses.back(), &entry, (uint32_t) attrs.size(), attrs.data());
+    port_map_range_bulker_.create_entry(&object_statuses.back(), &entry, (uint32_t)attrs.size(), attrs.data());
     SWSS_LOG_INFO("Adding port map range for %s: start=%d, end=%d", ctxt.parent_map_id.c_str(), ctxt.start_port, ctxt.end_port);
     return false;
 }
@@ -454,7 +454,7 @@ bool DashPortMapOrch::addPortMapRangePost(DashPortMapRangeBulkContext &ctxt)
 {
     SWSS_LOG_ENTER();
 
-    auto& object_statuses = ctxt.port_map_range_statuses;
+    auto &object_statuses = ctxt.port_map_range_statuses;
     if (object_statuses.empty())
     {
         return false;
@@ -470,7 +470,7 @@ bool DashPortMapOrch::addPortMapRangePost(DashPortMapRangeBulkContext &ctxt)
             return false;
         }
         SWSS_LOG_ERROR("Failed to create port map range for %s, status: %s", ctxt.parent_map_id.c_str(), sai_serialize_status(status).c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_PORT_MAP, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -502,7 +502,7 @@ bool DashPortMapOrch::removePortMapRange(DashPortMapRangeBulkContext &ctxt)
     port_range.max = ctxt.end_port;
     entry.dst_port_range = port_range;
 
-    auto& object_statuses = ctxt.port_map_range_statuses;
+    auto &object_statuses = ctxt.port_map_range_statuses;
     object_statuses.emplace_back();
     port_map_range_bulker_.remove_entry(&object_statuses.back(), &entry);
     SWSS_LOG_NOTICE("Removing port map range for %s: start=%d, end=%d", ctxt.parent_map_id.c_str(), ctxt.start_port, ctxt.end_port);
@@ -513,7 +513,7 @@ bool DashPortMapOrch::removePortMapRangePost(DashPortMapRangeBulkContext &ctxt)
 {
     SWSS_LOG_ENTER();
 
-    auto& object_statuses = ctxt.port_map_range_statuses;
+    auto &object_statuses = ctxt.port_map_range_statuses;
     if (object_statuses.empty())
     {
         return false;
@@ -529,7 +529,7 @@ bool DashPortMapOrch::removePortMapRangePost(DashPortMapRangeBulkContext &ctxt)
             return false;
         }
         SWSS_LOG_ERROR("Failed to remove port map range for %s, status: %s", ctxt.parent_map_id.c_str(), sai_serialize_status(status).c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_PORT_MAP, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -567,7 +567,7 @@ bool DashPortMapOrch::parsePortMapRange(const std::string &key, DashPortMapRange
         ctxt.start_port = std::stoi(range.substr(0, dash_pos));
         ctxt.end_port = std::stoi(range.substr(dash_pos + 1));
     }
-    catch (const std::invalid_argument& e)
+    catch (const std::invalid_argument &e)
     {
         SWSS_LOG_ERROR("Invalid port range values in key %s: %s", key.c_str(), e.what());
         return false;

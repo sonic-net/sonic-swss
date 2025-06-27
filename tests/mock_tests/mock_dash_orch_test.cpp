@@ -2,7 +2,7 @@
 
 namespace mock_orch_test
 {
-    
+
     void MockDashOrchTest::SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set, bool expect_empty)
     {
         auto it = dash_table_orch_map.find(table_name);
@@ -10,16 +10,14 @@ namespace mock_orch_test
         {
             FAIL() << "Table " << table_name << " not found in dash_table_orch_map.";
         }
-        Orch* target_orch = *(it->second);
+        Orch *target_orch = *(it->second);
 
         auto consumer = make_unique<Consumer>(
             new swss::ConsumerStateTable(m_app_db.get(), table_name),
-            target_orch, table_name
-        );
+            target_orch, table_name);
         auto op = set ? SET_COMMAND : DEL_COMMAND;
         consumer->addToSync(
-            swss::KeyOpFieldsValuesTuple(key, op, {{"pb", message.SerializeAsString()}})
-        );
+            swss::KeyOpFieldsValuesTuple(key, op, { { "pb", message.SerializeAsString() } }));
         target_orch->doTask(*consumer.get());
 
         auto it2 = consumer->m_toSync.begin();
