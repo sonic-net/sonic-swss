@@ -116,7 +116,7 @@ bool DashOrch::addApplianceEntry(const string &appliance_id, const dash::applian
 
     if (it != appliance_entries_.end())
     {
-        if (!MessageDifferencer::Equals(it->second.metadata.trusted_vnis(), entry.trusted_vnis()))
+        if (!MessageDifferencer::Equivalent(it->second.metadata.trusted_vnis(), entry.trusted_vnis()))
         {
             SWSS_LOG_INFO("Appliance Entry %s already exists with different trusted vnis", appliance_id.c_str());
             removeApplianceTrustedVni(appliance_id, it->second.metadata);
@@ -756,7 +756,7 @@ bool DashOrch::addEni(const string &eni, EniEntry &entry)
     if (it != eni_entries_.end())
     {
         bool changed = false;
-        if (!MessageDifferencer::Equals(it->second.metadata.trusted_vnis(), entry.metadata.trusted_vnis()))
+        if (!MessageDifferencer::Equivalent(it->second.metadata.trusted_vnis(), entry.metadata.trusted_vnis()))
         {
             SWSS_LOG_INFO("ENI %s trusted vnis have changed", eni.c_str());
             removeEniTrustedVnis(eni, it->second);
