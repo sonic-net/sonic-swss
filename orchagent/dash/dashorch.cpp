@@ -30,13 +30,13 @@ using namespace std;
 using namespace swss;
 using namespace google::protobuf::util;
 
-extern Directory<Orch*> gDirectory;
+extern Directory<Orch *> gDirectory;
 extern std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
-extern sai_dash_appliance_api_t* sai_dash_appliance_api;
-extern sai_dash_vip_api_t* sai_dash_vip_api;
-extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
-extern sai_dash_eni_api_t* sai_dash_eni_api;
-extern sai_dash_trusted_vni_api_t* sai_dash_trusted_vni_api;
+extern sai_dash_appliance_api_t *sai_dash_appliance_api;
+extern sai_dash_vip_api_t *sai_dash_vip_api;
+extern sai_dash_direction_lookup_api_t *sai_dash_direction_lookup_api;
+extern sai_dash_eni_api_t *sai_dash_eni_api;
+extern sai_dash_trusted_vni_api_t *sai_dash_trusted_vni_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
@@ -45,20 +45,17 @@ extern bool gTraditionalFlexCounter;
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
 static std::unordered_map<string, sai_dash_eni_mac_override_type_t> sMacOverride =
-{
-    { "src_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC},
-    { "dst_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC}
-};
+    {
+        {"src_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_SRC_MAC},
+        {"dst_mac", SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC}};
 
 static const std::unordered_map<dash::eni::EniMode, sai_dash_eni_mode_t> eniModeMap =
-{
-    { dash::eni::MODE_VM, SAI_DASH_ENI_MODE_VM },
-    { dash::eni::MODE_FNIC, SAI_DASH_ENI_MODE_FNIC }
-};
+    {
+        {dash::eni::MODE_VM, SAI_DASH_ENI_MODE_VM},
+        {dash::eni::MODE_FNIC, SAI_DASH_ENI_MODE_FNIC}};
 
-DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_state_db, ZmqServer *zmqServer) :
-    ZmqOrch(db, tableName, zmqServer),
-    m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
+DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_state_db, ZmqServer *zmqServer) : ZmqOrch(db, tableName, zmqServer),
+                                                                                                                  m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
 
@@ -76,7 +73,7 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_
         m_vid_to_rid_table = std::make_unique<Table>(m_asic_db.get(), "VIDTORID");
     }
 
-    auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    auto intervT = timespec{.tv_sec = FLEX_COUNTER_UPD_INTERVAL, .tv_nsec = 0};
     m_fc_update_timer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_fc_update_timer, this, "FLEX_COUNTER_UPD_TIMER");
     Orch::addExecutor(executorT);
@@ -84,14 +81,14 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_
     /* Fetch the available counter Ids */
     m_counter_stats.clear();
     auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_ENI);
-    for (auto &stat_enum: stat_enum_list)
+    for (auto &stat_enum : stat_enum_list)
     {
         auto counter_id = static_cast<sai_eni_stat_t>(stat_enum);
         m_counter_stats.insert(sai_serialize_eni_stat(counter_id));
     }
 }
 
-bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type)
+bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType &route_type)
 {
     SWSS_LOG_ENTER();
 
@@ -111,7 +108,7 @@ bool DashOrch::hasApplianceEntry()
     return !appliance_entries_.empty();
 }
 
-bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::appliance::Appliance &entry)
+bool DashOrch::addApplianceEntry(const string &appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -152,7 +149,7 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         if (status != SAI_STATUS_NOT_IMPLEMENTED)
         {
             SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
-            task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_APPLIANCE, status);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -174,7 +171,7 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create vip entry for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_VIP, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_VIP, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -201,17 +198,17 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     direction_lookup_attrs.push_back(appliance_attr);
 
     status = sai_dash_direction_lookup_api->create_direction_lookup_entry(&direction_lookup_entry,
-                (uint32_t)direction_lookup_attrs.size(), direction_lookup_attrs.data());
+                                                                          (uint32_t)direction_lookup_attrs.size(), direction_lookup_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create direction lookup entry for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
+    appliance_entries_[appliance_id] = ApplianceEntry{sai_appliance_id, entry};
     SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
     if (entry.has_trusted_vnis())
@@ -222,7 +219,7 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     return true;
 }
 
-void DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance &entry)
+void DashOrch::addApplianceTrustedVni(const std::string &appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
     sai_global_trusted_vni_entry_t trusted_vni_entry;
@@ -239,7 +236,7 @@ void DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const das
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_TRUSTED_VNI, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
         if (handle_status != task_success)
         {
             parseHandleSaiStatusFailure(handle_status);
@@ -247,10 +244,10 @@ void DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const das
     }
     appliance_entries_[appliance_id].metadata.mutable_trusted_vnis()->CopyFrom(entry.trusted_vnis());
     SWSS_LOG_NOTICE("Created global trusted vni entry for appliance with range %u-%u",
-                   vni_range.min, vni_range.max);
+                    vni_range.min, vni_range.max);
 }
 
-bool DashOrch::removeApplianceEntry(const string& appliance_id)
+bool DashOrch::removeApplianceEntry(const string &appliance_id)
 {
     SWSS_LOG_ENTER();
 
@@ -262,7 +259,7 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
         return true;
     }
 
-    const auto& entry = appliance_entries_[appliance_id].metadata;
+    const auto &entry = appliance_entries_[appliance_id].metadata;
     sai_vip_entry_t vip_entry;
     vip_entry.switch_id = gSwitchId;
     if (!to_sai(entry.sip(), vip_entry.vip))
@@ -273,7 +270,7 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove vip entry for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VIP, status);
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_VIP, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -287,7 +284,7 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove direction lookup entry for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -301,7 +298,7 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
         if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_IMPLEMENTED)
         {
             SWSS_LOG_ERROR("Failed to remove dash appliance object in SAI for %s", appliance_id.c_str());
-            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_APPLIANCE, status);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -317,11 +314,10 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     appliance_entries_.erase(appliance_id);
     SWSS_LOG_NOTICE("Removed appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
-
     return true;
 }
 
-void DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance &entry)
+void DashOrch::removeApplianceTrustedVni(const std::string &appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
     sai_global_trusted_vni_entry_t trusted_vni_entry;
@@ -332,14 +328,14 @@ void DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const 
     {
         SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
         return;
-    } 
+    }
 
     trusted_vni_entry.vni_range = vni_range;
     sai_status_t status = sai_dash_trusted_vni_api->remove_global_trusted_vni_entry(&trusted_vni_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TRUSTED_VNI, status);
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
         if (handle_status != task_success)
         {
             parseHandleSaiStatusFailure(handle_status);
@@ -348,10 +344,10 @@ void DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const 
 
     appliance_entries_[appliance_id].metadata.clear_trusted_vnis();
     SWSS_LOG_NOTICE("Removed global trusted vni entry for appliance with range %u-%u",
-                   vni_range.min, vni_range.max);
+                    vni_range.min, vni_range.max);
 }
 
-void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
+void DashOrch::doTaskApplianceTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -406,7 +402,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
     }
 }
 
-bool DashOrch::addRoutingTypeEntry(const dash::route_type::RoutingType& routing_type, const dash::route_type::RouteType &entry)
+bool DashOrch::addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -422,7 +418,7 @@ bool DashOrch::addRoutingTypeEntry(const dash::route_type::RoutingType& routing_
     return true;
 }
 
-bool DashOrch::removeRoutingTypeEntry(const dash::route_type::RoutingType& routing_type)
+bool DashOrch::removeRoutingTypeEntry(const dash::route_type::RoutingType &routing_type)
 {
     SWSS_LOG_ENTER();
 
@@ -438,7 +434,7 @@ bool DashOrch::removeRoutingTypeEntry(const dash::route_type::RoutingType& routi
     return true;
 }
 
-void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
+void DashOrch::doTaskRoutingTypeTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -504,7 +500,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
     }
 }
 
-bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
+bool DashOrch::setEniAdminState(const string &eni, const EniEntry &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -515,11 +511,11 @@ bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
     eni_attr.value.booldata = eni_enable;
 
     sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
-                                &eni_attr);
+                                                              &eni_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set ENI admin state for %s", eni.c_str());
-        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t)SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -531,7 +527,7 @@ bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
     return true;
 }
 
-bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
+bool DashOrch::addEniObject(const string &eni, EniEntry &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -549,15 +545,13 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         return false;
     }
 
-    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
-    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
-                                     entry.metadata.v4_meter_policy_id() : "";
-    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
-                                     entry.metadata.v6_meter_policy_id() : "";
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch *>();
+    const string &v4_meter_policy = entry.metadata.has_v4_meter_policy_id() ? entry.metadata.v4_meter_policy_id() : "";
+    const string &v6_meter_policy = entry.metadata.has_v6_meter_policy_id() ? entry.metadata.v6_meter_policy_id() : "";
 
     if (!v4_meter_policy.empty())
     {
-        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);    
+        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);
         if (meter_policy_oid == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Retry as v4 meter_policy %s not found", v4_meter_policy.c_str());
@@ -566,7 +560,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     }
     if (!v6_meter_policy.empty())
     {
-        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);    
+        sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);
         if (meter_policy_oid == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Retry as v6 meter_policy %s not found", v6_meter_policy.c_str());
@@ -610,7 +604,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     eni_attrs.push_back(eni_attr);
 
     eni_attr.id = SAI_ENI_ATTR_VM_VNI;
-    auto& app_entry = appliance_entries_.begin()->second.metadata;
+    auto &app_entry = appliance_entries_.begin()->second.metadata;
     eni_attr.value.u32 = app_entry.vm_vni();
     eni_attrs.push_back(eni_attr);
 
@@ -635,24 +629,27 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     if (!v4_meter_policy.empty())
     {
         eni_attr.id = SAI_ENI_ATTR_V4_METER_POLICY_ID;
-        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);    
+        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);
         eni_attrs.push_back(eni_attr);
     }
 
     if (!v6_meter_policy.empty())
     {
         eni_attr.id = SAI_ENI_ATTR_V6_METER_POLICY_ID;
-        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);    
+        eni_attr.value.oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);
         eni_attrs.push_back(eni_attr);
     }
 
-    if (entry.metadata.has_eni_mode()) {
+    if (entry.metadata.has_eni_mode())
+    {
         auto it = eniModeMap.find(entry.metadata.eni_mode());
         eni_attr.id = SAI_ENI_ATTR_DASH_ENI_MODE;
         if (it != eniModeMap.end())
         {
             eni_attr.value.u32 = it->second;
-        } else {
+        }
+        else
+        {
             // Default to VM mode if not specified
             eni_attr.value.u32 = SAI_DASH_ENI_MODE_VM;
             SWSS_LOG_ERROR("Invalid ENI mode %s for ENI %s, defaulting to VM mode", dash::eni::EniMode_Name(entry.metadata.eni_mode()).c_str(), eni.c_str());
@@ -661,11 +658,11 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     }
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
-                                (uint32_t)eni_attrs.size(), eni_attrs.data());
+                                                       (uint32_t)eni_attrs.size(), eni_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ENI object for %s", eni.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -690,7 +687,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     return true;
 }
 
-bool DashOrch::addEniAddrMapEntry(const string& eni, const EniEntry& entry)
+bool DashOrch::addEniAddrMapEntry(const string &eni, const EniEntry &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -704,11 +701,11 @@ bool DashOrch::addEniAddrMapEntry(const string& eni, const EniEntry& entry)
     eni_ether_address_map_entry_attr.value.oid = entry.eni_id;
 
     sai_status_t status = sai_dash_eni_api->create_eni_ether_address_map_entry(&eni_ether_address_map_entry, attr_count,
-                                                                                &eni_ether_address_map_entry_attr);
+                                                                               &eni_ether_address_map_entry_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ENI ether address map entry for %s", MacAddress::to_string(reinterpret_cast<const uint8_t *>(entry.metadata.mac_address().c_str())).c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -722,7 +719,7 @@ bool DashOrch::addEniAddrMapEntry(const string& eni, const EniEntry& entry)
     return true;
 }
 
-void DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
+void DashOrch::addEniTrustedVnis(const std::string &eni, const EniEntry &entry)
 {
     SWSS_LOG_ENTER();
     sai_eni_trusted_vni_entry_t trusted_vni_entry;
@@ -740,7 +737,7 @@ void DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_TRUSTED_VNI, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
         if (handle_status != task_success)
         {
             parseHandleSaiStatusFailure(handle_status);
@@ -748,10 +745,10 @@ void DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
     }
     eni_entries_[eni].metadata.mutable_trusted_vnis()->CopyFrom(entry.metadata.trusted_vnis());
     SWSS_LOG_NOTICE("Created ENI trusted vni entry for ENI %s with range %u-%u",
-                   entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
+                    entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
 }
 
-bool DashOrch::addEni(const string& eni, EniEntry &entry)
+bool DashOrch::addEni(const string &eni, EniEntry &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -792,7 +789,7 @@ bool DashOrch::addEni(const string& eni, EniEntry &entry)
     return true;
 }
 
-const EniEntry *DashOrch::getEni(const string& eni) const
+const EniEntry *DashOrch::getEni(const string &eni) const
 {
     SWSS_LOG_ENTER();
 
@@ -805,7 +802,7 @@ const EniEntry *DashOrch::getEni(const string& eni) const
     return &it->second;
 }
 
-bool DashOrch::removeEniObject(const string& eni)
+bool DashOrch::removeEniObject(const string &eni)
 {
     SWSS_LOG_ENTER();
 
@@ -816,24 +813,22 @@ bool DashOrch::removeEniObject(const string& eni)
     sai_status_t status = sai_dash_eni_api->remove_eni(entry.eni_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        //Retry later if object is in use
+        // Retry later if object is in use
         if (status == SAI_STATUS_OBJECT_IN_USE)
         {
             return false;
         }
         SWSS_LOG_ERROR("Failed to remove ENI object for %s", eni.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
 
-    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
-    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
-                                     entry.metadata.v4_meter_policy_id() : "";
-    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
-                                     entry.metadata.v6_meter_policy_id() : "";
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch *>();
+    const string &v4_meter_policy = entry.metadata.has_v4_meter_policy_id() ? entry.metadata.v4_meter_policy_id() : "";
+    const string &v6_meter_policy = entry.metadata.has_v6_meter_policy_id() ? entry.metadata.v6_meter_policy_id() : "";
 
     if (!v4_meter_policy.empty())
     {
@@ -851,7 +846,7 @@ bool DashOrch::removeEniObject(const string& eni)
     return true;
 }
 
-bool DashOrch::removeEniAddrMapEntry(const string& eni)
+bool DashOrch::removeEniAddrMapEntry(const string &eni)
 {
     SWSS_LOG_ENTER();
 
@@ -869,7 +864,7 @@ bool DashOrch::removeEniAddrMapEntry(const string& eni)
             return true;
         }
         SWSS_LOG_ERROR("Failed to remove ENI ether address map entry for %s", eni.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -883,7 +878,7 @@ bool DashOrch::removeEniAddrMapEntry(const string& eni)
     return true;
 }
 
-void DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entry)
+void DashOrch::removeEniTrustedVnis(const std::string &eni, const EniEntry &entry)
 {
     SWSS_LOG_ENTER();
     sai_eni_trusted_vni_entry_t trusted_vni_entry;
@@ -902,7 +897,7 @@ void DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TRUSTED_VNI, status);
+        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
         if (handle_status != task_success)
         {
             parseHandleSaiStatusFailure(handle_status);
@@ -910,10 +905,10 @@ void DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entr
     }
     eni_entries_[eni].metadata.clear_trusted_vnis();
     SWSS_LOG_NOTICE("Removed ENI trusted vni entry for ENI %s with range %u-%u",
-                   entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
+                    entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
 }
 
-bool DashOrch::removeEni(const string& eni)
+bool DashOrch::removeEni(const string &eni)
 {
     SWSS_LOG_ENTER();
 
@@ -938,7 +933,7 @@ bool DashOrch::removeEni(const string& eni)
     return true;
 }
 
-void DashOrch::doTaskEniTable(ConsumerBase& consumer)
+void DashOrch::doTaskEniTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -992,7 +987,7 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
     }
 }
 
-bool DashOrch::addQosEntry(const string& qos_name, const dash::qos::Qos &entry)
+bool DashOrch::addQosEntry(const string &qos_name, const dash::qos::Qos &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -1007,7 +1002,7 @@ bool DashOrch::addQosEntry(const string& qos_name, const dash::qos::Qos &entry)
     return true;
 }
 
-bool DashOrch::removeQosEntry(const string& qos_name)
+bool DashOrch::removeQosEntry(const string &qos_name)
 {
     SWSS_LOG_ENTER();
 
@@ -1021,7 +1016,7 @@ bool DashOrch::removeQosEntry(const string& qos_name)
     return true;
 }
 
-void DashOrch::doTaskQosTable(ConsumerBase& consumer)
+void DashOrch::doTaskQosTable(ConsumerBase &consumer)
 {
     auto it = consumer.m_toSync.begin();
     uint32_t result;
@@ -1074,10 +1069,9 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
     }
 }
 
-bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry)
+bool DashOrch::setEniRoute(const std::string &eni, const dash::eni_route::EniRoute &entry)
 {
     SWSS_LOG_ENTER();
-
 
     if (eni_entries_.find(eni) == eni_entries_.end())
     {
@@ -1085,7 +1079,7 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
         return false;
     }
 
-    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
+    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch *>();
     sai_object_id_t route_group_oid = dash_route_orch->getRouteGroupOid(entry.group_id());
     if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
@@ -1113,12 +1107,12 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
     eni_attr.value.oid = route_group_oid;
 
     sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
-                                &eni_attr);
+                                                              &eni_attr);
 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set ENI route group for %s", eni.c_str());
-        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t)SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1136,7 +1130,7 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
     return true;
 }
 
-bool DashOrch::removeEniRoute(const std::string& eni)
+bool DashOrch::removeEniRoute(const std::string &eni)
 {
     SWSS_LOG_ENTER();
 
@@ -1153,11 +1147,11 @@ bool DashOrch::removeEniRoute(const std::string& eni)
         eni_attr.value.oid = SAI_NULL_OBJECT_ID;
 
         sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
-                                    &eni_attr);
+                                                                  &eni_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove ENI route for %s", eni.c_str());
-            task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
+            task_process_status handle_status = handleSaiSetStatus((sai_api_t)SAI_API_DASH_ENI, status);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -1165,7 +1159,7 @@ bool DashOrch::removeEniRoute(const std::string& eni)
         }
     }
 
-    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch*>();
+    DashRouteOrch *dash_route_orch = gDirectory.get<DashRouteOrch *>();
     dash_route_orch->unbindRouteGroup(eni_route_entries_[eni].group_id());
     eni_route_entries_.erase(eni);
 
@@ -1174,7 +1168,7 @@ bool DashOrch::removeEniRoute(const std::string& eni)
     return true;
 }
 
-void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
+void DashOrch::doTaskEniRouteTable(ConsumerBase &consumer)
 {
     auto it = consumer.m_toSync.begin();
     uint32_t result;
@@ -1227,11 +1221,11 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
     }
 }
 
-void DashOrch::doTask(ConsumerBase& consumer)
+void DashOrch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
-    const auto& tn = consumer.getTableName();
+    const auto &tn = consumer.getTableName();
 
     SWSS_LOG_INFO("Table name: %s", tn.c_str());
 
@@ -1315,9 +1309,9 @@ void DashOrch::handleFCStatusUpdate(bool enabled)
 
 void DashOrch::addEniToFC(sai_object_id_t oid, const string &name)
 {
-    if (!m_eni_fc_status) 
+    if (!m_eni_fc_status)
     {
-       return ;
+        return;
     }
     auto was_empty = m_eni_stat_work_queue.empty();
     m_eni_stat_work_queue[oid] = name;
@@ -1334,10 +1328,10 @@ void DashOrch::doTask(SelectableTimer &timer)
     if (!m_eni_fc_status)
     {
         m_fc_update_timer->stop();
-        return ;
+        return;
     }
 
-    for (auto it = m_eni_stat_work_queue.begin(); it != m_eni_stat_work_queue.end(); )
+    for (auto it = m_eni_stat_work_queue.begin(); it != m_eni_stat_work_queue.end();)
     {
         string value;
         const auto id = sai_serialize_object_id(it->first);
