@@ -2877,15 +2877,17 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         return false;
     }
 
+    NextHopGroupKey nhg_primary;
+    NextHopGroupKey nhg_secondary;
     if (check_directly_connected)
     {
-        NextHopGroupKey nhg_primary("", primary_list.empty() || !isLocalEndpoint(vnet_name, primary_list[0]));
-        NextHopGroupKey nhg_secondary("", secondary_list.empty() || !isLocalEndpoint(vnet_name, secondary_list[0]));
+        nhg_primary = NextHopGroupKey("", primary_list.empty() || !isLocalEndpoint(vnet_name, primary_list[0]));
+        nhg_secondary = NextHopGroupKey("", secondary_list.empty() || !isLocalEndpoint(vnet_name, secondary_list[0]));
     }
     else
     {
-        NextHopGroupKey nhg_primary("", true);
-        NextHopGroupKey nhg_secondary("", true);
+        nhg_primary = NextHopGroupKey("", true);
+        nhg_secondary = NextHopGroupKey("", true);
     }
     NextHopGroupKey nhg("", true);
     map<NextHopKey, IpAddress> monitors;
