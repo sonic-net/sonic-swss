@@ -1722,7 +1722,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         }
     }
 
-    if(nhg_id)
+    if (nhg_id)
     {
         setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
         SWSS_LOG_INFO("RouteTable set msg with NHG: %s nhg_id:%d", destipprefix, nhg_id);
