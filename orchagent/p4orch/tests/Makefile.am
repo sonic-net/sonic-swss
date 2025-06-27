@@ -23,6 +23,8 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/copporch.cpp \
 		       $(ORCHAGENT_DIR)/switch/switch_capabilities.cpp \
 		       $(ORCHAGENT_DIR)/switch/switch_helper.cpp \
+		       $(ORCHAGENT_DIR)/switch/trimming/capabilities.cpp \
+		       $(ORCHAGENT_DIR)/switch/trimming/helper.cpp \
 		       $(ORCHAGENT_DIR)/switchorch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(top_srcdir)/lib/recorder.cpp \
