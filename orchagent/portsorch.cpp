@@ -34,6 +34,7 @@
 #include "switchorch.h"
 #include "stringutility.h"
 #include "subscriberstatetable.h"
+#include "warm_restart.h"
 
 #include "saitam.h"
 
@@ -579,7 +580,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                 ref(wred_port_stat_manager),
                 ref(wred_queue_stat_manager)
             }),
-        m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
+        m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 })),
+        m_isWarmRestoreStage(WarmStart::isWarmStart())
 {
     SWSS_LOG_ENTER();
 
@@ -3806,6 +3808,12 @@ bool PortsOrch::initPort(const PortConfig &port)
                     createPortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
                 }
 
+                // In warm-reboot postPortInit is postponed.
+                if (!m_isWarmRestoreStage)
+                {
+                    postPortInit(m_portList[alias]);
+                }
+
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
             else
@@ -4216,9 +4224,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    initPortSupportedSpeeds(it->second.key, m_portListLaneMap[it->first]);
-                    initPortSupportedFecModes(it->second.key, m_portListLaneMap[it->first]);
-
                     it++;
                 }
 
@@ -4237,9 +4242,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             // Failure has been recorded in initPort
                             continue;
                         }
-
-                        initPortSupportedSpeeds(cit.key, m_portListLaneMap[cit.lanes.value]);
-                        initPortSupportedFecModes(cit.key, m_portListLaneMap[cit.lanes.value]);
                     }
                 }
 
@@ -5843,6 +5845,40 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
     }
 }
 
+void PortsOrch::onWarmBootEnd()
+{
+    SWSS_LOG_ENTER();
+
+    m_isWarmRestoreStage = false;
+
+    /* Start dynamic state sync up */
+    refreshPortStatus();
+
+    // Do post boot port initialization
+    for (auto& it: m_portList)
+    {
+        Port& port = it.second;
+
+        if (port.m_type == Port::PHY)
+        {
+            postPortInit(it.second);
+        }
+    }
+}
+
+void PortsOrch::postPortInit(Port& p)
+{
+    SWSS_LOG_ENTER();
+
+    if (gMySwitchType != "dpu")
+    {
+        initializePortBufferMaximumParameters(p);
+    }
+
+    initPortSupportedSpeeds(p.m_alias, p.m_port_id);
+    initPortSupportedFecModes(p.m_alias, p.m_port_id);
+}
+
 void PortsOrch::doTask()
 {
     auto tableOrder = {
@@ -6127,7 +6163,6 @@ bool PortsOrch::initializePort(Port &port)
         initializePriorityGroups(port);
         initializeQueues(port);
         initializeSchedulerGroups(port);
-        initializePortBufferMaximumParameters(port);
     }
 
     /*

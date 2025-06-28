@@ -3433,4 +3433,52 @@ namespace portsorch_test
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
 
+    struct PostPortInitTests : PortsOrchTest
+    {
+    };
+
+    // This test ensures post port initialization is performed when calling onWarmBootEnd()
+    TEST_F(PostPortInitTests, PortPostInit)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table stateTable = Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE);
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // Set warm boot flag
+        gPortsOrch->m_isWarmRestoreStage = true;
+
+        gPortsOrch->bake();
+        gPortsOrch->doTask();
+
+        std::string value;
+        bool stateDbSet;
+
+        // At this point postPortInit() hasn't been called yet, so don't expect
+        // to find "max_priority_groups" field in STATE_DB
+        stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
+        ASSERT_FALSE(stateDbSet);
+
+        gPortsOrch->onWarmBootEnd();
+
+        // Now the field "max_priority_groups" is set
+        stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
+        ASSERT_TRUE(stateDbSet);
+    }
 }
