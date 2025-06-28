@@ -105,6 +105,7 @@ struct NextHopKey
     }
 
     NextHopKey(const IpAddress &ip, const MacAddress &mac, const uint32_t &vni, bool overlay_nh) : ip_address(ip), alias(""), vni(vni), mac_address(mac), weight(0){}
+    NextHopKey(const IpAddress &ip, const std::string &alias, const MacAddress &mac, const uint32_t &vni, bool overlay_nh) : ip_address(ip), alias(alias), vni(vni), mac_address(mac), weight(0){}
 
     const std::string to_string() const
     {
