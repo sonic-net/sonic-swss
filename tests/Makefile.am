@@ -25,4 +25,4 @@ tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp ../orchagent/request_parser
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) -I../orchagent
 tests_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
-        -lswsscommon -lswsscommon -lgtest -lgtest_main
+        -lswsscommon -lswsscommon -lyaml-cpp -lgtest -lgtest_main

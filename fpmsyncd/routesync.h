@@ -99,6 +99,9 @@ private:
     /* nexthop group table */
     ProducerStateTable  m_nexthop_groupTable;
     map<uint32_t,NextHopGroup> m_nh_groups;
+    uint32_t route_tag_not_to_appdb;
+    uint32_t route_tag_fallback_to_default_route;
+
 
     bool                m_isSuppressionEnabled{false};
     FpmInterface*       m_fpmInterface {nullptr};
