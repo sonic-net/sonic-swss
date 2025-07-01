@@ -8,6 +8,7 @@
 #include <bitset>
 #include <tuple>
 
+#include "aclorch.h"
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
@@ -21,6 +22,11 @@
 #define VNET_NEIGHBOR_MAX 0xffff
 #define VXLAN_ENCAP_TTL 128
 #define VNET_BITMAP_RIF_MTU 9100
+
+#define VNET_TUNNEL_TERM_ACL_TABLE_TYPE "VNET_LOCAL_ENDPOINT_REDIRECT"
+#define VNET_TUNNEL_TERM_ACL_TABLE "VNET_LOCAL_ENDPOINT"
+#define VNET_TUNNEL_TERM_ACL_BASE_PRIORITY 9998
+#define VNET_TUNNEL_TERM_ACL_RULE_NAME_SUFFIX "IN_TUNN_TERM"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -394,6 +400,7 @@ struct MonitorUpdate
     IpPrefix prefix;
     std::string vnet;
 };
+
 struct VNetTunnelRouteEntry
 {
     // The nhg_key is the key for the next hop group which is currently active in hardware.
@@ -405,11 +412,60 @@ struct VNetTunnelRouteEntry
     NextHopGroupKey secondary;
 };
 
+struct VNetLocEpAclRule
+{
+    swss::IpPrefix vip;
+    swss::IpAddress nh_ip;
+    std::string rule_name;
+};
+
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
 typedef std::map<IpPrefix, std::map<IpAddress, MonitorSessionInfo>> MonitorSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
+
+class TunnelTermHelper
+{
+public:
+    TunnelTermHelper(DBConnector *cfgDb);
+
+    virtual void initialize();
+
+    std::vector<std::string> getBindPoints();
+    std::set<std::string> findInternalPorts();
+    std::string getNbrAlias(const swss::IpAddress& ip);
+    std::string getRuleName(const std::string& vnet_name, const swss::IpPrefix& vip);
+
+private:
+    unique_ptr<swss::Table> port_table_;
+    PortsOrch *ports_orch_;
+    IntfsOrch *intfs_orch_;
+};
+
+class VNetTunnelTermAcl
+{
+public:
+    VNetTunnelTermAcl(DBConnector *cfgDb, DBConnector *appDb);
+
+    bool createAclRule(const string vnet_name, swss::IpPrefix& vip, swss::IpAddress nh_ip);
+    bool removeAclRule(const string vnet_name, swss::IpPrefix& vip);
+    std::function<std::string(const std::string&, const std::string&)> concat =
+        [](const std::string &a, const std::string &b) { return a + "," + b; };
+    bool getAclRule(const string vnet_name, const swss::IpPrefix& vip, VNetLocEpAclRule& rule_found);
+
+protected:
+
+    void lazyInit();
+
+    std::shared_ptr<TunnelTermHelper> ctx_;
+
+    bool acl_table_initialized_ = false;
+    unique_ptr<swss::ProducerStateTable> acl_table_;
+    unique_ptr<swss::ProducerStateTable> acl_table_type_;
+    unique_ptr<swss::ProducerStateTable> acl_rule_table_;
+    std::map<std::string, std::vector<VNetLocEpAclRule>> vnet_loc_ep_acl_rule_map_;
+};
 
 class VNetRouteOrch : public Orch2, public Subject, public Observer
 {
@@ -440,7 +496,7 @@ private:
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false);
-    bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroup(const string&, IpPrefix&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
@@ -496,10 +552,13 @@ private:
     ProducerStateTable bfd_session_producer_;
     ProducerStateTable app_tunnel_decap_term_producer_;
     unique_ptr<Table> monitor_session_producer_;
+    shared_ptr<DBConnector> config_db_;
     shared_ptr<DBConnector> state_db_;
     shared_ptr<DBConnector> app_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
     unique_ptr<Table> state_vnet_rt_adv_table_;
+
+    shared_ptr<VNetTunnelTermAcl> vnet_tunnel_term_acl_;
 };
 
 class VNetCfgRouteOrch : public Orch
