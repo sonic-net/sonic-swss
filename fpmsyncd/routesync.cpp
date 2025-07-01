@@ -163,6 +163,31 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
+void RouteSync::setRouteWithWarmRestart(const std::string& key,
+                                      const std::vector<FieldValueTuple>& fvVector,
+                                      shared_ptr<ProducerStateTable> table,
+                                      const std::string& cmd)
+{
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+
+    if (!warmRestartInProgress)
+    {
+        if (cmd == SET_COMMAND)
+        {
+            table->set(key, fvVector);
+        }
+        else if (cmd == DEL_COMMAND)
+        {
+            table->del(key);
+        }
+    }
+    else
+    {
+        const KeyOpFieldsValuesTuple kfv = std::make_tuple(key, cmd, fvVector);
+        m_warmStartHelper.insertRefreshMap(kfv);
+    }
+}
+
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
 {
     char *ptr = buf;
@@ -448,7 +473,7 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
     return true;
 }
 
-void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,  
+void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,
                    string& mac_list, string& intf_list)
 {
     nexthops  += NHG_DELIMITER;
@@ -778,27 +803,12 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
      * Upon arrival of a delete msg we could either push the change right away,
      * or we could opt to defer it if we are going through a warm-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
     if (nlmsg_type == RTM_DELROUTE)
     {
-        if (!warmRestartInProgress)
-        {
-            m_routeTable->del(destipprefix);
-            return;
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
-                          destipprefix);
-
-            vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                               DEL_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
-            return;
-        }
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
+        return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
@@ -862,29 +872,11 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     fvVector.push_back(vni);
     fvVector.push_back(mac);
     fvVector.push_back(proto);
-
-    if (!warmRestartInProgress)
-    {
-        m_routeTable->set(destipprefix, fvVector);
-        SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
-                       destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
-                       proto_str.c_str());
-    }
-
-    /*
-     * During routing-stack restarting scenarios route-updates will be temporarily
-     * put on hold by warm-reboot logic.
-     */
-    else
-    {
-        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s vtep:%s vni:%s mac:%s",
-                      destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str());
-
-        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                           SET_COMMAND,
-                                                           fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
-    }
+    
+    setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+    SWSS_LOG_INFO("RouteTable set EVPN msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
+                  destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
+                  proto_str.c_str());
     return;
 }
 
@@ -1086,36 +1078,24 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
     if (nlmsg_type == RTM_DELROUTE)
     {
-        string srv6SidListTableKey = routeTableKey;
+        string routeTableKeyStr = string(routeTableKey);
+        string srv6SidListTableKey = routeTableKeyStr;
 
-        if (!warmRestartInProgress)
-        {
-            m_routeTable->del(routeTableKey);
-            m_srv6SidListTable.del(srv6SidListTableKey);
-            return;
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
-                          routeTableKey);
 
-            vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(routeTableKey,
-                                                               DEL_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
-            return;
-        }
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(routeTableKeyStr, fvVector, m_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("SRV6 RouteTable del msg: %s", routeTableKeyStr.c_str());
+        m_srv6SidListTable.del(srv6SidListTableKey);
+        return;
     }
     else if (nlmsg_type == RTM_NEWROUTE)
     {
+        string routeTableKeyStr = string(routeTableKey);
         /* Write SID list to SRV6_SID_LIST_TABLE */
 
-        string srv6SidListTableKey = routeTableKey;
+        string srv6SidListTableKey = routeTableKeyStr;
 
         vector<FieldValueTuple> fvVectorSidList;
 
@@ -1138,28 +1118,9 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
             FieldValueTuple seg_src("seg_src", src_addr_str);
             fvVectorRoute.push_back(seg_src);
         }
-        if (!warmRestartInProgress)
-        {
-            m_routeTable->set(routeTableKey, fvVectorRoute);
-            SWSS_LOG_DEBUG("RouteTable set msg: %s vpn_sid: %s src_addr:%s",
-                        routeTableKey, vpn_sid_str.c_str(),
-                        src_addr_str.c_str());
-        }
-
-        /*
-        * During routing-stack restarting scenarios route-updates will be
-        * temporarily put on hold by warm-reboot logic.
-        */
-        else
-        {
-            SWSS_LOG_INFO(
-                "Warm-Restart mode: RouteTable set msg: %s vpn_sid:%s src_addr:%s",
-                routeTableKey, vpn_sid_str.c_str(), src_addr_str.c_str());
-
-            const KeyOpFieldsValuesTuple kfv =
-                std::make_tuple(routeTableKey, SET_COMMAND, fvVectorRoute);
-            m_warmStartHelper.insertRefreshMap(kfv);
-        }
+        setRouteWithWarmRestart(routeTableKeyStr, fvVectorRoute, m_routeTable, SET_COMMAND);
+        SWSS_LOG_INFO("SRV6 RouteTable set msg: %s vpn_sid:%s src_addr:%s",
+                      routeTableKeyStr.c_str(), vpn_sid_str.c_str(), src_addr_str.c_str());
     }
 
     return;
@@ -1607,27 +1568,13 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
      * Upon arrival of a delete msg we could either push the change right away,
      * or we could opt to defer it if we are going through a warm-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
     if (nlmsg_type == RTM_DELROUTE)
     {
-        if (!warmRestartInProgress)
-        {
-            m_routeTable->del(destipprefix);
-            return;
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
-                          destipprefix);
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
+        return;
 
-            vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                               DEL_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
-            return;
-        }
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
@@ -1651,7 +1598,8 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
             fvVector.push_back(proto);
-            m_routeTable->set(destipprefix, fvVector);
+            setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+            SWSS_LOG_INFO("RouteTable set blackhole msg: %s", destipprefix);
             return;
         }
         case RTN_UNICAST:
@@ -1671,6 +1619,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     string gw_list;
     string intf_list;
     string mpls_list;
+    string weights;
 
     string nhg_id_key;
     uint32_t nhg_id = rtnl_route_get_nh_id(route_obj);
@@ -1721,7 +1670,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         /* Get nexthop lists */
 
         getNextHopList(route_obj, gw_list, mpls_list, intf_list);
-        string weights = getNextHopWt(route_obj);
+        weights = getNextHopWt(route_obj);
 
         vector<string> alsv = tokenize(intf_list, NHG_DELIMITER);
 
@@ -1731,25 +1680,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             {
                 SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
                             destipprefix, gw_list.c_str(), intf_list.c_str());
-
-                if (!warmRestartInProgress)
-                {
-                    SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
-                                    destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-                    m_routeTable->del(destipprefix);
-                }
-                else
-                {
-                    SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
-                                    destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-                    vector<FieldValueTuple> fvVector;
-                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                                    DEL_COMMAND,
-                                                                    fvVector);
-                    m_warmStartHelper.insertRefreshMap(kfv);
-                }
+                vector<FieldValueTuple> fvVector;
+                setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
+                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0 route: %s", destipprefix);
                 return;
             }
         }
@@ -1789,34 +1722,18 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         }
     }
 
-    if (!warmRestartInProgress)
+    if (nhg_id)
     {
-        if(nhg_id)
-        {
-            m_routeTable->set(destipprefix, fvVector);
-            SWSS_LOG_INFO("RouteTable set msg: %s %d ", destipprefix, nhg_id);
-        }
-        else
-        {
-            m_routeTable->set(destipprefix, fvVector);
-            SWSS_LOG_INFO("RouteTable set msg: %s %s %s %s", destipprefix,
-                       gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-        }
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+        SWSS_LOG_INFO("RouteTable set msg with NHG: %s nhg_id:%d", destipprefix, nhg_id);
     }
-
-    /*
-     * During routing-stack restarting scenarios route-updates will be temporarily
-     * put on hold by warm-reboot logic.
-     */
     else
     {
-        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s %s %s %s", destipprefix,
-                      gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                           SET_COMMAND,
-                                                           fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+        SWSS_LOG_INFO("RouteTable set msg: %s nexthop:%s ifname:%s mpls:%s weight:%s",
+                      destipprefix, gw_list.c_str(), intf_list.c_str(),
+                      mpls_list.empty() ? "na" : mpls_list.c_str(),
+                      weights.empty() ? "na" : weights.c_str());
     }
 }
 
@@ -1962,7 +1879,9 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        m_label_routeTable->del(destaddr);
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("LabelRouteTable del msg: %s", destaddr);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -1995,7 +1914,8 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
             fvVector.push_back(proto);
-            m_label_routeTable->set(destaddr, fvVector);
+            setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, SET_COMMAND);
+            SWSS_LOG_INFO("LabelRouteTable set blackhole msg: %s", destaddr);
             return;
         }
         case RTN_UNICAST:
@@ -2038,7 +1958,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     }
     fvVector.push_back(mpls_pop);
 
-    m_label_routeTable->set(destaddr, fvVector);
+    setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, SET_COMMAND);
     SWSS_LOG_INFO("LabelRouteTable set msg: %s %s %s %s", destaddr,
                   gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 }
