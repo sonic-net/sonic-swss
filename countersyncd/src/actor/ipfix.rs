@@ -1,5 +1,13 @@
-use std::{cell::RefCell, collections::LinkedList, rc::Rc, sync::Arc, time::SystemTime};
+use std::{
+    cell::RefCell, 
+    collections::LinkedList, 
+    rc::Rc, 
+    sync::Arc, 
+    time::SystemTime
+};
 
+use ahash::{HashMap, HashMapExt};
+use byteorder::{ByteOrder, NetworkEndian};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use tokio::{
@@ -7,9 +15,6 @@ use tokio::{
     sync::mpsc::{Receiver, Sender},
 };
 
-use ahash::{HashMap, HashMapExt};
-use byteorder::{ByteOrder, NetworkEndian};
-use ipfix::get_message_length;
 use ipfixrw::{
     information_elements::Formatter,
     parse_ipfix_message,
@@ -23,6 +28,7 @@ use super::super::message::{
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
 
+/// Cache for IPFIX templates and formatting data
 struct IpfixCache {
     pub templates: TemplateStore,
     pub formatter: Rc<Formatter>,
@@ -30,10 +36,12 @@ struct IpfixCache {
 }
 
 impl IpfixCache {
+    /// Creates a new IPFIX cache with current timestamp as initial observer time
     pub fn new() -> Self {
         let duration_since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
+            .expect("System time should be after Unix epoch");
+        
         IpfixCache {
             templates: Rc::new(RefCell::new(HashMap::new())),
             formatter: Rc::new(Formatter::new()),
@@ -44,15 +52,37 @@ impl IpfixCache {
 
 type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
 
+/// Actor responsible for processing IPFIX messages and converting them to SAI statistics.
+/// 
+/// The IpfixActor handles:
+/// - Processing IPFIX template messages to understand data structure
+/// - Parsing IPFIX data records and extracting SAI statistics
+/// - Managing template mappings between temporary and applied states
+/// - Distributing parsed statistics to multiple recipients
 pub struct IpfixActor {
+    /// List of channels to send processed SAI statistics to
     saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
+    /// Channel for receiving IPFIX template messages
     template_recipient: Receiver<IPFixTemplatesMessage>,
+    /// Channel for receiving IPFIX data records
     record_recipient: Receiver<SocketBufferMessage>,
+    /// Mapping from template ID to message key for temporary templates
     temporary_templates_map: HashMap<u16, String>,
+    /// Mapping from message key to template IDs for applied templates
     applied_templates_map: HashMap<String, Vec<u16>>,
 }
 
 impl IpfixActor {
+    /// Creates a new IpfixActor instance.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `template_recipient` - Channel for receiving IPFIX template messages
+    /// * `record_recipient` - Channel for receiving IPFIX data records
+    /// 
+    /// # Returns
+    /// 
+    /// A new IpfixActor instance with empty recipient lists and template maps
     pub fn new(
         template_recipient: Receiver<IPFixTemplatesMessage>,
         record_recipient: Receiver<SocketBufferMessage>,
@@ -66,10 +96,21 @@ impl IpfixActor {
         }
     }
 
+    /// Adds a new recipient channel for receiving processed SAI statistics.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `recipient` - Channel sender for distributing SAI statistics messages
     pub fn add_recipient(&mut self, recipient: Sender<SAIStatsMessage>) {
         self.saistats_recipients.push_back(recipient);
     }
 
+    /// Stores template information temporarily until it's applied to actual data.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `msg_key` - Unique key identifying the template message
+    /// * `templates` - Parsed IPFIX template message containing template definitions
     fn insert_temporary_template(&mut self, msg_key: &String, templates: Message) {
         templates.iter_template_records().for_each(|record| {
             self.temporary_templates_map
@@ -77,6 +118,11 @@ impl IpfixActor {
         });
     }
 
+    /// Moves a template from temporary to applied state when it's used in data records.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `template_id` - ID of the template to apply
     fn update_applied_template(&mut self, template_id: u16) {
         if !self.temporary_templates_map.contains_key(&template_id) {
             return;
@@ -84,7 +130,7 @@ impl IpfixActor {
         let msg_key = self
             .temporary_templates_map
             .get(&template_id)
-            .unwrap()
+            .expect("Template ID should exist in temporary map")
             .clone();
         let mut template_ids = Vec::new();
         self.temporary_templates_map
@@ -97,31 +143,54 @@ impl IpfixActor {
         self.applied_templates_map.insert(msg_key, template_ids);
     }
 
+    /// Processes IPFIX template messages and stores them for later use.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `templates` - Tuple containing message key and template data
     fn handle_template(&mut self, templates: IPFixTemplatesMessage) {
         let (msg_key, templates) = templates;
         let cache_ref = Self::get_cache();
         let cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
+        
         while read_size < templates.len() {
-            let len = get_message_length(&templates[read_size..]).unwrap();
+            let len = match get_ipfix_message_length(&templates[read_size..]) {
+                Ok(len) => len,
+                Err(e) => {
+                    warn!("Failed to parse IPFIX message length: {}", e);
+                    break;
+                }
+            };
+            
             let template = &templates[read_size..read_size + len as usize];
-            // We suppose that the template is always valid, otherwise we need to raise the panic
+            // Parse the template message - if this fails, it indicates a serious protocol error
             let new_templates: ipfixrw::parser::Message =
                 parse_ipfix_message(&template, cache.templates.clone(), cache.formatter.clone())
-                    .unwrap();
+                    .expect("IPFIX template should be valid according to protocol specification");
+            
             self.insert_temporary_template(&msg_key, new_templates);
             read_size += len as usize;
         }
-        debug!("Template handle {:?}", templates);
+        debug!("Template handled successfully for key: {}", msg_key);
     }
 
+    /// Processes IPFIX data records and converts them to SAI statistics.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `records` - Raw IPFIX data record bytes
+    /// 
+    /// # Returns
+    /// 
+    /// Vector of SAI statistics messages parsed from the records
     fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<SAIStatsMessage> {
         let cache_ref = Self::get_cache();
         let mut cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
         let mut messages: Vec<SAIStatsMessage> = Vec::new();
         while read_size < records.len() {
-            let len = get_message_length(&records[read_size..]);
+            let len = get_ipfix_message_length(&records[read_size..]);
             if len.is_err() || len.unwrap() as usize + read_size > records.len() {
                 warn!("Wrong length in the records {:?}", records);
                 break;
@@ -228,15 +297,43 @@ impl Drop for IpfixActor {
     }
 }
 
-static OBSERVATION_TIME_KEY: Lazy<DataRecordKey> =
-    Lazy::new(|| DataRecordKey::Unrecognized(FieldSpecifier::new(None, 325, 8)));
+// IPFIX observation time field constants according to IANA registry
+const OBSERVATION_TIME_FIELD_ID: u16 = 325;
+const OBSERVATION_TIME_FIELD_LENGTH: u16 = 8;
 
+/// Lazy-initialized key for observation time field used in IPFIX data records
+static OBSERVATION_TIME_KEY: Lazy<DataRecordKey> =
+    Lazy::new(|| DataRecordKey::Unrecognized(FieldSpecifier::new(
+        None, 
+        OBSERVATION_TIME_FIELD_ID, 
+        OBSERVATION_TIME_FIELD_LENGTH
+    )));
+
+/// Extracts observation time from an IPFIX data record.
+/// 
+/// # Arguments
+/// 
+/// * `data_record` - The IPFIX data record to extract time from
+/// 
+/// # Returns
+/// 
+/// Some(timestamp) if observation time field is present, None otherwise
 fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
     let val = data_record.values.get(&*OBSERVATION_TIME_KEY);
     match val {
         Some(DataRecordValue::Bytes(val)) => Some(NetworkEndian::read_u64(val)),
         _ => None,
     }
+}
+
+/// Parse IPFIX message length according to IPFIX RFC specification
+/// IPFIX message length is stored in bytes 2-3 of the message header (16-bit network byte order)
+fn get_ipfix_message_length(data: &[u8]) -> Result<u16, &'static str> {
+    if data.len() < 4 {
+        return Err("Data too short for IPFIX header");
+    }
+    // IPFIX message length is at byte positions 2-3 (0-indexed)
+    Ok(NetworkEndian::read_u16(&data[2..4]))
 }
 
 #[cfg(test)]
@@ -248,10 +345,10 @@ mod test {
     #[tokio::test]
     async fn test_ipfix() {
         capture_logs();
-        let (buffer_sender, buffer_reciver) = channel(1);
-        let (template_sender, template_reciver) = channel(1);
-        let (saistats_sender, mut saistats_reciver) = channel(100);
-        let mut actor = IpfixActor::new(template_reciver, buffer_reciver);
+        let (buffer_sender, buffer_receiver) = channel(1);
+        let (template_sender, template_receiver) = channel(1);
+        let (saistats_sender, mut saistats_receiver) = channel(100);
+        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
         actor.add_recipient(saistats_sender);
 
         let actor_handle = spawn(IpfixActor::run(actor));
@@ -436,8 +533,10 @@ mod test {
         ];
 
         let mut received_stats = Vec::new();
-        while let Some(stats) = saistats_reciver.recv().await {
-            received_stats.push(Arc::try_unwrap(stats).unwrap());
+        while let Some(stats) = saistats_receiver.recv().await {
+            let unwrapped_stats = Arc::try_unwrap(stats)
+                .expect("Failed to unwrap Arc<SAIStatsMessage>");
+            received_stats.push(unwrapped_stats);
             if received_stats.len() == expected_stats.len() {
                 break;
             }
@@ -447,9 +546,9 @@ mod test {
 
         drop(buffer_sender);
         drop(template_sender);
-        drop(saistats_reciver);
+        drop(saistats_receiver);
 
-        actor_handle.await.unwrap();
+        actor_handle.await.expect("Actor task should complete successfully");
         assert_logs(vec![
             "[DEBUG] Template handle",
             "[WARN] Wrong length in the records",
