@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include <sstream>
 #include <iostream>
+#include <boost/algorithm/string.hpp>
 
 #include "buffer/bufferschema.h"
 
@@ -868,7 +869,11 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_invalid_entry;
         }
 
-        if((tokens[0] == gMyHostName) && (tokens[1] == gMyAsicName))
+        string tmp_token_1 = tokens[1];
+        string tmp_gMyAsicName = gMyAsicName;
+        boost::algorithm::to_lower(tmp_token_1);
+        boost::algorithm::to_lower(tmp_gMyAsicName);
+        if((tokens[0] == gMyHostName) && (tmp_token_1 == tmp_gMyAsicName))
         {
            local_port = true;
            local_port_name = tokens[2];
