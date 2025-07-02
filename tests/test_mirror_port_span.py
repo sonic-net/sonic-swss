@@ -40,19 +40,19 @@ class TestMirror(object):
 
         # Sub Test 2
         marker = dvs.add_log_marker()
-        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="RX", queue="254")
+        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="RX", queue="15")
         self.dvs_mirror.verify_session_status(session)
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
-        self.check_syslog(dvs, marker, "Failed to get valid queue 254", 0)
+        self.check_syslog(dvs, marker, "Failed to get valid queue 15", 0)
 
         # Sub Test 3
         marker = dvs.add_log_marker()
-        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="TX", queue="255")
+        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="TX", queue="16")
         self.dvs_mirror.verify_session_status(session, expected=0)
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
-        self.check_syslog(dvs, marker, "Failed to get valid queue 255", 1)
+        self.check_syslog(dvs, marker, "Failed to get valid queue 16", 1)
         
 
     def test_PortMirrorAddRemove(self, dvs, testlog):
