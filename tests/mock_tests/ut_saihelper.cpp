@@ -102,6 +102,7 @@ namespace ut_helper
         sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_ROUTING, (void**)&sai_dash_outbound_routing_api);
         sai_api_query((sai_api_t)SAI_API_DASH_INBOUND_ROUTING, (void**)&sai_dash_inbound_routing_api);
         sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL, (void**)&sai_dash_tunnel_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, (void**)&sai_dash_outbound_port_map_api);
         sai_api_query(SAI_API_STP, (void**)&sai_stp_api);
         return SAI_STATUS_SUCCESS;
     }
