@@ -966,7 +966,6 @@ class TestWarmReboot(object):
         dvs.start_swss()
         time.sleep(5)
 
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_swss_port_state_syncup(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -1120,7 +1119,6 @@ class TestWarmReboot(object):
     #
     ################################################################################
 
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_routing_WarmRestart(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -2175,7 +2173,6 @@ class TestWarmReboot(object):
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
 
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_VrfMgrdWarmRestart(self, dvs, testlog):
 
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -2335,7 +2332,6 @@ class TestWarmReboot(object):
         dvs.set_interface_status("Ethernet20", "down")
 
     @pytest.mark.usefixtures("dvs_mirror_manager", "setup_erspan_neighbors")
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_MirrorSessionWarmReboot(self, dvs):
         dvs.setup_db()
 
@@ -2372,7 +2368,6 @@ class TestWarmReboot(object):
         dvs.check_swss_ready()
 
     @pytest.mark.usefixtures("dvs_mirror_manager", "dvs_policer_manager", "setup_erspan_neighbors")
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_EverflowWarmReboot(self, dvs, dvs_acl):
         # Setup the policer
         self.dvs_policer.create_policer("test_policer")
@@ -2433,7 +2428,6 @@ class TestWarmReboot(object):
         dvs.start_swss()
         dvs.check_swss_ready()
 
-    @pytest.mark.skip(reason="This test is failing consistently")
     def test_TunnelMgrdWarmRestart(self, dvs):
         tunnel_name = "MuxTunnel0"
         tunnel_table = "TUNNEL_DECAP_TABLE"
