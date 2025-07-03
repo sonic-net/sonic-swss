@@ -209,4 +209,25 @@ struct NextHopKey
     }
 };
 
+namespace std {
+    template <>
+    struct hash<NextHopKey> {
+        size_t operator()(const NextHopKey& obj) const {
+            size_t nh_hash = 0;
+            
+            nh_hash ^= (std::hash<std::string>{}(obj.ip_address.to_string()) << 1);
+            nh_hash ^= (std::hash<std::string>{}(obj.alias) << 1);
+            nh_hash ^= (std::hash<uint32_t>{}(obj.vni) << 1);
+            nh_hash ^= (std::hash<std::string>{}(obj.mac_address.to_string()) << 1);
+            nh_hash ^= (std::hash<std::string>{}(obj.label_stack.to_string()) << 1);
+            nh_hash ^= (std::hash<uint32_t>{}(obj.weight) << 1);
+            nh_hash ^= (std::hash<std::string>{}(obj.srv6_segment) << 1);
+            nh_hash ^= (std::hash<std::string>{}(obj.srv6_source) << 1);
+            nh_hash ^= (std::hash<std::string>{}(obj.srv6_vpn_sid) << 1);
+
+            return nh_hash;
+        }
+    };
+}
+
 #endif /* SWSS_NEXTHOPKEY_H */
