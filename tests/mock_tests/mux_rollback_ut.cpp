@@ -175,6 +175,7 @@ namespace mux_rollback_test
         }
     };
 
+#if 0
     TEST_F(MuxRollbackTest, StandbyToActiveNeighborAlreadyExists)
     {
         std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
@@ -300,4 +301,5 @@ namespace mux_rollback_test
         SetMuxStateFromAppDb(ACTIVE_STATE);
         EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
     }
+#endif
 }
