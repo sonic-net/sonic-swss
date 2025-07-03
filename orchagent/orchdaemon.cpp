@@ -192,7 +192,7 @@ bool OrchDaemon::init()
     vector<table_name_with_pri_t> ports_tables = {
         { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
         { APP_SEND_TO_INGRESS_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
-        { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
+        { APP_VLAN_TABLE_NAME,        portsorch_base_pri     },
         { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
         { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
         { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
