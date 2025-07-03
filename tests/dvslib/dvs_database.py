@@ -4,7 +4,7 @@ FIXME:
     - Reference DBs by name rather than ID/socket
     - Add support for ProducerStateTable
 """
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from swsscommon import swsscommon
 from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig
@@ -56,7 +56,7 @@ class DVSDatabase:
         table.set(key, formatted_entry)
 
         if status:
-            for f in [ k for k, v in dict(fv_pairs).items() if k not in entry.keys() ]:
+            for f in [k for k, v in dict(fv_pairs).items() if k not in entry.keys()]:
                 table.hdel(key, f)
 
     def update_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
@@ -160,7 +160,9 @@ class DVSDatabase:
             fv_pairs = self.get_entry(table_name, key)
             return (bool(fv_pairs), fv_pairs)
 
-        message = failure_message or f'Entry not found: key="{key}", table="{table_name}"'
+        message = (
+            failure_message or f'Entry not found: key="{key}", table="{table_name}"'
+        )
         _, result = wait_for_result(access_function, polling_config, message)
 
         return result
@@ -206,6 +208,7 @@ class DVSDatabase:
             assert not polling_config.strict, message
 
         return result
+
 
     def wait_for_field_match(
         self,
