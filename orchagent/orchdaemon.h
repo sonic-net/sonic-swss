@@ -57,6 +57,7 @@
 #include "dash/dashvnetorch.h"
 #include "dash/dashhaorch.h"
 #include "dash/dashmeterorch.h"
+#include "high_frequency_telemetry/hftelorch.h"
 #include <sairedis.h>
 
 using namespace swss;
