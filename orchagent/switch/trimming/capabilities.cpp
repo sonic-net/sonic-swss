@@ -109,7 +109,27 @@ bool SwitchTrimmingCapabilities::isSwitchTrimmingSupported() const
         queue = capabilities.queue.isAttrSupported;
     }
 
-    return size && dscp && mode && queue;
+    return size || dscp || mode || queue;
+}
+
+bool SwitchTrimmingCapabilities::isSwitchTrimmingSizeSetSupported() const
+{
+    return capabilities.size.isAttrSupported;
+}
+
+bool SwitchTrimmingCapabilities::isSwitchTrimmingDscpSetSupported() const
+{
+    return capabilities.dscp.isAttrSupported;
+}
+
+bool SwitchTrimmingCapabilities::isSwitchTrimmingQueueSetSupported() const
+{
+    return capabilities.mode.isStaticModeSupported && capabilities.queue.isAttrSupported;
+}
+
+bool SwitchTrimmingCapabilities::isSwitchTrimmingModeSetSupported() const
+{
+    return capabilities.mode.isAttrSupported;
 }
 
 bool SwitchTrimmingCapabilities::validateQueueModeCap(sai_packet_trim_queue_resolution_mode_t value) const

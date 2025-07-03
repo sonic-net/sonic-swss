@@ -959,94 +959,106 @@ bool SwitchOrch::setSwitchTrimming(const SwitchTrimming &trim)
         return true;
     }
 
-    if (trim.size.is_set)
+    if (trimCap.isSwitchTrimmingSizeSetSupported())
     {
-        if (!tObj.size.is_set || (tObj.size.value != trim.size.value))
+        if (trim.size.is_set)
         {
-            if (!setSwitchTrimmingSizeSai(trim))
+            if (!tObj.size.is_set || (tObj.size.value != trim.size.value))
             {
-                SWSS_LOG_ERROR("Failed to set switch trimming size in SAI");
+                if (!setSwitchTrimmingSizeSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming size in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+        }
+        else
+        {
+            if (tObj.size.is_set)
+            {
+                SWSS_LOG_ERROR("Failed to remove switch trimming size configuration: operation is not supported");
                 return false;
             }
-
-            cfgUpd = true;
-        }
-    }
-    else
-    {
-        if (tObj.size.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch trimming size configuration: operation is not supported");
-            return false;
         }
     }
 
-    if (trim.dscp.is_set)
+    if (trimCap.isSwitchTrimmingDscpSetSupported())
     {
-        if (!tObj.dscp.is_set || (tObj.dscp.value != trim.dscp.value))
+        if (trim.dscp.is_set)
         {
-            if (!setSwitchTrimmingDscpSai(trim))
+            if (!tObj.dscp.is_set || (tObj.dscp.value != trim.dscp.value))
             {
-                SWSS_LOG_ERROR("Failed to set switch trimming DSCP in SAI");
+                if (!setSwitchTrimmingDscpSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming DSCP in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+        }
+        else
+        {
+            if (tObj.dscp.is_set)
+            {
+                SWSS_LOG_ERROR("Failed to remove switch trimming DSCP configuration: operation is not supported");
                 return false;
             }
-
-            cfgUpd = true;
-        }
-    }
-    else
-    {
-        if (tObj.dscp.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch trimming DSCP configuration: operation is not supported");
-            return false;
         }
     }
 
-    if (trim.queue.mode.is_set)
+    if (trimCap.isSwitchTrimmingModeSetSupported())
     {
-        if (!tObj.queue.mode.is_set || (tObj.queue.mode.value != trim.queue.mode.value))
+        if (trim.queue.mode.is_set)
         {
-            if (!trimCap.validateQueueModeCap(trim.queue.mode.value))
+            if (!tObj.queue.mode.is_set || (tObj.queue.mode.value != trim.queue.mode.value))
             {
-                SWSS_LOG_ERROR("Failed to validate switch trimming queue mode: capability is not supported");
+                if (!trimCap.validateQueueModeCap(trim.queue.mode.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch trimming queue mode: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchTrimmingQueueModeSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming queue mode in SAI");
+                    return false;
+                }
+
+                if (trimHlpr.isStaticQueueMode(tObj))
+                {
+                    qIdxBak = true;
+                }
+
+                cfgUpd = true;
+            }
+        }
+        else
+        {
+            if (tObj.queue.mode.is_set)
+            {
+                SWSS_LOG_ERROR("Failed to remove switch trimming queue configuration: operation is not supported");
                 return false;
             }
-
-            if (!setSwitchTrimmingQueueModeSai(trim))
-            {
-                SWSS_LOG_ERROR("Failed to set switch trimming queue mode in SAI");
-                return false;
-            }
-
-            if (trimHlpr.isStaticQueueMode(tObj))
-            {
-                qIdxBak = true;
-            }
-
-            cfgUpd = true;
-        }
-    }
-    else
-    {
-        if (tObj.queue.mode.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch trimming queue configuration: operation is not supported");
-            return false;
         }
     }
 
-    if (trim.queue.index.is_set)
+    if (trimCap.isSwitchTrimmingQueueSetSupported())
     {
-        if (!tObj.queue.index.is_set || (tObj.queue.index.value != trim.queue.index.value))
+        if (trim.queue.index.is_set)
         {
-            if (!setSwitchTrimmingQueueIndexSai(trim))
+            if (!tObj.queue.index.is_set || (tObj.queue.index.value != trim.queue.index.value))
             {
-                SWSS_LOG_ERROR("Failed to set switch trimming queue index in SAI");
-                return false;
-            }
+                if (!setSwitchTrimmingQueueIndexSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming queue index in SAI");
+                    return false;
+                }
 
-            cfgUpd = true;
+                cfgUpd = true;
+            }
         }
     }
 

@@ -16,7 +16,11 @@ public:
     ~SwitchTrimmingCapabilities() = default;
 
     bool isSwitchTrimmingSupported() const;
-
+    bool isSwitchTrimmingSizeSetSupported() const;
+    bool isSwitchTrimmingDscpSetSupported() const;
+    bool isSwitchTrimmingModeSetSupported() const;
+    bool isSwitchTrimmingQueueSetSupported() const;
+    
     bool validateQueueModeCap(sai_packet_trim_queue_resolution_mode_t value) const;
 
 private:
