@@ -37,11 +37,11 @@ extern string gMySwitchType;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
-        Orch(db, tableNames),
+        ZmqOrch(db, tableNames, zmqServer),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
@@ -599,7 +599,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
     return true;
 }
 
-void RouteOrch::doTask(Consumer& consumer)
+void RouteOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -2323,6 +2323,15 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         return false;
     }
 
+    // Ensure VRF exists in m_syncdRoutes
+    auto routeTableIter = m_syncdRoutes.find(vrf_id);
+    if (routeTableIter == m_syncdRoutes.end())
+    {
+        SWSS_LOG_INFO("VRF 0x%" PRIx64 " doesn't exist in syncd routes for route %s, will retry later",
+                      vrf_id, ipPrefix.to_string().c_str());
+        return false;
+    }
+
     if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
     {
         /* Route is pointing to Fine Grained ECMP nexthop group */
@@ -2383,11 +2392,11 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     }
 
     auto it_status = object_statuses.begin();
-    auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
+    auto it_route = routeTableIter->second.find(ipPrefix);
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (isFineGrained)
     {
-        if (it_route == m_syncdRoutes.at(vrf_id).end())
+        if (it_route == routeTableIter->second.end())
         {
             /* First time route addition pointing to FG nhg */
             if (*it_status++ != SAI_STATUS_SUCCESS)
@@ -2429,7 +2438,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
         }
     }
-    else if (it_route == m_syncdRoutes.at(vrf_id).end())
+    else if (it_route == routeTableIter->second.end())
     {
         sai_status_t status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
@@ -2495,6 +2504,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
         {
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                // Routeorch internal cache has an entry, but it has already been removed in sai.
+                // This can happen in dualtor when a tunnel route is removed that matches a learned route
+                // remove the entry from the cache and retry route creation
+                m_syncdRoutes.at(vrf_id).erase(ipPrefix);
+                return false;
+            }
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
             task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTE, status);
@@ -2618,7 +2635,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         updateDefRouteState(ipPrefix.to_string(), true);
     }
 
-    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    if (it_route == routeTableIter->second.end())
     {
         gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
     }
