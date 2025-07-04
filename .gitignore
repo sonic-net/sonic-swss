@@ -32,6 +32,7 @@ stamp-h1
 **/Makefile
 autom4te.cache
 
+
 # Temp files #
 ##############
 *~
@@ -44,6 +45,7 @@ deps/
 
 # Executables #
 ###############
+.vscode
 cfgmgr/buffermgrd
 cfgmgr/intfmgrd
 cfgmgr/natmgrd
