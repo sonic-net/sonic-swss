@@ -165,7 +165,7 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
 
 void RouteSync::setRouteWithWarmRestart(const std::string& key,
                                       const std::vector<FieldValueTuple>& fvVector,
-                                      shared_ptr<ProducerStateTable> table,
+                                      shared_ptr<ProducerStateTable>& table,
                                       const std::string& cmd)
 {
     bool warmRestartInProgress = m_warmStartHelper->inProgress();
