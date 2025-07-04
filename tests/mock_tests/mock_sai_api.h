@@ -205,6 +205,10 @@ This is required since some sai_api do not support this function call yet.
  * 2. If two arguments are provided, use the second argument as the entry type (e.g. sai_dash_outbound_ca_to_pa_api_t and sai_outbound_ca_to_pa_entry_t)
  */
 #define GET_MOCK_MACRO(_1, _2, NAME, ...) NAME
+/*
+ * DEFINE_SAI_API_MOCK is deprecated.
+ * Use DEFINE_SAI_ENTRY_APIS_MOCK which supports mocking multiple entry types for a single sai api class.
+ */
 #define DEFINE_SAI_API_MOCK(...) \
     GET_MOCK_MACRO(__VA_ARGS__, DEFINE_SAI_API_MOCK_SPECIFY_ENTRY, DEFINE_SAI_API_MOCK_MATCH_ENTRY)(__VA_ARGS__)
 
@@ -277,10 +281,30 @@ This is required since some sai_api do not support this function call yet.
     ON_CALL(*this, set_##sai_object_type##_attribute).WillByDefault([this](sai_object_id_t oid, const sai_attribute_t *attr) { \
         return old_sai_##sai_api_name##_api->set_##sai_object_type##_attribute(oid, attr); \
     });
+#define DEFINE_ENTRY_ON_CALL_DEFAULTS(sai_api_name, sai_entry_type) \
+    ON_CALL(*this, create_##sai_entry_type##_entry).WillByDefault([this](CREATE_PARAMS(sai_entry_type)) { \
+        return old_sai_##sai_api_name##_api->create_##sai_entry_type##_entry(CREATE_ARGS(sai_entry_type)); \
+    }); \
+    ON_CALL(*this, remove_##sai_entry_type##_entry).WillByDefault([this](REMOVE_PARAMS(sai_entry_type)) { \
+        return old_sai_##sai_api_name##_api->remove_##sai_entry_type##_entry(REMOVE_ARGS(sai_entry_type)); \
+    }); \
+    ON_CALL(*this, create_##sai_entry_type##_entries).WillByDefault([this](CREATE_BULK_PARAMS(sai_entry_type)) { \
+        return old_sai_##sai_api_name##_api->create_##sai_entry_type##_entries(CREATE_BULK_ARGS(sai_entry_type)); \
+    }); \
+    ON_CALL(*this, remove_##sai_entry_type##_entries).WillByDefault([this](REMOVE_BULK_PARAMS(sai_entry_type)) { \
+        return old_sai_##sai_api_name##_api->remove_##sai_entry_type##_entries(REMOVE_BULK_ARGS(sai_entry_type)); \
+    });
+
 #define DEFINE_MOCK_METHODS(sai_api_name, sai_object_type) \
     MOCK_METHOD4(create_##sai_object_type, sai_status_t(GENERIC_CREATE_PARAMS(sai_object_type))); \
     MOCK_METHOD1(remove_##sai_object_type, sai_status_t(GENERIC_REMOVE_PARAMS(sai_object_type))); \
     MOCK_METHOD2(set_##sai_object_type##_attribute, sai_status_t(sai_object_id_t, const sai_attribute_t *));
+#define DEFINE_MOCK_ENTRY_METHODS(sai_api_name, sai_entry_type) \
+    MOCK_METHOD3(create_##sai_entry_type##_entry, sai_status_t(CREATE_PARAMS(sai_entry_type))); \
+    MOCK_METHOD1(remove_##sai_entry_type##_entry, sai_status_t(REMOVE_PARAMS(sai_entry_type))); \
+    MOCK_METHOD6(create_##sai_entry_type##_entries, sai_status_t(CREATE_BULK_PARAMS(sai_entry_type))); \
+    MOCK_METHOD4(remove_##sai_entry_type##_entries, sai_status_t(REMOVE_BULK_PARAMS(sai_entry_type)));
+
 #define DEFINE_WRAPPER_FUNCTIONS(sai_api_name, sai_object_type) \
     inline sai_status_t mock_create_##sai_object_type(GENERIC_CREATE_PARAMS(sai_object_type)) { \
         return mock_sai_##sai_api_name##_api->create_##sai_object_type(GENERIC_CREATE_ARGS(sai_object_type)); \
@@ -291,10 +315,29 @@ This is required since some sai_api do not support this function call yet.
     inline sai_status_t mock_set_##sai_object_type##_attribute(sai_object_id_t oid, const sai_attribute_t *attr) { \
         return mock_sai_##sai_api_name##_api->set_##sai_object_type##_attribute(oid, attr); \
     }
+#define DEFINE_ENTRY_WRAPPER_FUNCTIONS(sai_api_name, sai_entry_type) \
+    inline sai_status_t mock_create_##sai_entry_type##_entry(CREATE_PARAMS(sai_entry_type)) { \
+        return mock_sai_##sai_api_name##_api->create_##sai_entry_type##_entry(CREATE_ARGS(sai_entry_type)); \
+    } \
+    inline sai_status_t mock_remove_##sai_entry_type##_entry(REMOVE_PARAMS(sai_entry_type)) { \
+        return mock_sai_##sai_api_name##_api->remove_##sai_entry_type##_entry(REMOVE_ARGS(sai_entry_type)); \
+    } \
+    inline sai_status_t mock_create_##sai_entry_type##_entries(CREATE_BULK_PARAMS(sai_entry_type)) { \
+        return mock_sai_##sai_api_name##_api->create_##sai_entry_type##_entries(CREATE_BULK_ARGS(sai_entry_type)); \
+    } \
+    inline sai_status_t mock_remove_##sai_entry_type##_entries(REMOVE_BULK_PARAMS(sai_entry_type)) { \
+        return mock_sai_##sai_api_name##_api->remove_##sai_entry_type##_entries(REMOVE_BULK_ARGS(sai_entry_type)); \
+    }
+
 #define APPLY_MOCK_FUNCTIONS(sai_api_name, sai_object_type) \
     sai_##sai_api_name##_api->create_##sai_object_type = mock_create_##sai_object_type; \
     sai_##sai_api_name##_api->remove_##sai_object_type = mock_remove_##sai_object_type; \
     sai_##sai_api_name##_api->set_##sai_object_type##_attribute = mock_set_##sai_object_type##_attribute;
+#define APPLY_ENTRY_MOCK_FUNCTIONS(sai_api_name, sai_entry_type) \
+    sai_##sai_api_name##_api->create_##sai_entry_type##_entry = mock_create_##sai_entry_type##_entry; \
+    sai_##sai_api_name##_api->remove_##sai_entry_type##_entry = mock_remove_##sai_entry_type##_entry; \
+    sai_##sai_api_name##_api->create_##sai_entry_type##_entries = mock_create_##sai_entry_type##_entries; \
+    sai_##sai_api_name##_api->remove_##sai_entry_type##_entries = mock_remove_##sai_entry_type##_entries;
 
 #define DEFINE_SAI_GENERIC_APIS_MOCK(sai_api_name, ...) \
     static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api; \
@@ -314,6 +357,29 @@ This is required since some sai_api do not support this function call yet.
         ut_sai_##sai_api_name##_api = *sai_##sai_api_name##_api; \
         sai_##sai_api_name##_api = &ut_sai_##sai_api_name##_api; \
         FOR_EACH(APPLY_MOCK_FUNCTIONS, sai_api_name, __VA_ARGS__) \
+    } \
+    inline void remove_sai_##sai_api_name##_api_mock() { \
+        sai_##sai_api_name##_api = old_sai_##sai_api_name##_api; \
+        delete mock_sai_##sai_api_name##_api; \
+    }
+#define DEFINE_SAI_ENTRY_APIS_MOCK(sai_api_name, ...) \
+    static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api; \
+    static sai_##sai_api_name##_api_t ut_sai_##sai_api_name##_api; \
+    class mock_sai_##sai_api_name##_api_t { \
+    public: \
+        mock_sai_##sai_api_name##_api_t() { \
+            FOR_EACH(DEFINE_ENTRY_ON_CALL_DEFAULTS, sai_api_name, __VA_ARGS__) \
+        } \
+        FOR_EACH(DEFINE_MOCK_ENTRY_METHODS, sai_api_name, __VA_ARGS__) \
+    }; \
+    static mock_sai_##sai_api_name##_api_t *mock_sai_##sai_api_name##_api; \
+    FOR_EACH(DEFINE_ENTRY_WRAPPER_FUNCTIONS, sai_api_name, __VA_ARGS__) \
+    inline void apply_sai_##sai_api_name##_api_mock() { \
+        mock_sai_##sai_api_name##_api = new NiceMock<mock_sai_##sai_api_name##_api_t>(); \
+        old_sai_##sai_api_name##_api = sai_##sai_api_name##_api; \
+        ut_sai_##sai_api_name##_api = *sai_##sai_api_name##_api; \
+        sai_##sai_api_name##_api = &ut_sai_##sai_api_name##_api; \
+        FOR_EACH(APPLY_ENTRY_MOCK_FUNCTIONS, sai_api_name, __VA_ARGS__) \
     } \
     inline void remove_sai_##sai_api_name##_api_mock() { \
         sai_##sai_api_name##_api = old_sai_##sai_api_name##_api; \
