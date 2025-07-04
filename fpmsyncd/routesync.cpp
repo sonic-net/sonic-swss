@@ -151,9 +151,9 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
     m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
-    m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
+    m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
