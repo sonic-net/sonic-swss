@@ -60,7 +60,10 @@ def enable_dynamic_buffer(config_db, cmd_runner):
         time.sleep(20)
 
 
-def disable_dynamic_buffer(config_db, app_db, cmd_runner):
+def disable_dynamic_buffer(dvs):
+    config_db = dvs.get_config_db()
+    app_db = dvs.get_app_db()
+
     device_meta = config_db.get_entry('DEVICE_METADATA', 'localhost')
     assert 'buffer_model' in device_meta, "'buffer_model' doesn't exist in DEVICE_METADATA|localhost"
     if device_meta['buffer_model'] == 'traditional':
@@ -91,7 +94,7 @@ def disable_dynamic_buffer(config_db, app_db, cmd_runner):
 
     finally:
         # restart daemon
-        cmd_runner("supervisorctl restart buffermgrd")
+        dvs.runcmd("supervisorctl restart buffermgrd")
 
         # Remove all the non-default zero profiles
         profiles = app_db.get_keys('BUFFER_PROFILE_TABLE')

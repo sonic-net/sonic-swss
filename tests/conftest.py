@@ -1399,6 +1399,11 @@ class DockerVirtualSwitch:
         tbl.set(interface, fvs)
         time.sleep(1)
 
+    # db
+    def delete_entry_tbl(self, db, table, key):
+        tbl = swsscommon.Table(db, table)
+        tbl._del(key)
+
     # deps: acl, crm, fdb
     def setReadOnlyAttr(self, obj, attr, val):
         db = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)

@@ -52,7 +52,7 @@ def dynamicModel(dvs):
     trimlogger.info("Enable dynamic buffer model")
     buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
     yield
-    buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.get_app_db(), dvs.runcmd)
+    buffer_model.disable_dynamic_buffer(dvs)
     trimlogger.info("Disable dynamic buffer model")
 
 
