@@ -2,6 +2,11 @@
 
 static swss::DBConnector gDb("APPL_DB", 0);
 
+// Mock-specific static variables for testing warm restart state
+static std::unordered_map<std::string, swss::KeyOpFieldsValuesTuple> g_mockRefreshMap;
+static swss::WarmStart::WarmStartState g_mockState = swss::WarmStart::RECONCILED;
+static bool g_mockEnabled = true;
+
 namespace swss {
 
 WarmStartHelper::WarmStartHelper(RedisPipeline *pipeline,
@@ -19,11 +24,12 @@ WarmStartHelper::~WarmStartHelper()
 
 void WarmStartHelper::setState(WarmStart::WarmStartState state)
 {
+    g_mockState = state;
 }
 
 WarmStart::WarmStartState WarmStartHelper::getState() const
 {
-    return WarmStart::WarmStartState::INITIALIZED;
+    return g_mockState;
 }
 
 bool WarmStartHelper::checkAndStart()
@@ -33,12 +39,13 @@ bool WarmStartHelper::checkAndStart()
 
 bool WarmStartHelper::isReconciled() const
 {
-    return false;
+    return (g_mockState == WarmStart::RECONCILED);
 }
 
 bool WarmStartHelper::inProgress() const
 {
-    return false;
+    // Match real implementation: return true when enabled and not reconciled
+    return (g_mockEnabled && g_mockState != WarmStart::RECONCILED);
 }
 
 uint32_t WarmStartHelper::getRestartTimer() const
@@ -53,6 +60,9 @@ bool WarmStartHelper::runRestoration()
 
 void WarmStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
 {
+    // Store the entry - in real implementation this would be used during reconciliation
+    const std::string key = kfvKey(kfv);
+    g_mockRefreshMap[key] = kfv;
 }
 
 void WarmStartHelper::reconcile()
@@ -76,4 +86,12 @@ bool WarmStartHelper::compareOneFV(const std::string &v1, const std::string &v2)
     return false;
 }
 
+}
+
+// Test utility function to reset mock state between tests
+void resetMockWarmStartHelper()
+{
+    g_mockRefreshMap.clear();
+    g_mockState = swss::WarmStart::RECONCILED;  // Default to not in progress
+    g_mockEnabled = true;
 }
