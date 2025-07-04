@@ -1,7 +1,12 @@
 import re
 import time
 
+
 lossless_profile_name_pattern = 'pg_lossless_([1-9][0-9]*000)_([1-9][0-9]*m)_profile'
+zero_profile_name_pattern = '.+_zero_profile'
+zero_pool_name_pattern = '.+_zero_pool'
+
+
 def enable_dynamic_buffer(config_db, cmd_runner):
     # check whether it's already running dynamic mode
     device_meta = config_db.get_entry('DEVICE_METADATA', 'localhost')
@@ -55,7 +60,10 @@ def enable_dynamic_buffer(config_db, cmd_runner):
         time.sleep(20)
 
 
-def disable_dynamic_buffer(config_db, cmd_runner):
+def disable_dynamic_buffer(dvs):
+    config_db = dvs.get_config_db()
+    app_db = dvs.get_app_db()
+
     device_meta = config_db.get_entry('DEVICE_METADATA', 'localhost')
     assert 'buffer_model' in device_meta, "'buffer_model' doesn't exist in DEVICE_METADATA|localhost"
     if device_meta['buffer_model'] == 'traditional':
@@ -86,6 +94,17 @@ def disable_dynamic_buffer(config_db, cmd_runner):
 
     finally:
         # restart daemon
-        cmd_runner("supervisorctl restart buffermgrd")
+        dvs.runcmd("supervisorctl restart buffermgrd")
+
+        # Remove all the non-default zero profiles
+        profiles = app_db.get_keys('BUFFER_PROFILE_TABLE')
+        for key in profiles:
+            if re.search(zero_profile_name_pattern, key):
+                app_db.delete_entry('BUFFER_PROFILE_TABLE', key)
+        # Remove all the non-default zero pools
+        pools = app_db.get_keys('BUFFER_POOL_TABLE')
+        for key in pools:
+            if re.search(zero_pool_name_pattern, key):
+                app_db.delete_entry('BUFFER_POOL_TABLE', key)
 
         time.sleep(20)

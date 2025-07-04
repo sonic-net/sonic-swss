@@ -19,7 +19,7 @@ DELETE_CREATE_ITERATIONS = 10
 def dynamic_buffer(dvs):
     buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
     yield
-    buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+    buffer_model.disable_dynamic_buffer(dvs)
 
 
 @pytest.mark.usefixtures('dvs_port_manager')
