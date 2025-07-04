@@ -106,15 +106,29 @@ std::shared_ptr<swss::ZmqClient> swss::create_local_zmq_client(std::string featu
 std::shared_ptr<swss::ProducerStateTable> swss::createProducerStateTable(DBConnector *db, const std::string &tableName, std::shared_ptr<swss::ZmqClient> zmqClient)
 {
     swss::ProducerStateTable *tablePtr = nullptr;
-    SWSS_LOG_NOTICE("Create ProducerStateTable : %s", tableName.c_str());
-    tablePtr = new swss::ProducerStateTable(db, tableName);
+    if (zmqClient != nullptr) {
+        SWSS_LOG_NOTICE("Create ZmqProducerStateTable : %s", tableName.c_str());
+        tablePtr = new swss::ZmqProducerStateTable(db, tableName, *zmqClient);
+    }
+    else {
+        SWSS_LOG_NOTICE("Create ProducerStateTable : %s", tableName.c_str());
+        tablePtr = new swss::ProducerStateTable(db, tableName);
+    }
+
     return std::shared_ptr<swss::ProducerStateTable>(tablePtr);
 }
 
 std::shared_ptr<swss::ProducerStateTable> swss::createProducerStateTable(RedisPipeline *pipeline, const std::string& tableName, bool buffered, std::shared_ptr<swss::ZmqClient> zmqClient)
 {
     swss::ProducerStateTable *tablePtr = nullptr;
-    SWSS_LOG_NOTICE("Create ProducerStateTable : %s", tableName.c_str());
-    tablePtr = new swss::ProducerStateTable(pipeline, tableName, buffered);
+    if (zmqClient != nullptr) {
+        SWSS_LOG_NOTICE("Create ZmqProducerStateTable : %s", tableName.c_str());
+        tablePtr = new swss::ZmqProducerStateTable(pipeline, tableName, *zmqClient);
+    }
+    else {
+        SWSS_LOG_NOTICE("Create ProducerStateTable : %s", tableName.c_str());
+        tablePtr = new swss::ProducerStateTable(pipeline, tableName, buffered);
+    }
+
     return std::shared_ptr<swss::ProducerStateTable>(tablePtr);
 }
