@@ -93,7 +93,7 @@ private:
     shared_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
     shared_ptr<ProducerStateTable> m_label_routeTable;
-    /* vnet route table */  
+    /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable;
