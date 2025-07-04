@@ -41,10 +41,6 @@ class TestP4RTVIPLB(object):
         self._p4rt_neighbor_obj.set_up_databases(dvs)
         self._p4rt_nexthop_obj.set_up_databases(dvs)
         self._p4rt_viplb_obj.set_up_databases(dvs)
-        self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_viplb_obj.appl_db, "APPL_DB_" +
-            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
-        )
 
     def test_VIPv4LBWithGoodNexthopAddUpdateDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -55,8 +51,8 @@ class TestP4RTVIPLB(object):
         tables_definition_key, attr_list = (
             self._p4rt_tables_definition_obj.create_tables_definition()
         )
-        util.verify_response(self.response_consumer, tables_definition_key,
-                             attr_list, "SWSS_RC_SUCCESS")
+        self._p4rt_tables_definition_obj.verify_response(tables_definition_key,
+                                                         attr_list, "SWSS_RC_SUCCESS")
 
         # Set IP type for viplb object.
         self._p4rt_viplb_obj.set_ip_type("IPV4")
@@ -81,8 +77,8 @@ class TestP4RTVIPLB(object):
         router_interface_id, router_intf_key, attr_list = (
             self._p4rt_router_intf_obj.create_router_interface()
         )
-        util.verify_response(self.response_consumer, router_intf_key,
-                             attr_list, "SWSS_RC_SUCCESS")
+            self._p4rt_router_intf_obj.verify_response(router_intf_key,
+                                                       attr_list, "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count incremented by 1 in Redis DB.
         count = 1
@@ -94,8 +90,8 @@ class TestP4RTVIPLB(object):
         neighbor_id, neighbor_key, attr_list = (
             self._p4rt_neighbor_obj.create_neighbor()
         )
-        util.verify_response(self.response_consumer, neighbor_key, attr_list,
-                             "SWSS_RC_SUCCESS")
+        self._p4rt_neighbor_obj.verify_response(neighbor_key, attr_list,
+                                                "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count incremented by 1 in Redis DB.
         count += 1
@@ -107,8 +103,8 @@ class TestP4RTVIPLB(object):
         first_nexthop_id, first_nexthop_key, attr_list = (
             self._p4rt_nexthop_obj.create_next_hop()
         )
-        util.verify_response(self.response_consumer, first_nexthop_key, attr_list,
-                             "SWSS_RC_SUCCESS")
+        self._p4rt_nexthop_obj.verify_response(first_nexthop_key, attr_list,
+                                               "SWSS_RC_SUCCESS")
         # get nexthop_oid of newly created nexthop
         first_nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
         assert first_nexthop_oid is not None
@@ -123,8 +119,8 @@ class TestP4RTVIPLB(object):
         viplb_key, attr_list = (
             self._p4rt_viplb_obj.create_viplb(first_nexthop_id)
         )
-        util.verify_response(self.response_consumer, viplb_key, attr_list,
-                             "SWSS_RC_SUCCESS")
+        self._p4rt_viplb_obj.verify_response(viplb_key, attr_list,
+                                             "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count incremented by 1 in Redis DB.
         count += 1
@@ -161,8 +157,8 @@ class TestP4RTVIPLB(object):
         router_interface_id, router_intf_key, attr_list = (
                 self._p4rt_router_intf_obj.create_router_interface(router_interace_id="20")
         )
-        util.verify_response(self.response_consumer, router_intf_key,
-                             attr_list, "SWSS_RC_SUCCESS")
+        self._p4rt_router_intf_obj.verify_response(router_intf_key,
+                                                   attr_list, "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count incremented by 1 in Redis DB.
         count += 1
@@ -174,8 +170,8 @@ class TestP4RTVIPLB(object):
         neighbor_id, neighbor_key, attr_list = (
             self._p4rt_neighbor_obj.create_neighbor(router_interface_id="20", neighbor_id="10.0.0.1")
         )
-        util.verify_response(self.response_consumer, neighbor_key, attr_list,
-                             "SWSS_RC_SUCCESS")
+        self._p4rt_neighbor_obj.verify_response(neighbor_key, attr_list,
+                                                "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count incremented by 1 in Redis DB.
         count += 1
@@ -187,8 +183,8 @@ class TestP4RTVIPLB(object):
         second_nexthop_id, second_nexthop_key, attr_list = (
             self._p4rt_nexthop_obj.create_next_hop(router_interface_id="20", neighbor_id="10.0.0.1", nexthop_id="16")
         )
-        util.verify_response(self.response_consumer, second_nexthop_key, attr_list,
-                             "SWSS_RC_SUCCESS")
+        self._p4rt_nexthop_obj.verify_response(second_nexthop_key, attr_list,
+                                               "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count incremented by 1 in Redis DB.
         count += 1
@@ -200,14 +196,13 @@ class TestP4RTVIPLB(object):
         viplb_key, attr_list = (
             self._p4rt_viplb_obj.create_viplb(second_nexthop_id)
         )
-        util.verify_response(self.response_consumer, viplb_key, attr_list,
-                             "SWSS_RC_SUCCESS")
-        
+        self._p4rt_viplb_obj.verify_response(viplb_key, attr_list,
+                                             "SWSS_RC_SUCCESS")
 
         # Remove nexthop.
         self._p4rt_nexthop_obj.remove_app_db_entry(first_nexthop_key)
-        util.verify_response(self.response_consumer, first_nexthop_key, [],
-                             "SWSS_RC_SUCCESS")
+        self._p4rt_nexthop_obj.verify_response(first_nexthop_key, [],
+                                               "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count decremented by 1 in Redis DB.
         count -= 1
@@ -223,8 +218,8 @@ class TestP4RTVIPLB(object):
 
         # Remove viplb entry.
         self._p4rt_viplb_obj.remove_app_db_entry(viplb_key)
-        util.verify_response(
-            self.response_consumer, viplb_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_viplb_obj.verify_response(
+            viplb_key, [], "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count decremented by 1 in Redis DB.
         count -= 1
@@ -248,8 +243,8 @@ class TestP4RTVIPLB(object):
         tables_definition_key, attr_list = (
             self._p4rt_tables_definition_obj.create_tables_definition()
         )
-        util.verify_response(self.response_consumer, tables_definition_key,
-                             attr_list, "SWSS_RC_SUCCESS")
+        self._p4rt_tables_definition_obj.verify_response(tables_definition_key,
+                                                         attr_list, "SWSS_RC_SUCCESS")
 
         # Set IP type for viplb object.
         self._p4rt_viplb_obj.set_ip_type("IPV4")
@@ -258,6 +253,6 @@ class TestP4RTVIPLB(object):
         viplb_key, attr_list = (
             self._p4rt_viplb_obj.create_viplb()
         )
-        util.verify_response(self.response_consumer, viplb_key, attr_list,
-                             "SWSS_RC_INVALID_PARAM", "[OrchAgent] Cross-table reference valdiation failed, no OID found")
+        self._p4rt_viplb_obj.verify_response(viplb_key, attr_list,
+                                             "SWSS_RC_INVALID_PARAM", "[OrchAgent] Cross-table reference valdiation failed, no OID found")
 

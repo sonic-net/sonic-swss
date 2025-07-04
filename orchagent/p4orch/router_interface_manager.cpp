@@ -371,18 +371,22 @@ void RouterInterfaceManager::enqueue(const std::string &table_name, const swss::
     m_entries.push_back(entry);
 }
 
-void RouterInterfaceManager::drain()
-{
+void RouterInterfaceManager::drainWithNotExecuted() {
+    drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode RouterInterfaceManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string db_key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
         const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
         auto app_db_entry_or = deserializeRouterIntfEntry(db_key, attributes);
         if (!app_db_entry_or.ok())
         {
@@ -392,7 +396,7 @@ void RouterInterfaceManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &app_db_entry = *app_db_entry_or;
 
@@ -404,7 +408,7 @@ void RouterInterfaceManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
 
         const std::string router_intf_key = KeyGenerator::generateRouterInterfaceKey(app_db_entry.router_interface_id);
@@ -436,8 +440,12 @@ void RouterInterfaceManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
+        if (!status.ok()) {
+            break;
+        }
     }
-    m_entries.clear();
+    drainWithNotExecuted();
+    return status;
 }
 
 std::string RouterInterfaceManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)

@@ -4,11 +4,54 @@ FIXME:
     - Reference DBs by name rather than ID/socket
     - Add support for ProducerStateTable
 """
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from swsscommon import swsscommon
 from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig
 
+import json
+import time
+
+def verify_attr(
+    fvs: Dict[str, str], attr_list: Dict[str, str], key: str
+) -> Dict[str, List[str]]:
+    """Verifies attribute list for given key in a database table."""
+    assert len(fvs) == len(
+        attr_list
+    ), "Unexpected size: '%d' received, expected '%d' on key '%s'" % (
+        len(fvs),
+        len(attr_list),
+        key,
+    )
+    diffs = {}
+    for fvkey in fvs:
+        if fvkey in attr_list:
+            if fvs[fvkey] != attr_list[fvkey] and attr_list[fvkey] != "any_value":
+                diffs[fvkey] = [fvs[fvkey], attr_list[fvkey]]
+        else:
+            diffs[fvkey] = [fvs[fvkey], "unexpected attribute"]
+    return diffs
+
+def verify_response(
+    response_entry: Tuple[str, List[Tuple[str, str]]],
+    key: str,
+    attr_list: Dict[str, str],
+    status: str,
+    err_message: str = "SWSS_RC_SUCCESS",
+) -> Dict[str, List[str]]:
+    """Verifies a response entry key, attribute list and status."""
+    (data, values) = response_entry
+    assert data == key, "data '%s' does not match key '%s'" % (data, key)
+    assert len(values) >= 1
+    assert values[0][0] == status, "received status '%s' does not match status '%s'" % (
+        values[0][0],
+        status,
+    )
+    assert (
+        values[0][1] == err_message
+    ), "Unexpected message '%s' received, expected '%s'" % (values[0][1], err_message)
+    values = dict(values[1:])
+    return verify_attr(values, attr_list, key)
 
 class DVSDatabase:
     """DVSDatabase provides access to redis databases on the virtual switch."""
@@ -28,6 +71,10 @@ class DVSDatabase:
     def separator(self) -> str:
         """Get DB separator."""
         return self._separator
+
+    def set_up_zmq_connection(self, zmq_sock: str, db_name: str = "APPL_DB"):
+        self.zmq = swsscommon.ZmqClient("ipc://" + zmq_sock, 5000)
+        self.zmq_db = swsscommon.DBConnector(db_name, 0)
 
     def create_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Add the mapping {`key` -> `entry`} to the specified table.
@@ -56,7 +103,7 @@ class DVSDatabase:
         table.set(key, formatted_entry)
 
         if status:
-            for f in [ k for k, v in dict(fv_pairs).items() if k not in entry.keys() ]:
+            for f in [k for k, v in dict(fv_pairs).items() if k not in entry.keys()]:
                 table.hdel(key, f)
 
     def update_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
@@ -489,6 +536,38 @@ class DVSDatabase:
             assert not polling_config.strict, message
 
         return result
+
+    def set_zmq_entry(
+        self, table_name: str, key: str, entry: Dict[str, str]
+    ) -> Tuple[str, List[Tuple[str, str]]]:
+        fvs = swsscommon.FieldValuePairs(list(entry.items()))
+        zmq_tbl = swsscommon.ZmqProducerStateTable(self.zmq_db, table_name, self.zmq)
+        zmq_tbl.set(key, fvs)
+        time.sleep(0.2)
+        kcos = swsscommon.zmqWait(zmq_tbl)
+        assert len(kcos) == 1
+        return kcos[0]
+
+    def remove_zmq_entry(
+        self, table_name: str, key: str
+    ) -> Tuple[str, List[Tuple[str, str]]]:
+        zmq_tbl = swsscommon.ZmqProducerStateTable(self.zmq_db, table_name, self.zmq)
+        zmq_tbl.delete(key)
+        time.sleep(0.2)
+        kcos = swsscommon.zmqWait(zmq_tbl)
+        assert len(kcos) == 1
+        return kcos[0]
+
+    def set_app_db_entry(self, table_name: str, key: str, entry: Dict[str, str]):
+        fvs = swsscommon.FieldValuePairs(list(entry.items()))
+        tbl = swsscommon.ProducerStateTable(self.db_connection, table_name)
+        tbl.set(key, fvs)
+        time.sleep(1)
+
+    def remove_app_db_entry(self, table_name: str, key: str):
+        tbl = swsscommon.ProducerStateTable(self.db_connection, table_name)
+        tbl._del(key)
+        time.sleep(1)
 
     @staticmethod
     def _disable_strict_polling(polling_config: PollingConfig) -> PollingConfig:
