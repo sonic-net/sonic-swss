@@ -18,6 +18,10 @@ WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
     m_dockName(dockerName),
     m_appName(appName)
 {
+    if (m_syncTable == nullptr)
+    {
+        SWSS_LOG_NOTICE("[DEBUG] WarmStartHelper init, m_syncTable is null");
+    }
     WarmStart::initialize(appName, dockerName);
 }
 
@@ -50,6 +54,10 @@ bool WarmStartHelper::checkAndStart(void)
 {
     bool enabled = WarmStart::checkWarmStart(m_appName, m_dockName);
 
+    if (m_syncTable == nullptr)
+    {
+        SWSS_LOG_NOTICE("[DEBUG] m_syncTable is null");
+    }
     /*
      * If warm-restart feature is enabled for this application, proceed to
      * initialize its FSM, and clean any pending state that could be potentially

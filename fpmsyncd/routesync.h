@@ -62,7 +62,7 @@ public:
 
     /* Helper method to set route table with warm restart support */
     void setRouteWithWarmRestart(const std::string& key, const std::vector<FieldValueTuple>& fvVector,
-                                 ProducerStateTable& table, const std::string& cmd = SET_COMMAND);
+                                 shared_ptr<ProducerStateTable> table, const std::string& cmd = SET_COMMAND);
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
@@ -81,13 +81,15 @@ public:
         m_fpmInterface = nullptr;
     }
 
-    WarmStartHelper  m_warmStartHelper;
+    shared_ptr<WarmStartHelper> m_warmStartHelper;
 
 private:
+    /* ZMQ client */
+    shared_ptr<ZmqClient> m_zmqClient;
     /* regular route table */
-    ProducerStateTable m_routeTable;
+    shared_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
-    ProducerStateTable m_label_routeTable;
+    shared_ptr<ProducerStateTable> m_label_routeTable;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
