@@ -157,7 +157,6 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
-    m_routeTable->clear();
     m_warmStartHelper = std::make_shared<WarmStartHelper>(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp");
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
