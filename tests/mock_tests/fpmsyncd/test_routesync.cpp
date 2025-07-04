@@ -1035,8 +1035,6 @@ class TestableRouteSync : public RouteSync
 {
 public:
     TestableRouteSync(RedisPipeline *pipeline) : RouteSync(pipeline) {}
-
-    shared_ptr<WarmStartHelper> getWarmStartHelper() { return m_warmStartHelper; }
 };
 
 class WarmRestartRouteSyncTest : public ::testing::Test
@@ -1062,7 +1060,7 @@ public:
 
 TEST_F(WarmRestartRouteSyncTest, TestRouteMessageHandlingWarmRestartNotInProgress)
 {
-    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper()->inProgress());
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
 
     auto route = create_route("192.168.1.0/24");
 
@@ -1101,7 +1099,7 @@ TEST_F(WarmRestartRouteSyncTest, TestRouteDeleteHandlingWarmRestartNotInProgress
     vector<FieldValueTuple> result;
     EXPECT_TRUE(routeTable.get("192.168.2.0/24", result));
 
-    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper()->inProgress());
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
 
     m_testRouteSync.onRouteMsg(RTM_DELROUTE, (struct nl_object*)route.get(), nullptr);
 
@@ -1111,7 +1109,7 @@ TEST_F(WarmRestartRouteSyncTest, TestRouteDeleteHandlingWarmRestartNotInProgress
 
 TEST_F(WarmRestartRouteSyncTest, TestBlackholeRouteHandlingWarmRestartNotInProgress)
 {
-    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper()->inProgress());
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
 
     auto route = create_route("192.168.6.0/24");
     rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
@@ -1139,7 +1137,7 @@ TEST_F(WarmRestartRouteSyncTest, TestVrfRouteHandlingWarmRestartNotInProgress)
 {
     // Test VRF route handling with warm restart integration
 
-    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper()->inProgress());
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
 
     auto route = create_route("192.168.8.0/24");
     rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
@@ -1167,7 +1165,7 @@ TEST_F(WarmRestartRouteSyncTest, TestVrfRouteHandlingWarmRestartNotInProgress)
 TEST_F(WarmRestartRouteSyncTest, TestStaticRouteHandlingWarmRestartNotInProgress)
 {
     // Test static route handling with warm restart integration
-    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper()->inProgress());
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
 
     auto route = create_route("192.168.3.0/24");
     rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
@@ -1192,10 +1190,10 @@ TEST_F(WarmRestartRouteSyncTest, TestStaticRouteHandlingWarmRestartNotInProgress
 TEST_F(WarmRestartRouteSyncTest, TestRouteHandlingWarmRestartInProgress)
 {
     // Simulate warm restart in progress by setting state to INITIALIZED (not RECONCILED)
-    m_testRouteSync.getWarmStartHelper()->setState(WarmStart::INITIALIZED);
+    m_testRouteSync.getWarmStartHelper().setState(WarmStart::INITIALIZED);
 
-    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper()->inProgress());
-    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper()->isReconciled());
+    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper().inProgress());
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().isReconciled());
 
     auto route = create_route("192.168.10.0/24");
     rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
@@ -1212,9 +1210,9 @@ TEST_F(WarmRestartRouteSyncTest, TestRouteHandlingWarmRestartInProgress)
 TEST_F(WarmRestartRouteSyncTest, TestVrfRouteHandlingWarmRestartInProgress)
 {
     // Simulate warm restart in progress by setting state to RESTORED
-    m_testRouteSync.getWarmStartHelper()->setState(WarmStart::RESTORED);
+    m_testRouteSync.getWarmStartHelper().setState(WarmStart::RESTORED);
 
-    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper()->inProgress());
+    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper().inProgress());
 
     auto route = create_route("192.168.11.0/24");
     rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
@@ -1242,8 +1240,8 @@ TEST_F(WarmRestartRouteSyncTest, TestRouteDeleteHandlingWarmRestartInProgress)
     EXPECT_TRUE(routeTable.get("192.168.12.0/24", result));
 
     // Now simulate warm restart in progress
-    m_testRouteSync.getWarmStartHelper()->setState(WarmStart::INITIALIZED);
-    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper()->inProgress());
+    m_testRouteSync.getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper().inProgress());
 
     m_testRouteSync.onRouteMsg(RTM_DELROUTE, (struct nl_object*)route.get(), nullptr);
 

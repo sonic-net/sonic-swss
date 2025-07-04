@@ -81,7 +81,10 @@ public:
         m_fpmInterface = nullptr;
     }
 
-    shared_ptr<WarmStartHelper> m_warmStartHelper;
+    WarmStartHelper& getWarmStartHelper()
+    {
+        return m_warmStartHelper;
+    }
 
 private:
     /* ZMQ client */
@@ -90,7 +93,9 @@ private:
     shared_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
     shared_ptr<ProducerStateTable> m_label_routeTable;
-    /* vnet route table */
+    /* Warm start helper */
+    WarmStartHelper m_warmStartHelper;
+    /* vnet route table */  
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable;

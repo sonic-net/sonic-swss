@@ -149,15 +149,16 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     // When the feature ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED is enabled, route events must be sent to orchagent via the ZMQ channel.
     m_zmqClient(create_local_zmq_client(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false)),
     m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
-    m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
     m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
+    m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
-    m_nl_sock(NULL), m_link_cache(NULL)
+    m_nl_sock(NULL),
+    m_link_cache(NULL),
+    m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true)
 {
-    m_warmStartHelper = std::make_shared<WarmStartHelper>(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp");
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
@@ -168,7 +169,7 @@ void RouteSync::setRouteWithWarmRestart(const std::string& key,
                                       shared_ptr<ProducerStateTable>& table,
                                       const std::string& cmd)
 {
-    bool warmRestartInProgress = m_warmStartHelper->inProgress();
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
 
     if (!warmRestartInProgress)
     {
@@ -184,7 +185,7 @@ void RouteSync::setRouteWithWarmRestart(const std::string& key,
     else
     {
         const KeyOpFieldsValuesTuple kfv = std::make_tuple(key, cmd, fvVector);
-        m_warmStartHelper->insertRefreshMap(kfv);
+        m_warmStartHelper.insertRefreshMap(kfv);
     }
 }
 
@@ -2536,9 +2537,9 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
         markRoutesOffloaded(applStateDb);
     }
 
-    if (m_warmStartHelper->inProgress())
+    if (m_warmStartHelper.inProgress())
     {
-        m_warmStartHelper->reconcile();
+        m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
     }
 }
