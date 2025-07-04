@@ -232,8 +232,7 @@ bool OrchDaemon::init()
         APP_STP_VLAN_INSTANCE_TABLE_NAME,
         APP_STP_PORT_STATE_TABLE_NAME,
         APP_STP_FASTAGEING_FLUSH_TABLE_NAME,
-        APP_STP_INST_PORT_FLUSH_TABLE_NAME
-        //"STP_INST_PORT_FLUSH_TABLE"
+        "STP_INST_PORT_FLUSH_TABLE"
 
     };
     gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
