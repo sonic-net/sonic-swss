@@ -1035,8 +1035,6 @@ class TestableRouteSync : public RouteSync
 {
 public:
     TestableRouteSync(RedisPipeline *pipeline) : RouteSync(pipeline) {}
-
-    WarmStartHelper& getWarmStartHelper() { return m_warmStartHelper; }
 };
 
 class WarmRestartRouteSyncTest : public ::testing::Test
