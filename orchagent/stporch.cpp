@@ -590,7 +590,7 @@ void StpOrch::doTask(Consumer &consumer)
     {
         doStpFastageTask(consumer);
     }
-    else if (table_name == "STP_INST_PORT_FLUSH_TABLE")
+    else if (table_name == APP_STP_INST_PORT_FLUSH_TABLE_NAME)
     {
         doMstInstPortFlushTask(consumer);
     }

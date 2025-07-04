@@ -397,38 +397,6 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             msg.opcode = STP_DEL_COMMAND;
-
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "name")
-                {
-                    msg.name[0] = '\0'; // Reset to default empty string
-                }
-                else if (fvField(i) == "revision")
-                {
-                    msg.revision_number = 0; // Default revision
-                }
-                else if (fvField(i) == "forward_delay")
-                {
-                    msg.forward_delay = 15; // Default forward delay
-                }
-                else if (fvField(i) == "hello_time")
-                {
-                    msg.hello_time = 2; // Default hello time
-                }
-                else if (fvField(i) == "max_age")
-                {
-                    msg.max_age = 20; // Default max age
-                }
-                else if (fvField(i) == "max_hops")
-                {
-                    msg.max_hops = 40; // Default max hops
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Invalid field: %s", fvField(i).c_str());
-                }
-            }
         }
 
         sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
