@@ -11,7 +11,11 @@ class ObjectManagerInterface
     virtual void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) = 0;
 
     // Processes all entries in the queue
-    virtual void drain() = 0;
+    // Stops on first failure, returns first error status.
+    virtual ReturnCode drain() = 0;
+ 
+    // Drains all entries in the queue without execution.
+    virtual void drainWithNotExecuted() = 0;
 
     // StateVerification helper function for the manager
     virtual std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) = 0;

@@ -683,10 +683,16 @@ void ExtTablesManager::enqueue(const std::string &table_name, const swss::KeyOpF
     m_entriesTables[table_name].push_back(entry);
 }
 
-void ExtTablesManager::drain()
-{
+void ExtTablesManager::drainWithNotExecuted() {
+   for (auto& entries_table : m_entriesTables) {
+     drainMgmtWithNotExecuted(entries_table.second, m_publisher);
+   }
+}
+
+ReturnCode ExtTablesManager::drain() {
     SWSS_LOG_ENTER();
     std::string table_prefix = "EXT_";
+    ReturnCode ret;
 
     if (gP4Orch->tablesinfo)
     {
@@ -701,8 +707,10 @@ void ExtTablesManager::drain()
                 continue;
             }
 
-            for (const auto &key_op_fvs_tuple : it_m->second)
-            {
+        ReturnCode status;
+        while (!it_m->second.empty()) {
+           auto key_op_fvs_tuple = it_m->second.front();
+           it_m->second.pop_front();
                 std::string table_name;
                 std::string table_key;
 
@@ -711,16 +719,16 @@ void ExtTablesManager::drain()
 
                 if (table_name.rfind(table_prefix, 0) == std::string::npos)
                 {
+                    status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM);
                     SWSS_LOG_ERROR("Table %s is without prefix %s", table_name.c_str(), table_prefix.c_str());
                     m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                                         kfvFieldsValues(key_op_fvs_tuple), StatusCode::SWSS_RC_INVALID_PARAM,
+                                         kfvFieldsValues(key_op_fvs_tuple), status,
                                          /*replace=*/true);
-                    continue;
+                    break;
                 }
                 table_name = table_name.substr(table_prefix.length());
                 boost::algorithm::to_lower(table_name);
 
-                ReturnCode status;
                 auto app_db_entry_or = deserializeP4ExtTableEntry(table_name, table_key, attributes);
                 if (!app_db_entry_or.ok())
                 {
@@ -730,7 +738,7 @@ void ExtTablesManager::drain()
                     m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
                                          kfvFieldsValues(key_op_fvs_tuple), status,
                                          /*replace=*/true);
-                    continue;
+                    break;
                 }
 
                 auto &app_db_entry = *app_db_entry_or;
@@ -780,23 +788,17 @@ void ExtTablesManager::drain()
                 m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                      status,
                                      /*replace=*/true);
+                if (!status.ok()) {
+                    break;
+                }
             }
 
             it_m->second.clear();
         }
     }
 
-    // Now report error for all remaining un-processed entries
-    for (auto it_m = m_entriesTables.begin(); it_m != m_entriesTables.end(); it_m++)
-    {
-        for (const auto &key_op_fvs_tuple : it_m->second)
-        {
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 StatusCode::SWSS_RC_INVALID_PARAM, /*replace=*/true);
-        }
-
-        it_m->second.clear();
-    }
+    drainWithNotExecuted();
+    return ret;
 }
 
 void ExtTablesManager::doExtCounterStatsTask()

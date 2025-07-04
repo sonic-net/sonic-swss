@@ -581,18 +581,22 @@ void TablesDefnManager::enqueue(const std::string &table_name, const swss::KeyOp
     m_entries.push_back(entry);
 }
 
-void TablesDefnManager::drain()
-{
+void TablesDefnManager::drainWithNotExecuted() {
+    drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode TablesDefnManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
         const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
         auto app_db_entry_or = deserializeTablesInfoEntry(key, attributes);
         if (!app_db_entry_or.ok())
         {
@@ -602,7 +606,7 @@ void TablesDefnManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &app_db_entry = *app_db_entry_or;
 
@@ -615,7 +619,7 @@ void TablesDefnManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
 
         const std::string context_key = KeyGenerator::generateTablesInfoKey(app_db_entry.context);
@@ -657,8 +661,12 @@ void TablesDefnManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
+        if (!status.ok()) {
+            break;
+        }
     }
-    m_entries.clear();
+    drainWithNotExecuted();
+    return status;
 }
 
 std::string TablesDefnManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)

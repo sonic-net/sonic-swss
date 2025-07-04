@@ -109,20 +109,23 @@ void GreTunnelManager::enqueue(const std::string &table_name, const swss::KeyOpF
     m_entries.push_back(entry);
 }
 
-void GreTunnelManager::drain()
-{
+void GreTunnelManager::drainWithNotExecuted() {
+    drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode GreTunnelManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
         const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
-
         const std::string &operation = kfvOp(key_op_fvs_tuple);
 
-        ReturnCode status;
         auto app_db_entry_or = deserializeP4GreTunnelAppDbEntry(key, attributes);
         if (!app_db_entry_or.ok())
         {
@@ -132,7 +135,7 @@ void GreTunnelManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &app_db_entry = *app_db_entry_or;
 
@@ -149,7 +152,7 @@ void GreTunnelManager::drain()
                 m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                      status,
                                      /*replace=*/true);
-                continue;
+                break;
             }
             auto *gre_tunnel_entry = getGreTunnelEntry(tunnel_key);
             if (gre_tunnel_entry == nullptr)
@@ -175,8 +178,12 @@ void GreTunnelManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
+        if (!status.ok()) {
+           break;
+        }
     }
-    m_entries.clear();
+    drainWithNotExecuted();
+    return status;
 }
 
 P4GreTunnelEntry *GreTunnelManager::getGreTunnelEntry(const std::string &tunnel_key)

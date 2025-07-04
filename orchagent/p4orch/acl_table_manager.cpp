@@ -216,29 +216,33 @@ void AclTableManager::enqueue(const std::string &table_name, const swss::KeyOpFi
     m_entries.push_back(entry);
 }
 
-void AclTableManager::drain()
-{
+void AclTableManager::drainWithNotExecuted() {
+   drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode AclTableManager::drain() {
     SWSS_LOG_ENTER();
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
+    ReturnCode status;
+    while (!m_entries.empty()) {
+        auto key_op_fvs_tuple = m_entries.front();
+        m_entries.pop_front();
         std::string table_name;
         std::string db_key;
         parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
         SWSS_LOG_NOTICE("P4AclTableManager drain tuple for table %s", QuotedVar(table_name).c_str());
         if (table_name != APP_P4RT_ACL_TABLE_DEFINITION_NAME)
         {
-            ReturnCode status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                                << "Invalid table " << QuotedVar(table_name);
+            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                << "Invalid table " << QuotedVar(table_name);
             SWSS_LOG_ERROR("%s", status.message().c_str());
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
         const std::string &operation = kfvOp(key_op_fvs_tuple);
         if (operation == SET_COMMAND)
         {
@@ -251,7 +255,7 @@ void AclTableManager::drain()
                 m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                      status,
                                      /*replace=*/true);
-                continue;
+                break;
             }
             auto &app_db_entry = *app_db_entry_or;
 
@@ -263,7 +267,7 @@ void AclTableManager::drain()
                 m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                      status,
                                      /*replace=*/true);
-                continue;
+                break;
             }
             auto *acl_table_definition = getAclTable(app_db_entry.acl_table_name);
             if (acl_table_definition == nullptr)
@@ -294,8 +298,12 @@ void AclTableManager::drain()
         }
         m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
                              /*replace=*/true);
+        if (!status.ok()) {
+           break;
+        }
     }
-    m_entries.clear();
+    drainWithNotExecuted();
+    return status;
 }
 
 ReturnCodeOr<P4AclTableDefinitionAppDbEntry> AclTableManager::deserializeAclTableDefinitionAppDbEntry(

@@ -939,7 +939,7 @@ class AclManagerTest : public ::testing::Test
                                                          kAclGroupLookupOid, std::placeholders::_1))))
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+	gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
         acl_table_manager_ = gP4Orch->getAclTableManager();
         acl_rule_manager_ = gP4Orch->getAclRuleManager();
         p4_oid_mapper_ = acl_table_manager_->m_p4OidMapper;
