@@ -77,8 +77,8 @@ class TestP4RTVIPLB(object):
         router_interface_id, router_intf_key, attr_list = (
             self._p4rt_router_intf_obj.create_router_interface()
         )
-            self._p4rt_router_intf_obj.verify_response(router_intf_key,
-                                                       attr_list, "SWSS_RC_SUCCESS")
+        self._p4rt_router_intf_obj.verify_response(router_intf_key,
+                                                   attr_list, "SWSS_RC_SUCCESS")
 
         # Verify that P4RT key to OID count incremented by 1 in Redis DB.
         count = 1
