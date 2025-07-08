@@ -838,6 +838,24 @@ bool TunnelDecapOrch::addDecapTunnel(
     status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0)
+        {
+            SWSS_LOG_WARN("SAI_API_TUNNEL (create SAI_TUNNEL_TYPE_IPINIP): unsupported (%d) for tunnel %s (%d).", (int)status, key.c_str(), (int)tunnel_id);
+
+            // Make sure we're not leaking a SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID overlayIfId here.
+            sai_status_t rm_status = sai_router_intfs_api->remove_router_interface(overlayIfId);
+            if (rm_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove tunnel overlay interface: %" PRIu64, overlayIfId);
+                task_process_status rm_handle_status = handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, rm_status);
+                if (rm_handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(rm_handle_status);
+                }
+            }
+            return false;
+        }
+
         SWSS_LOG_ERROR("Failed to create tunnel");
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
         if (handle_status != task_success)
@@ -968,6 +986,11 @@ bool TunnelDecapOrch::addDecapTunnelTermEntry(
     sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(&tunnel_term_table_entry_id, gSwitchId, (uint32_t)tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0)
+        {
+            SWSS_LOG_WARN("SAI_API_TUNNEL (create SAI_TUNNEL_TYPE_IPINIP): unsupported (%d) for tunnel %s with IP %s.", (int)status, tunnel_name.c_str(), dst_ip.to_string().c_str());
+            return false;
+        }        
         SWSS_LOG_ERROR("Failed to create tunnel decap term entry %s.", dst_ip.to_string().c_str());
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
         if (handle_status != task_success)

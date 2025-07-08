@@ -7169,7 +7169,7 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
     attr.value.booldata = !enableCollection;
 
     status = sai_lag_api->set_lag_member_attribute(lagMember.m_lag_member_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_ITEM_NOT_FOUND)
     {
         SWSS_LOG_ERROR("Failed to %s collection on LAG member %s",
             enableCollection ? "enable" : "disable",
@@ -7179,6 +7179,14 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+    }
+    else if (status == SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        SWSS_LOG_ERROR("Failed to %s collection on LAG member %s because not "
+                        "found the bridge port entry",
+                        enableCollection ? "enable" : "disable",
+                        lagMember.m_alias.c_str());
+        return true;
     }
 
     SWSS_LOG_NOTICE("%s collection on LAG member %s",
@@ -7200,7 +7208,7 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
     attr.value.booldata = !enableDistribution;
 
     status = sai_lag_api->set_lag_member_attribute(lagMember.m_lag_member_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_ITEM_NOT_FOUND)
     {
         SWSS_LOG_ERROR("Failed to %s distribution on LAG member %s",
             enableDistribution ? "enable" : "disable",
@@ -7210,6 +7218,14 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+    }
+    else if (status == SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        SWSS_LOG_ERROR("Failed to %s distribution on LAG member %s because not "
+                       "found the bridge port entry",
+                        enableDistribution ? "enable" : "disable",
+                        lagMember.m_alias.c_str());
+        return true;
     }
 
     SWSS_LOG_NOTICE("%s distribution on LAG member %s",
