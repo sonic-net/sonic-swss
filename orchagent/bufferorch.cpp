@@ -8,6 +8,9 @@
 #include <inttypes.h>
 #include <sstream>
 #include <iostream>
+#include <boost/algorithm/string.hpp>
+
+#include "buffer/bufferschema.h"
 
 using namespace std;
 
@@ -710,6 +713,28 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
+            else if (field == BUFFER_PROFILE_PACKET_DISCARD_ACTION)
+            {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION;
+
+                if (value == BUFFER_PROFILE_PACKET_DISCARD_ACTION_DROP)
+                {
+                    attr.value.s32 = SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP;
+                }
+                else if (value == BUFFER_PROFILE_PACKET_DISCARD_ACTION_TRIM)
+                {
+                    attr.value.s32 = SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP_AND_TRIM;
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to parse buffer profile(%s) field(%s): invalid value(%s)",
+                        object_name.c_str(), field.c_str(), value.c_str()
+                    );
+                    return task_process_status::task_failed;
+                }
+
+                attribs.push_back(attr);
+            }
             else
             {
                 SWSS_LOG_ERROR("Unknown buffer profile field specified:%s, ignoring", field.c_str());
@@ -844,7 +869,11 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_invalid_entry;
         }
 
-        if((tokens[0] == gMyHostName) && (tokens[1] == gMyAsicName))
+        string tmp_token_1 = tokens[1];
+        string tmp_gMyAsicName = gMyAsicName;
+        boost::algorithm::to_lower(tmp_token_1);
+        boost::algorithm::to_lower(tmp_gMyAsicName);
+        if((tokens[0] == gMyHostName) && (tmp_token_1 == tmp_gMyAsicName))
         {
            local_port = true;
            local_port_name = tokens[2];
