@@ -588,6 +588,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     break;
             }
             break;
+        case SAI_API_LAG:
         case SAI_API_NEIGHBOR:
         case SAI_API_NEXT_HOP:
         case SAI_API_NEXT_HOP_GROUP:
@@ -597,6 +598,8 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
                     return task_success;
                 case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                    SWSS_LOG_NOTICE("Returning success for create operation, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     return task_success;
                 case SAI_STATUS_TABLE_FULL:
                     return task_need_retry;
@@ -734,6 +737,7 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
                     break;
             }
             break;
+        case SAI_API_LAG:
         case SAI_API_NEIGHBOR:
         case SAI_API_NEXT_HOP:
         case SAI_API_NEXT_HOP_GROUP:
@@ -743,6 +747,8 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
                     SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
                     return task_success;
                 case SAI_STATUS_ITEM_NOT_FOUND:
+                    SWSS_LOG_NOTICE("Returning success for remove operation, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     return task_success;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
