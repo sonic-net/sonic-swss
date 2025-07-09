@@ -232,8 +232,7 @@ bool OrchDaemon::init()
         APP_STP_VLAN_INSTANCE_TABLE_NAME,
         APP_STP_PORT_STATE_TABLE_NAME,
         APP_STP_FASTAGEING_FLUSH_TABLE_NAME,
-        "STP_INST_PORT_FLUSH_TABLE"
-
+        APP_STP_INST_PORT_FLUSH_TABLE_NAME
     };
     gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
     gDirectory.set(gStpOrch);
@@ -1210,7 +1209,7 @@ bool FabricOrchDaemon::init()
         { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
         { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
     };
-    gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
+    gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
     addOrchList(gFabricPortsOrch);
 
     vector<string> flex_counter_tables = {

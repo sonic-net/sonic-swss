@@ -6,6 +6,7 @@
 #include "orch.h"
 
 #define STP_INVALID_INSTANCE 0xFFFF
+#define APP_STP_INST_PORT_FLUSH_TABLE_NAME "STP_INST_PORT_FLUSH_TABLE"
 
 typedef enum _stp_state
 {

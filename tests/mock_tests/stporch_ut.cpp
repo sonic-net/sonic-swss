@@ -241,7 +241,7 @@ namespace stporch_test
 
         entries.clear();
         entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
-        consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor(APP_STP_INST_PORT_FLUSH_TABLE_NAME));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
 
