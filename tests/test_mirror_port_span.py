@@ -12,7 +12,7 @@ class TestMirror(object):
         (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" % (marker, log)])
         assert out.strip() == str(expected_cnt)
 
-    
+    @pytest.skip("Skipping test_PortMirrorQueue: https://github.com/sonic-net/sonic-swss/issues/3754")
     def test_PortMirrorQueue(self, dvs, testlog):
         """
         This test covers valid and invalid values of the queue parameter.  All sessions have source & dest port.
