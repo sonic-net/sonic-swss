@@ -1172,6 +1172,7 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else
     {
         m_syncdNextHopGroups[nexthops].ref_count ++;
+        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops", m_syncdNextHopGroups[nexthops].ref_count);
     }
 }
 
@@ -1193,6 +1194,7 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else
     {
         m_syncdNextHopGroups[nexthops].ref_count --;
+        SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops", m_syncdNextHopGroups[nexthops].ref_count);
     }
 }
 
@@ -1291,6 +1293,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
     std::map<sai_object_id_t, set<NextHopKey>> nhopgroup_shared_set;
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
@@ -1299,6 +1303,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         sai_object_id_t next_hop_id;
         if (m_neighOrch->hasNextHop(it))
         {
+            // this can be tunnel nh id when mux neighbor is disabled
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         /* See if there is an IP neighbor NH for MPLS NH*/
@@ -1443,7 +1448,20 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     /* Increment the ref_count for the next hops used by the next hop group. */
     for (auto it : next_hop_set)
-        m_neighOrch->increaseNextHopRefCount(it);
+    {
+        // Skip next hops that were filtered out (interface down)
+        if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
+        {
+            continue;
+        }
+        
+        // Skip ref count increment if this is a mux tunnel next hop
+        auto nh_id = m_neighOrch->getNextHopId(it);
+        if (nh_id != mux_tunnel_nh_id)
+        {
+            m_neighOrch->increaseNextHopRefCount(it);
+        }
+    }
 
     /*
      * Initialize the next hop group structure with ref_count as 0. This
@@ -1527,11 +1545,19 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
 
     m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
 
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     for (auto it : next_hop_set)
     {
-        m_neighOrch->decreaseNextHopRefCount(it);
+        // skip ref count update if the underlying nh from mux is tunnel nh
+        auto nh_id = m_neighOrch->getNextHopId(it);
+        if (nh_id != mux_tunnel_nh_id)
+        {
+            m_neighOrch->decreaseNextHopRefCount(it);
+        }
+
         if (overlay_nh && !srv6_nh && !m_neighOrch->getNextHopRefCount(it))
         {
             if(!m_neighOrch->removeTunnelNextHop(it))

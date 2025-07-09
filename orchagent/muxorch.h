@@ -233,6 +233,7 @@ public:
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
+    sai_object_id_t getTunnelNextHopId();
 
     void updateRoute(const IpPrefix &pfx, bool add);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
