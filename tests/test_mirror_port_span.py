@@ -12,7 +12,6 @@ class TestMirror(object):
         (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" % (marker, log)])
         assert out.strip() == str(expected_cnt)
 
-    @pytest.skip("Skipping test_PortMirrorQueue: https://github.com/sonic-net/sonic-swss/issues/3754")
     def test_PortMirrorQueue(self, dvs, testlog):
         """
         This test covers valid and invalid values of the queue parameter.  All sessions have source & dest port.
@@ -25,7 +24,7 @@ class TestMirror(object):
         by calling setReadOnlyAttr, because orchagent has already completed initialization and would never read the simulated value.
         Therefore, the default value must be used, MIRROR_SESSION_DEFAULT_NUM_TC which is defined in mirrororch.cpp as 255.
         """
-
+        pytest.skip("Skipping test_PortMirrorQueue: https://github.com/sonic-net/sonic-swss/issues/3754")
         session = "TEST_SESSION"
         dst_port = "Ethernet16"
         src_ports = "Ethernet12"
