@@ -1172,7 +1172,7 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else
     {
         m_syncdNextHopGroups[nexthops].ref_count ++;
-        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops", m_syncdNextHopGroups[nexthops].ref_count);
+        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
     }
 }
 
@@ -1194,7 +1194,7 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else
     {
         m_syncdNextHopGroups[nexthops].ref_count --;
-        SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops", m_syncdNextHopGroups[nexthops].ref_count);
+        SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
     }
 }
 
@@ -1291,6 +1291,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
+    set<NextHopKey> valid_next_hops_for_refcount;  // Track valid next hops for reference counting
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
     std::map<sai_object_id_t, set<NextHopKey>> nhopgroup_shared_set;
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
@@ -1320,6 +1321,13 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
                     it.to_string().c_str(), nexthops.to_string().c_str());
             return false;
         }
+
+        // Skip tunnel_nh for reference counting
+        if (next_hop_id != mux_tunnel_nh_id)
+        {
+            valid_next_hops_for_refcount.insert(it);
+        }
+
         // skip next hop group member create for neighbor from down port
         if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
         {
@@ -1446,21 +1454,10 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         }
     }
 
-    /* Increment the ref_count for the next hops used by the next hop group. */
-    for (auto it : next_hop_set)
+    /* Increment the ref_count for the valid next hops used by the next hop group. */
+    for (auto it : valid_next_hops_for_refcount)
     {
-        // Skip next hops that were filtered out (interface down)
-        if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
-        {
-            continue;
-        }
-        
-        // Skip ref count increment if this is a mux tunnel next hop
-        auto nh_id = m_neighOrch->getNextHopId(it);
-        if (nh_id != mux_tunnel_nh_id)
-        {
-            m_neighOrch->increaseNextHopRefCount(it);
-        }
+        m_neighOrch->increaseNextHopRefCount(it);
     }
 
     /*
@@ -1548,15 +1545,21 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
 
+    // Filter valid next hops for reference counting (consistent with addNextHopGroup)
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     for (auto it : next_hop_set)
     {
-        // skip ref count update if the underlying nh from mux is tunnel nh
+        // Skip mux tunnel next hops (consistent with addNextHopGroup)
         auto nh_id = m_neighOrch->getNextHopId(it);
         if (nh_id != mux_tunnel_nh_id)
         {
             m_neighOrch->decreaseNextHopRefCount(it);
         }
+    }
+
+    // Process all next hops for overlay/SRv6/MPLS cleanup
+    for (auto it : next_hop_set)
+    {
 
         if (overlay_nh && !srv6_nh && !m_neighOrch->getNextHopRefCount(it))
         {
