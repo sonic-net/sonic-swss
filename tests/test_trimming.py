@@ -57,6 +57,17 @@ def dynamicModel(dvs):
 
 
 @pytest.fixture(scope="class")
+def switchCounters(dvs):
+    trimlogger.info("Initialize switch counters")
+    dvs.runcmd("counterpoll switch interval 1000")
+    dvs.runcmd("counterpoll switch enable")
+    yield
+    dvs.runcmd("counterpoll switch disable")
+    dvs.runcmd("counterpoll switch interval 60000")
+    trimlogger.info("Deinitialize switch counters")
+
+
+@pytest.fixture(scope="class")
 def portCounters(dvs):
     trimlogger.info("Initialize port counters")
     dvs.runcmd("counterpoll port enable")
@@ -68,18 +79,22 @@ def portCounters(dvs):
 @pytest.fixture(scope="class")
 def pgCounters(dvs):
     trimlogger.info("Initialize priority group counters")
+    dvs.runcmd("counterpoll watermark interval 10000")
     dvs.runcmd("counterpoll watermark enable")
     yield
     dvs.runcmd("counterpoll watermark disable")
+    dvs.runcmd("counterpoll watermark interval 60000")
     trimlogger.info("Deinitialize priority group counters")
 
 
 @pytest.fixture(scope="class")
 def queueCounters(dvs):
     trimlogger.info("Initialize queue counters")
+    dvs.runcmd("counterpoll queue interval 1000")
     dvs.runcmd("counterpoll queue enable")
     yield
     dvs.runcmd("counterpoll queue disable")
+    dvs.runcmd("counterpoll queue interval 10000")
     trimlogger.info("Deinitialize queue counters")
 
 
@@ -1320,12 +1335,40 @@ class TestTrimmingNegativeDynamicBufferModel(TrimmingNegativeBufferModel):
             self.verifyProfileListBufferEditConfiguration(portData, bufferData, False)
 
 
+@pytest.mark.usefixtures("dvs_switch_manager")
 @pytest.mark.usefixtures("dvs_port_manager")
 @pytest.mark.usefixtures("dvs_queue_manager")
 @pytest.mark.usefixtures("testlog")
 class TestTrimmingStats:
     PORT = "Ethernet4"
     QUEUE = "1"
+
+    @pytest.fixture(scope="class")
+    def switchData(self, switchCounters):
+        trimlogger.info("Initialize switch data")
+
+        trimlogger.info("Verify switch count")
+        self.dvs_switch.verify_switch_count(0)
+
+        trimlogger.info("Get switch id")
+        switchIdList = self.dvs_switch.get_switch_ids()
+
+        # Assumption: VS has only one switch object
+        meta_dict = {
+            "id": switchIdList[0]
+        }
+
+        yield meta_dict
+
+        sai_attr_dict = {
+            "SAI_SWITCH_STAT_TX_TRIM_PACKETS": "0",
+            "SAI_SWITCH_STAT_DROPPED_TRIM_PACKETS": "0",
+        }
+
+        trimlogger.info("Reset switch trimming counters")
+        self.dvs_switch.set_switch_counter(switchIdList[0], sai_attr_dict)
+
+        trimlogger.info("Deinitialize switch data")
 
     @pytest.fixture(scope="class")
     def portData(self, portCounters):
@@ -1341,7 +1384,9 @@ class TestTrimmingStats:
         yield meta_dict
 
         sai_attr_dict = {
-            "SAI_PORT_STAT_TRIM_PACKETS": "0"
+            "SAI_PORT_STAT_TRIM_PACKETS": "0",
+            "SAI_PORT_STAT_TX_TRIM_PACKETS": "0",
+            "SAI_PORT_STAT_DROPPED_TRIM_PACKETS": "0"
         }
 
         trimlogger.info("Reset port trimming counters: port={}".format(self.PORT))
@@ -1363,7 +1408,9 @@ class TestTrimmingStats:
         yield meta_dict
 
         sai_attr_dict = {
-            "SAI_QUEUE_STAT_TRIM_PACKETS": "0"
+            "SAI_QUEUE_STAT_TRIM_PACKETS": "0",
+            "SAI_QUEUE_STAT_TX_TRIM_PACKETS": "0",
+            "SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS": "0"
         }
 
         trimlogger.info("Reset queue trimming counters: port={}, queue={}".format(self.PORT, self.QUEUE))
@@ -1371,9 +1418,39 @@ class TestTrimmingStats:
 
         trimlogger.info("Deinitialize queue data")
 
-    def test_TrimPortStats(self, portData):
+    @pytest.mark.parametrize(
+        "attr, value", [
+            pytest.param("SAI_SWITCH_STAT_TX_TRIM_PACKETS", "1000", id="tx-packet"),
+            pytest.param("SAI_SWITCH_STAT_DROPPED_TRIM_PACKETS", "2000", id="drop-packet")
+        ]
+    )
+    def test_TrimSwitchStats(self, switchData, attr, value):
         sai_attr_dict = {
-            "SAI_PORT_STAT_TRIM_PACKETS": "1000"
+            attr: value
+        }
+
+        trimlogger.info("Update switch counter")
+        self.dvs_switch.set_switch_counter(
+            sai_switch_id=switchData["id"],
+            sai_qualifiers=sai_attr_dict
+        )
+
+        trimlogger.info("Validate switch counter")
+        self.dvs_switch.verify_switch_counter(
+            sai_switch_id=switchData["id"],
+            sai_qualifiers=sai_attr_dict
+        )
+
+    @pytest.mark.parametrize(
+        "attr, value", [
+            pytest.param("SAI_PORT_STAT_TRIM_PACKETS", "1000", id="trim-packet"),
+            pytest.param("SAI_PORT_STAT_TX_TRIM_PACKETS", "2000", id="tx-packet"),
+            pytest.param("SAI_PORT_STAT_DROPPED_TRIM_PACKETS", "3000", id="drop-packet")
+        ]
+    )
+    def test_TrimPortStats(self, portData, attr, value):
+        sai_attr_dict = {
+            attr: value
         }
 
         trimlogger.info("Update port counters: port={}".format(self.PORT))
@@ -1388,9 +1465,16 @@ class TestTrimmingStats:
             sai_qualifiers=sai_attr_dict
         )
 
-    def test_TrimQueueStats(self, queueData):
+    @pytest.mark.parametrize(
+        "attr, value", [
+            pytest.param("SAI_QUEUE_STAT_TRIM_PACKETS", "1000", id="trim-packet"),
+            pytest.param("SAI_QUEUE_STAT_TX_TRIM_PACKETS", "2000", id="tx-packet"),
+            pytest.param("SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS", "3000", id="drop-packet")
+        ]
+    )
+    def test_TrimQueueStats(self, queueData, attr, value):
         sai_attr_dict = {
-            "SAI_QUEUE_STAT_TRIM_PACKETS": "1000"
+            attr: value
         }
 
         trimlogger.info("Update queue counters: port={}, queue={}".format(self.PORT, self.QUEUE))
