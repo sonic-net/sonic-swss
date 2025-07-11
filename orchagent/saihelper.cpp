@@ -92,6 +92,7 @@ sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
 sai_dash_meter_api_t*               sai_dash_meter_api;
 sai_dash_outbound_port_map_api_t*   sai_dash_outbound_port_map_api;
+sai_dash_trusted_vni_api_t*         sai_dash_trusted_vni_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;

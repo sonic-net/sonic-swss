@@ -205,6 +205,10 @@ This is required since some sai_api do not support this function call yet.
  * 2. If two arguments are provided, use the second argument as the entry type (e.g. sai_dash_outbound_ca_to_pa_api_t and sai_outbound_ca_to_pa_entry_t)
  */
 #define GET_MOCK_MACRO(_1, _2, NAME, ...) NAME
+/*
+ * DEFINE_SAI_API_MOCK is deprecated.
+ * Use DEFINE_SAI_ENTRY_APIS_MOCK which supports mocking multiple entry types for a single sai api class.
+ */
 #define DEFINE_SAI_API_MOCK(...) \
     GET_MOCK_MACRO(__VA_ARGS__, DEFINE_SAI_API_MOCK_SPECIFY_ENTRY, DEFINE_SAI_API_MOCK_MATCH_ENTRY)(__VA_ARGS__)
 
@@ -417,6 +421,29 @@ This is required since some sai_api do not support this function call yet.
     {                                                                                    \
         sai_##sai_api_name##_api = old_sai_##sai_api_name##_api;                         \
         delete mock_sai_##sai_api_name##_api;                                            \
+    }
+#define DEFINE_SAI_ENTRY_APIS_MOCK(sai_api_name, ...) \
+    static sai_##sai_api_name##_api_t *old_sai_##sai_api_name##_api; \
+    static sai_##sai_api_name##_api_t ut_sai_##sai_api_name##_api; \
+    class mock_sai_##sai_api_name##_api_t { \
+    public: \
+        mock_sai_##sai_api_name##_api_t() { \
+            FOR_EACH(DEFINE_ENTRY_ON_CALL_DEFAULTS, sai_api_name, __VA_ARGS__) \
+        } \
+        FOR_EACH(DEFINE_MOCK_ENTRY_METHODS, sai_api_name, __VA_ARGS__) \
+    }; \
+    static mock_sai_##sai_api_name##_api_t *mock_sai_##sai_api_name##_api; \
+    FOR_EACH(DEFINE_ENTRY_WRAPPER_FUNCTIONS, sai_api_name, __VA_ARGS__) \
+    inline void apply_sai_##sai_api_name##_api_mock() { \
+        mock_sai_##sai_api_name##_api = new NiceMock<mock_sai_##sai_api_name##_api_t>(); \
+        old_sai_##sai_api_name##_api = sai_##sai_api_name##_api; \
+        ut_sai_##sai_api_name##_api = *sai_##sai_api_name##_api; \
+        sai_##sai_api_name##_api = &ut_sai_##sai_api_name##_api; \
+        FOR_EACH(APPLY_ENTRY_MOCK_FUNCTIONS, sai_api_name, __VA_ARGS__) \
+    } \
+    inline void remove_sai_##sai_api_name##_api_mock() { \
+        sai_##sai_api_name##_api = old_sai_##sai_api_name##_api; \
+        delete mock_sai_##sai_api_name##_api; \
     }
 
 #define DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(sai_api_name, sai_object_type)                                                       \
