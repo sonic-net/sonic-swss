@@ -15,7 +15,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 - [Known Issues/FAQs](#known-issues)
 
 ## Setting up your test environment
-###1. System Requirements
+1. System Requirements
 
   To set up your test environment, you will need:
 
@@ -29,8 +29,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
   uname -r | grep generic
   python3 --version
   ```
-
-###2. Team Kernel Module
+2. Team Kernel Module
 
   **Note:**  
   Check if the `team` kernel module is already installed by running:
@@ -39,8 +38,8 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
   lsmod | grep team
   ```
 
-If the output is non-empty, you're good to proceed to the next step.  
-If the output is empty, run the following script to install the necessary modules:
+  If the output is non-empty, you're good to proceed to the next step.  
+  If the output is empty, run the following script to install the necessary modules:
 
 ```bash
 sudo .azure-pipelines/build_and_install_module.sh
@@ -54,15 +53,15 @@ lsmod | grep team
 
 3. Install Docker CE
 
-Install Docker CE from the official documentation:  
-https://docs.docker.com/engine/install/ubuntu/
+  Install Docker CE from the official documentation:  
+  https://docs.docker.com/engine/install/ubuntu/
 
-**Important:** Follow the post-install instructions to avoid needing `sudo` for Docker commands:
-https://docs.docker.com/engine/install/linux-postinstall/
+  **Important:** Follow the post-install instructions to avoid needing `sudo` for Docker commands:
+  https://docs.docker.com/engine/install/linux-postinstall/
 
 4. Install External Dependencies
 
-Install packages required for running the VS tests:
+  Install packages required for running the VS tests:
 
 ```bash
 sudo apt-get install -y net-tools bridge-utils vlan libzmq3-dev libzmq5 \
@@ -78,7 +77,7 @@ sudo pip3 install docker pytest flaky redis distro dataclasses fstring \
 
 5. Install DASH Dependencies (Ubuntu 22.04)
 
-Download and install the necessary `.deb` files:
+  Download and install the necessary `.deb` files:
 
 ```bash
 wget -O libdashapi.deb "https://artprodcus3.artifacts.visualstudio.com/Af91412a5-a906-4990-9d7c-f697b81fc04d/be1b070f-be15-4154-aade-b1d3bfb17054/_apis/artifact/cGlwZWxpbmVhcnRpZmFjdDovL21zc29uaWMvcHJvamVjdElkL2JlMWIwNzBmLWJlMTUtNDE1NC1hYWRlLWIxZDNiZmIxNzA1NC9idWlsZElkLzg4NzIwNi9hcnRpZmFjdE5hbWUvc29uaWMtYnVpbGRpbWFnZS5hbWQ2NC51YnVudHUyMl8wNA2/content?format=file&subPath=%2Flibdashapi_1.0.0_amd64.deb"
@@ -104,7 +103,7 @@ sudo dpkg -i python_swsscommon.deb
 ```bash
 wget -O docker-sonic-vs.gz "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs.gz"
 ```
-Load the image into Docker:
+  Load the image into Docker:
 
 ```bash
 docker load < docker-sonic-vs.gz
