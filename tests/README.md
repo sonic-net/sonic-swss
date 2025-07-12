@@ -15,8 +15,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 - [Known Issues/FAQs](#known-issues)
 
 ## Setting up your test environment
-#### System Requirements
----
+#### **System Requirements**
 
   To set up your test environment, you will need:
 
