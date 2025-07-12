@@ -55,10 +55,10 @@ lsmod | grep team
 3. Install Docker CE
 
 Install Docker CE from the official documentation:  
-👉 https://docs.docker.com/engine/install/ubuntu/
+https://docs.docker.com/engine/install/ubuntu/
 
 **Important:** Follow the post-install instructions to avoid needing `sudo` for Docker commands:
-👉 https://docs.docker.com/engine/install/linux-postinstall/
+https://docs.docker.com/engine/install/linux-postinstall/
 
 4. Install External Dependencies
 
