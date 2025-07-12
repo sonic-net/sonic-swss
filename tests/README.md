@@ -17,27 +17,27 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 ## Setting up your test environment
 1. System Requirements
 
-To set up your test environment, you will need:
+  To set up your test environment, you will need:
 
-- A machine running **Ubuntu 22.04**
-- **Python 3**
+  - A machine running **Ubuntu 22.04**
+  - **Python 3**
 
-You can check these dependencies with the following commands:
+  You can check these dependencies with the following commands:
 
-```bash
-cat /etc/os-release | grep ".*22.04*"
-uname -r | grep generic
-python3 --version
-```
+  ```bash
+  cat /etc/os-release | grep ".*22.04*"
+  uname -r | grep generic
+  python3 --version
+  ```
 
 2. Team Kernel Module
 
-**Note:**  
-Check if the `team` kernel module is already installed by running:
+  **Note:**  
+  Check if the `team` kernel module is already installed by running:
 
-```bash
-lsmod | grep team
-```
+  ```bash
+  lsmod | grep team
+  ```
 
 If the output is non-empty, you're good to proceed to the next step.  
 If the output is empty, run the following script to install the necessary modules:
