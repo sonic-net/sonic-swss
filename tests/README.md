@@ -15,7 +15,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 - [Known Issues/FAQs](#known-issues)
 
 ## Setting up your test environment
-#### *System Requirements*
+### System Requirements
 
   To set up your test environment, you will need:
 
@@ -29,7 +29,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
   uname -r | grep generic
   python3 --version
   ```
-#### Team Kernel Module
+### Team Kernel Module
 
   **Note:**  
   Check if the `team` kernel module is already installed by running:
@@ -51,7 +51,7 @@ Once the script completes successfully, verify again:
 lsmod | grep team
 ```
 
-#### Install Docker CE
+### Install Docker CE
 
   Install Docker CE from the official documentation:  
   https://docs.docker.com/engine/install/ubuntu/
@@ -59,7 +59,7 @@ lsmod | grep team
   **Important:** Follow the post-install instructions to avoid needing `sudo` for Docker commands:
   https://docs.docker.com/engine/install/linux-postinstall/
 
-#### Install External Dependencies
+### Install External Dependencies
 
   Install packages required for running the VS tests:
 
@@ -75,7 +75,7 @@ sudo pip3 install docker pytest flaky redis distro dataclasses fstring \
   exabgp docker lcov_cobertura
 ```
 
-#### Install DASH Dependencies (Ubuntu 22.04)
+### Install DASH Dependencies (Ubuntu 22.04)
 
   Download and install the necessary `.deb` files:
 
@@ -87,7 +87,7 @@ wget -O libprotobuf32.deb "https://artprodcus3.artifacts.visualstudio.com/Af9141
 sudo dpkg -i libdashapi.deb libprotobuf32.deb
 ```
 
-#### Install swsscommon
+### Install swsscommon
 
 ```bash
 wget -O libswsscommon.deb "https://artprodcus3.artifacts.visualstudio.com/Af91412a5-a906-4990-9d7c-f697b81fc04d/be1b070f-be15-4154-aade-b1d3bfb17054/_apis/artifact/cGlwZWxpbmVhcnRpZmFjdDovL21zc29uaWMvcHJvamVjdElkL2JlMWIwNzBmLWJlMTUtNDE1NC1hYWRlLWIxZDNiZmIxNzA1NC9idWlsZElkLzg4NDY1NC9hcnRpZmFjdE5hbWUvc29uaWMtc3dzcy1jb21tb24uYW1kNjQudWJ1bnR1MjJfMDQ1/content?format=file&subPath=%2Flibswsscommon_1.0.0_amd64.deb"
@@ -98,7 +98,7 @@ sudo dpkg -i libswsscommon.deb
 sudo dpkg -i python_swsscommon.deb
 ```
 
-#### Download the latest `docker-sonic-vs.gz` file from Azure build artifacts.
+### Download the latest `docker-sonic-vs.gz` file from Azure build artifacts.
 
 ```bash
 wget -O docker-sonic-vs.gz "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs.gz"
