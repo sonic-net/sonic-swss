@@ -15,8 +15,9 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 - [Known Issues/FAQs](#known-issues)
 
 ## Setting up your test environment
+### System Requirements
 
-  1. To set up your test environment, you will need:
+  To set up your test environment, you will need:
 
   - A machine running **Ubuntu 22.04**
   - **Python 3**
