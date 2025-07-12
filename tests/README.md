@@ -15,7 +15,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 - [Known Issues/FAQs](#known-issues)
 
 ## Setting up your test environment
-1. System Requirements
+###System Requirements
 
   To set up your test environment, you will need:
 
@@ -30,7 +30,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
   python3 --version
   ```
 
-2. Team Kernel Module
+###Team Kernel Module
 
   **Note:**  
   Check if the `team` kernel module is already installed by running:
