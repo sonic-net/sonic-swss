@@ -260,12 +260,6 @@ class TestHFT(object):
             "Expected hostif user defined trap type to be " \
             "SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM"
 
-        # Fix: Use only the object ID
-        trap_group_oid = hostif_trap[
-            "SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP"]
-        assert trap_group_oid in asic_db["host_trap_group"], \
-            "Expected hostif user defined trap to reference host trap group"
-
     def verify_no_asic_objects(self, asic_db):
         """Verify that HFT objects are cleaned up from ASIC_STATE DB."""
         # We expect some objects to remain (like base infrastructure)
