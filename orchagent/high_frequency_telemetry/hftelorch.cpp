@@ -676,14 +676,20 @@ void HFTelOrch::createTAM()
             attrs.data()));
 
     // Bind the TAM object to switch
-
-    HFTELUTILS_ADD_SAI_OBJECT_LIST(
-        gSwitchId,
-        SAI_SWITCH_ATTR_TAM_OBJECT_ID,
-        m_sai_tam_obj,
-        SAI_API_SWITCH,
-        switch,
-        switch);
+    // FIX: There is a bug for config reload
+    // WARNING #syncd: :- logViewObjectCount: object count for SAI_OBJECT_TYPE_TAM on current view 1 is different than on temporary view: 2
+    // WARNING #syncd: :- performObjectSetTransition: Present current attr SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST:1:SAI_TAM_BIND_POINT_TYPE_SWITCH has default that CAN'T be set to 0:null since it's CREATE_ONLY
+    attr.id = SAI_SWITCH_ATTR_TAM_OBJECT_ID;
+    vector<sai_object_id_t> obj_list = {m_sai_tam_obj};
+    attr.value.objlist.count = static_cast<uint32_t>(obj_list.size());
+    attr.value.objlist.list = obj_list.data();
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_TAM_OBJECT_ID, status: %s",
+                       sai_serialize_status(status).c_str());
+        throw runtime_error("HFTelOrch initialization failure (failed to set tam object id)");
+    }
 }
 
 void HFTelOrch::deleteTAM()
