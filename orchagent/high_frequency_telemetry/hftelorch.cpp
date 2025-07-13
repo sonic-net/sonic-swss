@@ -533,8 +533,8 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
 
     sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
-    // Create hostif trap group object
-    sai_hostif_api->create_hostif_trap_group(&m_sai_hostif_trap_group_obj, gSwitchId, 0, nullptr);
+    // // Create hostif trap group object
+    // sai_hostif_api->create_hostif_trap_group(&m_sai_hostif_trap_group_obj, gSwitchId, 0, nullptr);
 
     // Create hostif user defined trap object
     attrs.clear();
@@ -543,9 +543,9 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM;
     attrs.push_back(attr);
 
-    attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
-    attr.value.oid = m_sai_hostif_trap_group_obj;
-    attrs.push_back(attr);
+    // attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
+    // attr.value.oid = m_sai_hostif_trap_group_obj;
+    // attrs.push_back(attr);
 
     sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
@@ -676,14 +676,20 @@ void HFTelOrch::createTAM()
             attrs.data()));
 
     // Bind the TAM object to switch
-
-    HFTELUTILS_ADD_SAI_OBJECT_LIST(
-        gSwitchId,
-        SAI_SWITCH_ATTR_TAM_OBJECT_ID,
-        m_sai_tam_obj,
-        SAI_API_SWITCH,
-        switch,
-        switch);
+    // FIX: There is a bug for config reload
+    // WARNING #syncd: :- logViewObjectCount: object count for SAI_OBJECT_TYPE_TAM on current view 1 is different than on temporary view: 2
+    // WARNING #syncd: :- performObjectSetTransition: Present current attr SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST:1:SAI_TAM_BIND_POINT_TYPE_SWITCH has default that CAN'T be set to 0:null since it's CREATE_ONLY
+    attr.id = SAI_SWITCH_ATTR_TAM_OBJECT_ID;
+    vector<sai_object_id_t> obj_list = {m_sai_tam_obj};
+    attr.value.objlist.count = static_cast<uint32_t>(obj_list.size());
+    attr.value.objlist.list = obj_list.data();
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_TAM_OBJECT_ID, status: %s",
+                       sai_serialize_status(status).c_str());
+        throw runtime_error("HFTelOrch initialization failure (failed to set tam object id)");
+    }
 }
 
 void HFTelOrch::deleteTAM()
