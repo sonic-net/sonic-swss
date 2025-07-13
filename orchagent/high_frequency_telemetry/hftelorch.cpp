@@ -533,8 +533,8 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
 
     sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
-    // Create hostif trap group object
-    sai_hostif_api->create_hostif_trap_group(&m_sai_hostif_trap_group_obj, gSwitchId, 0, nullptr);
+    // // Create hostif trap group object
+    // sai_hostif_api->create_hostif_trap_group(&m_sai_hostif_trap_group_obj, gSwitchId, 0, nullptr);
 
     // Create hostif user defined trap object
     attrs.clear();
@@ -543,9 +543,9 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM;
     attrs.push_back(attr);
 
-    attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
-    attr.value.oid = m_sai_hostif_trap_group_obj;
-    attrs.push_back(attr);
+    // attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
+    // attr.value.oid = m_sai_hostif_trap_group_obj;
+    // attrs.push_back(attr);
 
     sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
