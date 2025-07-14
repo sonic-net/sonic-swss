@@ -1088,7 +1088,8 @@ namespace portsorch_test
                 { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
                 { "obnlev",        "0x5f,0x61,0x60,0x62"         },
                 { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
-                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         }
+                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
+                { "custom_serdes_attrs", "{'attributes':[]}"     }
             }
         }};
 
@@ -1173,6 +1174,10 @@ namespace portsorch_test
 
         // Verify unreliablelos
         ASSERT_EQ(p.m_unreliable_los, false);
+
+        // Verify custom_serdes_attrs
+        std::string custom_serdes_attrs = "{'attributes':[]}";
+        ASSERT_EQ(p.m_custom_serdes_attrs, custom_serdes_attrs);
 
         // Dump pending tasks
         std::vector<std::string> taskList;

@@ -7,6 +7,9 @@
 
 #include "portcnt.h"
 
+typedef decltype(PortConfig::serdes) PortSerdes_t;
+typedef decltype(PortSerdes_t::custom_collection) CustomSerdes_t;
+
 class PortHelper final
 {
 public:
@@ -36,6 +39,7 @@ public:
 private:
     std::string getFieldValueStr(const PortConfig &port, const std::string &field) const;
 
+    bool parsePortSerdes(CustomSerdes_t& serdes, const std::string& field, const std::string& value) const;
     template<typename T>
     bool parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const;
 

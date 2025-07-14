@@ -243,6 +243,7 @@ public:
 
     /* pre-emphasis */
     std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
+    std::string m_custom_serdes_attrs;
 
     /* Force initial parameter configuration flags */
     bool m_an_cfg = false;        // Auto-negotiation (AN)
