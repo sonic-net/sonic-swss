@@ -6,6 +6,8 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "producerstatetable.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -15,9 +17,10 @@
 #include <map>
 
 typedef uint32_t Bank;
+typedef uint32_t HashBucketIdx;
 typedef std::set<NextHopKey> ActiveNextHops;
 typedef std::vector<sai_object_id_t> FGNextHopGroupMembers;
-typedef std::vector<uint32_t> HashBuckets;
+typedef std::vector<HashBucketIdx> HashBuckets;
 typedef std::map<NextHopKey, HashBuckets> FGNextHopGroupMap;
 typedef std::vector<FGNextHopGroupMap> BankFGNextHopGroupMap;
 typedef std::map<Bank,Bank> InactiveBankMapsToBank;
@@ -56,8 +59,10 @@ typedef std::unordered_map<string, std::vector<IpAddress>> Links;
 enum FGMatchMode
 {
     ROUTE_BASED,
-    NEXTHOP_BASED
+    NEXTHOP_BASED,
+    PREFIX_BASED
 };
+
 /* Store the indices occupied by a bank */
 typedef struct
 {
@@ -70,6 +75,7 @@ typedef struct FgNhgEntry
     string fg_nhg_name;                               // Name of FG NHG group configured by user
     uint32_t configured_bucket_size;                  // Bucket size configured by user
     uint32_t real_bucket_size;                        // Real bucket size as queried from SAI
+    uint32_t max_next_hops;                           // For match_mode==prefix-based. Maximum number of next hops in the FG NHG
     NextHops next_hops;                               // The IP to Bank mapping configured by user
     Links links;                                      // Link to IP map for oper changes
     std::vector<IpPrefix> prefixes;                   // Prefix which desires FG behavior
@@ -78,9 +84,9 @@ typedef struct FgNhgEntry
 } FgNhgEntry;
 
 /* Map from IP prefix to user configured FG NHG entries */
-typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes; 
+typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes;
 /* Map from IP address to user configured FG NHG entries */
-typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers; 
+typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers;
 /* Main structure to hold user configuration */
 typedef std::map<FgNhg, FgNhgEntry> FgNhgs;
 
@@ -123,7 +129,9 @@ private:
     bool isFineGrainedConfigured;
 
     Table m_stateWarmRestartRouteTable;
-    ProducerStateTable m_routeTable;
+
+    std::shared_ptr<swss::ZmqClient> m_zmqClient = nullptr;
+    std::shared_ptr<swss::ProducerStateTable> m_routeTable = nullptr;
 
     FgPrefixOpCache m_fgPrefixAddCache;
     FgPrefixOpCache m_fgPrefixDelCache;
@@ -133,13 +141,18 @@ private:
     WarmBootRecoveryMap m_recoveryMap;
 
     bool setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    std::vector<BankMemberChanges> &bank_member_changes, 
+                    std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
+    bool sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const IpPrefix &ipPrefix,
+                    BankIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
+                    uint32_t bank, BankMemberChanges &bank_member_change,
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+
     bool computeAndSetHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry,
                     FgNhgEntry *fgNhgEntry, std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    uint32_t bank, uint32_t syncd_bank, std::vector<BankMemberChanges> bank_member_changes,
+                    uint32_t syncd_bank, BankMemberChanges bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     uint32_t bank,std::vector<BankMemberChanges> &bank_member_changes,

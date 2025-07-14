@@ -5,6 +5,8 @@
 #include "timer.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
+#include "switch/trimming/capabilities.h"
+#include "switch/trimming/helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
@@ -16,6 +18,7 @@
 #define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE             "PORT_EGRESS_SAMPLE_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE                   "PATH_TRACING_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE                   "ICMP_OFFLOAD_CAPABLE"
 
 #define ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL 3600
 #define SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE          "ASIC_SDK_HEALTH_EVENT"
@@ -41,6 +44,7 @@ public:
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
+    void get_switch_capability(const std::string& capability, std::string& val);
     bool querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
     bool checkPfcDlrInitEnable() { return m_PfcDlrInitEnable; }
     void set_switch_pfc_dlr_init_capability();
@@ -72,6 +76,7 @@ private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doCfgSwitchHashTableTask(Consumer &consumer);
+    void doCfgSwitchTrimmingTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
@@ -86,6 +91,14 @@ private:
 
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
+    void setSwitchIcmpOffloadCapability();
+
+    // Switch trimming
+    bool setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimming(const SwitchTrimming &trim);
 
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
@@ -151,7 +164,9 @@ private:
 
     // Switch OA capabilities
     SwitchCapabilities swCap;
+    SwitchTrimmingCapabilities trimCap;
 
     // Switch OA helper
     SwitchHelper swHlpr;
+    SwitchTrimmingHelper trimHlpr;
 };

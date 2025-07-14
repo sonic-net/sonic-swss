@@ -91,6 +91,33 @@ bool to_sai(const RepeatedPtrField<dash::types::IpPrefix> &pb_prefixes, vector<s
     return true;
 }
 
+bool to_sai(const dash::types::ValueOrRange &pb_range, sai_u32_range_t &sai_range)
+{
+    SWSS_LOG_ENTER();
+
+    if (pb_range.has_value())
+    {
+        sai_range.min = pb_range.value();
+        sai_range.max = pb_range.value();
+    }
+    else if (pb_range.has_range())
+    {
+        if (pb_range.range().min() > pb_range.range().max())
+        {
+            SWSS_LOG_WARN("The range %s is invalid", pb_range.range().DebugString().c_str());
+            return false;
+        }
+        sai_range.min = pb_range.range().min();
+        sai_range.max = pb_range.range().max();
+    }
+    else
+    {
+        SWSS_LOG_WARN("The ValueOrRange %s is invalid", pb_range.DebugString().c_str());
+        return false;
+    }
+    return true;
+}
+
 ip_addr_t to_swss(const dash::types::IpAddress &pb_address)
 {
     SWSS_LOG_ENTER();
@@ -119,4 +146,55 @@ std::string to_string(const dash::types::IpAddress &pb_address)
     SWSS_LOG_ENTER();
 
     return IpAddress(to_swss(pb_address)).to_string();
+}
+
+sai_uint16_t to_sai(const dash::types::HaRole ha_role)
+{
+    SWSS_LOG_ENTER();
+
+    sai_dash_ha_role_t sai_ha_role = SAI_DASH_HA_ROLE_DEAD;
+
+    switch (ha_role)
+    {
+        case dash::types::HA_SCOPE_ROLE_DEAD:
+            sai_ha_role = SAI_DASH_HA_ROLE_DEAD;
+            break;
+        case dash::types::HA_SCOPE_ROLE_ACTIVE:
+            sai_ha_role = SAI_DASH_HA_ROLE_ACTIVE;
+            break;
+        case dash::types::HA_SCOPE_ROLE_STANDBY:
+            sai_ha_role = SAI_DASH_HA_ROLE_STANDBY;
+            break;
+        case dash::types::HA_SCOPE_ROLE_STANDALONE:
+            sai_ha_role = SAI_DASH_HA_ROLE_STANDALONE;
+            break;
+        case dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE:
+            sai_ha_role = SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE;
+            break;
+        default:
+            SWSS_LOG_ERROR("Invalid HA Role %s", dash::types::HaRole_Name(ha_role).c_str());
+    }
+
+    return static_cast<sai_uint16_t>(sai_ha_role);
+}
+
+dash::types::HaRole to_pb(const sai_dash_ha_role_t ha_role)
+{
+    SWSS_LOG_ENTER();
+
+    switch (ha_role)
+    {
+        case SAI_DASH_HA_ROLE_DEAD:
+            return dash::types::HA_SCOPE_ROLE_DEAD;
+        case SAI_DASH_HA_ROLE_ACTIVE:
+            return dash::types::HA_SCOPE_ROLE_ACTIVE;
+        case SAI_DASH_HA_ROLE_STANDBY:
+            return dash::types::HA_SCOPE_ROLE_STANDBY;
+        case SAI_DASH_HA_ROLE_STANDALONE:
+            return dash::types::HA_SCOPE_ROLE_STANDALONE;
+        case SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE:
+            return dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE;
+        default:
+            return dash::types::HA_SCOPE_ROLE_DEAD;
+    }
 }

@@ -8,6 +8,9 @@
 #include <inttypes.h>
 #include <sstream>
 #include <iostream>
+#include <boost/algorithm/string.hpp>
+
+#include "buffer/bufferschema.h"
 
 using namespace std;
 
@@ -72,6 +75,11 @@ void BufferOrch::initTableHandlers()
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PG_TABLE_NAME, &BufferOrch::processPriorityGroup));
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, &BufferOrch::processIngressBufferProfileList));
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
+
+    m_bufferFlushHandlerMap.insert(buffer_flush_handler_pair(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, &BufferOrch::processIngressBufferProfileListBulk));
+    m_bufferFlushHandlerMap.insert(buffer_flush_handler_pair(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileListBulk));
+    m_bufferFlushHandlerMap.insert(buffer_flush_handler_pair(APP_BUFFER_PG_TABLE_NAME, &BufferOrch::processPriorityGroupBulk));
+    m_bufferFlushHandlerMap.insert(buffer_flush_handler_pair(APP_BUFFER_QUEUE_TABLE_NAME, &BufferOrch::processQueueBulk));
 }
 
 void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
@@ -705,6 +713,28 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
+            else if (field == BUFFER_PROFILE_PACKET_DISCARD_ACTION)
+            {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION;
+
+                if (value == BUFFER_PROFILE_PACKET_DISCARD_ACTION_DROP)
+                {
+                    attr.value.s32 = SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP;
+                }
+                else if (value == BUFFER_PROFILE_PACKET_DISCARD_ACTION_TRIM)
+                {
+                    attr.value.s32 = SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP_AND_TRIM;
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to parse buffer profile(%s) field(%s): invalid value(%s)",
+                        object_name.c_str(), field.c_str(), value.c_str()
+                    );
+                    return task_process_status::task_failed;
+                }
+
+                attribs.push_back(attr);
+            }
             else
             {
                 SWSS_LOG_ERROR("Unknown buffer profile field specified:%s, ignoring", field.c_str());
@@ -839,7 +869,11 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_invalid_entry;
         }
 
-        if((tokens[0] == gMyHostName) && (tokens[1] == gMyAsicName))
+        string tmp_token_1 = tokens[1];
+        string tmp_gMyAsicName = gMyAsicName;
+        boost::algorithm::to_lower(tmp_token_1);
+        boost::algorithm::to_lower(tmp_gMyAsicName);
+        if((tokens[0] == gMyHostName) && (tmp_token_1 == tmp_gMyAsicName))
         {
            local_port = true;
            local_port_name = tokens[2];
@@ -860,6 +894,9 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_invalid_entry;
         }
     }
+
+    QueueTask task;
+    task.kofvs = tuple;
 
     if (op == SET_COMMAND)
     {
@@ -940,6 +977,12 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+
+        QueueTask::PortContext portContext;
+        portContext.port_name = port_name;
+        portContext.local_port = local_port;
+        portContext.local_port_name = local_port_name;
+
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
             SWSS_LOG_DEBUG("processing queue:%zd", ind);
@@ -974,7 +1017,52 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             if (need_update_sai)
             {
                 SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
-                sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
+            }
+
+            QueueTask::QueueContext queueContext;
+            queueContext.queue_id = queue_id;
+            queueContext.attr = SaiAttrWrapper(SAI_OBJECT_TYPE_QUEUE, attr);
+            queueContext.counter_was_added = counter_was_added;
+            queueContext.counter_needs_to_add = counter_needs_to_add;
+            queueContext.index = ind;
+            queueContext.update_sai = need_update_sai;
+
+            portContext.queues.emplace_back(queueContext);
+        }
+
+        task.ports.emplace_back(portContext);
+    }
+
+    m_queueBulk[op].emplace_back(task);
+
+    return task_process_status::task_success;
+}
+
+task_process_status BufferOrch::processQueuePost(const QueueTask& task)
+{
+    SWSS_LOG_ENTER();
+
+    const auto& key = kfvKey(task.kofvs);
+    const auto& op = kfvOp(task.kofvs);
+    const auto tokens = tokenize(key, delimiter);
+    Port port;
+
+    for (const auto& portContext: task.ports)
+    {
+        const auto& port_name = portContext.port_name;
+        if (!gPortsOrch->getPort(port_name, port))
+        {
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        for (const auto& queueContext: portContext.queues)
+        {
+            const auto ind = queueContext.index;
+
+            if (queueContext.update_sai)
+            {
+                const auto sai_status = queueContext.status;
+
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to set queue's buffer profile attribute, status:%d", sai_status);
@@ -991,14 +1079,14 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                     auto queues = tokens[1];
-                    if (!counter_was_added && counter_needs_to_add &&
+                    if (!queueContext.counter_was_added && queueContext.counter_needs_to_add &&
                         (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
                         SWSS_LOG_INFO("Creating counters for %s %zd", port_name.c_str(), ind);
                         gPortsOrch->createPortBufferQueueCounters(port, queues);
                     }
-                    else if (counter_was_added && !counter_needs_to_add &&
-                             (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                    else if (queueContext.counter_was_added && !queueContext.counter_needs_to_add &&
+                                (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
                         SWSS_LOG_INFO("Removing counters for %s %zd", port_name.c_str(), ind);
                         gPortsOrch->removePortBufferQueueCounters(port, queues);
@@ -1054,17 +1142,23 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         // should be applied to a physical port before the physical port is brought up to
         // carry traffic. Here, we alert to application through syslog when such a wrong
         // set order is detected.
-        for (const auto &port_name : port_names)
+        for (const auto &portContext : task.ports)
         {
+            const auto& port_name = portContext.port_name;
+            const auto& local_port_name = portContext.local_port_name;
+            const auto local_port = portContext.local_port;
+
             if(local_port == true)
             {
-                if (gPortsOrch->isPortAdminUp(local_port_name)) {
+                if (gPortsOrch->isPortAdminUp(local_port_name))
+                {
                     SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
                 }
             }
             else
             {
-                if (gPortsOrch->isPortAdminUp(port_name)) {
+                if (gPortsOrch->isPortAdminUp(port_name))
+                {
                     SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
                 }
             }
@@ -1072,6 +1166,72 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     }
 
     return task_process_status::task_success;
+}
+
+void BufferOrch::processQueueBulk(Consumer& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto op: {DEL_COMMAND, SET_COMMAND})
+    {
+        std::vector<sai_object_id_t> oids;
+        std::vector<sai_attribute_t> attrs;
+        std::vector<sai_status_t> statuses;
+
+        auto& bulk = m_queueBulk[op];
+        for (const auto& task: bulk)
+        {
+            for (const auto& port: task.ports)
+            {
+                for (const auto& queue: port.queues)
+                {
+                    if (queue.update_sai)
+                    {
+                        oids.push_back(queue.queue_id);
+                        attrs.push_back(queue.attr.getSaiAttr());
+                        statuses.push_back(SAI_STATUS_NOT_EXECUTED);
+                    }
+                }
+            }
+        }
+
+        const auto objectCount = static_cast<uint32_t>(oids.size());
+
+        if (objectCount > 0)
+        {
+            SWSS_LOG_TIMER("Set %u queues buffer profile", objectCount);
+
+            sai_queue_api->set_queues_attribute(objectCount, oids.data(), attrs.data(),
+                SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
+        }
+
+        size_t i = 0;
+        for (auto& task: bulk)
+        {
+            for (auto& port: task.ports)
+            {
+                for (auto& queue: port.queues)
+                {
+                    if (queue.update_sai)
+                    {
+                        queue.status = statuses[i];
+                        i++;
+                    }
+                }
+            }
+        }
+
+        for (const auto& task: bulk)
+        {
+            auto task_status = processQueuePost(task);
+            if (task_status == task_process_status::task_need_retry)
+            {
+                consumer.m_toSync.emplace(kfvKey(task.kofvs), task.kofvs);
+            }
+        }
+
+        bulk.clear();
+    }
 }
 
 /*
@@ -1104,6 +1264,9 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
         SWSS_LOG_ERROR("Failed to obtain pg range values");
         return task_process_status::task_invalid_entry;
     }
+
+    PriorityGroupTask task;
+    task.kofvs = tuple;
 
     if (op == SET_COMMAND)
     {
@@ -1169,6 +1332,10 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+
+        PriorityGroupTask::PortContext portContext;
+        portContext.port_name = port_name;
+
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
             SWSS_LOG_DEBUG("processing pg:%zd", ind);
@@ -1179,38 +1346,82 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
             }
             else
             {
+                sai_object_id_t pg_id = port.m_priority_group_ids[ind];
                 if (need_update_sai)
                 {
-                    sai_object_id_t pg_id;
-                    pg_id = port.m_priority_group_ids[ind];
                     SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
-                    sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
-                    if (sai_status != SAI_STATUS_SUCCESS)
+                }
+
+                PriorityGroupTask::PgContext pgContext;
+                pgContext.pg_id = pg_id;
+                pgContext.attr = SaiAttrWrapper(SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP, attr);
+                pgContext.counter_was_added = counter_was_added;
+                pgContext.counter_needs_to_add = counter_needs_to_add;
+                pgContext.index = ind;
+                pgContext.update_sai = need_update_sai;
+
+                portContext.pgs.emplace_back(pgContext);
+            }
+        }
+
+        task.ports.emplace_back(portContext);
+    }
+
+    m_priorityGroupBulk[op].emplace_back(task);
+
+    return task_process_status::task_success;
+}
+
+task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask& task)
+{
+    SWSS_LOG_ENTER();
+
+    const auto& key = kfvKey(task.kofvs);
+    const auto& op = kfvOp(task.kofvs);
+    const auto tokens = tokenize(key, delimiter);
+    Port port;
+
+    for (const auto& portContext: task.ports)
+    {
+        const auto& port_name = portContext.port_name;
+        if (!gPortsOrch->getPort(port_name, port))
+        {
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        for (const auto& pg: portContext.pgs)
+        {
+            const auto ind = pg.index;
+
+            if (pg.update_sai)
+            {
+                const auto sai_status = pg.status;
+
+                if (sai_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
                     {
-                        SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
-                        task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
-                        if (handle_status != task_process_status::task_success)
-                        {
-                            return handle_status;
-                        }
+                        return handle_status;
                     }
-                    // create or remove a port PG counter for the PG buffer
-                    else
+                }
+                // create or remove a port PG counter for the PG buffer
+                else
+                {
+                    auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+                    auto pgs = tokens[1];
+                    if (!pg.counter_was_added && pg.counter_needs_to_add &&
+                        (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
                     {
-                        auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
-                        auto pgs = tokens[1];
-                        if (!counter_was_added && counter_needs_to_add &&
-                            (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
-                        {
-                            SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
-                            gPortsOrch->createPortBufferPgCounters(port, pgs);
-                        }
-                        else if (counter_was_added && !counter_needs_to_add &&
-                                 (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
-                        {
-                            SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
-                            gPortsOrch->removePortBufferPgCounters(port, pgs);
-                        }
+                        SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
+                        gPortsOrch->createPortBufferPgCounters(port, pgs);
+                    }
+                    else if (pg.counter_was_added && !pg.counter_needs_to_add &&
+                                (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                    {
+                        SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
+                        gPortsOrch->removePortBufferPgCounters(port, pgs);
                     }
                 }
             }
@@ -1246,7 +1457,6 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
             }
             /* save the last command (set or delete) */
             pg_port_flags[port_name][ind] = op;
-
         }
     }
 
@@ -1263,9 +1473,11 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
         // should be applied to a physical port before the physical port is brought up to
         // carry traffic. Here, we alert to application through syslog when such a wrong
         // set order is detected.
-        for (const auto &port_name : port_names)
+        for (const auto &portContext : task.ports)
         {
-            if (gPortsOrch->isPortAdminUp(port_name)) {
+            const auto& port_name = portContext.port_name;
+            if (gPortsOrch->isPortAdminUp(port_name))
+            {
                 SWSS_LOG_WARN("PG profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
             }
         }
@@ -1273,6 +1485,73 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
 
     return task_process_status::task_success;
 }
+
+void BufferOrch::processPriorityGroupBulk(Consumer& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto op: {DEL_COMMAND, SET_COMMAND})
+    {
+        std::vector<sai_object_id_t> oids;
+        std::vector<sai_attribute_t> attrs;
+        std::vector<sai_status_t> statuses;
+
+        auto& bulk = m_priorityGroupBulk[op];
+        for (const auto& task: bulk)
+        {
+            for (const auto& port: task.ports)
+            {
+                for (const auto& pg: port.pgs)
+                {
+                    if (pg.update_sai)
+                    {
+                        oids.push_back(pg.pg_id);
+                        attrs.push_back(pg.attr.getSaiAttr());
+                        statuses.push_back(SAI_STATUS_NOT_EXECUTED);
+                    }
+                }
+            }
+        }
+
+        const auto objectCount = static_cast<uint32_t>(oids.size());
+
+        if (objectCount > 0)
+        {
+            SWSS_LOG_TIMER("Set %u ingress priority groups buffer profile", objectCount);
+
+            sai_buffer_api->set_ingress_priority_groups_attribute(objectCount, oids.data(), attrs.data(),
+                SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
+        }
+
+        size_t i = 0;
+        for (auto& task: bulk)
+        {
+            for (auto& port: task.ports)
+            {
+                for (auto& pg: port.pgs)
+                {
+                    if (pg.update_sai)
+                    {
+                        pg.status = statuses[i];
+                        i++;
+                    }
+                }
+            }
+        }
+
+        for (const auto& task: bulk)
+        {
+            auto task_status = processPriorityGroupPost(task);
+            if (task_status == task_process_status::task_need_retry)
+            {
+                consumer.m_toSync.emplace(kfvKey(task.kofvs), task.kofvs);
+            }
+        }
+
+        bulk.clear();
+    }
+}
+
 
 /*
 Input sample:"i_port.profile0,i_port.profile1"
@@ -1333,6 +1612,9 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
         SWSS_LOG_ERROR("Unknown command %s when handling BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE key %s", op.c_str(), key.c_str());
     }
 
+    PortBufferProfileListTask task;
+    task.kofvs = tuple;
+
     for (string port_name : port_names)
     {
         if (!gPortsOrch->getPort(port_name, port))
@@ -1340,7 +1622,21 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
-        sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+        task.ports.emplace_back(PortBufferProfileListTask::PortContext{port_name, port.m_port_id, SaiAttrWrapper{SAI_OBJECT_TYPE_PORT, attr}, SAI_STATUS_NOT_EXECUTED});
+    }
+
+    m_portIngressBufferProfileListBulk[op].push_back(task);
+
+    return task_process_status::task_success;
+}
+
+task_process_status BufferOrch::processIngressBufferProfileListPost(const PortBufferProfileListTask& task)
+{
+    for (const auto& portContext: task.ports)
+    {
+        const auto& port_name = portContext.port_name;
+        sai_status_t sai_status = portContext.status;
         if (sai_status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set ingress buffer profile list on port, status:%d, key:%s", sai_status, port_name.c_str());
@@ -1353,6 +1649,60 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
     }
 
     return task_process_status::task_success;
+}
+
+void BufferOrch::processIngressBufferProfileListBulk(Consumer& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto op: {DEL_COMMAND, SET_COMMAND})
+    {
+        std::vector<sai_object_id_t> oids;
+        std::vector<sai_attribute_t> attrs;
+        std::vector<sai_status_t> statuses;
+
+        auto& bulk = m_portIngressBufferProfileListBulk[op];
+        for (const auto& task: bulk)
+        {
+            for (const auto& port: task.ports)
+            {
+                oids.push_back(port.port_oid);
+                attrs.push_back(port.attr.getSaiAttr());
+                statuses.push_back(SAI_STATUS_NOT_EXECUTED);
+            }
+        }
+
+        const auto objectCount = static_cast<uint32_t>(oids.size());
+
+        if (objectCount > 0)
+        {
+            SWSS_LOG_TIMER("Set %u ports ingress buffer profile list", objectCount);
+
+            sai_port_api->set_ports_attribute(objectCount, oids.data(), attrs.data(),
+                SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
+        }
+
+        size_t i = 0;
+        for (auto& task: bulk)
+        {
+            for (auto& port: task.ports)
+            {
+                port.status = statuses[i];
+                i++;
+            }
+        }
+
+        for (const auto& task: bulk)
+        {
+            auto task_status = processIngressBufferProfileListPost(task);
+            if (task_status == task_process_status::task_need_retry)
+            {
+                consumer.m_toSync.emplace(kfvKey(task.kofvs), task.kofvs);
+            }
+        }
+
+        bulk.clear();
+    }
 }
 
 /*
@@ -1412,6 +1762,9 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
         SWSS_LOG_ERROR("Unknown command %s when handling BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE key %s", op.c_str(), key.c_str());
     }
 
+    PortBufferProfileListTask task;
+    task.kofvs = tuple;
+
     for (string port_name : port_names)
     {
         if (!gPortsOrch->getPort(port_name, port))
@@ -1419,7 +1772,21 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
-        sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+        task.ports.emplace_back(PortBufferProfileListTask::PortContext{port_name, port.m_port_id, SaiAttrWrapper{SAI_OBJECT_TYPE_PORT, attr}, SAI_STATUS_NOT_EXECUTED});
+    }
+
+    m_portEgressBufferProfileListBulk[op].push_back(task);
+
+    return task_process_status::task_success;
+}
+
+task_process_status BufferOrch::processEgressBufferProfileListPost(const PortBufferProfileListTask& task)
+{
+    for (const auto& portContext: task.ports)
+    {
+        const auto& port_name = portContext.port_name;
+        sai_status_t sai_status = portContext.status;
         if (sai_status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set egress buffer profile list on port, status:%d, key:%s", sai_status, port_name.c_str());
@@ -1432,6 +1799,60 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
     }
 
     return task_process_status::task_success;
+}
+
+void BufferOrch::processEgressBufferProfileListBulk(Consumer& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto op: {DEL_COMMAND, SET_COMMAND})
+    {
+        std::vector<sai_object_id_t> oids;
+        std::vector<sai_attribute_t> attrs;
+        std::vector<sai_status_t> statuses;
+
+        auto& bulk = m_portEgressBufferProfileListBulk[op];
+        for (const auto& task: bulk)
+        {
+            for (const auto& port: task.ports)
+            {
+                oids.push_back(port.port_oid);
+                attrs.push_back(port.attr.getSaiAttr());
+                statuses.push_back(SAI_STATUS_NOT_EXECUTED);
+            }
+        }
+
+        const auto objectCount = static_cast<uint32_t>(oids.size());
+
+        if (objectCount > 0)
+        {
+            SWSS_LOG_TIMER("Set %u ports egress buffer profile list", objectCount);
+
+            sai_port_api->set_ports_attribute(objectCount, oids.data(), attrs.data(),
+                SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
+        }
+
+        size_t i = 0;
+        for (auto& task: bulk)
+        {
+            for (auto& port: task.ports)
+            {
+                port.status = statuses[i];
+                i++;
+            }
+        }
+
+        for (const auto& task: bulk)
+        {
+            auto task_status = processEgressBufferProfileListPost(task);
+            if (task_status == task_process_status::task_need_retry)
+            {
+                consumer.m_toSync.emplace(kfvKey(task.kofvs), task.kofvs);
+            }
+        }
+
+        bulk.clear();
+    }
 }
 
 void BufferOrch::doTask()
@@ -1466,6 +1887,7 @@ void BufferOrch::doTask()
             continue;
         consumer->drain();
     }
+    gPortsOrch->flushCounters();
 }
 
 void BufferOrch::doTask(Consumer &consumer)
@@ -1486,11 +1908,12 @@ void BufferOrch::doTask(Consumer &consumer)
         return;
     }
 
+    auto map_type_name = consumer.getTableName();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         /* Make sure the handler is initialized for the task */
-        auto map_type_name = consumer.getTableName();
         if (m_bufferHandlerMap.find(map_type_name) == m_bufferHandlerMap.end())
         {
             SWSS_LOG_ERROR("No handler for key:%s found.", map_type_name.c_str());
@@ -1523,4 +1946,11 @@ void BufferOrch::doTask(Consumer &consumer)
                 break;
         }
     }
+
+    if (m_bufferFlushHandlerMap.find(map_type_name) != m_bufferFlushHandlerMap.end())
+    {
+        (this->*(m_bufferFlushHandlerMap[map_type_name]))(consumer);
+    }
+
+    gPortsOrch->flushCounters();
 }

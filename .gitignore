@@ -59,6 +59,8 @@ cfgmgr/sflowmgrd
 cfgmgr/macsecmgrd
 cfgmgr/coppmgrd
 cfgmgr/tunnelmgrd
+cfgmgr/fabricmgrd
+cfgmgr/stpmgrd
 fpmsyncd/fpmsyncd
 gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
@@ -83,6 +85,8 @@ tests/mock_tests/tests_portsyncd
 
 # Test Files #
 ##############
+*gcda
+*gcno
 tests/log
 tests/mock_tests/test-suite.log
 tests/mock_tests/tests.log
@@ -92,5 +96,4 @@ tests/tests.log
 tests/tests.trs
 tests/mock_tests/**/*log
 tests/mock_tests/**/*trs
-orchagent/p4orch/tests/**/*gcda
-orchagent/p4orch/tests/**/*gcno
+orchagent/p4orch/tests/p4orch_tests

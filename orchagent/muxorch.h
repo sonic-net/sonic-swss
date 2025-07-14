@@ -174,6 +174,7 @@ const request_description_t mux_cfg_request_description = {
                 { "soc_ipv4", REQ_T_IP_PREFIX },
                 { "soc_ipv6", REQ_T_IP_PREFIX },
                 { "cable_type", REQ_T_STRING },
+                { "prober_type", REQ_T_STRING },
             },
             { }
 };
@@ -235,6 +236,7 @@ public:
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
+    sai_object_id_t getTunnelNextHopId();
 
     void updateRoute(const IpPrefix &pfx, bool add);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);

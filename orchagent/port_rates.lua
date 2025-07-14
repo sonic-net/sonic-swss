@@ -200,6 +200,10 @@ local function compute_rate(port)
             local fec_corr_bits_last = redis.call('HGET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_CORRECTED_BITS_last')
             local fec_uncorr_frames_last = redis.call('HGET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_NOT_CORRECTABLE_FARMES_last')
 
+            -- Initialize to 0 if last counter values does not exist (during first boot for eg)
+            fec_corr_bits_last = tonumber(fec_corr_bits_last) or 0
+            fec_uncorr_frames_last = tonumber(fec_uncorr_frames_last) or 0
+
             local serdes_rate_total = lanes_count * serdes_speed * delta / 1000
 
             fec_corr_bits_ber_new = (fec_corr_bits - fec_corr_bits_last) / serdes_rate_total
@@ -207,7 +211,6 @@ local function compute_rate(port)
         else
             logit("FEC counters or lane info not found on " .. port)
         end
-
     else
         redis.call('HSET', state_table, 'INIT_DONE', 'COUNTERS_LAST')
     end
@@ -228,6 +231,12 @@ local function compute_rate(port)
         return
     end
     -- Set BER values
+    local fec_pre_ber_max = redis.call('HGET', rates_table_name .. ':' .. port, 'FEC_PRE_BER_MAX')
+    fec_pre_ber_max =  tonumber(fec_pre_ber_max) or 0
+
+    if fec_corr_bits_ber_new > fec_pre_ber_max then
+        redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_PRE_BER_MAX', fec_corr_bits_ber_new)
+    end
     redis.call('HSET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_CORRECTED_BITS_last', fec_corr_bits)
     redis.call('HSET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_NOT_CORRECTABLE_FARMES_last', fec_uncorr_frames)
     redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_PRE_BER', fec_corr_bits_ber_new)
