@@ -28,6 +28,7 @@ namespace stporch_test
 
     using ::testing::_;
     using ::testing::Return;
+    using ::gStpOrch;
 
     sai_status_t _ut_stub_sai_set_vlan_attribute(_In_ sai_object_id_t vlan_oid,
                     _In_ const sai_attribute_t *attr)
@@ -95,11 +96,8 @@ namespace stporch_test
                 {"STP_TABLE",
                 "STP_VLAN_INSTANCE_TABLE",
                 "STP_PORT_STATE_TABLE",
-
                 "STP_FASTAGEING_FLUSH_TABLE",
                 "STP_INST_PORT_FLUSH_TABLE"};
-
-                "STP_FASTAGEING_FLUSH_TABLE"};
             _hook_sai_switch_api();
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
         }
