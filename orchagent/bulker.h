@@ -39,6 +39,13 @@ typedef sai_status_t (*sai_bulk_set_inbound_routing_entry_attribute_fn) (
         _In_ sai_bulk_op_error_mode_t mode,
         _Out_ sai_status_t *object_statuses);
 
+typedef sai_status_t (*sai_bulk_set_outbound_port_map_port_range_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_outbound_port_map_port_range_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
     if (a.addr_family != b.addr_family) return false;
@@ -136,6 +143,15 @@ static inline bool operator==(const sai_outbound_routing_entry_t& a, const sai_o
     return a.switch_id == b.switch_id
         && a.outbound_routing_group_id == b.outbound_routing_group_id
         && a.destination == b.destination
+        ;
+}
+
+static inline bool operator==(const sai_outbound_port_map_port_range_entry_t& a, const sai_outbound_port_map_port_range_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.outbound_port_map_id == b.outbound_port_map_id
+        && a.dst_port_range.min == b.dst_port_range.min
+        && a.dst_port_range.max == b.dst_port_range.max
         ;
 }
 
@@ -273,6 +289,20 @@ namespace std
             boost::hash_combine(seed, a.eni_id);
             boost::hash_combine(seed, a.vni);
             boost::hash_combine(seed, a.sip);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_outbound_port_map_port_range_entry_t>
+    {
+        size_t operator()(const sai_outbound_port_map_port_range_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.outbound_port_map_id);
+            boost::hash_combine(seed, a.dst_port_range.min);
+            boost::hash_combine(seed, a.dst_port_range.max);
             return seed;
         }
     };
@@ -466,6 +496,19 @@ struct SaiBulkerTraits<sai_dash_tunnel_api_t>
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_outbound_port_map_api_t>
+{
+    // Need to bulk port map objects and port map range entries from the same DASH API
+    // entry_t, bulk_create/remove_entry_fn are only used by EntityBulker so we can use them for
+    // port map port range bulking w/o affecting port map object bulking
+    using api_t = sai_dash_outbound_port_map_api_t;
+    using entry_t = sai_outbound_port_map_port_range_entry_t;
+    using bulk_create_entry_fn = sai_bulk_create_outbound_port_map_port_range_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_outbound_port_map_port_range_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_outbound_port_map_port_range_entry_attribute_fn;
 };
 
 template <typename T>
@@ -922,6 +965,14 @@ inline EntityBulker<sai_dash_outbound_routing_api_t>::EntityBulker(sai_dash_outb
     set_entries_attribute = nullptr;
 }
 
+template <>
+inline EntityBulker<sai_dash_outbound_port_map_api_t>::EntityBulker(sai_dash_outbound_port_map_api_t *api, size_t max_bulk_size) : max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_port_map_port_range_entries;
+    remove_entries = api->remove_outbound_port_map_port_range_entries;
+    set_entries_attribute = nullptr;
+}
+
 template <typename T>
 class ObjectBulker
 {
@@ -1139,9 +1190,9 @@ private:
                                                             // object_id -> object_status
     std::unordered_map<sai_object_id_t, sai_status_t *>     removing_entries;
 
-    typename Ts::bulk_create_entry_fn                       create_entries;
-    typename Ts::bulk_remove_entry_fn                       remove_entries;
-    typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
+    sai_bulk_object_create_fn                               create_entries;
+    sai_bulk_object_remove_fn                               remove_entries;
+    sai_bulk_set_entry_attribute_fn                         set_entries_attribute;
 
     std::unordered_map<sai_object_id_t, sai_status_t>       create_statuses;
 
@@ -1312,4 +1363,13 @@ inline ObjectBulker<sai_dash_tunnel_api_t>::ObjectBulker(SaiBulkerTraits<sai_das
             ss << "Invalid object type for sai_dash_tunnel_api_t: " << type_str;
             throw std::invalid_argument(ss.str());
     }
+}
+
+template <>
+inline ObjectBulker<sai_dash_outbound_port_map_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_outbound_port_map_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_port_maps;
+    remove_entries = api->remove_outbound_port_maps;
 }
