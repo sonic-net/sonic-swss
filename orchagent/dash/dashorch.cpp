@@ -56,6 +56,12 @@ static const std::unordered_map<dash::eni::EniMode, sai_dash_eni_mode_t> eniMode
     { dash::eni::MODE_FNIC, SAI_DASH_ENI_MODE_FNIC }
 };
 
+static const std::unordered_map<string, sai_direction_lookup_entry_action_t> directionLookupActionMap =
+{
+    { "src_mac", SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION },
+    { "dst_mac", SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_INBOUND_DIRECTION }
+};
+
 DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tableName, zmqServer),
     m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
@@ -186,7 +192,14 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     direction_lookup_entry.switch_id = gSwitchId;
     direction_lookup_entry.vni = entry.vm_vni();
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION;
-    appliance_attr.value.u32 = SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION;
+    if (entry.has_outbound_direction_lookup())
+    {
+        appliance_attr.value.u32 = directionLookupActionMap.at(entry.outbound_direction_lookup());
+    }
+    else
+    {
+        appliance_attr.value.u32 = SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION;
+    }
     direction_lookup_attrs.push_back(appliance_attr);
 
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE;
