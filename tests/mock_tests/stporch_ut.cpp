@@ -41,6 +41,27 @@ namespace stporch_test
         return SAI_STATUS_SUCCESS;
     }
 
+    sai_status_t _ut_stub_sai_get_switch_attribute(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        return SAI_STATUS_SUCCESS;
+        if (attr_count == 2)
+        {
+            if (attr_list[0].id == SAI_SWITCH_ATTR_DEFAULT_STP_INST_ID)
+            {
+                attr_list[0].value.oid = 0;
+            }
+            if (attr_list[1].id == SAI_SWITCH_ATTR_MAX_STP_INSTANCE)
+            {
+                attr_list[1].value.u32 = 510;
+            }
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+    
+
     class StpOrchTest : public MockOrchTest {
     protected:
         void ApplyInitialConfigs()
@@ -74,14 +95,19 @@ namespace stporch_test
                 {"STP_TABLE",
                 "STP_VLAN_INSTANCE_TABLE",
                 "STP_PORT_STATE_TABLE",
+
                 "STP_FASTAGEING_FLUSH_TABLE",
                 "STP_INST_PORT_FLUSH_TABLE"};
+
+                "STP_FASTAGEING_FLUSH_TABLE"};
+            _hook_sai_switch_api();
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
         }
         void PreTearDown() override
         {
             delete gStpOrch;
             gStpOrch = nullptr;
+            _unhook_sai_switch_api();
         }
 
         sai_stp_api_t ut_sai_stp_api;
@@ -128,6 +154,20 @@ namespace stporch_test
         void _unhook_sai_fdb_api()
         {
             sai_fdb_api = org_sai_fdb_api;
+        }
+
+        sai_switch_api_t ut_sai_switch_api;
+        sai_switch_api_t *pold_sai_switch_api;
+        void _hook_sai_switch_api()
+        {
+            ut_sai_switch_api = *sai_switch_api;
+            pold_sai_switch_api = sai_switch_api;
+            ut_sai_switch_api.get_switch_attribute = _ut_stub_sai_get_switch_attribute;
+            sai_switch_api = &ut_sai_switch_api;
+        }
+        void _unhook_sai_switch_api()
+        {
+            sai_switch_api = pold_sai_switch_api;
         }
     };
 

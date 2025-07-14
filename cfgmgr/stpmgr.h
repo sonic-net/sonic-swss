@@ -100,6 +100,7 @@ typedef enum STP_CTL_TYPE {
 typedef struct STP_IPC_MSG {
     int          msg_type;
     unsigned int msg_len;
+    L2_PROTO_MODE proto_mode;
     char         data[0];
 } ALIGNED(4) STP_IPC_MSG;
 
