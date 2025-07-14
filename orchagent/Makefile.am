@@ -69,6 +69,7 @@ orchagent_SOURCES = \
             copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
+            buffer/bufferhelper.cpp \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
@@ -124,6 +125,7 @@ orchagent_SOURCES = \
             dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
             dash/dashhaorch.cpp \
+            dash/dashportmaporch.cpp \
             twamporch.cpp \
             stporch.cpp
 

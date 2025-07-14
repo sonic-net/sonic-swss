@@ -279,7 +279,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         gSrv6Orch->setCountersState((value == "enable"));
                     }
 
-                    gPortsOrch->flushCounters();
+                    if (gPortsOrch)
+                    {
+                        gPortsOrch->flushCounters();
+                    }
+
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
                     if (gPortsOrch && gPortsOrch->isGearboxEnabled())
