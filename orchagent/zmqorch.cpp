@@ -48,7 +48,7 @@ ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableName
 
 void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
 {
-    if (db->getDbId() == APPL_DB)
+    if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
     {
         if (zmqServer != nullptr)
         {

@@ -38,6 +38,7 @@
 #include "dashvnetorch.h"
 #include "dashhaorch.h"
 #include "dashtunnelorch.h"
+#include "dashportmaporch.h"
 
 extern int gBatchSize;
 
@@ -113,4 +114,5 @@ extern sai_dash_appliance_api_t* sai_dash_appliance_api;
 extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
 extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
+extern sai_dash_outbound_port_map_api_t* sai_dash_outbound_port_map_api;
 extern sai_dash_trusted_vni_api_t* sai_dash_trusted_vni_api;
