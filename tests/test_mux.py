@@ -1709,44 +1709,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         self.create_and_test_soc(appdb, asicdb, dvs, dvs_route)
 
-    def test_warm_boot_mux_state(
-            self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            setup_peer_switch, neighbor_cleanup, testlog
-    ):
-        """
-        test mux initialization during warm boot.
-        """
-        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        apdb = dvs.get_app_db()
-
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.set_mux_state(appdb, "Ethernet4", "active")
-        self.set_mux_state(appdb, "Ethernet8", "standby")
-
-        # Execute the warm reboot
-        dvs.runcmd("config warm_restart enable swss")
-        dvs.stop_swss()
-        dvs.start_swss()
-        dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
-
-        time.sleep(5)
-
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
-
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
-
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
-
-    def test_warm_boot_neighbor_restore(
+   def test_warm_boot_neighbor_restore(
         self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
         setup_peer_switch, neighbor_cleanup, testlog
     ):
@@ -1833,6 +1796,43 @@ class TestMuxTunnel(TestMuxTunnelBase):
             ]
         )
 
+    def test_warm_boot_mux_state(
+            self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        test mux initialization during warm boot.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        apdb = dvs.get_app_db()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.set_mux_state(appdb, "Ethernet8", "standby")
+
+        # Execute the warm reboot
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+
+        time.sleep(5)
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
+ 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
