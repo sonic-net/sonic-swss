@@ -60,6 +60,7 @@ namespace mock_orch_test
         DashRouteOrch *m_DashRouteOrch;
         DashTunnelOrch *m_DashTunnelOrch;
         DashMeterOrch *m_DashMeterOrch;
+        DashPortMapOrch *m_dashPortMapOrch;
 
         void PrepareSai();
         void SetUp();

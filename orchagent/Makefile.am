@@ -48,6 +48,7 @@ orchagent_SOURCES = \
             $(top_srcdir)/lib/gearboxutils.cpp \
             $(top_srcdir)/lib/subintf.cpp \
             $(top_srcdir)/lib/recorder.cpp \
+            $(top_srcdir)/lib/orch_zmq_config.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
@@ -67,6 +68,7 @@ orchagent_SOURCES = \
             copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
+            buffer/bufferhelper.cpp \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
@@ -80,6 +82,8 @@ orchagent_SOURCES = \
             saiattr.cpp \
             switch/switch_capabilities.cpp \
             switch/switch_helper.cpp \
+            switch/trimming/capabilities.cpp \
+            switch/trimming/helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
             pfcactionhandler.cpp \
@@ -103,6 +107,7 @@ orchagent_SOURCES = \
             macsecorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
+            icmporch.cpp \
             srv6orch.cpp \
             response_publisher.cpp \
             nvgreorch.cpp \
@@ -119,6 +124,7 @@ orchagent_SOURCES = \
             dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
             dash/dashhaorch.cpp \
+            dash/dashportmaporch.cpp \
             twamporch.cpp \
             stporch.cpp
 
@@ -145,7 +151,8 @@ orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFL
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
 
-routeresync_SOURCES = routeresync.cpp
+routeresync_SOURCES = routeresync.cpp \
+             $(top_srcdir)/lib/orch_zmq_config.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 routeresync_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 routeresync_LDADD = $(LDFLAGS_ASAN) -lswsscommon

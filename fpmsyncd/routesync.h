@@ -3,6 +3,8 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
 #include "netmsg.h"
 #include "linkcache.h"
 #include "fpminterface.h"
@@ -58,6 +60,10 @@ public:
         return m_isSuppressionEnabled;
     }
 
+    /* Helper method to set route table with warm restart support */
+    void setRouteWithWarmRestart(const std::string& key, const std::vector<FieldValueTuple>& fvVector,
+                                 shared_ptr<ProducerStateTable> table, const std::string& cmd = SET_COMMAND);
+
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
     void onWarmStartEnd(swss::DBConnector& applStateDb);
@@ -75,17 +81,24 @@ public:
         m_fpmInterface = nullptr;
     }
 
-    WarmStartHelper  m_warmStartHelper;
+    WarmStartHelper& getWarmStartHelper()
+    {
+        return m_warmStartHelper;
+    }
 
 private:
+    /* ZMQ client */
+    shared_ptr<ZmqClient> m_zmqClient;
     /* regular route table */
-    ProducerStateTable  m_routeTable;
+    shared_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
-    ProducerStateTable  m_label_routeTable;
+    shared_ptr<ProducerStateTable> m_label_routeTable;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable;
+    /* Warm start helper */
+    WarmStartHelper m_warmStartHelper;
     /* srv6 mySid table */
     ProducerStateTable m_srv6MySidTable; 
     /* srv6 sid list table */

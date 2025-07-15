@@ -22,6 +22,8 @@ using namespace testing;
 
 using ::testing::_;
 
+extern void resetMockWarmStartHelper();
+
 int rt_build_ret = 0;
 bool nlmsg_alloc_ret = true;
 #pragma GCC diagnostic ignored "-Wcast-align"
@@ -69,12 +71,14 @@ class FpmSyncdResponseTest : public ::testing::Test
 public:
     void SetUp() override
     {
+        testing_db::reset();
         EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
         m_routeSync.setSuppressionEnabled(true);
     }
 
     void TearDown() override
     {
+        testing_db::reset();
     }
 
     shared_ptr<swss::DBConnector> m_db = make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -903,4 +907,334 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
     }
 
     rtnl_route_put(test_route);
+}
+
+
+TEST_F(FpmSyncdResponseTest, RouteResponseOnNoProto)
+{
+    // Expect the message to zebra is sent
+    EXPECT_CALL(m_mockFpm, send(_)).Times(0);
+
+    m_routeSync.onRouteResponse("1.0.0.0/24", {
+        {"err_str", "SWSS_RC_SUCCESS"},
+    });
+}
+
+TEST_F(FpmSyncdResponseTest, TestBlackholeRoute)
+{
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+    Table label_route_table(m_db.get(), APP_LABEL_ROUTE_TABLE_NAME);
+    auto createRoute = [](const char* prefix, uint8_t prefixlen) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_BLACKHOLE);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, RT_TABLE_UNSPEC);
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    // create a route
+    const char* test_destipprefix = "10.1.1.0";
+    rtnl_route* test_route = createRoute(test_destipprefix, 24);
+
+    const char* test_destipprefix2 = "20.1.1.0";
+    rtnl_route* test_route2 = createRoute(test_destipprefix2, 24);
+    {
+
+        m_mockRouteSync.onRouteMsg(RTM_NEWROUTE, (nl_object*)test_route, nullptr);
+
+        // verify the blackhole route has protocol programmed
+        vector<FieldValueTuple> fvs;
+        EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
+
+        bool proto_found = false;
+        for (const auto& fv : fvs) {
+            if (fvField(fv) == "protocol") {
+                proto_found = true;
+                EXPECT_EQ(fvValue(fv), "static");
+            }
+        }
+        EXPECT_TRUE(proto_found);
+
+        m_mockRouteSync.onLabelRouteMsg(RTM_NEWROUTE, (nl_object*)test_route2);
+
+        // verify the blackhole route has protocol programmed
+        EXPECT_TRUE(label_route_table.get(test_destipprefix2, fvs));
+
+        proto_found = false;
+        for (const auto& fv : fvs) {
+            if (fvField(fv) == "protocol") {
+                proto_found = true;
+                EXPECT_EQ(fvValue(fv), "static");
+            }
+        }
+        EXPECT_TRUE(proto_found);
+    }
+}
+
+auto create_nl_addr(const char* addr_str)
+{
+    nl_addr* addr;
+    nl_addr_parse(addr_str, AF_INET, &addr);
+    return unique_ptr<nl_addr, decltype(nl_addr_put)*>(addr, nl_addr_put);
+}
+
+auto create_route(const char* dst_addr_str)
+{
+    rtnl_route* route = rtnl_route_alloc();
+    auto dst_addr = create_nl_addr(dst_addr_str);
+    rtnl_route_set_dst(route, dst_addr.get());
+    rtnl_route_set_type(route, RTN_UNICAST);
+    rtnl_route_set_protocol(route, RTPROT_STATIC);
+    rtnl_route_set_family(route, AF_INET);
+    rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+    rtnl_route_set_table(route, RT_TABLE_MAIN);
+    return unique_ptr<rtnl_route, decltype(rtnl_route_put)*>(route, rtnl_route_put);
+}
+
+rtnl_nexthop* create_nexthop(const char* gateway_str)
+{
+    static int idx = 1; // interface index
+    ++idx;
+    // Create a nexthop with 0 weight
+    rtnl_nexthop* nh = rtnl_route_nh_alloc();
+    rtnl_route_nh_set_weight(nh, 0);
+    rtnl_route_nh_set_ifindex(nh, idx);
+    auto gateway_addr = create_nl_addr(gateway_str);
+    rtnl_route_nh_set_gateway(nh, gateway_addr.get());
+    return nh;
+}
+
+// Checks that when a nexthop is not assigned a weight, the default weight of 1 is used.
+TEST_F(FpmSyncdResponseTest, TestGetNextHopWt)
+{
+    auto test_route = create_route("10.1.1.0");
+
+    // Create two nexthops with 0 weight
+    rtnl_nexthop* nh1 = create_nexthop(test_gateway);
+    rtnl_nexthop* nh2 = create_nexthop(test_gateway_);
+
+    // Add new nexthops to the route
+    rtnl_route_add_nexthop(test_route.get(), nh1);
+    rtnl_route_add_nexthop(test_route.get(), nh2);
+
+    EXPECT_EQ(m_mockRouteSync.getNextHopWt(test_route.get()), "1,1");
+}
+
+class WarmRestartRouteSyncTest : public ::testing::Test
+{
+public:
+    void SetUp() override
+    {
+        resetMockWarmStartHelper();  // Reset warm restart state before each test
+        testing_db::reset();
+        EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+    }
+
+    void TearDown() override
+    {
+        resetMockWarmStartHelper();  // Reset warm restart state after each test
+        testing_db::reset();
+    }
+
+    shared_ptr<swss::DBConnector> m_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    shared_ptr<RedisPipeline> m_pipeline = make_shared<RedisPipeline>(m_db.get());
+    RouteSync m_testRouteSync{m_pipeline.get()};
+};
+
+TEST_F(WarmRestartRouteSyncTest, TestRouteMessageHandlingWarmRestartNotInProgress)
+{
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
+
+    auto route = create_route("192.168.1.0/24");
+
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_BGP);
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), nullptr);
+
+    // Verify: Route was set directly in the table
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_TRUE(routeTable.get("192.168.1.0/24", result));
+
+    // Should have protocol and blackhole fields
+    bool foundProtocol = false, foundBlackhole = false;
+    for (const auto& fv : result) {
+        if (fvField(fv) == "protocol" && fvValue(fv) == "bgp") {
+            foundProtocol = true;
+        } else if (fvField(fv) == "blackhole" && fvValue(fv) == "true") {
+            foundBlackhole = true;
+        }
+    }
+    EXPECT_TRUE(foundProtocol);
+    EXPECT_TRUE(foundBlackhole);
+}
+
+TEST_F(WarmRestartRouteSyncTest, TestRouteDeleteHandlingWarmRestartNotInProgress)
+{
+    auto route = create_route("192.168.2.0/24");
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_STATIC);
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), nullptr);
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_TRUE(routeTable.get("192.168.2.0/24", result));
+
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
+
+    m_testRouteSync.onRouteMsg(RTM_DELROUTE, (struct nl_object*)route.get(), nullptr);
+
+    // Verify: Route was deleted from the table
+    EXPECT_FALSE(routeTable.get("192.168.2.0/24", result));
+}
+
+TEST_F(WarmRestartRouteSyncTest, TestBlackholeRouteHandlingWarmRestartNotInProgress)
+{
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
+
+    auto route = create_route("192.168.6.0/24");
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_STATIC);
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), nullptr);
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_TRUE(routeTable.get("192.168.6.0/24", result));
+
+    bool foundBlackhole = false, foundProtocol = false;
+    for (const auto& fv : result) {
+        if (fvField(fv) == "blackhole" && fvValue(fv) == "true") {
+            foundBlackhole = true;
+        } else if (fvField(fv) == "protocol" && fvValue(fv) == "static") {
+            foundProtocol = true;
+        }
+    }
+    EXPECT_TRUE(foundBlackhole);
+    EXPECT_TRUE(foundProtocol);
+}
+
+TEST_F(WarmRestartRouteSyncTest, TestVrfRouteHandlingWarmRestartNotInProgress)
+{
+    // Test VRF route handling with warm restart integration
+
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
+
+    auto route = create_route("192.168.8.0/24");
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_BGP);
+    rtnl_route_set_table(route.get(), 100); // VRF table ID
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), "Vrf100");
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_TRUE(routeTable.get("Vrf100:192.168.8.0/24", result));
+
+    bool foundProtocol = false, foundBlackhole = false;
+    for (const auto& fv : result) {
+        if (fvField(fv) == "protocol" && fvValue(fv) == "bgp") {
+            foundProtocol = true;
+        } else if (fvField(fv) == "blackhole" && fvValue(fv) == "true") {
+            foundBlackhole = true;
+        }
+    }
+    EXPECT_TRUE(foundProtocol);
+    EXPECT_TRUE(foundBlackhole);
+}
+
+TEST_F(WarmRestartRouteSyncTest, TestStaticRouteHandlingWarmRestartNotInProgress)
+{
+    // Test static route handling with warm restart integration
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().inProgress());
+
+    auto route = create_route("192.168.3.0/24");
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_STATIC);
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), nullptr);
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_TRUE(routeTable.get("192.168.3.0/24", result));
+
+    bool foundProtocol = false;
+    for (const auto& fv : result) {
+        if (fvField(fv) == "protocol" && fvValue(fv) == "static") {
+            foundProtocol = true;
+        }
+    }
+    EXPECT_TRUE(foundProtocol);
+}
+
+// Tests for when warm restart IS in progress
+TEST_F(WarmRestartRouteSyncTest, TestRouteHandlingWarmRestartInProgress)
+{
+    // Simulate warm restart in progress by setting state to INITIALIZED (not RECONCILED)
+    m_testRouteSync.getWarmStartHelper().setState(WarmStart::INITIALIZED);
+
+    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper().inProgress());
+    EXPECT_FALSE(m_testRouteSync.getWarmStartHelper().isReconciled());
+
+    auto route = create_route("192.168.10.0/24");
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_BGP);
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), nullptr);
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_FALSE(routeTable.get("192.168.10.0/24", result));
+
+}
+
+TEST_F(WarmRestartRouteSyncTest, TestVrfRouteHandlingWarmRestartInProgress)
+{
+    // Simulate warm restart in progress by setting state to RESTORED
+    m_testRouteSync.getWarmStartHelper().setState(WarmStart::RESTORED);
+
+    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper().inProgress());
+
+    auto route = create_route("192.168.11.0/24");
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_STATIC);
+    rtnl_route_set_table(route.get(), 200); // Different VRF table
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), "Vrf200");
+
+    // Verify: Route should NOT be in the regular table yet (handled by warm restart helper)
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_FALSE(routeTable.get("Vrf200:192.168.11.0/24", result));
+}
+
+TEST_F(WarmRestartRouteSyncTest, TestRouteDeleteHandlingWarmRestartInProgress)
+{
+    auto route = create_route("192.168.12.0/24");
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route.get(), RTPROT_STATIC);
+
+    m_testRouteSync.onRouteMsg(RTM_NEWROUTE, (struct nl_object*)route.get(), nullptr);
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_TRUE(routeTable.get("192.168.12.0/24", result));
+
+    // Now simulate warm restart in progress
+    m_testRouteSync.getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    EXPECT_TRUE(m_testRouteSync.getWarmStartHelper().inProgress());
+
+    m_testRouteSync.onRouteMsg(RTM_DELROUTE, (struct nl_object*)route.get(), nullptr);
+
+    // Verify: Route should still be in table (deletion handled by warm restart helper)
+    EXPECT_TRUE(routeTable.get("192.168.12.0/24", result));
+
 }

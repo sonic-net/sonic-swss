@@ -44,6 +44,7 @@
 #include "macsecorch.h"
 #include "p4orch/p4orch.h"
 #include "bfdorch.h"
+#include "icmporch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
 #include "twamporch.h"
@@ -56,6 +57,7 @@
 #include "dash/dashvnetorch.h"
 #include "dash/dashhaorch.h"
 #include "dash/dashmeterorch.h"
+#include "dash/dashportmaporch.h"
 #include <sairedis.h>
 
 using namespace swss;

@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "mock_sai_switch.h"
+#include "saihelper.h"
 
 extern sai_switch_api_t* sai_switch_api;
 sai_switch_api_t test_sai_switch;
@@ -16,6 +17,7 @@ namespace orchdaemon_test
     using ::testing::_;
     using ::testing::Return;
     using ::testing::StrictMock;
+    using ::testing::InSequence;
 
     DBConnector appl_db("APPL_DB", 0);
     DBConnector state_db("STATE_DB", 0);
@@ -163,6 +165,16 @@ namespace orchdaemon_test
         EXPECT_TRUE(gRingBuffer->IsEmpty() && x==5);
 
         orchd->disableRingBuffer();
+    }
+
+    TEST_F(OrchDaemonTest, TestRedisFlushFailure)
+    {
+        InSequence s;
+
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute( _, _)).WillOnce(Return(SAI_STATUS_FAILURE));
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
+
+        orchd->flush();
     }
 
 }

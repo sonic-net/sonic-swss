@@ -308,6 +308,7 @@ const request_description_t vnet_route_description = {
         { "primary",                REQ_T_IP_LIST },
         { "monitoring",             REQ_T_STRING },
         { "adv_prefix",             REQ_T_IP_PREFIX },
+        { "check_directly_connected", REQ_T_BOOL },
     },
     { }
 };
@@ -438,7 +439,7 @@ private:
     bool hasNextHopGroup(const string&, const NextHopGroupKey&);
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
-                            const string& monitoring);
+                            const string& monitoring, const bool isLocalEp=false);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring);
@@ -474,6 +475,9 @@ private:
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
 
+    bool isLocalEndpoint(const string&vnet, const IpAddress &ipAddr);
+    bool isPartiallyLocal(const std::vector<swss::IpAddress>& ip_list);
+
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
     handler_map handler_map_;
@@ -482,6 +486,7 @@ private:
     VNetNextHopObserverTable next_hop_observers_;
     std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
     std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
+    std::map<std::string, bool> vnet_tunnel_route_check_directly_connected;
     BfdSessionTable bfd_sessions_;
     std::map<std::string, MonitorSessionTable> monitor_info_;
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
