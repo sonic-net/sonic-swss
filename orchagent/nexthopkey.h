@@ -1,11 +1,18 @@
 #ifndef SWSS_NEXTHOPKEY_H
 #define SWSS_NEXTHOPKEY_H
 
+extern "C"
+{
+#include <saitypes.h>
+}
+
+#include <boost/functional/hash.hpp>
+#include <tuple>
+
 #include "ipaddress.h"
 #include "tokenize.h"
 #include "label.h"
 #include "intfsorch.h"
-#include <boost/functional/hash.hpp>
 
 #define LABELSTACK_DELIMITER '+'
 #define NH_DELIMITER '@'
@@ -132,8 +139,8 @@ struct NextHopKey
 
     bool operator<(const NextHopKey &o) const
     {
-        return tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source, srv6_vpn_sid) <
-            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source, o.srv6_vpn_sid);
+        return std::tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source, srv6_vpn_sid) <
+            std::tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source, o.srv6_vpn_sid);
     }
 
     bool operator==(const NextHopKey &o) const

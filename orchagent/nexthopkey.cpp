@@ -1,8 +1,3 @@
-extern "C"
-{
-#include <saitypes.h>
-}
-
 #include "nexthopkey.h"
 
 std::size_t hash_value(const NextHopKey& obj) {
