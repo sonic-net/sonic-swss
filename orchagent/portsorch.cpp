@@ -4280,7 +4280,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             else
             {
                 PortSerdesAttrMap_t serdes_attr;
+                string custom_serdes_attrs_str;
                 getPortSerdesAttr(serdes_attr, pCfg);
+                if (pCfg.serdes.custom_collection.is_set) {
+                    custom_serdes_attrs_str = pCfg.serdes.custom_collection.value;
+                }
 
                 // Saved configured admin status
                 bool admin_status = p.m_admin_state_up;
@@ -4391,9 +4395,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         updatePortStatePoll(p, PORT_STATE_POLL_LT, pCfg.link_training.value);
 
                         // Restore pre-emphasis when LT is transitioned from ON to OFF
-                        if (!p.m_link_training && serdes_attr.empty())
+                        if (!p.m_link_training && (serdes_attr.empty() || custom_serdes_attrs_str.empty()))
                         {
-                            serdes_attr = p.m_preemphasis;
+                            if (serdes_attr.empty()) {
+                                serdes_attr = p.m_preemphasis;
+                            }
+                            if (custom_serdes_attrs_str.empty()) {
+                                custom_serdes_attrs_str = p.m_custom_serdes_attrs;
+                            }
                         }
 
                         SWSS_LOG_NOTICE(
@@ -4904,12 +4913,17 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (!serdes_attr.empty())
+                if (!serdes_attr.empty() or !custom_serdes_attrs_str.empty())
                 {
                     if (p.m_link_training)
                     {
                         SWSS_LOG_NOTICE("Save port %s preemphasis for LT", p.m_alias.c_str());
-                        p.m_preemphasis = serdes_attr;
+                        if (!serdes_attr.empty()) {
+                            p.m_preemphasis = serdes_attr;
+                        }
+                        if (!custom_serdes_attrs_str.empty()) {
+                            p.m_custom_serdes_attrs = custom_serdes_attrs_str;
+                        }
                         m_portList[p.m_alias] = p;
                     }
                     else
@@ -4928,10 +4942,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 m_portList[p.m_alias] = p;
                         }
 
-                        if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
+                        if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr, custom_serdes_attrs_str))
                         {
                             SWSS_LOG_NOTICE("Set port %s SI settings is successful", p.m_alias.c_str());
-                            p.m_preemphasis = serdes_attr;
+                            if (!serdes_attr.empty()) {
+                                p.m_preemphasis = serdes_attr;
+                            }
+                            if (!custom_serdes_attrs_str.empty()) {
+                                p.m_custom_serdes_attrs = custom_serdes_attrs_str;
+                            }
                             m_portList[p.m_alias] = p;
                         }
                         else
@@ -9009,7 +9028,8 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
 }
 
 bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
-                                       map<sai_port_serdes_attr_t, vector<uint32_t>> &serdes_attr)
+                                       map<sai_port_serdes_attr_t, vector<uint32_t>> &serdes_attr,
+                                       const std::string& custom_serdes_attrs_str)
 {
     SWSS_LOG_ENTER();
 
@@ -9060,8 +9080,17 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
         port_serdes_attr.value.u32list.list = it->second.data();
         attr_list.emplace_back(port_serdes_attr);
     }
+
+    if (!custom_serdes_attrs_str.empty())
+    {
+        port_serdes_attr.id = SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION;
+        port_serdes_attr.value.json.json.count = static_cast<uint32_t>(custom_serdes_attrs_str.size());
+        port_serdes_attr.value.json.json.list = reinterpret_cast<int8_t*>(const_cast<char*>(custom_serdes_attrs_str.data()));
+        attr_list.emplace_back(port_serdes_attr);
+    }
+
     status = sai_port_api->create_port_serdes(&port_serdes_id, switch_id,
-                                              static_cast<uint32_t>(serdes_attr.size()+1),
+                                              static_cast<uint32_t>(attr_list.size()),
                                               attr_list.data());
 
     if (status != SAI_STATUS_SUCCESS)
