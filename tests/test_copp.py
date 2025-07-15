@@ -174,8 +174,7 @@ copp_trap = {
         "ip2me": ["ip2me", copp_group_queue1_group1, "always_enabled"],
         "nat": ["src_nat_miss;dest_nat_miss", copp_group_queue1_group2],
         "sflow": ["sample_packet", copp_group_queue2_group1],
-        "ttl": ["ttl_error", copp_group_default],
-        "neighbor_miss": ["neighbor_miss", copp_group_queue1_group3, "always_enabled"]
+        "ttl": ["ttl_error", copp_group_default]
 }
 
 disabled_traps = ["sample_packet"]
