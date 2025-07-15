@@ -5,6 +5,7 @@
 #include "tokenize.h"
 #include "label.h"
 #include "intfsorch.h"
+#include <boost/functional/hash.hpp>
 
 #define LABELSTACK_DELIMITER '+'
 #define NH_DELIMITER '@'
@@ -214,16 +215,16 @@ namespace std {
     struct hash<NextHopKey> {
         size_t operator()(const NextHopKey& obj) const {
             size_t nh_hash = 0;
-            
-            nh_hash ^= (std::hash<std::string>{}(obj.ip_address.to_string()) << 1);
-            nh_hash ^= (std::hash<std::string>{}(obj.alias) << 1);
-            nh_hash ^= (std::hash<uint32_t>{}(obj.vni) << 1);
-            nh_hash ^= (std::hash<std::string>{}(obj.mac_address.to_string()) << 1);
-            nh_hash ^= (std::hash<std::string>{}(obj.label_stack.to_string()) << 1);
-            nh_hash ^= (std::hash<uint32_t>{}(obj.weight) << 1);
-            nh_hash ^= (std::hash<std::string>{}(obj.srv6_segment) << 1);
-            nh_hash ^= (std::hash<std::string>{}(obj.srv6_source) << 1);
-            nh_hash ^= (std::hash<std::string>{}(obj.srv6_vpn_sid) << 1);
+
+            boost::hash_combine(nhg_hash, obj.ip_address.to_string());
+            boost::hash_combine(nhg_hash, obj.alias);
+            boost::hash_combine(nhg_hash, obj.vni);
+            boost::hash_combine(nhg_hash, obj.mac_address.to_string());
+            boost::hash_combine(nhg_hash, obj.label_stack.to_string());
+            boost::hash_combine(nhg_hash, obj.weight);
+            boost::hash_combine(nhg_hash, obj.srv6_segment);
+            boost::hash_combine(nhg_hash, obj.srv6_source);
+            boost::hash_combine(nhg_hash, obj.srv6_vpn_sid);
 
             return nh_hash;
         }

@@ -2,6 +2,7 @@
 #define SWSS_NEXTHOPGROUPKEY_H
 
 #include "nexthopkey.h"
+#include <boost/functional/hash.hpp>
 
 class NextHopGroupKey
 {
@@ -254,14 +255,7 @@ namespace std {
     template <>
     struct hash<NextHopGroupKey> {
         size_t operator()(const NextHopGroupKey& obj) const {
-            size_t nhg_hash = 0;
-
-            for (auto it = obj.m_nexthops.begin(); it != obj.m_nexthops.end(); ++it)
-            {
-                nhg_hash ^= (std::hash<NextHopKey>{}(*it) << 1);
-            }
-
-            return nhg_hash;
+            return boost::hash_range(obj.m_nexthops.begin(), obj.m_nexthops.end());
         }
     };
 }
