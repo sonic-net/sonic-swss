@@ -15,6 +15,8 @@ extern IntfsOrch *gIntfsOrch;
 
 struct NextHopKey
 {
+    // Note: When adding a new field to NextHopKey, make sure to also update
+    // the hash_value method to incorporate the new field into the hash calculation.
     IpAddress           ip_address;     // neighbor IP address
     string              alias;          // incoming interface alias
     uint32_t            vni;            // Encap VNI overlay nexthop
