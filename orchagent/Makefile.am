@@ -67,6 +67,7 @@ orchagent_SOURCES = \
             copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
+            buffer/bufferhelper.cpp \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \

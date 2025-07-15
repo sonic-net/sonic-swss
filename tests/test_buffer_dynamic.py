@@ -9,7 +9,7 @@ from dvslib.dvs_common import PollingConfig
 def dynamic_buffer(dvs):
     buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
     yield
-    buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+    buffer_model.disable_dynamic_buffer(dvs)
 
 @pytest.mark.usefixtures("dynamic_buffer")
 class TestBufferMgrDyn(object):
@@ -140,7 +140,7 @@ class TestBufferMgrDyn(object):
                                               'SAI_BUFFER_PROFILE_ATTR_POOL_ID': self.ingress_lossless_pool_oid,
                                               'SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE': sai_threshold_mode,
                                               sai_threshold_name: sai_threshold_value},
-                                          self.DEFAULT_POLLING_CONFIG)
+                                          polling_config=self.DEFAULT_POLLING_CONFIG)
 
     def make_lossless_profile_name(self, speed, cable_length, mtu = None, dynamic_th = None):
         extra = ""
@@ -889,7 +889,7 @@ class TestBufferMgrDyn(object):
                 pass
 
             # 4. Remove the ingress_lossless_pool from the APPL_DB
-            self.app_db.delete_entry('BUFFER_POOL_TABLE', 'ingress_lossless_pool')
+            dvs.delete_entry_tbl(self.app_db.db_connection, 'BUFFER_POOL_TABLE', 'ingress_lossless_pool')
 
             # 5. Mock it by adding a "TABLE_SET" entry to trigger the fallback logic
             self.app_db.update_entry("BUFFER_PG_TABLE_SET", "", {"NULL": "NULL"})
@@ -901,7 +901,7 @@ class TestBufferMgrDyn(object):
         finally:
             self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', original_ingress_lossless_pool)
             self.config_db.delete_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
-            self.app_db.delete_entry("BUFFER_PG_TABLE_SET", "")
+            dvs.delete_entry_tbl(self.app_db.db_connection, 'BUFFER_PG_TABLE_SET', '')
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
 
 

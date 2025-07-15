@@ -1,4 +1,5 @@
 import pytest
+import time
 import logging
 
 from typing import NamedTuple
@@ -10,6 +11,10 @@ logging.basicConfig(level=logging.INFO)
 trimlogger = logging.getLogger(__name__)
 
 
+SAI_DSCP_MODE_DICT = {
+    "dscp-value": "SAI_PACKET_TRIM_DSCP_RESOLUTION_MODE_DSCP_VALUE",
+    "from-tc": "SAI_PACKET_TRIM_DSCP_RESOLUTION_MODE_FROM_TC"
+}
 SAI_QUEUE_MODE_DICT = {
     "static": "SAI_PACKET_TRIM_QUEUE_RESOLUTION_MODE_STATIC",
     "dynamic": "SAI_PACKET_TRIM_QUEUE_RESOLUTION_MODE_DYNAMIC"
@@ -18,20 +23,27 @@ SAI_BUFFER_PROFILE_MODE_DICT = {
     "drop": "SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP",
     "trim": "SAI_BUFFER_PROFILE_PACKET_ADMISSION_FAIL_ACTION_DROP_AND_TRIM"
 }
+SAI_BUFFER_PROFILE_LIST_DICT = {
+    "ingress": "SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST",
+    "egress": "SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST"
+}
 
 
 class TrimmingTuple(NamedTuple):
     """Config DB trimming attribute container"""
     size: str
     dscp: str
+    tc: str
     queue: str
 
 
 class TrimmingTupleSai(NamedTuple):
     """ASIC DB trimming attribute container"""
     size: str
+    dscpMode: str
     dscp: str
-    mode: str
+    tc: str
+    queueMode: str
     queue: str
 
 
@@ -40,7 +52,7 @@ def dynamicModel(dvs):
     trimlogger.info("Enable dynamic buffer model")
     buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
     yield
-    buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+    buffer_model.disable_dynamic_buffer(dvs)
     trimlogger.info("Disable dynamic buffer model")
 
 
@@ -51,6 +63,15 @@ def portCounters(dvs):
     yield
     dvs.runcmd("counterpoll port disable")
     trimlogger.info("Deinitialize port counters")
+
+
+@pytest.fixture(scope="class")
+def pgCounters(dvs):
+    trimlogger.info("Initialize priority group counters")
+    dvs.runcmd("counterpoll watermark enable")
+    yield
+    dvs.runcmd("counterpoll watermark disable")
+    trimlogger.info("Deinitialize priority group counters")
 
 
 @pytest.fixture(scope="class")
@@ -89,14 +110,52 @@ class TestTrimmingBasicFlows(TestTrimmingFlows):
     @pytest.mark.parametrize(
         "attrDict,saiAttrDict", [
             pytest.param(
-                TrimmingTuple(size="100", dscp="10", queue="1"),
-                TrimmingTupleSai(size="100", dscp="10", mode=SAI_QUEUE_MODE_DICT["static"], queue="1"),
-                id="static-queue-index"
+                TrimmingTuple(size="100", dscp="10", tc=None, queue="1"),
+                TrimmingTupleSai(
+                    size="100",
+                    dscpMode=SAI_DSCP_MODE_DICT["dscp-value"],
+                    dscp="10",
+                    tc=None,
+                    queueMode=SAI_QUEUE_MODE_DICT["static"],
+                    queue="1"
+                ),
+                id="symmetric-dscp-static-queue-index"
             ),
             pytest.param(
-                TrimmingTuple(size="200", dscp="20", queue="dynamic"),
-                TrimmingTupleSai(size="200", dscp="20", mode=SAI_QUEUE_MODE_DICT["dynamic"], queue="1"),
-                id="dynamic-queue-index"
+                TrimmingTuple(size="200", dscp="20", tc=None, queue="dynamic"),
+                TrimmingTupleSai(
+                    size="200",
+                    dscpMode=SAI_DSCP_MODE_DICT["dscp-value"],
+                    dscp="20",
+                    tc=None,
+                    queueMode=SAI_QUEUE_MODE_DICT["dynamic"],
+                    queue="1"
+                ),
+                id="symmetric-dscp-dynamic-queue-index"
+            ),
+            pytest.param(
+                TrimmingTuple(size="100", dscp="from-tc", tc="1", queue="1"),
+                TrimmingTupleSai(
+                    size="100",
+                    dscpMode=SAI_DSCP_MODE_DICT["from-tc"],
+                    dscp="20",
+                    tc="1",
+                    queueMode=SAI_QUEUE_MODE_DICT["static"],
+                    queue="1"
+                ),
+                id="asymmetric-dscp-static-queue-index"
+            ),
+            pytest.param(
+                TrimmingTuple(size="200", dscp="from-tc", tc="2", queue="dynamic"),
+                TrimmingTupleSai(
+                    size="200",
+                    dscpMode=SAI_DSCP_MODE_DICT["from-tc"],
+                    dscp="20",
+                    tc="2",
+                    queueMode=SAI_QUEUE_MODE_DICT["dynamic"],
+                    queue="1"
+                ),
+                id="asymmetric-dscp-dynamic-queue-index"
             )
         ]
     )
@@ -107,6 +166,9 @@ class TestTrimmingBasicFlows(TestTrimmingFlows):
             "queue_index": attrDict.queue
         }
 
+        if attrDict.tc is not None:
+            attr_dict["tc_value"] = attrDict.tc
+
         trimlogger.info("Update trimming global")
         self.dvs_switch.update_switch_trimming(
             qualifiers=attr_dict
@@ -115,9 +177,118 @@ class TestTrimmingBasicFlows(TestTrimmingFlows):
         switchId = switchData["id"]
         sai_attr_dict = {
             "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": saiAttrDict.size,
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": saiAttrDict.dscpMode,
             "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": saiAttrDict.dscp,
-            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": saiAttrDict.mode,
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": saiAttrDict.queueMode,
             "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": saiAttrDict.queue
+        }
+
+        if saiAttrDict.tc is not None:
+            sai_attr_dict["SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE"] = saiAttrDict.tc
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+
+class TestTrimmingAdvancedFlows(TestTrimmingFlows):
+    def test_TrimAsymToSymMigration(self, switchData):
+        switchId = switchData["id"]
+
+        # Configure Asymmetric DSCP mode
+        attr_dict = {
+            "size": "200",
+            "dscp_value": "from-tc",
+            "tc_value": "2",
+            "queue_index": "2"
+        }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "200",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["from-tc"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "2",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "2"
+        }
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Configure Symmetric DSCP mode
+        attr_dict = {
+            "size": "100",
+            "dscp_value": "10",
+            "queue_index": "1"
+        }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "100",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["dscp-value"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": "10",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "1"
+        }
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update TC value
+        attr_dict = {
+            "tc_value": "5"
+        }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "2"
+        }
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Configure Asymmetric DSCP mode
+        attr_dict = {
+            "size": "200",
+            "dscp_value": "from-tc",
+            "tc_value": "2",
+            "queue_index": "2"
+        }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "200",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["from-tc"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "2",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "2"
         }
 
         trimlogger.info("Validate trimming global")
@@ -136,6 +307,22 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
 
         switchId = switchData["id"]
 
+        # Asymmetric DSCP mode
+
+        attr_dict = {
+            "size": "100",
+            "dscp_value": "from-tc",
+            "tc_value": "1",
+            "queue_index": "1"
+        }
+
+        trimlogger.info("Update trimming global")
+        self.dvs_switch.update_switch_trimming(
+            qualifiers=attr_dict
+        )
+
+        # Symmetric DSCP mode
+
         attr_dict = {
             "size": "100",
             "dscp_value": "10",
@@ -147,9 +334,13 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
             qualifiers=attr_dict
         )
 
+        # Validation
+
         sai_attr_dict = {
             "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "100",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["dscp-value"],
             "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": "10",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "1",
             "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
             "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "1"
         }
@@ -191,6 +382,11 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
                 "dscp_value": "10"
             }
 
+        if attrDict.tc is not None:
+            attr_dict = {
+                "tc_value": "1"
+            }
+
         if attrDict.queue is not None:
             attr_dict = {
                 "queue_index": "1"
@@ -210,8 +406,16 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
 
         if saiAttrDict.dscp is not None:
             sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["dscp-value"],
                 "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": "10"
             }
+
+        if saiAttrDict.tc is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["dscp-value"],
+                "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "1"
+            }
+
 
         if saiAttrDict.queue is not None:
             sai_attr_dict = {
@@ -230,48 +434,81 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
     @pytest.mark.parametrize(
         "attrDict,saiAttrDict", [
             pytest.param(
-                TrimmingTuple(size="", dscp=None, queue=None),
-                TrimmingTupleSai(size="100", dscp=None, mode=None, queue=None),
+                TrimmingTuple(size="", dscp=None, tc=None, queue=None),
+                TrimmingTupleSai(size="100", dscpMode=None, dscp=None, tc=None, queueMode=None, queue=None),
                 id="size-empty"
             ),
             pytest.param(
-                TrimmingTuple(size="-1", dscp=None, queue=None),
-                TrimmingTupleSai(size="100", dscp=None, mode=None, queue=None),
+                TrimmingTuple(size="-1", dscp=None, tc=None, queue=None),
+                TrimmingTupleSai(size="100", dscpMode=None, dscp=None, tc=None, queueMode=None, queue=None),
                 id="size-min-1"
             ),
             pytest.param(
-                TrimmingTuple(size="4294967296", dscp=None, queue=None),
-                TrimmingTupleSai(size="100", dscp=None, mode=None, queue=None),
+                TrimmingTuple(size="4294967296", dscp=None, tc=None, queue=None),
+                TrimmingTupleSai(size="100", dscpMode=None, dscp=None, tc=None, queueMode=None, queue=None),
                 id="size-max+1"
             ),
             pytest.param(
-                TrimmingTuple(size=None, dscp="", queue=None),
-                TrimmingTupleSai(size=None, dscp="10", mode=None, queue=None),
+                TrimmingTuple(size=None, dscp="", tc=None, queue=None),
+                TrimmingTupleSai(
+                    size=None, tc=None, queueMode=None, queue=None,
+                    dscpMode=SAI_DSCP_MODE_DICT["dscp-value"], dscp="10"
+                ),
                 id="dscp-empty"
             ),
             pytest.param(
-                TrimmingTuple(size=None, dscp="-1", queue=None),
-                TrimmingTupleSai(size=None, dscp="10", mode=None, queue=None),
+                TrimmingTuple(size=None, dscp="-1", tc=None, queue=None),
+                TrimmingTupleSai(
+                    size=None, tc=None, queueMode=None, queue=None,
+                    dscpMode=SAI_DSCP_MODE_DICT["dscp-value"], dscp="10"
+                ),
                 id="dscp-min-1"
             ),
             pytest.param(
-                TrimmingTuple(size=None, dscp="64", queue=None),
-                TrimmingTupleSai(size=None, dscp="10", mode=None, queue=None),
+                TrimmingTuple(size=None, dscp="64", tc=None, queue=None),
+                TrimmingTupleSai(
+                    size=None, tc=None, queueMode=None, queue=None,
+                    dscpMode=SAI_DSCP_MODE_DICT["dscp-value"], dscp="10"
+                ),
                 id="dscp-max+1"
             ),
             pytest.param(
-                TrimmingTuple(size=None, dscp=None, queue=""),
-                TrimmingTupleSai(size=None, dscp=None, mode=SAI_QUEUE_MODE_DICT["static"], queue="1"),
+                TrimmingTuple(size=None, dscp=None, tc="", queue=None),
+                TrimmingTupleSai(size=None, dscpMode=None, dscp=None, tc="1", queueMode=None, queue=None),
+                id="tc-empty"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp=None, tc="-1", queue=None),
+                TrimmingTupleSai(size=None, dscpMode=None, dscp=None, tc="1", queueMode=None, queue=None),
+                id="tc-min-1"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp=None, tc="256", queue=None),
+                TrimmingTupleSai(size=None, dscpMode=None, dscp=None, tc="1", queueMode=None, queue=None),
+                id="tc-max+1"
+            ),
+            pytest.param(
+                TrimmingTuple(size=None, dscp=None, tc=None, queue=""),
+                TrimmingTupleSai(
+                    size=None, dscpMode=None, dscp=None, tc=None,
+                    queueMode=SAI_QUEUE_MODE_DICT["static"], queue="1"
+                ),
                 id="queue-empty"
             ),
             pytest.param(
-                TrimmingTuple(size=None, dscp=None, queue="-1"),
-                TrimmingTupleSai(size=None, dscp=None, mode=SAI_QUEUE_MODE_DICT["static"], queue="1"),
+                TrimmingTuple(size=None, dscp=None, tc=None, queue="-1"),
+                TrimmingTupleSai(
+                    size=None, dscpMode=None, dscp=None, tc=None,
+                    queueMode=SAI_QUEUE_MODE_DICT["static"], queue="1"
+                ),
                 id="queue-min-1"
             ),
             pytest.param(
-                TrimmingTuple(size=None, dscp=None, queue="256"),
-                TrimmingTupleSai(size=None, dscp=None, mode=SAI_QUEUE_MODE_DICT["static"], queue="1"),
+                TrimmingTuple(size=None, dscp=None, tc=None, queue="256"),
+                TrimmingTupleSai(
+                    size=None, dscpMode=None, dscp=None, tc=None,
+                    queueMode=SAI_QUEUE_MODE_DICT["static"], queue="1"
+                ),
                 id="queue-max+1"
             )
         ]
@@ -289,6 +526,11 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
         if attrDict.dscp is not None:
             attr_dict = {
                 "dscp_value": attrDict.dscp
+            }
+
+        if attrDict.tc is not None:
+            attr_dict = {
+                "tc_value": attrDict.tc
             }
 
         if attrDict.queue is not None:
@@ -310,12 +552,18 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
 
         if saiAttrDict.dscp is not None:
             sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": saiAttrDict.dscpMode,
                 "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": saiAttrDict.dscp
+            }
+
+        if saiAttrDict.tc is not None:
+            sai_attr_dict = {
+                "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": saiAttrDict.tc
             }
 
         if saiAttrDict.queue is not None:
             sai_attr_dict = {
-                "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": saiAttrDict.mode,
+                "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": saiAttrDict.queueMode,
                 "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": saiAttrDict.queue
             }
 
@@ -327,11 +575,9 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
 
 
 @pytest.mark.usefixtures("dvs_buffer_manager")
-@pytest.mark.usefixtures("dvs_queue_manager")
 @pytest.mark.usefixtures("testlog")
 class TrimmingBufferModel:
     PORT = "Ethernet0"
-    QUEUE = "0"
     MMU = "12766208"
 
     @pytest.fixture(scope="class")
@@ -355,9 +601,17 @@ class TrimmingBufferModel:
 
         trimlogger.info("Remove dynamic buffer configuration")
 
+
+@pytest.mark.usefixtures("dvs_queue_manager")
+class TrimmingRegularBufferModel(TrimmingBufferModel):
+    QUEUE = "0"
+
     @pytest.fixture(scope="class")
     def bufferData(self, queueCounters):
         trimlogger.info("Initialize buffer data")
+
+        trimlogger.info("Verify buffer profiles are loaded")
+        self.dvs_buffer.wait_for_buffer_profiles()
 
         trimlogger.info("Get buffer profile name: port={}, queue={}".format(self.PORT, self.QUEUE))
         bufferProfileName = self.dvs_queue.get_queue_buffer_profile_name(self.PORT, self.QUEUE)
@@ -403,7 +657,8 @@ class TrimmingBufferModel:
             sai_qualifiers=sai_attr_dict
         )
 
-class TestTrimmingTraditionalBufferModel(TrimmingBufferModel):
+
+class TestTrimmingTraditionalBufferModel(TrimmingRegularBufferModel):
     @pytest.mark.parametrize(
         "action", [
             pytest.param("drop", id="drop-packet"),
@@ -413,15 +668,656 @@ class TestTrimmingTraditionalBufferModel(TrimmingBufferModel):
     def test_TrimStaticBufferProfileConfiguration(self, bufferData, action):
         self.verifyBufferProfileConfiguration(bufferData, action)
 
-class TestTrimmingDynamicBufferModel(TrimmingBufferModel):
+
+@pytest.mark.usefixtures("dynamicBuffer")
+class TestTrimmingDynamicBufferModel(TrimmingRegularBufferModel):
     @pytest.mark.parametrize(
         "action", [
             pytest.param("drop", id="drop-packet"),
             pytest.param("trim", id="trim-packet")
         ]
     )
-    def test_TrimDynamicBufferProfileConfiguration(self, dynamicBuffer, bufferData, action):
+    def test_TrimDynamicBufferProfileConfiguration(self, bufferData, action):
         self.verifyBufferProfileConfiguration(bufferData, action)
+
+
+@pytest.mark.usefixtures("dvs_port_manager")
+class TrimmingNegativeBufferModel(TrimmingBufferModel):
+    INGRESS_TRIM_PROFILE = "ingress_trim_profile"
+    EGRESS_TRIM_PROFILE = "egress_trim_profile"
+
+    INGRESS_DEFAULT_PROFILE = "ingress_default_profile"
+    EGRESS_DEFAULT_PROFILE = "egress_default_profile"
+
+    PG = "0"
+
+    def createBufferProfile(self, profileName, attrDict):
+        bufferProfileIds = self.dvs_buffer.get_buffer_profile_ids()
+
+        self.dvs_buffer.create_buffer_profile(
+            buffer_profile_name=profileName,
+            qualifiers=attrDict
+        )
+
+        bufferProfileIdsExt = self.dvs_buffer.get_buffer_profile_ids(len(bufferProfileIds)+1)
+
+        return (set(bufferProfileIdsExt) - set(bufferProfileIds)).pop()
+
+    def getPgBufferKeyValuePair(self, portName, pgIdx):
+        keyList = self.dvs_buffer.get_buffer_pg_keys(portName, pgIdx)
+        assert len(keyList) <= 1, "Invalid BUFFER_PG table"
+
+        if keyList:
+            key = keyList[0]
+            value = self.dvs_buffer.get_buffer_pg_value(key)
+
+            return key, value
+
+        return None, None
+
+    @pytest.fixture(scope="class")
+    def portData(self, portCounters):
+        trimlogger.info("Initialize port data")
+
+        trimlogger.info("Get port id: port={}".format(self.PORT))
+        portId = self.dvs_port.get_port_id(self.PORT)
+
+        meta_dict = {
+            "id": portId
+        }
+
+        yield meta_dict
+
+        trimlogger.info("Deinitialize port data")
+
+    @pytest.fixture(scope="class")
+    def pgData(self, pgCounters):
+        trimlogger.info("Initialize priority group data")
+
+        trimlogger.info("Get priority group id: port={}, pg={}".format(self.PORT, self.PG))
+        pgId = self.dvs_buffer.get_priority_group_id(self.PORT, self.PG)
+
+        trimlogger.info("Get priority group buffer profile: port={}, pg={}".format(self.PORT, self.PG))
+        pgBufferKey, pgBufferProfile = self.getPgBufferKeyValuePair(self.PORT, self.PG)
+
+        if pgBufferKey is not None:
+            trimlogger.info("Remove priority group buffer profile: key={}".format(pgBufferKey))
+            self.dvs_buffer.remove_buffer_pg(pgBufferKey)
+
+        meta_dict = {
+            "id": pgId
+        }
+
+        yield meta_dict
+
+        if pgBufferKey is not None:
+            trimlogger.info(
+                "Restore priority group buffer profile: key={}, profile={}".format(
+                    pgBufferKey, pgBufferProfile
+                )
+            )
+            self.dvs_buffer.update_buffer_pg(
+                pg_buffer_key=pgBufferKey,
+                pg_buffer_profile=pgBufferProfile
+            )
+        else:
+            if self.dvs_buffer.is_priority_group_exists(self.PORT, self.PG):
+                trimlogger.info("Remove priority group buffer profile: port={}, pg={}".format(self.PORT, self.PG))
+                self.dvs_buffer.remove_priority_group(self.PORT, self.PG)
+
+        trimlogger.info("Deinitialize priority group data")
+
+    @pytest.fixture(scope="class")
+    def bufferData(self):
+        trimlogger.info("Initialize buffer data")
+
+        trimlogger.info("Verify buffer profiles are loaded")
+        self.dvs_buffer.wait_for_buffer_profiles()
+
+        attr_dict = {
+            "dynamic_th": "3",
+            "size": "0",
+            "pool": "ingress_lossless_pool"
+        }
+
+        trimlogger.info("Create buffer profile: {}".format(self.INGRESS_TRIM_PROFILE))
+        iBufferProfileTrimId = self.createBufferProfile(self.INGRESS_TRIM_PROFILE, attr_dict)
+
+        trimlogger.info("Create buffer profile: {}".format(self.INGRESS_DEFAULT_PROFILE))
+        iBufferProfileDefId = self.createBufferProfile(self.INGRESS_DEFAULT_PROFILE, attr_dict)
+
+        attr_dict = {
+            "dynamic_th": "3",
+            "size": "1518",
+            "pool": "egress_lossy_pool"
+        }
+
+        trimlogger.info("Create buffer profile: {}".format(self.EGRESS_TRIM_PROFILE))
+        eBufferProfileTrimId = self.createBufferProfile(self.EGRESS_TRIM_PROFILE, attr_dict)
+
+        trimlogger.info("Create buffer profile: {}".format(self.EGRESS_DEFAULT_PROFILE))
+        eBufferProfileDefId = self.createBufferProfile(self.EGRESS_DEFAULT_PROFILE, attr_dict)
+
+        iBufferProfileListOld = None
+        eBufferProfileListOld = None
+
+        if self.dvs_port.is_buffer_profile_list_exists(self.PORT):
+            trimlogger.info("Get ingress buffer profile list: port={}".format(self.PORT))
+            iBufferProfileListOld = self.dvs_port.get_buffer_profile_list(self.PORT)
+
+        if self.dvs_port.is_buffer_profile_list_exists(self.PORT, False):
+            trimlogger.info("Get egress buffer profile list: port={}".format(self.PORT))
+            eBufferProfileListOld = self.dvs_port.get_buffer_profile_list(self.PORT, False)
+
+        meta_dict = {
+            "id": {
+                "profile": {
+                    "trim": {
+                        "ingress": iBufferProfileTrimId,
+                        "egress": eBufferProfileTrimId
+                    },
+                    "default": {
+                        "ingress": iBufferProfileDefId,
+                        "egress": eBufferProfileDefId
+                    }
+                }
+            }
+        }
+
+        yield meta_dict
+
+        if iBufferProfileListOld is not None:
+            trimlogger.info(
+                "Restore ingress buffer profile list: port={}, profile_list={}".format(
+                    self.PORT, ",".join(iBufferProfileListOld)
+                )
+            )
+            self.dvs_port.update_buffer_profile_list(
+                port_name=self.PORT,
+                profile_list=",".join(iBufferProfileListOld)
+            )
+        else:
+            if self.dvs_port.is_buffer_profile_list_exists(self.PORT):
+                trimlogger.info("Remove ingress buffer profile list: port={}".format(self.PORT))
+                self.dvs_port.remove_buffer_profile_list(self.PORT)
+
+        if eBufferProfileListOld is not None:
+            trimlogger.info(
+                "Restore egress buffer profile list: port={}, profile_list={}".format(
+                    self.PORT, ",".join(eBufferProfileListOld)
+                )
+            )
+            self.dvs_port.update_buffer_profile_list(
+                port_name=self.PORT,
+                profile_list=",".join(eBufferProfileListOld),
+                ingress=False
+            )
+        else:
+            if self.dvs_port.is_buffer_profile_list_exists(self.PORT, False):
+                trimlogger.info("Remove egress buffer profile list: port={}".format(self.PORT))
+                self.dvs_port.remove_buffer_profile_list(self.PORT, False)
+
+        trimlogger.info("Remove buffer profile: {}".format(self.INGRESS_TRIM_PROFILE))
+        self.dvs_buffer.remove_buffer_profile(self.INGRESS_TRIM_PROFILE)
+
+        trimlogger.info("Remove buffer profile: {}".format(self.INGRESS_DEFAULT_PROFILE))
+        self.dvs_buffer.remove_buffer_profile(self.INGRESS_DEFAULT_PROFILE)
+
+        trimlogger.info("Remove buffer profile: {}".format(self.EGRESS_TRIM_PROFILE))
+        self.dvs_buffer.remove_buffer_profile(self.EGRESS_TRIM_PROFILE)
+
+        trimlogger.info("Remove buffer profile: {}".format(self.EGRESS_DEFAULT_PROFILE))
+        self.dvs_buffer.remove_buffer_profile(self.EGRESS_DEFAULT_PROFILE)
+
+        trimlogger.info("Deinitialize buffer data")
+
+    def verifyPriorityGroupBufferAttachConfiguration(self, bufferData, pgData):
+        trimProfile = self.INGRESS_TRIM_PROFILE
+        defaultProfile = self.INGRESS_DEFAULT_PROFILE
+
+        pgId = pgData["id"]
+        trimProfileId = bufferData["id"]["profile"]["trim"]["ingress"]
+        defaultProfileId = bufferData["id"]["profile"]["default"]["ingress"]
+
+        # Update priority group with the default buffer profile
+
+        trimlogger.info(
+            "Update priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, defaultProfile)
+        )
+        self.dvs_buffer.update_priority_group(
+            port_name=self.PORT,
+            pg_index=self.PG,
+            buffer_profile_name=defaultProfile
+        )
+
+        sai_attr_dict = {
+            "SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE": defaultProfileId
+        }
+
+        trimlogger.info(
+            "Validate priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, defaultProfile)
+        )
+        self.dvs_buffer.verify_priority_group(
+            sai_priority_group_id=pgId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Set buffer profile trimming eligibility
+
+        attr_dict = {
+            "packet_discard_action": "trim"
+        }
+
+        trimlogger.info("Update buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.update_buffer_profile(
+            buffer_profile_name=trimProfile,
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION": SAI_BUFFER_PROFILE_MODE_DICT["trim"]
+        }
+
+        trimlogger.info("Validate buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.verify_buffer_profile(
+            sai_buffer_profile_id=trimProfileId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update priority group with the trimming buffer profile
+        # and verify no update is done to ASIC DB
+
+        trimlogger.info(
+            "Update priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, trimProfile)
+        )
+        self.dvs_buffer.update_priority_group(
+            port_name=self.PORT,
+            pg_index=self.PG,
+            buffer_profile_name=trimProfile
+        )
+        time.sleep(1)
+
+        sai_attr_dict = {
+            "SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE": defaultProfileId
+        }
+
+        trimlogger.info(
+            "Validate priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, defaultProfile)
+        )
+        self.dvs_buffer.verify_priority_group(
+            sai_priority_group_id=pgId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+    def verifyPriorityGroupBufferEditConfiguration(self, bufferData, pgData):
+        trimProfile = self.INGRESS_TRIM_PROFILE
+        defaultProfile = self.INGRESS_DEFAULT_PROFILE
+
+        pgId = pgData["id"]
+        trimProfileId = bufferData["id"]["profile"]["trim"]["ingress"]
+        defaultProfileId = bufferData["id"]["profile"]["default"]["ingress"]
+
+        # Reset buffer profile trimming eligibility
+
+        attr_dict = {
+            "packet_discard_action": "drop"
+        }
+
+        trimlogger.info("Update buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.update_buffer_profile(
+            buffer_profile_name=trimProfile,
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION": SAI_BUFFER_PROFILE_MODE_DICT["drop"]
+        }
+
+        trimlogger.info("Validate buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.verify_buffer_profile(
+            sai_buffer_profile_id=trimProfileId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update priority group with the trimming buffer profile
+
+        trimlogger.info(
+            "Update priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, trimProfile)
+        )
+        self.dvs_buffer.update_priority_group(
+            port_name=self.PORT,
+            pg_index=self.PG,
+            buffer_profile_name=trimProfile
+        )
+
+        sai_attr_dict = {
+            "SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE": trimProfileId
+        }
+
+        trimlogger.info(
+            "Validate priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, trimProfile)
+        )
+        self.dvs_buffer.verify_priority_group(
+            sai_priority_group_id=pgId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Set buffer profile trimming eligibility
+        # and verify no update is done to ASIC DB
+
+        attr_dict = {
+            "packet_discard_action": "trim"
+        }
+
+        trimlogger.info("Update buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.update_buffer_profile(
+            buffer_profile_name=trimProfile,
+            qualifiers=attr_dict
+        )
+        time.sleep(1)
+
+        sai_attr_dict = {
+            "SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION": SAI_BUFFER_PROFILE_MODE_DICT["drop"]
+        }
+
+        trimlogger.info("Validate buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.verify_buffer_profile(
+            sai_buffer_profile_id=trimProfileId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update priority group with the default buffer profile
+
+        trimlogger.info(
+            "Update priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, defaultProfile)
+        )
+        self.dvs_buffer.update_priority_group(
+            port_name=self.PORT,
+            pg_index=self.PG,
+            buffer_profile_name=defaultProfile
+        )
+
+        sai_attr_dict = {
+            "SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE": defaultProfileId
+        }
+
+        trimlogger.info(
+            "Validate priority group: port={}, pg={}, profile={}".format(self.PORT, self.PG, defaultProfile)
+        )
+        self.dvs_buffer.verify_priority_group(
+            sai_priority_group_id=pgId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+    def verifyProfileListBufferAttachConfiguration(self, portData, bufferData, ingress):
+        trimProfile = self.INGRESS_TRIM_PROFILE if ingress else self.EGRESS_TRIM_PROFILE
+        defaultProfile = self.INGRESS_DEFAULT_PROFILE if ingress else self.EGRESS_DEFAULT_PROFILE
+
+        direction = "ingress" if ingress else "egress"
+
+        portId = portData["id"]
+        trimProfileId = bufferData["id"]["profile"]["trim"][direction]
+        defaultProfileId = bufferData["id"]["profile"]["default"][direction]
+
+        # Update port ingress/egress buffer profile list with the default buffer profile
+
+        trimlogger.info(
+            "Update {} buffer profile list: port={}, profile={}".format(direction, self.PORT, defaultProfile)
+        )
+        self.dvs_port.update_buffer_profile_list(
+            port_name=self.PORT,
+            profile_list=defaultProfile,
+            ingress=ingress
+        )
+
+        sai_attr_dict = {
+            SAI_BUFFER_PROFILE_LIST_DICT[direction]: [ defaultProfileId ]
+        }
+
+        trimlogger.info(
+            "Validate {} buffer profile list: port={}, profile={}".format(direction, self.PORT, defaultProfile)
+        )
+        self.dvs_port.verify_port(
+            sai_port_id=portId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Set buffer profile trimming eligibility
+
+        attr_dict = {
+            "packet_discard_action": "trim"
+        }
+
+        trimlogger.info("Update buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.update_buffer_profile(
+            buffer_profile_name=trimProfile,
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION": SAI_BUFFER_PROFILE_MODE_DICT["trim"]
+        }
+
+        trimlogger.info("Validate buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.verify_buffer_profile(
+            sai_buffer_profile_id=trimProfileId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update port ingress/egress buffer profile list with the trimming buffer profile
+        # and verify no update is done to ASIC DB
+
+        trimlogger.info(
+            "Update {} buffer profile list: port={}, profile={}".format(direction, self.PORT, trimProfile)
+        )
+        self.dvs_port.update_buffer_profile_list(
+            port_name=self.PORT,
+            profile_list=trimProfile,
+            ingress=ingress
+        )
+        time.sleep(1)
+
+        sai_attr_dict = {
+            SAI_BUFFER_PROFILE_LIST_DICT[direction]: [ defaultProfileId ]
+        }
+
+        trimlogger.info(
+            "Validate {} buffer profile list: port={}, profile={}".format(direction, self.PORT, trimProfile)
+        )
+        self.dvs_port.verify_port(
+            sai_port_id=portId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update port ingress/egress buffer profile list with the default buffer profile
+
+        trimlogger.info(
+            "Update {} buffer profile list: port={}, profile={}".format(direction, self.PORT, defaultProfile)
+        )
+        self.dvs_port.update_buffer_profile_list(
+            port_name=self.PORT,
+            profile_list=defaultProfile,
+            ingress=ingress
+        )
+
+        sai_attr_dict = {
+            SAI_BUFFER_PROFILE_LIST_DICT[direction]: [ defaultProfileId ]
+        }
+
+        trimlogger.info(
+            "Validate {} buffer profile list: port={}, profile={}".format(direction, self.PORT, defaultProfile)
+        )
+        self.dvs_port.verify_port(
+            sai_port_id=portId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+    def verifyProfileListBufferEditConfiguration(self, portData, bufferData, ingress):
+        trimProfile = self.INGRESS_TRIM_PROFILE if ingress else self.EGRESS_TRIM_PROFILE
+        defaultProfile = self.INGRESS_DEFAULT_PROFILE if ingress else self.EGRESS_DEFAULT_PROFILE
+
+        direction = "ingress" if ingress else "egress"
+
+        portId = portData["id"]
+        trimProfileId = bufferData["id"]["profile"]["trim"][direction]
+        defaultProfileId = bufferData["id"]["profile"]["default"][direction]
+
+        # Reset buffer profile trimming eligibility
+
+        attr_dict = {
+            "packet_discard_action": "drop"
+        }
+
+        trimlogger.info("Update buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.update_buffer_profile(
+            buffer_profile_name=trimProfile,
+            qualifiers=attr_dict
+        )
+
+        sai_attr_dict = {
+            "SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION": SAI_BUFFER_PROFILE_MODE_DICT["drop"]
+        }
+
+        trimlogger.info("Validate buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.verify_buffer_profile(
+            sai_buffer_profile_id=trimProfileId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update port ingress/egress buffer profile list with the trimming buffer profile
+
+        trimlogger.info(
+            "Update {} buffer profile list: port={}, profile={}".format(direction, self.PORT, trimProfile)
+        )
+        self.dvs_port.update_buffer_profile_list(
+            port_name=self.PORT,
+            profile_list=trimProfile,
+            ingress=ingress
+        )
+
+        sai_attr_dict = {
+            SAI_BUFFER_PROFILE_LIST_DICT[direction]: [ trimProfileId ]
+        }
+
+        trimlogger.info(
+            "Validate {} buffer profile list: port={}, profile={}".format(direction, self.PORT, trimProfile)
+        )
+        self.dvs_port.verify_port(
+            sai_port_id=portId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Set buffer profile trimming eligibility
+        # and verify no update is done to ASIC DB
+
+        attr_dict = {
+            "packet_discard_action": "trim"
+        }
+
+        trimlogger.info("Update buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.update_buffer_profile(
+            buffer_profile_name=trimProfile,
+            qualifiers=attr_dict
+        )
+        time.sleep(1)
+
+        sai_attr_dict = {
+            "SAI_BUFFER_PROFILE_ATTR_PACKET_ADMISSION_FAIL_ACTION": SAI_BUFFER_PROFILE_MODE_DICT["drop"]
+        }
+
+        trimlogger.info("Validate buffer profile: {}".format(trimProfile))
+        self.dvs_buffer.verify_buffer_profile(
+            sai_buffer_profile_id=trimProfileId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+        # Update port ingress/egress buffer profile list with the default buffer profile
+
+        trimlogger.info(
+            "Update {} buffer profile list: port={}, profile={}".format(direction, self.PORT, defaultProfile)
+        )
+        self.dvs_port.update_buffer_profile_list(
+            port_name=self.PORT,
+            profile_list=defaultProfile,
+            ingress=ingress
+        )
+
+        sai_attr_dict = {
+            SAI_BUFFER_PROFILE_LIST_DICT[direction]: [ defaultProfileId ]
+        }
+
+        trimlogger.info(
+            "Validate {} buffer profile list: port={}, profile={}".format(direction, self.PORT, defaultProfile)
+        )
+        self.dvs_port.verify_port(
+            sai_port_id=portId,
+            sai_qualifiers=sai_attr_dict
+        )
+
+
+class TestTrimmingNegativeTraditionalBufferModel(TrimmingNegativeBufferModel):
+    @pytest.mark.parametrize(
+        "target", [
+            pytest.param("pg", id="priority-group"),
+            pytest.param("ibuf", id="ingress-buffer-profile-list"),
+            pytest.param("ebuf", id="egress-buffer-profile-list")
+        ]
+    )
+    def test_TrimNegStaticBufferProfileAttach(self, bufferData, portData, pgData, target):
+        if target == "pg":
+            self.verifyPriorityGroupBufferAttachConfiguration(bufferData, pgData)
+        elif target == "ibuf":
+            self.verifyProfileListBufferAttachConfiguration(portData, bufferData, True)
+        elif target == "ebuf":
+            self.verifyProfileListBufferAttachConfiguration(portData, bufferData, False)
+
+    @pytest.mark.parametrize(
+        "target", [
+            pytest.param("pg", id="priority-group"),
+            pytest.param("ibuf", id="ingress-buffer-profile-list"),
+            pytest.param("ebuf", id="egress-buffer-profile-list")
+        ]
+    )
+    def test_TrimNegStaticBufferProfileEdit(self, bufferData, portData, pgData, target):
+        if target == "pg":
+            self.verifyPriorityGroupBufferEditConfiguration(bufferData, pgData)
+        elif target == "ibuf":
+            self.verifyProfileListBufferEditConfiguration(portData, bufferData, True)
+        elif target == "ebuf":
+            self.verifyProfileListBufferEditConfiguration(portData, bufferData, False)
+
+
+@pytest.mark.usefixtures("dynamicBuffer")
+class TestTrimmingNegativeDynamicBufferModel(TrimmingNegativeBufferModel):
+    @pytest.mark.parametrize(
+        "target", [
+            pytest.param("pg", id="priority-group"),
+            pytest.param("ibuf", id="ingress-buffer-profile-list"),
+            pytest.param("ebuf", id="egress-buffer-profile-list")
+        ]
+    )
+    def test_TrimNegDynamicBufferProfileAttach(self, bufferData, portData, pgData, target):
+        if target == "pg":
+            self.verifyPriorityGroupBufferAttachConfiguration(bufferData, pgData)
+        elif target == "ibuf":
+            self.verifyProfileListBufferAttachConfiguration(portData, bufferData, True)
+        elif target == "ebuf":
+            self.verifyProfileListBufferAttachConfiguration(portData, bufferData, False)
+
+    @pytest.mark.parametrize(
+        "target", [
+            pytest.param("pg", id="priority-group"),
+            pytest.param("ibuf", id="ingress-buffer-profile-list"),
+            pytest.param("ebuf", id="egress-buffer-profile-list")
+        ]
+    )
+    def test_TrimNegDynamicBufferProfileEdit(self, bufferData, portData, pgData, target):
+        if target == "pg":
+            self.verifyPriorityGroupBufferEditConfiguration(bufferData, pgData)
+        elif target == "ibuf":
+            self.verifyProfileListBufferEditConfiguration(portData, bufferData, True)
+        elif target == "ebuf":
+            self.verifyProfileListBufferEditConfiguration(portData, bufferData, False)
 
 
 @pytest.mark.usefixtures("dvs_port_manager")
