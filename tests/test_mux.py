@@ -1709,7 +1709,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         self.create_and_test_soc(appdb, asicdb, dvs, dvs_route)
 
-   def test_warm_boot_neighbor_restore(
+    def test_warm_boot_neighbor_restore(
         self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
         setup_peer_switch, neighbor_cleanup, testlog
     ):
