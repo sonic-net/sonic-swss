@@ -1026,19 +1026,6 @@ TEST_F(FpmSyncdResponseTest, TestGetNextHopWt)
     EXPECT_EQ(m_mockRouteSync.getNextHopWt(test_route.get()), "1,1");
 }
 
-/**
- * Unit tests for warm restart route handling functionality
- *
- */
-
-class TestableRouteSync : public RouteSync
-{
-public:
-    TestableRouteSync(RedisPipeline *pipeline) : RouteSync(pipeline) {}
-
-    WarmStartHelper& getWarmStartHelper() { return m_warmStartHelper; }
-};
-
 class WarmRestartRouteSyncTest : public ::testing::Test
 {
 public:
@@ -1057,7 +1044,7 @@ public:
 
     shared_ptr<swss::DBConnector> m_db = make_shared<swss::DBConnector>("APPL_DB", 0);
     shared_ptr<RedisPipeline> m_pipeline = make_shared<RedisPipeline>(m_db.get());
-    TestableRouteSync m_testRouteSync{m_pipeline.get()};
+    RouteSync m_testRouteSync{m_pipeline.get()};
 };
 
 TEST_F(WarmRestartRouteSyncTest, TestRouteMessageHandlingWarmRestartNotInProgress)
