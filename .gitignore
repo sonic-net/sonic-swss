@@ -97,3 +97,6 @@ tests/tests.trs
 tests/mock_tests/**/*log
 tests/mock_tests/**/*trs
 orchagent/p4orch/tests/p4orch_tests
+
+# VS Code settings (local only, should not be committed)
+.vscode/
