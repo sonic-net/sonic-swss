@@ -3613,18 +3613,21 @@ void PortsOrch::updateDbPortOperError(Port& port, PortOperErrorEvent *pevent)
 {
     SWSS_LOG_ENTER();
 
+    auto time = pevent->getEventTime();
     auto key = pevent->getDbKey();
     vector<FieldValueTuple> tuples;
     FieldValueTuple tup1("oper_error_status", std::to_string(port.m_oper_error_status));
     tuples.push_back(tup1);
 
-    size_t count = pevent->getErrorCount();
-    FieldValueTuple tup2(key + "_count", std::to_string(count));
+    FieldValueTuple tup2("oper_error_status_time", time);
     tuples.push_back(tup2);
 
-    auto time = pevent->getEventTime();
-    FieldValueTuple tup3(key + "_time", time);
+    size_t count = pevent->getErrorCount();
+    FieldValueTuple tup3(key + "_count", std::to_string(count));
     tuples.push_back(tup3);
+
+    FieldValueTuple tup4(key + "_time", time);
+    tuples.push_back(tup4);
 
     m_portOpErrTable.set(port.m_alias, tuples);
 }
