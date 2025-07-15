@@ -541,7 +541,8 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
             NextHopKey nexthop_key = NextHopKey(peer_address, alias);
 
             //For UT, not null at runtime
-            if (gNeighOrch) {
+            if (gNeighOrch)
+            {
                 next_hop_id = gNeighOrch->getLocalNextHopId(nexthop_key);
             }
             attr.value.oid = next_hop_id;
@@ -549,7 +550,9 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
             bfd_inject_next_hop.next_hop_id = attr.value.oid;
             inject_next_hop = true;
             SWSS_LOG_NOTICE("BFD: create bfd session using nexthop_id %llu", static_cast<unsigned long long>(next_hop_id));
-        } else {
+        }
+        else
+        {
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
@@ -573,7 +576,8 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
             attrs.emplace_back(attr);
 
             attr.id = SAI_BFD_SESSION_ATTR_SRC_MAC_ADDRESS;
-            if (src_mac_provided) {
+            if (src_mac_provided)
+            {
                 memcpy(attr.value.mac, src_mac.getMac(), sizeof(sai_mac_t));
             }
             else
@@ -635,7 +639,8 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     bfd_session_map[key] = bfd_session_id;
     bfd_session_lookup[bfd_session_id] = {state_db_key, SAI_BFD_SESSION_STATE_DOWN};
 
-    if (inject_next_hop) {
+    if (inject_next_hop)
+    {
         bfd_inject_next_hop.bfd_session_id = bfd_session_id;
         bfd_inject_next_hop_lookup[key] = bfd_inject_next_hop;
     }
