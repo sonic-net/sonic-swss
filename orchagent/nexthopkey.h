@@ -1,6 +1,14 @@
 #ifndef SWSS_NEXTHOPKEY_H
 #define SWSS_NEXTHOPKEY_H
 
+extern "C"
+{
+#include <saitypes.h>
+}
+
+#include <boost/functional/hash.hpp>
+#include <tuple>
+
 #include "ipaddress.h"
 #include "tokenize.h"
 #include "label.h"
@@ -14,6 +22,8 @@ extern IntfsOrch *gIntfsOrch;
 
 struct NextHopKey
 {
+    // Note: When adding a new field to NextHopKey, make sure to also update
+    // the hash_value method to incorporate the new field into the hash calculation.
     IpAddress           ip_address;     // neighbor IP address
     string              alias;          // incoming interface alias
     uint32_t            vni;            // Encap VNI overlay nexthop
@@ -129,8 +139,8 @@ struct NextHopKey
 
     bool operator<(const NextHopKey &o) const
     {
-        return tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source, srv6_vpn_sid) <
-            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source, o.srv6_vpn_sid);
+        return std::tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source, srv6_vpn_sid) <
+            std::tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source, o.srv6_vpn_sid);
     }
 
     bool operator==(const NextHopKey &o) const
@@ -208,5 +218,7 @@ struct NextHopKey
         return str;
     }
 };
+
+std::size_t hash_value(const NextHopKey& obj);
 
 #endif /* SWSS_NEXTHOPKEY_H */
