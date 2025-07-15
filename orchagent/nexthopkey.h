@@ -210,7 +210,7 @@ struct NextHopKey
     }
 };
 
-std::size_t hash_value(const NextHopKey& obj) {
+template<> std::size_t hash_value(const NextHopKey& obj) {
     std::size_t nh_hash = 0;
 
     boost::hash_combine(nh_hash, obj.ip_address.to_string());
