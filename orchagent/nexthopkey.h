@@ -216,15 +216,15 @@ namespace std {
         size_t operator()(const NextHopKey& obj) const {
             size_t nh_hash = 0;
 
-            boost::hash_combine(nhg_hash, obj.ip_address.to_string());
-            boost::hash_combine(nhg_hash, obj.alias);
-            boost::hash_combine(nhg_hash, obj.vni);
-            boost::hash_combine(nhg_hash, obj.mac_address.to_string());
-            boost::hash_combine(nhg_hash, obj.label_stack.to_string());
-            boost::hash_combine(nhg_hash, obj.weight);
-            boost::hash_combine(nhg_hash, obj.srv6_segment);
-            boost::hash_combine(nhg_hash, obj.srv6_source);
-            boost::hash_combine(nhg_hash, obj.srv6_vpn_sid);
+            boost::hash_combine(nh_hash, obj.ip_address.to_string());
+            boost::hash_combine(nh_hash, obj.alias);
+            boost::hash_combine(nh_hash, obj.vni);
+            boost::hash_combine(nh_hash, obj.mac_address.to_string());
+            boost::hash_combine(nh_hash, obj.label_stack.to_string());
+            boost::hash_combine(nh_hash, obj.weight);
+            boost::hash_combine(nh_hash, obj.srv6_segment);
+            boost::hash_combine(nh_hash, obj.srv6_source);
+            boost::hash_combine(nh_hash, obj.srv6_vpn_sid);
 
             return nh_hash;
         }
