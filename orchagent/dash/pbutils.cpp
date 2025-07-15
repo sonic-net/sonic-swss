@@ -91,6 +91,33 @@ bool to_sai(const RepeatedPtrField<dash::types::IpPrefix> &pb_prefixes, vector<s
     return true;
 }
 
+bool to_sai(const dash::types::ValueOrRange &pb_range, sai_u32_range_t &sai_range)
+{
+    SWSS_LOG_ENTER();
+
+    if (pb_range.has_value())
+    {
+        sai_range.min = pb_range.value();
+        sai_range.max = pb_range.value();
+    }
+    else if (pb_range.has_range())
+    {
+        if (pb_range.range().min() > pb_range.range().max())
+        {
+            SWSS_LOG_WARN("The range %s is invalid", pb_range.range().DebugString().c_str());
+            return false;
+        }
+        sai_range.min = pb_range.range().min();
+        sai_range.max = pb_range.range().max();
+    }
+    else
+    {
+        SWSS_LOG_WARN("The ValueOrRange %s is invalid", pb_range.DebugString().c_str());
+        return false;
+    }
+    return true;
+}
+
 ip_addr_t to_swss(const dash::types::IpAddress &pb_address)
 {
     SWSS_LOG_ENTER();
