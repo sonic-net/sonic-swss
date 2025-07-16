@@ -8,7 +8,7 @@
 #include "selectabletimer.h"
 #include "table.h"
 #include "select.h"
-#include "time.h"
+#include "timer.h"
 
 #include <map>
 #include <algorithm>
@@ -19,27 +19,32 @@ extern "C" {
 #include "sai.h"
 }
 
-
 /*fields definition*/
-#define TXMONORCH_FIELD_CFG_PERIOD "tx_error__check_period"
-#define TXMONORCH_FIELD_CFG_THRESHOLD "tx_error_threshold"
+#define TXMONORCH_FIELD_CFG_PERIOD      "tx_error_check_period"
+#define TXMONORCH_FIELD_CFG_THRESHOLD       "tx_error_threshold"
 
-#define TXMONGAGENT_FIELD_APPL_STATI "tx_error_status"
-#define TXMONGAGENT_FIELD_APPL_TIMESTAMP "tx_error_timestamp"
-#define TXMONGAGENT_FIELD_APPL_SAIPORTID "tx_error_saiportid"
+#define TXMONORCH_FIELD_APPL_STATI      "tx_error_stati"
+#define TXMONORCH_FIELD_APPL_TIMESTAMP  "tx_error_timestamp"
+#define TXMONORCH_FIELD_APPL_SAIPORTID  "tx_error_portid"
 
-#define TXMONORCH_FIELD_STATE_TX_STATUS "tx_status"
+#define TXMONORCH_FIELD_STATE_TX_STATE  "tx_status"
 
-#define TXMONORCH_KEY_CFG_PERIOD "GLOBAL_PERIOD"
+/*key name definition*/
+/*key name for each port is its intf name*/
+/*key name of global period*/
+#define TXMONORCH_KEY_CFG_PERIOD    "GLOBAL_PERIOD" 
 
-#define TXMON_ERROR_STATE "tx_error_state"
+/*table names are defined in schema.h*/
 
-#define TXMONORCH_SEL_TIMER "tx_error_timer"
+#define TXMONORCH_ERR_STATE     "tx_status"
 
-#define TXMONORCH_PORT_STATE_OK 0
-#define TXMONORCH_PORT_STATE_ERROR 1
-#define TXMONORCH_PORT_STATE_UNKNOWN 2
-#define TXMONORCH_PORT_STATE_MAX 3
+#define TXMONORCH_SEL_TIMER     "TX_ERR_COUNTERS_POLL"
+
+/*tx state definition*/
+#define TXMONORCH_PORT_STATE_OK         0
+#define TXMONORCH_PORT_STATE_ERROR      1
+#define TXMONORCH_PORT_STATE_UNKNOWN    2
+#define TXMONORCH_PORT_STATE_MAX        3
 
 typedef std::tuple<int, sai_object_id_t, uint64_t, uint64_t> TxErrorStatistics;//state, stati, threshold
 typedef std::map<std::string, TxErrorStatistics> TxErrorStatMap;
