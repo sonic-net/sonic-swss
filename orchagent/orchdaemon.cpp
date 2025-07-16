@@ -68,6 +68,7 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 TxMonOrch *gTxMonOrch;
+
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
 
