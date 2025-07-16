@@ -166,7 +166,7 @@ void TxMonOrch::doTask(Consumer& consumer)
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("TxMonOrch doTask consumer\n");
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         SWSS_LOG_INFO("Ports not ready\n");
         return;
