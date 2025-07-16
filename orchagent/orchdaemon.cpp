@@ -395,9 +395,9 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    TableConnector stateDbTxErr(m_stateDb, /*"TX_ERR_STATE"*/STATE_TX_ERR_TABLE_NAME);
-    TableConnector applDbTxErr(m_applDb, /*"TX_ERR_APPL"*/APP_TX_ERR_TABLE_NAME);
-    TableConnector confDbTxErr(m_configDb, /*"TX_ERR_CFG"*/CFG_PORT_TX_ERR_TABLE_NAME);
+    TableConnector stateDbTxErr(m_stateDb, STATE_TX_ERR_TABLE_NAME);
+    TableConnector applDbTxErr(m_applDb, APP_TX_ERR_TABLE_NAME);
+    TableConnector confDbTxErr(m_configDb, CFG_PORT_TX_ERR_TABLE_NAME);
     gTxMonOrch = new TxMonOrch(applDbTxErr, confDbTxErr, stateDbTxErr);
 
     SWSS_LOG_NOTICE("Create TxMonOrch object %p\n", gTxMonOrch);
