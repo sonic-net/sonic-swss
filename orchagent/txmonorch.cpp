@@ -234,68 +234,45 @@ int TxMonOrch::pollOnePortErrorStatistics(const string &port, TxErrorStatistics 
 
     SWSS_LOG_ENTER();
 
-#if 0
-    {
-        //generate a random value instead :D
-        static uint64_t seed = 1;
-        txErrStatistics = seed;
-        txErrStatistics = txErrStatistics * 991 % 997;
-        seed = txErrStatistics;
-        txErrStatistics += txErrStatLasttime;
-        SWSS_LOG_INFO("TX_ERR_POLL: got port %s tx_err stati %d, lasttime %d threshold %d\n", 
-                      port.c_str(), txErrStatistics, txErrStatLasttime, txErrStatThreshold);
-    }
-#else
-#if 0
-    {
-        uint64_t tx_err = 0;
-        SWSS_LOG_INFO("TX_ERR_POLL: got port %s %lx tx_err stati %ld, lasttime %ld threshold %ld\n", 
-                      port.c_str(), tesPortId(stat),
-                      txErrStatistics, txErrStatLasttime, txErrStatThreshold);
-        vector<FieldValueTuple> fieldValues;
+    //generate a random value instead :D
+    static uint64_t seed = 1;
+    txErrStatistics = seed;
+    txErrStatistics = txErrStatistics * 991 % 997;
+    seed = txErrStatistics;
+    txErrStatistics += txErrStatLasttime;
+    SWSS_LOG_INFO("TX_ERR_POLL: got port %s tx_err stati %" PRIu64 ", lasttime %" PRIu64 " threshold %" PRIu64 "\n", 
+                    port.c_str(), txErrStatistics, txErrStatLasttime, txErrStatThreshold);
+    uint64_t tx_err = 0;
+    SWSS_LOG_INFO("TX_ERR_POLL: got port %s %lx tx_err stati %" PRIu64 ", lasttime %" PRIu64 " threshold %" PRIu64 "\n", 
+                    port.c_str(), tesPortId(stat),
+                    txErrStatistics, txErrStatLasttime, txErrStatThreshold);
+    vector<FieldValueTuple> fieldValues;
 
-        if (m_countersTable.get(sai_serialize_object_id(tesPortId(stat)), fieldValues))
+    if (m_countersTable.get(sai_serialize_object_id(tesPortId(stat)), fieldValues))
+    {
+        SWSS_LOG_INFO("TX_ERR_POLL: got port %s %lx statistics, parsing... \n", port.c_str(), tesPortId(stat));
+        for (const auto& fv : fieldValues)
         {
-            SWSS_LOG_INFO("TX_ERR_POLL: got port %s %lx statistics, parsing... \n", port.c_str(), tesPortId(stat));
-            for (const auto& fv : fieldValues)
+            const auto field = fvField(fv);
+            const auto value = fvValue(fv);
+
+
+            if (field == "SAI_PORT_STAT_IF_OUT_ERRORS")
             {
-                const auto field = fvField(fv);
-                const auto value = fvValue(fv);
-
-
-                if (field == "SAI_PORT_STAT_IF_OUT_ERRORS")
-                {
-                    tx_err = stoul(value);
-                    SWSS_LOG_INFO("    TX_ERR_POLL: %s found %ld %s\n", 
-                                  field.c_str(), tx_err, value.c_str());
-                    break;
-                }
+                tx_err = stoul(value);
+                SWSS_LOG_INFO("    TX_ERR_POLL: %s found %ld %s\n", 
+                                field.c_str(), tx_err, value.c_str());
+                break;
             }
         }
-        else
-        {
-            SWSS_LOG_INFO("TX_ERR_POLL: failed to get port %s %lx \n", port.c_str(), tesPortId(stat));
-        }
-        txErrStatistics = tx_err;
-        SWSS_LOG_INFO("TX_ERR_POLL: got port %s tx_err stati %ld, lasttime %ld threshold %ld\n", 
-                      port.c_str(), txErrStatistics, txErrStatLasttime, txErrStatThreshold);
     }
-#endif
+    else
     {
-        static const vector<sai_stat_id_t> txErrStatId = {SAI_PORT_STAT_IF_OUT_ERRORS};
-        uint64_t tx_err = -1;
-        //get statistics from hal
-        //check FlexCounter::saiUpdateSupportedPortCounters in sai-redis for reference
-        sai_port_api->get_port_stats(tesPortId(stat),
-                                     static_cast<uint32_t>(txErrStatId.size()),
-                                     txErrStatId.data(),
-                                     &tx_err);
-        txErrStatistics = tx_err;
-        SWSS_LOG_INFO("TX_ERR_POLL: got port %s tx_err stati %ld, lasttime %ld threshold %ld\n", 
-                      port.c_str(), txErrStatistics, txErrStatLasttime, txErrStatThreshold);
+        SWSS_LOG_INFO("TX_ERR_POLL: failed to get port %s %lx \n", port.c_str(), tesPortId(stat));
     }
-
-#endif
+    txErrStatistics = tx_err;
+    SWSS_LOG_INFO("TX_ERR_POLL: got port %s tx_err stati %ld, lasttime %ld threshold %ld\n", 
+                    port.c_str(), txErrStatistics, txErrStatLasttime, txErrStatThreshold);
 
     if (txErrStatistics - txErrStatLasttime > txErrStatThreshold)
     {
