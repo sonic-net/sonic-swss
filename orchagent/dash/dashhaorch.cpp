@@ -58,7 +58,8 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
     dash_ha_set_result_table_ = make_unique<Table>(app_state_db, APP_DASH_HA_SET_TABLE_NAME);
     dash_ha_scope_result_table_ = make_unique<Table>(app_state_db, APP_DASH_HA_SCOPE_TABLE_NAME);
 
-    m_dpuStateDbConnector = make_unique<DBConnector>("DPU_STATE_DB", 0);
+    m_dpuStateDbConnector = make_unique<DBConnector>("DPU_STATE_DB", 0, true);
+
     m_dpuStateDbHaSetTable = make_unique<Table>(m_dpuStateDbConnector.get(), STATE_DASH_HA_SET_STATE_TABLE_NAME);
     m_dpuStateDbHaScopeTable = make_unique<Table>(m_dpuStateDbConnector.get(), STATE_DASH_HA_SCOPE_STATE_TABLE_NAME);
 
