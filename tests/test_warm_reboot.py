@@ -2475,6 +2475,23 @@ class TestWarmReboot(object):
         assert nadd == 0
         assert ndel == 0
 
+    def test_FpmsyncdWarmRestart(self, dvs):
+        # This test aims to improve code coverage in fpmsyncd.
+        warm_restart_set(dvs, "system", "true")
+        warm_restart_set(dvs, "bgp", "true")
+
+        # set restore count
+        db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(db, "WARM_RESTART_ENABLE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("restore_count", "0")])
+        tbl.set("bgp", fvs)
+
+        # Stop fpmsyncd
+        dvs.stop_fpmsyncd()
+
+        # Start fpmsyncd
+        dvs.start_fpmsyncd()
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

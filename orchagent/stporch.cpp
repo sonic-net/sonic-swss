@@ -27,12 +27,15 @@ StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableN
     vector<sai_attribute_t> attrs;
     attr.id = SAI_SWITCH_ATTR_DEFAULT_STP_INST_ID;
     attrs.push_back(attr);
+    attr.id = SAI_SWITCH_ATTR_MAX_STP_INSTANCE;
+    attrs.push_back(attr);
     
     status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status == SAI_STATUS_SUCCESS)
     {
 	    m_defaultStpId = attrs[0].value.oid;
-	    ret = true;
+        updateMaxStpInstance(attrs[1].value.u32);
+        ret = true;
     }
 
     SWSS_LOG_NOTICE("StpOrch initialization %s", (ret == true)?"success":"failure");
@@ -514,3 +517,16 @@ void StpOrch::doTask(Consumer &consumer)
     }
 }
 
+bool StpOrch::updateMaxStpInstance(uint32_t max_stp_instances)
+{
+    m_maxStpInstance = (sai_uint16_t)max_stp_instances - 1;
+
+    SWSS_LOG_NOTICE("StpOrch Max STP instances %d", m_maxStpInstance);
+
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("max_stp_inst", to_string(m_maxStpInstance));
+    tuples.push_back(tuple);
+    m_stpTable->set("GLOBAL", tuples);
+
+    return true;
+}
