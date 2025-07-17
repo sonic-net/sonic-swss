@@ -56,6 +56,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
+                evpnmhorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
@@ -75,6 +76,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
                 mock_saihelper.cpp \
+				shlorch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -95,6 +97,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/port/port_capabilities.cpp \
                 $(top_srcdir)/orchagent/port/porthlpr.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
+                $(top_srcdir)/orchagent/evpnmhorch.cpp \
                 $(top_srcdir)/orchagent/fabricportsorch.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \
                 $(top_srcdir)/orchagent/tunneldecaporch.cpp \
@@ -162,7 +165,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
                 $(top_srcdir)/orchagent/twamporch.cpp \
                 $(top_srcdir)/orchagent/stporch.cpp \
-                $(top_srcdir)/orchagent/nexthopkey.cpp
+                $(top_srcdir)/orchagent/nexthopkey.cpp \
+                $(top_srcdir)/orchagent/shlorch.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp

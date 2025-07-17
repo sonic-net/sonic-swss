@@ -151,6 +151,7 @@ public:
     void initializePortOperErrors(Port &port);
     bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
+    bool getVlanMember(string alias, Port vlan, sai_object_id_t &vlan_member_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
