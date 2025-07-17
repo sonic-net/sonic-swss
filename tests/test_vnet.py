@@ -2650,7 +2650,7 @@ class TestVnetOrch(object):
     '''
     Test 28 - Test for Single endpoint priority vnet tunnel routes. Test with local endpoint.
     '''
-    def test_vnet_orch_28(self, dvs, testlog):
+    def test_vnet_orch_28(self, dvs, dvs_acl, testlog):
         self.setup_db(dvs)
         self.clear_srv_config(dvs)
 

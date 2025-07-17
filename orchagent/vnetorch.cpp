@@ -895,7 +895,8 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
             return false;
         }
 
-        /* For local endpoint, we don't remove the next hop from NeighOrch.
+        /* For local endpoint, we don't remove the next hop from NeighOrch,
+         * as it is not created by VNetRouteOrch.
         */
         if (!isLocalEndpoint(vnet, nexthop.ip_address))
         {
@@ -2463,7 +2464,6 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                     vrf_obj->removeTunnelNextHop(endpoint);
                     SWSS_LOG_INFO("Successfully removed nexthop: %s\n",endpoint.to_string().c_str() );
                 }
-                /* There is no need to remove Tunnel Term Acl unless the NHG is removed. */
 
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
             }
@@ -3349,6 +3349,7 @@ bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vi
     vector<FieldValueTuple> fvs = {
         {RULE_PRIORITY, to_string(VNET_TUNNEL_TERM_ACL_BASE_PRIORITY)},
         {MATCH_DST_IP, vip.to_string()},
+        /* This tunnel term acl is to handle a transient state in DPU failover, so the redirect can't point to a VIP.*/
         {ACTION_REDIRECT_ACTION, alias}
     };
 
