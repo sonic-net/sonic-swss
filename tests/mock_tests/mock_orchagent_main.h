@@ -8,7 +8,6 @@
 #include "flowcounterrouteorch.h"
 #include "intfsorch.h"
 #include "neighorch.h"
-#include "evpnmhorch.h"
 #include "fdborch.h"
 #include "mirrororch.h"
 #define private public
@@ -72,7 +71,6 @@ extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
-extern EvpnMhOrch *gEvpnMhOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;

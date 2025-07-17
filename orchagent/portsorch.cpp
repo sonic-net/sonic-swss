@@ -4,7 +4,6 @@
 #include "neighorch.h"
 #include "gearboxutils.h"
 #include "vxlanorch.h"
-#include "evpnmhorch.h"
 #include "directory.h"
 #include "subintf.h"
 #include "notifications.h"
@@ -65,7 +64,6 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
-extern EvpnMhOrch *gEvpnMhOrch;
 extern event_handle_t g_events_handle;
 
 // defines ------------------------------------------------------------------------------------------------------------
@@ -1507,17 +1505,6 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     }
 
     return false;
-}
-
-bool PortsOrch::getVlanMember(string alias, Port vlan, sai_object_id_t &vlan_member_id)
-{
-    auto vlan_member = m_portVlanMember[alias].find(vlan.m_vlan_info.vlan_id);
-    if (vlan_member == m_portVlanMember[alias].end()) {
-        return false;
-    }
-    vlan_member_id = vlan_member->second.vlan_member_id;
-
-    return true;
 }
 
 void PortsOrch::increasePortRefCount(const string &alias)
@@ -6507,14 +6494,6 @@ bool PortsOrch::addBridgePort(Port &port)
     attr.value.s32 = port.m_learn_mode;
     attrs.push_back(attr);
 
-    /* If the interface is associated with an ethernet segment, set the DF role */
-    if (gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
-        /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
-        attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
-        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
-        attrs.push_back(attr);
-    }
-
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -6806,14 +6785,6 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     else assert(false);
     attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
-
-    /* If the interface is associated with an ethernet segment, send the SAI vlan DF attribute */
-    if (gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
-        /* TODO: Use proper attribute once its available in SAI */
-        attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
-        attrs.push_back(attr);
-    }
 
     sai_object_id_t vlan_member_id;
     sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
