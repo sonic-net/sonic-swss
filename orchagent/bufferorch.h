@@ -9,6 +9,8 @@
 #include "redisapi.h"
 #include "saiattr.h"
 
+#include "buffer/bufferhelper.h"
+
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
@@ -160,6 +162,9 @@ private:
     std::map<std::string, std::vector<PortBufferProfileListTask>> m_portEgressBufferProfileListBulk;
     std::map<std::string, std::vector<PriorityGroupTask>> m_priorityGroupBulk;
     std::map<std::string, std::vector<QueueTask>> m_queueBulk;
+
+    // Buffer OA helper
+    BufferHelper m_bufHlpr;
 };
 #endif /* SWSS_BUFFORCH_H */
 
