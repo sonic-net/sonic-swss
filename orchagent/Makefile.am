@@ -60,6 +60,7 @@ orchagent_SOURCES = \
             mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
+            evpnmhorch.cpp \
             port/port_capabilities.cpp \
             port/porthlpr.cpp \
             portsorch.cpp \
