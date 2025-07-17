@@ -496,7 +496,7 @@ private:
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false);
-    bool removeNextHopGroup(const string&, IpPrefix&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );

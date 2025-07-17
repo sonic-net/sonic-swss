@@ -864,7 +864,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     return true;
 }
 
-bool VNetRouteOrch::removeNextHopGroup(const string& vnet, IpPrefix& ip_prefix, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
+bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
 {
     SWSS_LOG_ENTER();
 
@@ -895,17 +895,11 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, IpPrefix& ip_prefix, 
             return false;
         }
 
-        /* For local endpoint, we don't remove the next hop from NeighOrch,
-        * as it is not created by VNetRouteOrch. But we still need to remove
-        * the acl entry.
+        /* For local endpoint, we don't remove the next hop from NeighOrch.
         */
         if (!isLocalEndpoint(vnet, nexthop.ip_address))
         {
             vrf_obj->removeTunnelNextHop(nexthop);
-        }
-        else
-        {
-            vnet_tunnel_term_acl_->removeAclRule(vnet, ip_prefix);
         }
 
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
@@ -1225,7 +1219,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 /* Clean up the newly created next hop group entry */
                 if (active_nhg.getSize() > 1)
                 {
-                    removeNextHopGroup(vnet, ipPrefix, active_nhg, vrf_obj);
+                    removeNextHopGroup(vnet, active_nhg, vrf_obj);
                 }
                 return false;
             }
@@ -1264,7 +1258,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 {
                     if (nhg.getSize() > 1)
                     {
-                        removeNextHopGroup(vnet, ipPrefix, nhg, vrf_obj);
+                        removeNextHopGroup(vnet, nhg, vrf_obj);
                     }
                     else
                     {
@@ -1275,10 +1269,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                             if (!isLocalEndpoint(vnet, nexthop.ip_address))
                             {
                                 vrf_obj->removeTunnelNextHop(nexthop);
-                            }
-                            else
-                            {
-                                vnet_tunnel_term_acl_->removeAclRule(vnet, ipPrefix);
                             }
                         }
                     }
@@ -1365,7 +1355,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             if (nhg.getSize() > 1)
             {
-                removeNextHopGroup(vnet, ipPrefix, nhg, vrf_obj);
+                removeNextHopGroup(vnet, nhg, vrf_obj);
             }
             else
             {
@@ -1378,10 +1368,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     if (!isLocalEndpoint(vnet, nexthop.ip_address))
                     {
                         vrf_obj->removeTunnelNextHop(nexthop);
-                    }
-                    else
-                    {
-                        vnet_tunnel_term_acl_->removeAclRule(vnet, ipPrefix);
                     }
                 }
             }
@@ -2684,7 +2670,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                     /* Clean up the newly created next hop group entry */
                     if (nhg_custom.getSize() > 1)
                     {
-                        removeNextHopGroup(vnet, prefix, nhg_custom, vrf_obj);
+                        removeNextHopGroup(vnet, nhg_custom, vrf_obj);
                     }
                     return;
                 }
@@ -2706,7 +2692,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         {
             if (active_nhg_size > 1)
             {
-                removeNextHopGroup(vnet, prefix, active_nhg, vrf_obj);
+                removeNextHopGroup(vnet, active_nhg, vrf_obj);
             }
             else
             {
@@ -2717,10 +2703,6 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                     if (!isLocalEndpoint(vnet, nexthop.ip_address))
                     {
                         vrf_obj->removeTunnelNextHop(nexthop);
-                    }
-                    else
-                    {
-                        vnet_tunnel_term_acl_->removeAclRule(vnet, prefix);
                     }
                 }
             }
