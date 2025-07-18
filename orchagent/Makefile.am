@@ -127,7 +127,12 @@ orchagent_SOURCES = \
             dash/dashportmaporch.cpp \
             twamporch.cpp \
             stporch.cpp \
-            nexthopkey.cpp
+            nexthopkey.cpp \
+            high_frequency_telemetry/hftelorch.cpp \
+            high_frequency_telemetry/hftelprofile.cpp \
+            high_frequency_telemetry/counternameupdater.cpp \
+            high_frequency_telemetry/hftelutils.cpp \
+            high_frequency_telemetry/hftelgroup.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
