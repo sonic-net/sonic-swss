@@ -29,6 +29,7 @@
 #include "muxorch.h"
 #include "nhgorch.h"
 #include "copporch.h"
+#include "txmonorch.h"
 #include "twamporch.h"
 #include "mlagorch.h"
 #define private public
@@ -71,6 +72,7 @@ extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
+extern TxMonOrch *gTxMonOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
