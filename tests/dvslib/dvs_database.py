@@ -4,7 +4,7 @@ FIXME:
     - Reference DBs by name rather than ID/socket
     - Add support for ProducerStateTable
 """
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Callable
 from swsscommon import swsscommon
 from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig
@@ -143,8 +143,12 @@ class DVSDatabase:
             table_name: The name of the table where the entry is being removed.
             key: The key that maps to the entry being removed.
         """
-        table = swsscommon.Table(self.db_connection, table_name)
-        table._del(key)  # pylint: disable=protected-access
+        if self.db_connection.getDbId() == swsscommon.APPL_DB:
+            table = swsscommon.ProducerStateTable(self.db_connection, table_name)
+            table._del(key)
+        else:
+            table = swsscommon.Table(self.db_connection, table_name)
+            table._del(key)  # pylint: disable=protected-access
 
     def delete_field(self, table_name: str, key: str, field: str) -> None:
         """Remove a field from an entry stored at `key` in the specified table.
@@ -260,6 +264,7 @@ class DVSDatabase:
         key: str,
         expected_fields: Dict[str, str],
         polling_config: PollingConfig = PollingConfig(),
+        comparator: Callable[[], bool] = None,
         failure_message: str = None,
     ) -> Dict[str, str]:
         """Wait for the entry stored at `key` to have the specified field/values and retrieve it.
@@ -281,6 +286,11 @@ class DVSDatabase:
 
         def access_function():
             fv_pairs = self.get_entry(table_name, key)
+
+            if comparator is not None:
+                result = all(comparator(k, fv_pairs.get(k, None), v) for k, v in expected_fields.items())
+                return (result, fv_pairs)
+
             return (
                 all(fv_pairs.get(k) == v for k, v in expected_fields.items()),
                 fv_pairs,

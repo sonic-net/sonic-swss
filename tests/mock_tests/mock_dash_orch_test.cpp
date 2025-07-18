@@ -2,7 +2,7 @@
 
 namespace mock_orch_test
 {
-    
+
     void MockDashOrchTest::SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set, bool expect_empty)
     {
         auto it = dash_table_orch_map.find(table_name);
@@ -10,35 +10,44 @@ namespace mock_orch_test
         {
             FAIL() << "Table " << table_name << " not found in dash_table_orch_map.";
         }
-        Orch* target_orch = *(it->second);
+        Orch *target_orch = *(it->second);
 
         auto consumer = make_unique<Consumer>(
             new swss::ConsumerStateTable(m_app_db.get(), table_name),
-            target_orch, table_name
-        );
+            target_orch, table_name);
         auto op = set ? SET_COMMAND : DEL_COMMAND;
         consumer->addToSync(
-            swss::KeyOpFieldsValuesTuple(key, op, {{"pb", message.SerializeAsString()}})
-        );
+            swss::KeyOpFieldsValuesTuple(key, op, { { "pb", message.SerializeAsString() } }));
         target_orch->doTask(*consumer.get());
 
+        auto it2 = consumer->m_toSync.begin();
         if (expect_empty)
         {
-            auto it = consumer->m_toSync.begin();
-            EXPECT_EQ(it, consumer->m_toSync.end())
+            EXPECT_EQ(it2, consumer->m_toSync.end())
                 << "Expected consumer to be empty after operation on table " << table_name
+                << " with key " << key;
+        }
+        else
+        {
+            EXPECT_NE(it2, consumer->m_toSync.end())
+                << "Expected consumer to not be empty after operation on table " << table_name
                 << " with key " << key;
         }
     }
 
-    void MockDashOrchTest::CreateApplianceEntry()
+    dash::appliance::Appliance MockDashOrchTest::BuildApplianceEntry()
     {
         swss::IpAddress sip("1.1.1.1");
         dash::appliance::Appliance appliance = dash::appliance::Appliance();
         appliance.mutable_sip()->set_ipv4(sip.getV4Addr());
         appliance.set_local_region_id(100);
         appliance.set_vm_vni(9999);
-        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        return appliance;
+    }
+
+    void MockDashOrchTest::CreateApplianceEntry()
+    {
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, BuildApplianceEntry());
     }
 
     void MockDashOrchTest::CreateVnet()
@@ -98,5 +107,18 @@ namespace mock_orch_test
     void MockDashOrchTest::RemoveVnetMap()
     {
         SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip1, dash::vnet_mapping::VnetMapping(), false);
+    }
+
+    dash::eni::Eni MockDashOrchTest::BuildEniEntry()
+    {
+        dash::eni::Eni eni;
+        std::string mac = "f4:93:9f:ef:c4:7e";
+        eni.set_admin_state(dash::eni::State::STATE_ENABLED);
+        eni.set_eni_id(eni1);
+        eni.set_mac_address(mac);
+        eni.set_vnet(vnet1);
+        eni.mutable_underlay_ip()->set_ipv4(swss::IpAddress("1.2.3.4").getV4Addr());
+        eni.set_eni_mode(dash::eni::MODE_VM);
+        return eni;
     }
 }
