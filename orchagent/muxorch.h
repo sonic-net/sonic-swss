@@ -98,6 +98,7 @@ public:
 private:
     bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
     bool addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+    bool setBulkRouteNH(std::list<MuxRouteBulkContext>& bulk_ctx_list);
 
     inline void updateTunnelRoute(NextHopKey, bool = true);
 
@@ -221,6 +222,7 @@ public:
     }
 
     MuxCable* findMuxCableInSubnet(IpAddress);
+    bool isMuxPortNeighbor(const IpAddress& nbr, const MacAddress& mac, string& alias);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
 
@@ -249,6 +251,11 @@ public:
     }
     void updateCachedNeighbors();
 
+    void saveMuxNeighbors();
+    void restoreMuxNeighbors();
+
+    bool bake() override;
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
@@ -256,7 +263,13 @@ private:
     bool handleMuxCfg(const Request&);
     bool handlePeerSwitch(const Request&);
 
-    void updateNeighbor(const NeighborUpdate&);
+    // heper functions for warmboot
+    void saveNeighborToMuxTable(const IpAddress& ip, const string& alias);
+    void removeNeighborFromMuxTable(const IpAddress& ip, const string& alias);
+    bool isCachedMuxNeighbor(const IpAddress& ip, const string& alias) const;
+    void clearCachedMuxNeighbors();
+
+    void updateNeighbor(const NeighborUpdate& update);
     void updateFdb(const FdbUpdate&);
 
     bool getMuxPort(const MacAddress&, const string&, string&);
@@ -300,6 +313,11 @@ private:
 
     bool enable_cache_neigh_updates_ = false;
     std::vector<NeighborUpdate> cached_neigh_updates_;
+    
+    // Redis table for persisting MUX neighbors across warm reboot
+    std::unique_ptr<DBConnector> state_db_;
+    std::unique_ptr<Table> mux_neighbors_table_;
+    std::set<std::pair<IpAddress, std::string>> cached_mux_neighbors_;
 };
 
 const request_description_t mux_cable_request_description = {
