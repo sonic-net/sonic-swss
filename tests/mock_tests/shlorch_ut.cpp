@@ -397,6 +397,8 @@ namespace shlorch_test
                 APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
             };
             gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
+            gDirectory.set(gBufferOrch);
+            ut_orch_list.push_back((Orch **)&gBufferOrch);
 
             vector<TableConnector> policer_tables = {
                 TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
