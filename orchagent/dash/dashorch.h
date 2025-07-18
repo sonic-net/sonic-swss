@@ -59,6 +59,8 @@ public:
     void handleFCStatusUpdate(bool is_enabled);
     dash::types::IpAddress getApplianceVip();
     bool hasApplianceEntry();
+    void clearMeterFCStats();
+    void refreshMeterFCStats(bool);
 
 private:
     ApplianceTable appliance_entries_;
