@@ -969,7 +969,7 @@ class TestVirtualChassis(object):
                     "awk STARTFILE/ENDFILE /var/log/syslog | grep 'removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN' | wc -l"] )
                 assert logSeen.strip() == "1"
 
-            buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+            buffer_model.disable_dynamic_buffer(dvs)
 
     def test_voq_egress_queue_counter(self, vct):
         if vct is None:

@@ -227,7 +227,7 @@ void DebugCounterOrch::doTask(Consumer& consumer)
 
 // publishDropCounterCapabilities queries the SAI for available drop counter
 // capabilities on this device and publishes the information to the
-// DROP_COUNTER_CAPABILITIES table in STATE_DB.
+// DEBUG_COUNTER_CAPABILITIES table in STATE_DB.
 void DebugCounterOrch::publishDropCounterCapabilities()
 {
     supported_ingress_drop_reasons = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST);

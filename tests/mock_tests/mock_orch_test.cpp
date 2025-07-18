@@ -326,6 +326,14 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_DashTunnelOrch);
     ut_orch_list.push_back((Orch **)&m_DashTunnelOrch);
 
+    vector<string> dash_port_map_tables = {
+        APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
+        APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
+    };
+    m_dashPortMapOrch = new DashPortMapOrch(m_app_db.get(), dash_port_map_tables, m_dpu_app_state_db.get(), nullptr);
+    gDirectory.set(m_dashPortMapOrch);
+    ut_orch_list.push_back((Orch **)&m_dashPortMapOrch);
+
     ApplyInitialConfigs();
     PostSetUp();
 }

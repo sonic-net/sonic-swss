@@ -19,15 +19,31 @@ public:
     } size; // Trim packets to this size to reduce bandwidth
 
     struct {
+        struct {
+            sai_packet_trim_dscp_resolution_mode_t value;
+            bool is_set = false;
+        } mode;
+
         sai_uint8_t value;
         bool is_set = false;
     } dscp; // New packet trimming DSCP value
 
     struct {
         struct {
+            sai_uint8_t value;
+            bool is_set = false;
+        } cache;
+
+        sai_uint8_t value;
+        bool is_set = false;
+    } tc; // New packet trimming TC value
+
+    struct {
+        struct {
             sai_packet_trim_queue_resolution_mode_t value;
             bool is_set = false;
         } mode;
+
         struct {
             sai_uint8_t value;
             bool is_set = false;

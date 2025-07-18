@@ -31,6 +31,7 @@ private:
     unique_ptr<Table> m_stpTable;
     std::map<sai_uint16_t, sai_object_id_t> m_stpInstToOid;//Mapping from STP instance id to corresponding object id
     sai_object_id_t m_defaultStpId;
+    sai_uint16_t m_maxStpInstance;
     
     void doStpTask(Consumer &consumer);
     void doStpPortStateTask(Consumer &consumer);
