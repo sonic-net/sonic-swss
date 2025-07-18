@@ -901,6 +901,372 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
     }
 }
 
+bool SwitchOrch::setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_SIZE;
+    attr.value.u32 = trim.size.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingDscpModeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE;
+    attr.value.s32 = trim.dscp.mode.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE;
+    attr.value.u8 = trim.dscp.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingTcSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE;
+    attr.value.u8 = trim.tc.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE;
+    attr.value.s32 = trim.queue.mode.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX;
+    attr.value.u8 = trim.queue.index.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimming(const SwitchTrimming &trim)
+{
+    SWSS_LOG_ENTER();
+
+    auto tObj = trimHlpr.getConfig();
+
+    auto dscpBak = false;
+    auto tcBak = false;
+    auto queueBak = false;
+
+    auto tcUpdate = false;
+    auto tcSync = false;
+
+    auto cfgUpd = false;
+
+    if (!trimCap.isSwitchTrimmingSupported())
+    {
+        SWSS_LOG_WARN("Switch trimming configuration is not supported: skipping ...");
+        return true;
+    }
+
+    if (trim.size.is_set)
+    {
+        if (!tObj.size.is_set || (tObj.size.value != trim.size.value))
+        {
+            if (!setSwitchTrimmingSizeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming size in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.size.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming size configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.dscp.mode.is_set)
+    {
+        if (!tObj.dscp.mode.is_set || (tObj.dscp.mode.value != trim.dscp.mode.value))
+        {
+            if (!trimCap.validateTrimDscpModeCap(trim.dscp.mode.value))
+            {
+                SWSS_LOG_ERROR("Failed to validate switch trimming DSCP mode: capability is not supported");
+                return false;
+            }
+
+            if (!setSwitchTrimmingDscpModeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming DSCP mode in SAI");
+                return false;
+            }
+
+            if (trimHlpr.isSymDscpMode(tObj))
+            {
+                dscpBak = true;
+            }
+
+            if (!trimHlpr.isSymDscpMode(trim))
+            {
+                if (!tObj.tc.cache.is_set)
+                {
+                    tcUpdate = true;
+                }
+                else
+                {
+                    tObj.tc.value = tObj.tc.cache.value;
+                }
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.dscp.mode.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming DSCP configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.dscp.is_set)
+    {
+        if (!tObj.dscp.is_set || (tObj.dscp.value != trim.dscp.value))
+        {
+            if (!setSwitchTrimmingDscpSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming DSCP value in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+
+    if (trim.tc.is_set)
+    {
+        if (!tObj.tc.is_set || (tObj.tc.value != trim.tc.value) || tcUpdate)
+        {
+            if (!trimHlpr.isSymDscpMode(trim))
+            {
+                if (!trimCap.validateTrimTcCap(trim.tc.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch trimming TC value: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchTrimmingTcSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming TC value in SAI");
+                    return false;
+                }
+
+                tcSync = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Skip setting switch trimming TC value for symmetric DSCP mode");
+            }
+
+            cfgUpd = true;
+        }
+
+        // Cache synchronization and backup are mutually exclusive
+        if (!tcSync)
+        {
+            tcBak = true;
+        }
+    }
+    else
+    {
+        if (tObj.tc.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming TC configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.queue.mode.is_set)
+    {
+        if (!tObj.queue.mode.is_set || (tObj.queue.mode.value != trim.queue.mode.value))
+        {
+            if (!trimCap.validateTrimQueueModeCap(trim.queue.mode.value))
+            {
+                SWSS_LOG_ERROR("Failed to validate switch trimming queue mode: capability is not supported");
+                return false;
+            }
+
+            if (!setSwitchTrimmingQueueModeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming queue mode in SAI");
+                return false;
+            }
+
+            if (trimHlpr.isStaticQueueMode(tObj))
+            {
+                queueBak = true;
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.queue.mode.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming queue configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.queue.index.is_set)
+    {
+        if (!tObj.queue.index.is_set || (tObj.queue.index.value != trim.queue.index.value))
+        {
+            if (!trimCap.validateQueueIndexCap(trim.queue.index.value))
+            {
+                SWSS_LOG_ERROR("Failed to validate switch trimming queue index: capability is not supported");
+                return false;
+            }
+
+            if (!setSwitchTrimmingQueueIndexSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming queue index in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+
+    // Don't update internal cache when config remains unchanged
+    if (!cfgUpd)
+    {
+        SWSS_LOG_NOTICE("Switch trimming in SAI is up-to-date");
+        return true;
+    }
+
+    if (dscpBak || tcBak || queueBak || tcSync) // Custom configuration update
+    {
+        auto cfg = trim;
+
+        if (dscpBak) // Override dscp configuration during transition from symmetric -> asymmetric
+        {
+            cfg.dscp = tObj.dscp;
+            cfg.dscp.mode = trim.dscp.mode;
+        }
+
+        if (tcBak) // Override tc configuration to pass synchronization cache
+        {
+            cfg.tc.cache = tObj.tc.cache;
+        }
+
+        if (queueBak) // override queue configuration during transition from static -> dynamic
+        {
+            cfg.queue.index = tObj.queue.index;
+        }
+
+        if (tcSync) // Update tc synchronization cache
+        {
+            cfg.tc.cache.value = trim.tc.value;
+            cfg.tc.cache.is_set = true;
+        }
+
+        trimHlpr.setConfig(cfg);
+    }
+    else // Regular configuration update
+    {
+        trimHlpr.setConfig(trim);
+    }
+
+    SWSS_LOG_NOTICE("Set switch trimming in SAI");
+
+    return true;
+}
+
+void SwitchOrch::doCfgSwitchTrimmingTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        SWSS_LOG_INFO("KEY: %s, OP: %s", key.c_str(), op.c_str());
+
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("Failed to parse switch trimming key: empty string");
+            it = map.erase(it);
+            continue;
+        }
+
+        SwitchTrimming trim;
+
+        if (op == SET_COMMAND)
+        {
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+
+                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+
+                trim.fieldValueMap[fieldName] = fieldValue;
+            }
+
+            if (trimHlpr.parseTrimConfig(trim))
+            {
+                if (!setSwitchTrimming(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming: ASIC and CONFIG DB are diverged");
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming: operation is not supported: ASIC and CONFIG DB are diverged");
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation(%s)", op.c_str());
+        }
+
+        it = map.erase(it);
+    }
+}
+
 void SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const string &severityString, const string &suppressed_category_list, bool isInitializing)
 {
     sai_status_t status;
@@ -1045,6 +1411,10 @@ void SwitchOrch::doTask(Consumer &consumer)
     else if (tableName == CFG_SWITCH_HASH_TABLE_NAME)
     {
         doCfgSwitchHashTableTask(consumer);
+    }
+    else if (tableName == CFG_SWITCH_TRIMMING_TABLE_NAME)
+    {
+        doCfgSwitchTrimmingTableTask(consumer);
     }
     else if (tableName == CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME)
     {

@@ -91,6 +91,8 @@ sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
 sai_dash_meter_api_t*               sai_dash_meter_api;
+sai_dash_outbound_port_map_api_t*   sai_dash_outbound_port_map_api;
+sai_dash_trusted_vni_api_t*         sai_dash_trusted_vni_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -244,6 +246,7 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
     sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL,               (void**)&sai_dash_tunnel_api);
     sai_api_query((sai_api_t)SAI_API_DASH_HA,                   (void**)&sai_dash_ha_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP,    (void**)&sai_dash_outbound_port_map_api);
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
@@ -396,7 +399,7 @@ void initSaiRedis()
     }
 
     char *platform = getenv("platform");
-    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
+    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING) || strstr(platform, MRVL_PRST_PLATFORM_SUBSTRING)))
     {
         /* We set this long timeout in order for Orchagent to wait enough time for
          * response from syncd. It is needed since in init, systemd syncd startup
@@ -1103,7 +1106,15 @@ void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& ke
         fvVector.emplace_back("version", version);
     }
 
-    table->set(key, fvVector);
+    try
+    {
+        table->set(key, fvVector);
+    }
+    catch (const exception &e)
+    {
+        SWSS_LOG_ERROR("Exception caught while writing to DB: %s", e.what());
+        return;
+    }
     SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
 }
 
@@ -1117,6 +1128,14 @@ void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string&
         return;
     }
 
-    table->del(key);
+    try
+    {
+        table->del(key);
+    }
+    catch (const exception &e)
+    {
+        SWSS_LOG_ERROR("Exception caught while removing from DB: %s", e.what());
+        return;
+    }
     SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }

@@ -26,20 +26,28 @@ static const map<sai_ha_set_event_t, string> sai_ha_set_event_type_name =
     { SAI_HA_SET_EVENT_DP_CHANNEL_DOWN, "down" }
 };
 
+static const map<sai_dash_ha_role_t, string> sai_ha_role_name = {
+    { SAI_DASH_HA_ROLE_DEAD, "dead" },
+    { SAI_DASH_HA_ROLE_ACTIVE, "active" },
+    { SAI_DASH_HA_ROLE_STANDBY, "standby" },
+    { SAI_DASH_HA_ROLE_STANDALONE, "standalone" },
+    { SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE, "switching_to_active" },
+};
+
 static const map<sai_dash_ha_state_t, string> sai_ha_state_name = {
-    { SAI_DASH_HA_STATE_DEAD, "HA_STATE_DEAD" },
-    { SAI_DASH_HA_STATE_CONNECTING, "HA_STATE_CONNECTING" },
-    { SAI_DASH_HA_STATE_CONNECTED, "HA_STATE_CONNECTED" },
-    { SAI_DASH_HA_STATE_INITIALIZING_TO_ACTIVE, "HA_STATE_INITIALIZING_TO_ACTIVE" },
-    { SAI_DASH_HA_STATE_INITIALIZING_TO_STANDBY, "HA_STATE_INITIALIZING_TO_STANDBY" },
-    { SAI_DASH_HA_STATE_PENDING_STANDALONE_ACTIVATION, "HA_STATE_PENDING_STANDALONE_ACTIVATION" },
-    { SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION, "HA_STATE_PENDING_ACTIVE_ACTIVATION" },
-    { SAI_DASH_HA_STATE_PENDING_STANDBY_ACTIVATION, "HA_STATE_PENDING_STANDBY_ACTIVATION" },
-    { SAI_DASH_HA_STATE_STANDALONE, "HA_STATE_STANDALONE" },
-    { SAI_DASH_HA_STATE_ACTIVE, "HA_STATE_ACTIVE" },
-    { SAI_DASH_HA_STATE_STANDBY, "HA_STATE_STANDBY" },
-    { SAI_DASH_HA_STATE_DESTROYING, "HA_STATE_DESTROYING" },
-    { SAI_DASH_HA_STATE_SWITCHING_TO_STANDALONE, "HA_STATE_SWITCHING_TO_STANDALONE" },
+    { SAI_DASH_HA_STATE_DEAD, "dead" },
+    { SAI_DASH_HA_STATE_CONNECTING, "connecting" },
+    { SAI_DASH_HA_STATE_CONNECTED, "connected" },
+    { SAI_DASH_HA_STATE_INITIALIZING_TO_ACTIVE, "initializing_to_active" },
+    { SAI_DASH_HA_STATE_INITIALIZING_TO_STANDBY, "initializing_to_standby" },
+    { SAI_DASH_HA_STATE_PENDING_STANDALONE_ACTIVATION, "pending_standalone_activation" },
+    { SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION, "pending_active_activation" },
+    { SAI_DASH_HA_STATE_PENDING_STANDBY_ACTIVATION, "pending_standby_activation" },
+    { SAI_DASH_HA_STATE_STANDALONE, "standalone" },
+    { SAI_DASH_HA_STATE_ACTIVE, "active" },
+    { SAI_DASH_HA_STATE_STANDBY, "standby" },
+    { SAI_DASH_HA_STATE_DESTROYING, "destroying" },
+    { SAI_DASH_HA_STATE_SWITCHING_TO_STANDALONE, "switching_to_standalone" },
 };
 
 static const map<sai_ha_scope_event_t, string> sai_ha_scope_event_type_name =
@@ -748,7 +756,7 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                     role_start_time = m_ha_scope_entries[key].last_role_start_time;
                 }
 
-                fvs.push_back({"ha_role", dash::types::HaRole_Name(ha_role)});
+                fvs.push_back({"ha_role", sai_ha_role_name.at(ha_scope_event[i].ha_role)});
                 fvs.push_back({"ha_role_start_time ", to_string(role_start_time)});
 
                 switch (event_type)
