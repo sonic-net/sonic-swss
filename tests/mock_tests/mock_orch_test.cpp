@@ -217,6 +217,19 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gSrv6Orch);
     global_orch_list.insert((Orch **)&gSrv6Orch);
 
+    TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
+    TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+
+    vector<TableConnector> evpn_df_es_table_connectors = {
+        appDbDfTable,
+        confDbEvpnEsTable,
+    };
+
+    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+    gDirectory.set(gEvpnMhOrch);
+    ut_orch_list.push_back((Orch **)&gEvpnMhOrch);
+    global_orch_list.insert((Orch **)&gEvpnMhOrch);
+
     gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
     gDirectory.set(gCrmOrch);
     ut_orch_list.push_back((Orch **)&gCrmOrch);
