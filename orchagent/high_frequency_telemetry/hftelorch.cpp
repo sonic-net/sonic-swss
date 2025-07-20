@@ -74,7 +74,7 @@ HFTelOrch::HFTelOrch(
 {
     SWSS_LOG_ENTER();
 
-    createNetlinkChannel("stel", "ipfix");
+    createNetlinkChannel("sonic_stel", "ipfix");
     createTAM();
 
     m_asic_notification_consumer = make_shared<NotificationConsumer>(&m_asic_db, "NOTIFICATIONS");
