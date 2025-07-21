@@ -1209,7 +1209,7 @@ bool FabricOrchDaemon::init()
         { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
         { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
     };
-    gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
+    gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
     addOrchList(gFabricPortsOrch);
 
     vector<string> flex_counter_tables = {
