@@ -28,6 +28,7 @@ namespace vuh = vxlan_ut_helpers;
 #define VTEP_REMOTE_IP_5 "5.5.5.5"
 
 extern ShlOrch *gShlOrch;
+extern EvpnMhOrch *gEvpnMhOrch;
 extern sai_isolation_group_api_t*  sai_isolation_group_api;
 
 namespace shlorch_test
@@ -297,6 +298,10 @@ namespace shlorch_test
                 appDbDfTable,
                 confDbEvpnEsTable,
             };
+
+            gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+            gDirectory.set(gEvpnMhOrch);
+            ut_orch_list.push_back((Orch **)&gEvpnMhOrch);
 
             const int portsorch_base_pri = 40;
             vector<table_name_with_pri_t> ports_tables = {
