@@ -1266,7 +1266,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_HA_SCOPE_TABLE_NAME
     };
 
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
@@ -1301,6 +1301,13 @@ bool DpuOrchDaemon::init()
     DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
 
+    vector<string> dash_port_map_tables = {
+        APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
+        APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
+    };
+    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_applDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
+    gDirectory.set(dash_port_map_orch);
+
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
@@ -1308,6 +1315,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_tunnel_orch);
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
+    addOrchList(dash_port_map_orch);
 
     return true;
 }

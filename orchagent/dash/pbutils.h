@@ -18,6 +18,8 @@ bool to_sai(const dash::types::IpPrefix &pb_prefix, sai_ip_prefix_t &sai_prefix)
 
 bool to_sai(const google::protobuf::RepeatedPtrField<dash::types::IpPrefix> &pb_prefixes, std::vector<sai_ip_prefix_t> &sai_prefixes);
 
+bool to_sai(const dash::types::ValueOrRange &pb_range, sai_u32_range_t &sai_range);
+
 template<typename RangeType>
 bool to_sai(const dash::types::ValueOrRange &pb_range, RangeType &sai_range)
 {
