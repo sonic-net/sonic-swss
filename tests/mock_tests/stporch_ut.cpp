@@ -91,12 +91,14 @@ namespace stporch_test
         }
         void PostSetUp() override
         {
-            vector<string> tableNames = 
-                {"STP_TABLE", 
+            vector<string> tableNames =
+                {"STP_TABLE",
                 "STP_VLAN_INSTANCE_TABLE",
                 "STP_PORT_STATE_TABLE",
-                "STP_FASTAGEING_FLUSH_TABLE"};
-            _hook_sai_switch_api();
+
+                "STP_FASTAGEING_FLUSH_TABLE",
+                "STP_INST_PORT_FLUSH_TABLE"};
+
             gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), tableNames);
         }
         void PreTearDown() override
@@ -190,16 +192,16 @@ namespace stporch_test
         ASSERT_TRUE(gPortsOrch->getPort(ETHERNET0, port));
         ASSERT_TRUE(gPortsOrch->getPort(ETHERNET4, port1));
 
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             create_stp(_, _, _, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_oid),
                                         ::testing::Return(SAI_STATUS_SUCCESS)));
         result = gStpOrch->addVlanToStpInstance(VLAN_1000, stp_instance);
         ASSERT_TRUE(result);
 
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             create_stp_port(_, _, 3, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_port_oid),
                                         ::testing::Return(SAI_STATUS_SUCCESS)));
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             set_stp_port_attribute(_,_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         port.m_bridge_port_id = 1234;
         result = gStpOrch->updateStpPortState(port, stp_instance, STP_STATE_FORWARDING);
@@ -208,61 +210,60 @@ namespace stporch_test
         result = gStpOrch->stpVlanFdbFlush(VLAN_1000);
         ASSERT_TRUE(result);
 
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             remove_stp_port(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         result = gStpOrch->removeStpPort(port, stp_instance);
         ASSERT_TRUE(result);
 
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             create_stp_port(_, _, 3, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_port_oid),
                                         ::testing::Return(SAI_STATUS_SUCCESS)));
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             set_stp_port_attribute(_,_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         port1.m_bridge_port_id = 1111;
         result = gStpOrch->updateStpPortState(port1, stp_instance, STP_STATE_BLOCKING);
         ASSERT_TRUE(result);
 
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             remove_stp_port(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         result = gStpOrch->removeStpPorts(port1);
         ASSERT_TRUE(result);
 
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             remove_stp(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         result = gStpOrch->removeVlanFromStpInstance(VLAN_1000, stp_instance);
         ASSERT_TRUE(result);
 
         std::deque<KeyOpFieldsValuesTuple> entries;
         entries.push_back({"Vlan1000", "SET", { {"stp_instance", "1"}}});
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             create_stp(_, _, _, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_oid),
                                         ::testing::Return(SAI_STATUS_SUCCESS)));
-       
+
         auto consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_VLAN_INSTANCE_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
 
         entries.clear();
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             create_stp_port(_, _, 3, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_port_oid),
                                         ::testing::Return(SAI_STATUS_SUCCESS)));
-        EXPECT_CALL(mock_sai_stp_, 
-            set_stp_port_attribute(_,_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS)); 
+        EXPECT_CALL(mock_sai_stp_,
+            set_stp_port_attribute(_,_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         entries.push_back({"Ethernet0:1", "SET", { {"state", "4"}}});
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_PORT_STATE_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
-        
+
         entries.clear();
         entries.push_back({"Ethernet0:1", "SET", { {"state", "true"}}});
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_FASTAGEING_FLUSH_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
 
-
         entries.clear();
         entries.push_back({"Ethernet0:1", "DEL", { {} }});
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             remove_stp_port(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_PORT_STATE_TABLE"));
         consumer->addToSync(entries);
@@ -270,12 +271,18 @@ namespace stporch_test
 
         entries.clear();
         entries.push_back({"Vlan1000", "DEL", { {} }});
-        EXPECT_CALL(mock_sai_stp_, 
+        EXPECT_CALL(mock_sai_stp_,
             remove_stp(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_VLAN_INSTANCE_TABLE"));
         consumer->addToSync(entries);
         static_cast<Orch *>(gStpOrch)->doTask();
- 
+
+        entries.clear();
+        entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
+        consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor("STP_INST_PORT_FLUSH_TABLE"));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gStpOrch)->doTask();
+
         _unhook_sai_stp_api();
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
