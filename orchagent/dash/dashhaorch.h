@@ -54,6 +54,7 @@ protected:
     void doTaskEniTable(ConsumerBase &consumer);
     void doTaskHaSetTable(ConsumerBase &consumer);
     void doTaskHaScopeTable(ConsumerBase &consumer);
+    void doTaskBfdSessionTable(ConsumerBase &consumer);
 
     bool addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry);
     bool removeHaSetEntry(const std::string &key);

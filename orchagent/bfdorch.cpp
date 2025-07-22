@@ -703,6 +703,18 @@ void BfdOrch::handleTsaStateChange(bool tsaState)
     }
 }
 
+void BfdOrch::createSoftwareBfdSession(const string &key, const vector<swss::FieldValueTuple>& data)
+{
+    m_stateSoftBfdSessionTable->set(createStateDBKey(key), data);
+    SWSS_LOG_NOTICE("Software BFD session created for %s", key.c_str());
+}
+
+void BfdOrch::removeSoftwareBfdSession(const string &key)
+{
+    m_stateSoftBfdSessionTable->del(createStateDBKey(key));
+    SWSS_LOG_NOTICE("Software BFD session removed for %s", key.c_str());
+}
+
 BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
     Orch(db, tableName)
 {
