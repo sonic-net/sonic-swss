@@ -156,19 +156,19 @@ sai_uint16_t to_sai(const dash::types::HaRole ha_role)
 
     switch (ha_role)
     {
-        case dash::types::HA_SCOPE_ROLE_DEAD:
+        case dash::types::HA_ROLE_DEAD:
             sai_ha_role = SAI_DASH_HA_ROLE_DEAD;
             break;
-        case dash::types::HA_SCOPE_ROLE_ACTIVE:
+        case dash::types::HA_ROLE_ACTIVE:
             sai_ha_role = SAI_DASH_HA_ROLE_ACTIVE;
             break;
-        case dash::types::HA_SCOPE_ROLE_STANDBY:
+        case dash::types::HA_ROLE_STANDBY:
             sai_ha_role = SAI_DASH_HA_ROLE_STANDBY;
             break;
-        case dash::types::HA_SCOPE_ROLE_STANDALONE:
+        case dash::types::HA_ROLE_STANDALONE:
             sai_ha_role = SAI_DASH_HA_ROLE_STANDALONE;
             break;
-        case dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE:
+        case dash::types::HA_ROLE_SWITCHING_TO_ACTIVE:
             sai_ha_role = SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE;
             break;
         default:
@@ -185,16 +185,16 @@ dash::types::HaRole to_pb(const sai_dash_ha_role_t ha_role)
     switch (ha_role)
     {
         case SAI_DASH_HA_ROLE_DEAD:
-            return dash::types::HA_SCOPE_ROLE_DEAD;
+            return dash::types::HA_ROLE_DEAD;
         case SAI_DASH_HA_ROLE_ACTIVE:
-            return dash::types::HA_SCOPE_ROLE_ACTIVE;
+            return dash::types::HA_ROLE_ACTIVE;
         case SAI_DASH_HA_ROLE_STANDBY:
-            return dash::types::HA_SCOPE_ROLE_STANDBY;
+            return dash::types::HA_ROLE_STANDBY;
         case SAI_DASH_HA_ROLE_STANDALONE:
-            return dash::types::HA_SCOPE_ROLE_STANDALONE;
+            return dash::types::HA_ROLE_STANDALONE;
         case SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE:
-            return dash::types::HA_SCOPE_ROLE_SWITCHING_TO_ACTIVE;
+            return dash::types::HA_ROLE_SWITCHING_TO_ACTIVE;
         default:
-            return dash::types::HA_SCOPE_ROLE_DEAD;
+            return dash::types::HA_ROLE_DEAD;
     }
 }
