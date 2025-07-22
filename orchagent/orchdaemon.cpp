@@ -232,7 +232,8 @@ bool OrchDaemon::init()
     vector<string> stp_tables = {
         APP_STP_VLAN_INSTANCE_TABLE_NAME,
         APP_STP_PORT_STATE_TABLE_NAME,
-        APP_STP_FASTAGEING_FLUSH_TABLE_NAME
+        APP_STP_FASTAGEING_FLUSH_TABLE_NAME,
+        APP_STP_INST_PORT_FLUSH_TABLE_NAME
     };
     gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
     gDirectory.set(gStpOrch);
