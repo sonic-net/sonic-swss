@@ -22,6 +22,7 @@ namespace dashorch_test
 {
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
     DEFINE_SAI_ENTRY_APIS_MOCK(dash_trusted_vni, global_trusted_vni, eni_trusted_vni)
+    DEFINE_SAI_ENTRY_APIS_MOCK(dash_direction_lookup, direction_lookup)
     using namespace mock_orch_test;
     using ::testing::DoAll;
     using ::testing::Return;
@@ -67,12 +68,14 @@ namespace dashorch_test
         {
             INIT_SAI_API_MOCK(dash_eni);
             INIT_SAI_API_MOCK(dash_trusted_vni);
+            INIT_SAI_API_MOCK(dash_direction_lookup);
             MockSaiApis();
         }
 
         void PreTearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(dash_direction_lookup);
             DEINIT_SAI_API_MOCK(dash_trusted_vni);
             DEINIT_SAI_API_MOCK(dash_eni);
         }
@@ -99,6 +102,16 @@ namespace dashorch_test
                     }
                 }
                 FAIL() << "SAI_ENI_ATTR_DASH_ENI_MODE not found in attributes";
+            }
+            void VerifyDirectionLookup(std::vector<sai_attribute_t> &actual_attrs, sai_direction_lookup_entry_action_t expected_lookup)
+            {
+                for (auto attr : actual_attrs) {
+                    if (attr.id == SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION) {
+                        EXPECT_EQ(attr.value.u32, expected_lookup);
+                        return;
+                    }
+                }
+                FAIL() << "SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION not found in attributes";
             }
     };
 
@@ -490,4 +503,32 @@ namespace dashorch_test
             const auto &vni2 = std::get<1>(info.param);
             return "EniTrustedVni_" + GetVniString(vni1) + "_to_" + GetVniString(vni2);
         });
+
+    TEST_F(DashOrchTest, SetApplianceOutboundLookup)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.set_outbound_direction_lookup("dst_mac");
+
+        std::vector<sai_attribute_t> actual_attrs;
+        actual_attrs.clear();
+
+        EXPECT_CALL(*mock_sai_dash_direction_lookup_api, create_direction_lookup_entry).Times(2)
+            .WillRepeatedly(
+                DoAll(
+                    [&actual_attrs](const sai_direction_lookup_entry_t *entry, uint32_t count, const sai_attribute_t *attr_list) {
+                        actual_attrs.assign(attr_list, attr_list + count);
+                    },
+                    Invoke(old_sai_dash_direction_lookup_api, &sai_dash_direction_lookup_api_t::create_direction_lookup_entry) // Call the original function
+                )
+            );
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        VerifyDirectionLookup(actual_attrs, SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_INBOUND_DIRECTION);
+        actual_attrs.clear();
+        
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false);
+        appliance.set_outbound_direction_lookup("src_mac");
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        VerifyDirectionLookup(actual_attrs, SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION);
+    }
 }
