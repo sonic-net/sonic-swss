@@ -35,8 +35,6 @@ namespace mux_rollback_test
 
     static const string TEST_INTERFACE = "Ethernet4";
 
-    sai_bulk_create_neighbor_entry_fn old_create_neighbor_entries;
-    sai_bulk_remove_neighbor_entry_fn old_remove_neighbor_entries;
     sai_bulk_create_route_entry_fn old_create_route_entries;
     sai_bulk_remove_route_entry_fn old_remove_route_entries;
     sai_bulk_object_create_fn old_object_create;
@@ -147,16 +145,8 @@ namespace mux_rollback_test
             INIT_SAI_API_MOCK(acl);
             INIT_SAI_API_MOCK(next_hop);
             MockSaiApis();
-            old_create_neighbor_entries = gNeighOrch->gNeighBulker.create_entries;
-            old_remove_neighbor_entries = gNeighOrch->gNeighBulker.remove_entries;
-            old_object_create = gNeighOrch->gNextHopBulker.create_entries;
-            old_object_remove = gNeighOrch->gNextHopBulker.remove_entries;
             old_create_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.create_entries;
             old_remove_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.remove_entries;
-            gNeighOrch->gNeighBulker.create_entries = mock_create_neighbor_entries;
-            gNeighOrch->gNeighBulker.remove_entries = mock_remove_neighbor_entries;
-            gNeighOrch->gNextHopBulker.create_entries = mock_create_next_hops;
-            gNeighOrch->gNextHopBulker.remove_entries = mock_remove_next_hops;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = mock_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = mock_remove_route_entries;
         }
@@ -168,10 +158,6 @@ namespace mux_rollback_test
             DEINIT_SAI_API_MOCK(acl);
             DEINIT_SAI_API_MOCK(route);
             DEINIT_SAI_API_MOCK(neighbor);
-            gNeighOrch->gNeighBulker.create_entries = old_create_neighbor_entries;
-            gNeighOrch->gNeighBulker.remove_entries = old_remove_neighbor_entries;
-            gNeighOrch->gNextHopBulker.create_entries = old_object_create;
-            gNeighOrch->gNextHopBulker.remove_entries = old_object_remove;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = old_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = old_remove_route_entries;
         }

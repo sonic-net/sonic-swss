@@ -46,24 +46,17 @@ struct NeighborUpdate
 };
 
 /*
- * Keeps track of neighbor entry information primarily for bulk operations
+ * Keeps track of neighbor entry information
  */
 struct NeighborContext
 {
     NeighborEntry                       neighborEntry;              // neighbor entry to process
-    std::deque<sai_status_t>            object_statuses;            // entity bulk statuses for neighbors
     MacAddress                          mac;                        // neighbor mac
-    bool                                bulk_op = false;            // use bulker (only for mux use for now)
     sai_object_id_t                     next_hop_id;                // next hop id
     sai_status_t                        nexthop_status;             // next hop status
 
     NeighborContext(NeighborEntry neighborEntry)
         : neighborEntry(neighborEntry)
-    {
-    }
-
-    NeighborContext(NeighborEntry neighborEntry, bool bulk_op)
-        : neighborEntry(neighborEntry), bulk_op(bulk_op)
     {
     }
 };
@@ -91,8 +84,6 @@ public:
 
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
-    bool enableNeighbors(std::list<NeighborContext>&);
-    bool disableNeighbors(std::list<NeighborContext>&);
     bool isHwConfigured(const NeighborEntry&);
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
@@ -122,16 +113,10 @@ private:
 
     std::set<NextHopKey> m_neighborToResolve;
 
-    EntityBulker<sai_neighbor_api_t> gNeighBulker;
-    ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
-
     bool removeNextHop(const IpAddress&, const string&);
-    bool processBulkAddNextHop(NeighborContext&);
 
     bool addNeighbor(NeighborContext& ctx);
     bool removeNeighbor(NeighborContext& ctx, bool disable = false);
-    bool processBulkEnableNeighbor(NeighborContext& ctx);
-    bool processBulkDisableNeighbor(NeighborContext& ctx);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
