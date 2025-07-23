@@ -225,7 +225,7 @@ bool to_pb(const std::string &ha_role, dash::types::HaRole &pb_ha_role)
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown HA Role %s, defaulting to dead", ha_role.c_str());
+        SWSS_LOG_NOTICE("Unspecified HA Role %s, defaulting to dead", ha_role.c_str());
         pb_ha_role = dash::types::HA_ROLE_DEAD;
         return false;
     }
@@ -247,7 +247,7 @@ bool to_pb(const std::string &ha_owner, dash::types::HaOwner &pb_ha_owner)
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown HA Owner %s, defaulting to DPU", ha_owner.c_str());
+        SWSS_LOG_NOTICE("Unspecified HA Owner %s, defaulting to DPU", ha_owner.c_str());
         pb_ha_owner = dash::types::HA_OWNER_DPU;
         return false;
     }
@@ -269,7 +269,7 @@ bool to_pb(const std::string &ha_scope, dash::types::HaScope &pb_ha_scope)
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown HA Scope %s, defaulting to local", ha_scope.c_str());
+        SWSS_LOG_NOTICE("Unspecified HA Scope %s, defaulting to DPU", ha_scope.c_str());
         pb_ha_scope = dash::types::HA_SCOPE_DPU;
         return false;
     }
