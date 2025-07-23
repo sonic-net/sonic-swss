@@ -1351,8 +1351,6 @@ class TestMuxTunnelBase():
         """
         Checks the status of neighbor entries in APPL and ASIC DB
         """
-        #if expect_route and expect_neigh:
-        #    pytest.fail('expect_routes and expect_neigh cannot both be True')
         standby_state=False
         if expect_route and expect_neigh==False:
             standby_state=True

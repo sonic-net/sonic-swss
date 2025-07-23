@@ -899,7 +899,7 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
             SWSS_LOG_ERROR("Removing existing NH failed for %s", nh_key.ip_address.to_string().c_str());
             return false;
         }
-        SWSS_LOG_ERROR("Removing existing NH for %s, nh_removed: %u", nh_key.ip_address.to_string().c_str(), nh_removed);
+        SWSS_LOG_INFO("Removing existing NH for %s, nh_removed: %u", nh_key.ip_address.to_string().c_str(), nh_removed);
 
         /* Decrement ref count for ECMP NH members */
         gNeighOrch->decreaseNextHopRefCount(nh_key, nh_removed);
@@ -1445,6 +1445,12 @@ MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
 
 bool MuxOrch::isMuxPortNeighbor(const IpAddress& nbr, const MacAddress& mac, string& alias)
 {
+    // skip neighbors are treated as MUX port neighbor
+    if (isSkipNeighbor(nbr))
+    {
+        return true;
+    }
+
     if (mux_cable_tb_.empty())
     {
         // Check cached neighbors during warm boot
