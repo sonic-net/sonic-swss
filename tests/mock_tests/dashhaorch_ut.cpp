@@ -74,7 +74,6 @@ namespace dashhaorch_ut
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
-            // dash::ha_set::HaSet ha_set = HaSetPbObject();
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
                     {
@@ -82,7 +81,6 @@ namespace dashhaorch_ut
                             "HA_SET_1",
                             SET_COMMAND,
                             {
-                                // { "pb", ha_set.SerializeAsString() }
                                 {"version", "1"},
                                 {"vip_v4", "10.0.0.1"},
                                 {"vip_v6", "fc00::1"},
@@ -111,9 +109,6 @@ namespace dashhaorch_ut
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
-            // dash::ha_set::HaSet ha_set = HaSetPbObject();
-            // ha_set.set_scope(dash::types::HA_SCOPE_ENI);
-
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
                     {
@@ -121,7 +116,6 @@ namespace dashhaorch_ut
                             "HA_SET_1",
                             SET_COMMAND,
                             {
-                                // { "pb", ha_set.SerializeAsString() }
                                 {"version", "1"},
                                 {"vip_v4", "10.0.0.1"},
                                 {"vip_v6", "fc00::1"},
@@ -170,10 +164,6 @@ namespace dashhaorch_ut
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
-            // dash::ha_scope::HaScope ha_scope;
-            // ha_scope.set_version("1");
-            // ha_scope.set_ha_role(dash::types::HA_ROLE_DEAD);
-
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
                     {
@@ -181,7 +171,6 @@ namespace dashhaorch_ut
                             "HA_SET_1",
                             SET_COMMAND,
                             {
-                                // { "pb", ha_scope.SerializeAsString() }
                                 {"version", "1"},
                                 {"ha_role", "dead"}
                             }
@@ -217,10 +206,6 @@ namespace dashhaorch_ut
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
-            
-            // dash::ha_scope::HaScope ha_scope;
-            // ha_scope.set_version("1");
-            // ha_scope.set_ha_role(role);
 
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
@@ -229,7 +214,6 @@ namespace dashhaorch_ut
                             "HA_SET_1",
                             SET_COMMAND,
                             {
-                                // { "pb", ha_scope.SerializeAsString() }
                                 {"version", "1"},
                                 {"ha_role", role}
                             }
@@ -246,11 +230,6 @@ namespace dashhaorch_ut
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
-            // dash::ha_scope::HaScope ha_scope;
-            // ha_scope.set_version("1");
-            // ha_scope.set_ha_role(dash::types::HA_ROLE_ACTIVE);
-            // ha_scope.set_activate_role_requested(true);
-
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
                     {
@@ -258,7 +237,6 @@ namespace dashhaorch_ut
                             "HA_SET_1",
                             SET_COMMAND,
                             {
-                                // { "pb", ha_scope.SerializeAsString() }
                                 {"version", "1"},
                                 {"ha_role", "active"},
                                 {"activate_role_requested", "true"}
@@ -276,11 +254,6 @@ namespace dashhaorch_ut
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
-            // dash::ha_scope::HaScope ha_scope;
-            // ha_scope.set_version("1");
-            // ha_scope.set_ha_role(dash::types::HA_ROLE_ACTIVE);
-            // ha_scope.set_flow_reconcile_requested(true);
-
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
                     {
@@ -288,7 +261,6 @@ namespace dashhaorch_ut
                             "HA_SET_1",
                             SET_COMMAND,
                             {
-                                // { "pb", ha_scope.SerializeAsString() }
                                 {"version", "1"},
                                 {"ha_role", "active"},
                                 {"flow_reconcile_requested", "true"}

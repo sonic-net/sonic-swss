@@ -853,32 +853,21 @@ bool DashHaOrch::convertKfvToHaSetPb(const std::vector<FieldValueTuple> &kfv, da
         }
         else if (field == "owner")
         {
-            if (value == "switch")
+            dash::types::HaOwner owner;
+            if (!to_pb(value, owner))
             {
-                entry.set_owner(dash::types::HaOwner::HA_OWNER_DPU);
-            } else if (value == "dpu" || value == "")
-            {
-                // Default to switch owner if not specified
-                entry.set_owner(dash::types::HaOwner::HA_OWNER_SWITCH);
-            } else
-            {
-                SWSS_LOG_INFO("Unknown HA Set owner %s", value.c_str());
                 return false;
             }
+            entry.set_owner(owner);
         }
         else if (field == "scope")
         {
-            if (value == "eni")
+            dash::types::HaScope ha_scope;
+            if (!to_pb(value, ha_scope))
             {
-                entry.set_scope(dash::types::HaScope::HA_SCOPE_ENI);
-            } else if (value == "dpu" || value == "")
-            {
-                entry.set_scope(dash::types::HaScope::HA_SCOPE_DPU);
-            } else
-            {
-                SWSS_LOG_INFO("Unknown HA Set scope %s", value.c_str());
                 return false;
             }
+            entry.set_scope(ha_scope);
         }
         else if (field == "local_npu_ip")
         {
@@ -965,27 +954,12 @@ bool DashHaOrch::convertKfvToHaScopePb(const std::vector<FieldValueTuple> &kfv, 
         }
         else if (field == "ha_role")
         {
-            if (value == "active")
+            dash::types::HaRole ha_role;
+            if (!to_pb(value, ha_role))
             {
-                entry.set_ha_role(dash::types::HaRole::HA_ROLE_ACTIVE);
-            } else if (value == "standby")
-            {
-                entry.set_ha_role(dash::types::HaRole::HA_ROLE_STANDBY);
-            } else if (value == "dead")
-            {
-                entry.set_ha_role(dash::types::HaRole::HA_ROLE_DEAD);
-            } else if (value == "standalone")
-            {
-                entry.set_ha_role(dash::types::HaRole::HA_ROLE_STANDALONE);
-            } else if (value == "switching_to_active")
-            {
-                entry.set_ha_role(dash::types::HaRole::HA_ROLE_SWITCHING_TO_ACTIVE);
+                return false;
             }
-            else
-            {
-                SWSS_LOG_ERROR("Unknown HA Scope role %s, setting to dead", value.c_str());
-                entry.set_ha_role(dash::types::HaRole::HA_ROLE_DEAD);
-            }
+            entry.set_ha_role(ha_role);
         }
         else if (field == "flow_reconcile_requested")
         {

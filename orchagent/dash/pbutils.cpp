@@ -198,3 +198,81 @@ dash::types::HaRole to_pb(const sai_dash_ha_role_t ha_role)
             return dash::types::HA_ROLE_DEAD;
     }
 }
+
+bool to_pb(const std::string &ha_role, dash::types::HaRole &pb_ha_role)
+{
+    SWSS_LOG_ENTER();
+
+    if (ha_role == "dead")
+    {
+        pb_ha_role = dash::types::HA_ROLE_DEAD;
+    }
+    else if (ha_role == "active")
+    {
+        pb_ha_role = dash::types::HA_ROLE_ACTIVE;
+    }
+    else if (ha_role == "standby")
+    {
+        pb_ha_role = dash::types::HA_ROLE_STANDBY;
+    }
+    else if (ha_role == "standalone")
+    {
+        pb_ha_role = dash::types::HA_ROLE_STANDALONE;
+    }
+    else if (ha_role == "switching_to_active")
+    {
+        pb_ha_role = dash::types::HA_ROLE_SWITCHING_TO_ACTIVE;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown HA Role %s, defaulting to dead", ha_role.c_str());
+        pb_ha_role = dash::types::HA_ROLE_DEAD;
+        return false;
+    }
+
+    return true;
+}
+
+bool to_pb(const std::string &ha_owner, dash::types::HaOwner &pb_ha_owner)
+{
+    SWSS_LOG_ENTER();
+
+    if (ha_owner == "switch")
+    {
+        pb_ha_owner = dash::types::HA_OWNER_SWITCH;
+    }
+    else if (ha_owner == "dpu")
+    {
+        pb_ha_owner = dash::types::HA_OWNER_DPU;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown HA Owner %s, defaulting to DPU", ha_owner.c_str());
+        pb_ha_owner = dash::types::HA_OWNER_DPU;
+        return false;
+    }
+
+    return true;
+}
+
+bool to_pb(const std::string &ha_scope, dash::types::HaScope &pb_ha_scope)
+{
+    SWSS_LOG_ENTER();
+
+    if (ha_scope == "eni")
+    {
+        pb_ha_scope = dash::types::HA_SCOPE_ENI;
+    }
+    else if (ha_scope == "dpu")
+    {
+        pb_ha_scope = dash::types::HA_SCOPE_DPU;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown HA Scope %s, defaulting to local", ha_scope.c_str());
+        pb_ha_scope = dash::types::HA_SCOPE_DPU;
+        return false;
+    }
+
+    return true;
+}
