@@ -77,23 +77,21 @@ sudo pip3 install docker pytest flaky redis distro dataclasses fstring \
 
 ### Install DASH Dependencies (Ubuntu 22.04)
 
-  Download and install the necessary `.deb` files:
+Download latest artifacts and install the necessary `.deb` files:
+
+https://dev.azure.com/mssonic/build/_build?definitionId=1055&_a=summary&repositoryFilter=158&branchFilter=11237%2C11237%2C11237%2C11237%2C11237
 
 ```bash
-wget -O libdashapi.deb "https://artprodcus3.artifacts.visualstudio.com/Af91412a5-a906-4990-9d7c-f697b81fc04d/be1b070f-be15-4154-aade-b1d3bfb17054/_apis/artifact/cGlwZWxpbmVhcnRpZmFjdDovL21zc29uaWMvcHJvamVjdElkL2JlMWIwNzBmLWJlMTUtNDE1NC1hYWRlLWIxZDNiZmIxNzA1NC9idWlsZElkLzg4NzIwNi9hcnRpZmFjdE5hbWUvc29uaWMtYnVpbGRpbWFnZS5hbWQ2NC51YnVudHUyMl8wNA2/content?format=file&subPath=%2Flibdashapi_1.0.0_amd64.deb"
-
-wget -O libprotobuf32.deb "https://artprodcus3.artifacts.visualstudio.com/Af91412a5-a906-4990-9d7c-f697b81fc04d/be1b070f-be15-4154-aade-b1d3bfb17054/_apis/artifact/cGlwZWxpbmVhcnRpZmFjdDovL21zc29uaWMvcHJvamVjdElkL2JlMWIwNzBmLWJlMTUtNDE1NC1hYWRlLWIxZDNiZmIxNzA1NC9idWlsZElkLzg4NzIwNi9hcnRpZmFjdE5hbWUvc29uaWMtYnVpbGRpbWFnZS5hbWQ2NC51YnVudHUyMl8wNA2/content?format=file&subPath=%2Flibprotobuf32_3.21.12-3_amd64.deb"
-
 sudo dpkg -i libdashapi.deb libprotobuf32.deb
 ```
 
 ### Install swsscommon
 
+Download latest artifacts:
+
+https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&definitionId=9&artifactName=sonic-swss-common.amd64.ubuntu20_04
+
 ```bash
-wget -O libswsscommon.deb "https://artprodcus3.artifacts.visualstudio.com/Af91412a5-a906-4990-9d7c-f697b81fc04d/be1b070f-be15-4154-aade-b1d3bfb17054/_apis/artifact/cGlwZWxpbmVhcnRpZmFjdDovL21zc29uaWMvcHJvamVjdElkL2JlMWIwNzBmLWJlMTUtNDE1NC1hYWRlLWIxZDNiZmIxNzA1NC9idWlsZElkLzg4NDY1NC9hcnRpZmFjdE5hbWUvc29uaWMtc3dzcy1jb21tb24uYW1kNjQudWJ1bnR1MjJfMDQ1/content?format=file&subPath=%2Flibswsscommon_1.0.0_amd64.deb"
-
-wget -O python_swsscommon.deb "https://artprodcus3.artifacts.visualstudio.com/Af91412a5-a906-4990-9d7c-f697b81fc04d/be1b070f-be15-4154-aade-b1d3bfb17054/_apis/artifact/cGlwZWxpbmVhcnRpZmFjdDovL21zc29uaWMvcHJvamVjdElkL2JlMWIwNzBmLWJlMTUtNDE1NC1hYWRlLWIxZDNiZmIxNzA1NC9idWlsZElkLzg4NDY1NC9hcnRpZmFjdE5hbWUvc29uaWMtc3dzcy1jb21tb24uYW1kNjQudWJ1bnR1MjJfMDQ1/content?format=file&subPath=%2Fpython3-swsscommon_1.0.0_amd64.deb"
-
 sudo dpkg -i libswsscommon.deb
 sudo dpkg -i python_swsscommon.deb
 ```
