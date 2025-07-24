@@ -4,4 +4,4 @@
 !coverage.xml
 !build.info
 !syslog
-tests/mock_tests/tests
+!tests/mock_tests/*
