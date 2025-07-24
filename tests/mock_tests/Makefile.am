@@ -56,6 +56,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
+                evpnmhorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
@@ -95,6 +96,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/port/port_capabilities.cpp \
                 $(top_srcdir)/orchagent/port/porthlpr.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
+                $(top_srcdir)/orchagent/evpnmhorch.cpp \
                 $(top_srcdir)/orchagent/fabricportsorch.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \
                 $(top_srcdir)/orchagent/tunneldecaporch.cpp \

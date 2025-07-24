@@ -194,6 +194,17 @@ namespace routeorch_test
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
             gDirectory.set(gPortsOrch);
 
+            TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
+            TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+
+            vector<TableConnector> evpn_df_es_table_connectors = {
+                appDbDfTable,
+                confDbEvpnEsTable,
+            };
+
+            gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+            gDirectory.set(gEvpnMhOrch);
+
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
@@ -391,6 +402,9 @@ namespace routeorch_test
 
             delete gBufferOrch;
             gBufferOrch = nullptr;
+
+            delete gEvpnMhOrch;
+            gEvpnMhOrch = nullptr;
 
             sai_route_api = pold_sai_route_api;
             ut_helper::uninitSaiApi();
