@@ -59,6 +59,7 @@
 #include "dash/dashmeterorch.h"
 #include "dash/dashportmaporch.h"
 #include <sairedis.h>
+#include "shlorch.h"
 
 using namespace swss;
 
