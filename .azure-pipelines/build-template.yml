@@ -106,6 +106,9 @@ jobs:
         libdbus-1-dev \
         libteam-dev
       sudo pip3 install lcov_cobertura
+
+      sudo apt-get install -y rsyslog
+      sudo rsyslogd
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -232,9 +235,15 @@ jobs:
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
+  - script: |
+      set -ex
+      mkdir logs
+      sudo cp /var/log/syslog .
+      sudo chmod 0644 syslog
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
+    condition: always()
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: sonic-swss-pytests
     displayName: "Archive swss pytests"
