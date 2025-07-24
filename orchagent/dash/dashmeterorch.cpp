@@ -28,7 +28,7 @@ extern bool gTraditionalFlexCounter;
 #define METER_FLEX_COUNTER_UPD_INTERVAL 1
 
 // To be deleted after addition to sonic-swss-common/common/schema.h
-#define COUNTERS_METER_ENI_NAME_MAP "COUNTERS_METER_ENI_NAME_MAP"
+//#define COUNTERS_METER_ENI_NAME_MAP "COUNTERS_METER_ENI_NAME_MAP"
 
 
 DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
@@ -40,7 +40,7 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, Dash
     SWSS_LOG_ENTER();
 
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_meter_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_METER_ENI_NAME_MAP));
+    //m_meter_eni_name_table = std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_METER_ENI_NAME_MAP));
     m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
 
     if (gTraditionalFlexCounter)
@@ -654,7 +654,7 @@ void DashMeterOrch::removeEniFromMeterFC(sai_object_id_t oid, const string &name
         return;
     }
 
-    m_meter_eni_name_table->hdel("", name);
+    //m_meter_eni_name_table->hdel("", name);
     m_meter_stat_manager.clearCounterIdList(oid);
     SWSS_LOG_INFO("Unregistering FC for ENI %s, oid %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
@@ -695,7 +695,7 @@ void DashMeterOrch::doTask(SelectableTimer &timer)
             SWSS_LOG_INFO("Registering FC for ENI %s, oid %s", it->second.c_str(), id.c_str());
             std::vector<FieldValueTuple> eniNameFvs;
             eniNameFvs.emplace_back(it->second, id);
-            m_meter_eni_name_table->set("", eniNameFvs);
+            //m_meter_eni_name_table->set("", eniNameFvs);
 
             m_meter_stat_manager.setCounterIdList(it->first, CounterType::DASH_METER, m_meter_counter_stats);
             it = m_meter_stat_work_queue.erase(it);

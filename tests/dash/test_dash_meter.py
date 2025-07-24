@@ -35,7 +35,7 @@ from swsscommon.swsscommon import (
 meter_counter_group_meta = {
     'key': 'DASH_METER',
     'group_name': 'METER_STAT_COUNTER',
-    'name_map': 'COUNTERS_METER_ENI_NAME_MAP',
+    'name_map': 'COUNTERS_ENI_NAME_MAP',
     'post_test': 'post_meter_counter_test'
 }
 

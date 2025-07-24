@@ -109,7 +109,7 @@ private:
     FlexCounterManager m_meter_stat_manager;
     std::unordered_set<std::string> m_meter_counter_stats;
     std::map<sai_object_id_t, std::string> m_meter_stat_work_queue;
-    std::unique_ptr<swss::Table> m_meter_eni_name_table;
+    //std::unique_ptr<swss::Table> m_meter_eni_name_table;
     std::unique_ptr<swss::Table> m_vid_to_rid_table;
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
