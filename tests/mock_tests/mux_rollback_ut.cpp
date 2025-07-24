@@ -277,12 +277,23 @@ namespace mux_rollback_test
 
     TEST_F(MuxRollbackTest, StandbyToActiveExceptionRollbackToStandby)
     {
-        // Reset all mocks explicitly
-        testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_api);
-
+        int call_count = 0;
         EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(Throw(exception()));
+            .WillRepeatedly([&call_count](auto... args) {
+                ++call_count;
+                std::cout << "create_next_hops called - call #" << call_count 
+                        << " - throwing exception" << std::endl;
+                
+                // Print the call location using __builtin_return_address
+                void *caller = __builtin_return_address(0);
+                std::cout << "Called from address: " << caller << std::endl;
+                
+                throw exception();
+            });
+            
+        std::cout << "Before SetMuxStateFromAppDb" << std::endl;
         SetMuxStateFromAppDb(ACTIVE_STATE);
+        std::cout << "After SetMuxStateFromAppDb, total calls: " << call_count << std::endl;
         EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
     }
 

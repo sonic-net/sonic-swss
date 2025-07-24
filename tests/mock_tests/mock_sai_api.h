@@ -481,7 +481,20 @@ This is required since some sai_api do not support this function call yet.
     };                                                                                                                               \
     static mock_sai_##sai_api_name##_api_t *mock_sai_##sai_api_name##_api;                                                           \
     inline sai_status_t mock_create_##sai_object_type(GENERIC_CREATE_PARAMS(sai_object_type))                                        \
-    {                                                                                                                                \
+    {
+        static int call_count = 0;                                                                                                   \
+        ++call_count;                                                                                                                \
+        std::cout << "mock_create_" #sai_object_type "s called #" << call_count                                                     \
+                  << " with object_count=" << object_count << std::endl;                                                            \
+                                                                                                                                     \
+        void *trace[10];                                                                                                             \
+        int trace_size = backtrace(trace, 10);                                                                                      \
+        char **messages = backtrace_symbols(trace, trace_size);                                                                     \
+        std::cout << "Call stack:" << std::endl;                                                                                    \
+        for (int i = 0; i < trace_size; ++i) {                                                                                      \
+            std::cout << "  " << messages[i] << std::endl;                                                                          \
+        }                                                                                                                            \
+        free(messages);                                                                                                             \
         return mock_sai_##sai_api_name##_api->create_##sai_object_type(GENERIC_CREATE_ARGS(sai_object_type));                        \
     }                                                                                                                                \
     inline sai_status_t mock_remove_##sai_object_type(GENERIC_REMOVE_PARAMS(sai_object_type))                                        \
@@ -490,6 +503,19 @@ This is required since some sai_api do not support this function call yet.
     }                                                                                                                                \
     inline sai_status_t mock_create_##sai_object_type##s(GENERIC_BULK_CREATE_PARAMS(sai_object_type))                                \
     {                                                                                                                                \
+        static int call_count = 0;                                                                                                   \
+        ++call_count;                                                                                                                \
+        std::cout << "mock_create_" #sai_object_type "s called #" << call_count                                                     \
+                  << " with object_count=" << object_count << std::endl;                                                            \
+                                                                                                                                     \
+        void *trace[10];                                                                                                             \
+        int trace_size = backtrace(trace, 10);                                                                                      \
+        char **messages = backtrace_symbols(trace, trace_size);                                                                     \
+        std::cout << "Call stack:" << std::endl;                                                                                    \
+        for (int i = 0; i < trace_size; ++i) {                                                                                      \
+            std::cout << "  " << messages[i] << std::endl;                                                                          \
+        }                                                                                                                            \
+        free(messages);                                                                                                             \
         return mock_sai_##sai_api_name##_api->create_##sai_object_type##s(GENERIC_BULK_CREATE_ARGS(sai_object_type));                \
     }                                                                                                                                \
     inline sai_status_t mock_remove_##sai_object_type##s(GENERIC_BULK_REMOVE_PARAMS(sai_object_type))                                \
