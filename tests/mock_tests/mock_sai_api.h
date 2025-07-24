@@ -2,6 +2,9 @@
 #define MOCK_SAI_API_H
 #include "mock_orchagent_main.h"
 #include <gmock/gmock.h>
+#include <iostream>
+#include <execinfo.h>
+#include <cstdlib>
 
 /*
 To mock a particular SAI API:
