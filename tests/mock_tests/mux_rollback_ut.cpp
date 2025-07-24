@@ -277,7 +277,9 @@ namespace mux_rollback_test
 
     TEST_F(MuxRollbackTest, StandbyToActiveExceptionRollbackToStandby)
     {
-        //
+        // Reset all mocks explicitly
+        testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_api);
+
         EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
             .WillOnce(Throw(exception()));
         SetMuxStateFromAppDb(ACTIVE_STATE);
