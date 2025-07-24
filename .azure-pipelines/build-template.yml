@@ -240,6 +240,8 @@ jobs:
       mkdir logs
       sudo cp /var/log/syslog .
       sudo chmod 0644 syslog
+    displayName: "Copy syslog file"
+    condition: always()
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
