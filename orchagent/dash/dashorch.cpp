@@ -685,7 +685,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         }
     }
 
-    addEniMapEntry(eni_id, eni)
+    addEniMapEntry(eni_id, eni);
     addEniToFC(eni_id, eni);
     dash_meter_orch->addEniToMeterFC(eni_id,  eni);
 
