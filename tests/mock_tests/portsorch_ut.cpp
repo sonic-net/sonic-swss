@@ -2721,6 +2721,7 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
+            portTable.set(it.first, {{"oper_status", "up"}});
             transceieverInfoTable.set(it.first, {});
         }
 
@@ -2785,6 +2786,23 @@ namespace portsorch_test
         {
             attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
             status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            ASSERT_TRUE(attr.value.booldata);
+        }
+
+        // Verify host if configuration
+        for (const auto& iter: ports)
+        {
+            const auto& portName = iter.first;
+
+            Port port;
+            gPortsOrch->getPort(portName, port);
+
+            ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+
+            attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+            status = sai_hostif_api->get_hostif_attribute(port.m_hif_id, 1, &attr);
+
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
             ASSERT_TRUE(attr.value.booldata);
         }
