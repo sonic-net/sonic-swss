@@ -19,6 +19,11 @@ struct SubIntfInfo
 
 typedef std::map<std::string, SubIntfInfo>             SubIntfMap;
 
+enum class IpVersion {
+    IPv4,
+    IPv6
+};
+
 namespace swss {
 
 class IntfMgr : public Orch
@@ -69,7 +74,8 @@ private:
     void removeHostSubIntf(const std::string &subIntf);
     void setSubIntfStateOk(const std::string &alias);
     void removeSubIntfState(const std::string &alias);
-    void delIpv6LinkLocalNeigh(const std::string &alias);
+    void execNeighDelCommand(const std::string& cmd);
+    void delLinkLocalNeigh(const std::string &alias, IpVersion ipVersion);
 
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
     bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
