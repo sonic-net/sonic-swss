@@ -1349,9 +1349,10 @@ void DashOrch::handleFCStatusUpdate(bool enabled)
 void DashOrch::addEniMapEntry(sai_object_id_t oid, const string &name) {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("Adding ENI map entry for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
+    const auto id = sai_serialize_object_id(oid);
+    SWSS_LOG_INFO("Adding ENI map entry for %s, id: %s", name.c_str(), id.c_str());
     std::vector<FieldValueTuple> eniNameFvs;
-    eniNameFvs.emplace_back(name, oid);
+    eniNameFvs.emplace_back(name, id);
     m_eni_name_table->set("", eniNameFvs);
 }
 
