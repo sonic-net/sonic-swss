@@ -4,6 +4,9 @@ P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
 DASH_ORCH_DIR = $(top_srcdir)/orchagent/dash
 DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
 
+CFLAGS = -g -O0
+CXXFLAGS = -g -O0
+
 CFLAGS_SAI = -I /usr/include/sai
 
 TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
