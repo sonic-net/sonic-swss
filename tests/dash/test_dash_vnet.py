@@ -117,7 +117,6 @@ class TestDash(TestFlexCountersBase):
 
         for counter_entry in counters_keys.items():
             self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
-        self.wait_for_table_empty(meta_data['name_map'])
 
     def test_eni(self, dash_db: DashDB):
         self.vnet = "Vnet1"

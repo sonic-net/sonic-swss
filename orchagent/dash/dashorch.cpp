@@ -1294,7 +1294,6 @@ void DashOrch::removeEniFromFC(sai_object_id_t oid, const string &name)
         return;
     }
 
-    ////m_eni_name_table->hdel("", name);
     m_eni_stat_manager.clearCounterIdList(oid);
     SWSS_LOG_INFO("Unregistering FC for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
@@ -1349,6 +1348,12 @@ void DashOrch::handleFCStatusUpdate(bool enabled)
 void DashOrch::addEniMapEntry(sai_object_id_t oid, const string &name) {
     SWSS_LOG_ENTER();
 
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Cannot add ENI map entry with NULL OID for eni %s", name.c_str());
+        return;
+    }
+
     const auto id = sai_serialize_object_id(oid);
     SWSS_LOG_INFO("Adding ENI map entry for %s, id: %s", name.c_str(), id.c_str());
     std::vector<FieldValueTuple> eniNameFvs;
@@ -1401,9 +1406,6 @@ void DashOrch::doTask(SelectableTimer &timer)
         if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering FC for ENI: %s, id %s", it->second.c_str(), id.c_str());
-            //std::vector<FieldValueTuple> eniNameFvs;
-            //eniNameFvs.emplace_back(it->second, id);
-            //m_eni_name_table->set("", eniNameFvs);
 
             m_eni_stat_manager.setCounterIdList(it->first, CounterType::ENI, m_counter_stats);
             it = m_eni_stat_work_queue.erase(it);
