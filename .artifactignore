@@ -3,3 +3,5 @@
 !coverage.info
 !coverage.xml
 !build.info
+!syslog
+!tests/mock_tests/*
