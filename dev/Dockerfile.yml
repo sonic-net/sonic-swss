@@ -36,7 +36,7 @@ ARG DEBIAN_VERSION
 # SWSS COMMON
 
 ARG SWSS_COMMON_PROJECT_NAME="Azure.sonic-swss-common"
-ARG SWSS_COMMON_ARTIFACT_NAME="sonic-swss-common"
+ARG SWSS_COMMON_ARTIFACT_NAME="sonic-swss-common-bookworm"
 ARG SWSS_COMMON_FILE_PATHS="/libswsscommon_1.0.0_${PLATFORM}.deb /libswsscommon-dev_1.0.0_${PLATFORM}.deb"
 
 RUN download_artifact.sh "${SWSS_COMMON_PROJECT_NAME}" "${BRANCH_NAME}" "${SWSS_COMMON_ARTIFACT_NAME}" "${SWSS_COMMON_FILE_PATHS}"
@@ -44,7 +44,7 @@ RUN download_artifact.sh "${SWSS_COMMON_PROJECT_NAME}" "${BRANCH_NAME}" "${SWSS_
 # SAIREDIS
 
 ARG SAIREDIS_PROJECT_NAME="Azure.sonic-sairedis"
-ARG SAIREDIS_ARTIFACT_NAME="sonic-sairedis"
+ARG SAIREDIS_ARTIFACT_NAME="sonic-sairedis-bookworm"
 ARG SAIREDIS_FILE_PATHS="\
         /libsaivs_1.0.0_${PLATFORM}.deb \
         /libsaivs-dev_1.0.0_${PLATFORM}.deb \
