@@ -64,6 +64,7 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
+extern string gMyPlatform;
 extern event_handle_t g_events_handle;
 
 // defines ------------------------------------------------------------------------------------------------------------
@@ -257,7 +258,9 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15,
     SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
-    SAI_PORT_STAT_TRIM_PACKETS
+    SAI_PORT_STAT_TRIM_PACKETS,
+    SAI_PORT_STAT_DROPPED_TRIM_PACKETS,
+    SAI_PORT_STAT_TX_TRIM_PACKETS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -294,7 +297,9 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_BYTES,
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
-    SAI_QUEUE_STAT_TRIM_PACKETS
+    SAI_QUEUE_STAT_TRIM_PACKETS,
+    SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS,
+    SAI_QUEUE_STAT_TX_TRIM_PACKETS
 };
 static const vector<sai_queue_stat_t> voq_stat_ids =
 {
@@ -627,10 +632,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha;
+    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
+    string nvdaPortTrimPluginName = "nvda_port_trim_drop.lua";
 
     try
     {
@@ -642,10 +648,21 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
         portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
+
+        string nvdaPortTrimLuaScript = swss::loadLuaScript(nvdaPortTrimPluginName);
+        nvdaPortTrimSha = swss::loadRedisScript(m_counter_db.get(), nvdaPortTrimLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
+    }
+
+    std::string portStatPlugins = portRateSha;
+
+    // Nvidia custom trim stat calculation
+    if (gMyPlatform == "x86_64-nvidia_sn5640-r0")
+    {
+        portStatPlugins += "," + nvdaPortTrimSha;
     }
 
     setFlexCounterGroupParameter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
@@ -664,7 +681,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                                  PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
                                  STATS_MODE_READ,
                                  PORT_PLUGIN_FIELD,
-                                 portRateSha);
+                                 portStatPlugins);
 
     setFlexCounterGroupParameter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
