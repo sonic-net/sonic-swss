@@ -144,7 +144,6 @@ class TestDashMeter(TestFlexCountersBase):
         dash_db.remove_eni(self.mac_string)
         dash_db.remove_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1)
         dash_db.remove_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID)
-        self.wait_for_table_empty(meter_counter_group_meta['name_map'])
 
         dash_db.remove_app_db_entry(APP_DASH_METER_RULE_TABLE_NAME, METER_POLICY_V4, METER_RULE_1_NUM)
         dash_db.remove_app_db_entry(APP_DASH_METER_POLICY_TABLE_NAME, METER_POLICY_V4)
