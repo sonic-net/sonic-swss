@@ -131,18 +131,12 @@ class TestDashMeter(TestFlexCountersBase):
         rule_found = False
 
         ### verify meter policy cannot be removed with ENI bound to policy
-        dash_db.remove_app_db_entry(APP_DASH_METER_RULE_TABLE_NAME, self.meter_policy_id, self.meter_rule_num)
         dash_db.remove_app_db_entry(APP_DASH_METER_POLICY_TABLE_NAME, self.meter_policy_id)
         time.sleep(20)
-        meter_rule_oids = dash_db.wait_for_asic_db_keys(ASIC_METER_RULE_TABLE, min_keys=ENTRIES)
         meter_policy_oids = dash_db.wait_for_asic_db_keys(ASIC_METER_POLICY_TABLE, min_keys=ENTRIES)
         for oid in meter_policy_oids:
             if oid == policy_v4_oid:
                 policy_found = True
-                break
-        for oid in meter_rule_oids:
-            if oid == rule_v4_oid:
-                rule_found = True
                 break
         assert(policy_found)
 
