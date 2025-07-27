@@ -27,7 +27,6 @@ extern bool gTraditionalFlexCounter;
 
 #define METER_FLEX_COUNTER_UPD_INTERVAL 1
 
-
 DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     m_meter_stat_manager(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
     meter_rule_bulker_(sai_dash_meter_api, gSwitchId, gMaxBulkSize),
