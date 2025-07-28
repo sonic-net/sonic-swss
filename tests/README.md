@@ -77,9 +77,7 @@ sudo pip3 install docker pytest flaky redis distro dataclasses fstring \
 
 ### Install DASH Dependencies (Ubuntu 22.04)
 
-Download latest artifacts and install the necessary `.deb` files:
-
-https://dev.azure.com/mssonic/build/_build?definitionId=1055&_a=summary&repositoryFilter=158&branchFilter=11237%2C11237%2C11237%2C11237%2C11237
+[Download latest artifacts](https://dev.azure.com/mssonic/build/_build?definitionId=1055&_a=summary&repositoryFilter=158&branchFilter=11237%2C11237%2C11237%2C11237%2C11237).
 
 ```bash
 sudo dpkg -i libdashapi.deb libprotobuf32.deb
@@ -87,9 +85,8 @@ sudo dpkg -i libdashapi.deb libprotobuf32.deb
 
 ### Install swsscommon
 
-Download latest artifacts:
-
-https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&definitionId=9&artifactName=sonic-swss-common.amd64.ubuntu20_04
+[Download latest artifacts](https://github.com/sonic-net/sonic-buildimage/blob/master/platform/vs/create_vnet.sh](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&definitionId=9&artifactName=sonic-swss-common.amd64.ubuntu22_04
+).
 
 ```bash
 sudo dpkg -i libswsscommon.deb
