@@ -15,6 +15,7 @@
 #include "observer.h"
 #include "nexthopgroupkey.h"
 #include "bfdorch.h"
+#include "tunneltermhelper.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
@@ -22,11 +23,6 @@
 #define VNET_NEIGHBOR_MAX 0xffff
 #define VXLAN_ENCAP_TTL 128
 #define VNET_BITMAP_RIF_MTU 9100
-
-#define VNET_TUNNEL_TERM_ACL_TABLE_TYPE "VNET_LOCAL_ENDPOINT_REDIRECT"
-#define VNET_TUNNEL_TERM_ACL_TABLE "VNET_LOCAL_ENDPOINT"
-#define VNET_TUNNEL_TERM_ACL_BASE_PRIORITY 9998
-#define VNET_TUNNEL_TERM_ACL_RULE_NAME_SUFFIX "IN_TUNN_TERM"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -424,24 +420,6 @@ typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
 typedef std::map<IpPrefix, std::map<IpAddress, MonitorSessionInfo>> MonitorSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
-
-class TunnelTermHelper
-{
-public:
-    TunnelTermHelper(DBConnector *cfgDb);
-
-    virtual void initialize();
-
-    std::vector<std::string> getBindPoints();
-    std::set<std::string> findInternalPorts();
-    std::string getNbrAlias(const swss::IpAddress& ip);
-    std::string getRuleName(const std::string& vnet_name, const swss::IpPrefix& vip);
-
-private:
-    unique_ptr<swss::Table> port_table_;
-    PortsOrch *ports_orch_;
-    IntfsOrch *intfs_orch_;
-};
 
 class VNetTunnelTermAcl
 {

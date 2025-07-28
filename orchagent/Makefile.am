@@ -92,6 +92,7 @@ orchagent_SOURCES = \
             vrforch.cpp \
             countercheckorch.cpp \
             vxlanorch.cpp \
+            tunneltermhelper.cpp \
             vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
