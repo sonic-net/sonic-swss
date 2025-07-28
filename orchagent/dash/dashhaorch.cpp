@@ -402,15 +402,27 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
         return success;
     }
 
-    auto ha_set_it = m_ha_set_entries.find(key);
-    if (ha_set_it == m_ha_set_entries.end())
+    if (m_ha_set_entries.empty())
     {
         SWSS_LOG_ERROR("HA Set entry does not exist for %s", key.c_str());
         return false;
     }
+
+    auto ha_set_it = m_ha_set_entries.find(key);
+    if (ha_set_it == m_ha_set_entries.end())
+    {
+        // If it's ENI level HA, ha_set id won't map to ha_scope id.
+        // So we will use the first HA Set entry.
+        ha_set_it = m_ha_set_entries.begin();
+    }
     sai_object_id_t ha_set_oid = ha_set_it->second.ha_set_id;
 
-    const uint32_t attr_count = 2;
+    sai_ip_address_t sai_vip_v4 = {};
+    sai_ip_address_t sai_vip_v6 = {};
+    to_sai(ha_set_it->second.metadata.vip_v4(), sai_vip_v4);
+    to_sai(ha_set_it->second.metadata.vip_v6(), sai_vip_v6);
+
+    const uint32_t attr_count = 4;
     sai_attribute_t ha_scope_attrs[attr_count]={};
     sai_status_t status;
     sai_object_id_t sai_ha_scope_oid = 0UL;
@@ -421,6 +433,12 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     // TODO: add ha_role to attribute value enum
     ha_scope_attrs[1].id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
     ha_scope_attrs[1].value.u16 = to_sai(entry.ha_role());
+
+    ha_scope_attrs[2].id = SAI_HA_SCOPE_ATTR_VIP_V4;
+    ha_scope_attrs[2].value.ipaddr = sai_vip_v4;
+
+    ha_scope_attrs[3].id = SAI_HA_SCOPE_ATTR_VIP_V6;
+    ha_scope_attrs[3].value.ipaddr = sai_vip_v6;
 
     status = sai_dash_ha_api->create_ha_scope(&sai_ha_scope_oid,
                                          gSwitchId,
