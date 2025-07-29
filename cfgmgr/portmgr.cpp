@@ -90,7 +90,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     // If dhcp_rate_limit is not configured (empty string), do nothing
     if (dhcp_rate_limit.empty())
     {
-        //SWSS_LOG_DEBUG("DHCP rate limit not configured for port %s, skipping TC configuration", alias.c_str());
+        SWSS_LOG_DEBUG("DHCP rate limit not configured for port %s, skipping TC configuration", alias.c_str());
         return true;
     }
 
