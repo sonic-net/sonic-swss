@@ -433,10 +433,10 @@ class TestMuxTunnelBase():
 
         # neighbors must get added even for standby port
         self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
-        srv2_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
 
         self.add_neighbor(dvs, self.SERV2_IPV6, "00:00:00:00:00:02")
-        srv2_v6 = self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
 
         time.sleep(1)
 
