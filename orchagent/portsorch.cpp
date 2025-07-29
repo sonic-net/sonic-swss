@@ -818,11 +818,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_defaultVlan = attrs[1].value.oid;
     }
 
-    /* Get System ports */
-    getSystemPorts();
-
     if (gMySwitchType != "dpu")
     {
+        // System Ports not supported on dpu
+        // Get System ports
+        getSystemPorts();
+
         removeDefaultVlanMembers();
         removeDefaultBridgePorts();
     }
