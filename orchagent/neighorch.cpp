@@ -2096,3 +2096,9 @@ bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
     }
     return rc;
 }
+
+void NeighOrch::clearBulkers()
+{
+    gNeighBulker.clear();
+    gNextHopBulker.clear();
+}
