@@ -251,7 +251,6 @@ public:
     }
     void updateCachedNeighbors();
 
-    void saveMuxNeighbors();
     void restoreMuxNeighbors();
 
     bool bake() override;
@@ -267,7 +266,6 @@ private:
     void saveNeighborToMuxTable(const IpAddress& ip, const string& alias);
     void removeNeighborFromMuxTable(const IpAddress& ip, const string& alias);
     bool isCachedMuxNeighbor(const IpAddress& ip, const string& alias) const;
-    void clearCachedMuxNeighbors();
 
     void updateNeighbor(const NeighborUpdate& update);
     void updateFdb(const FdbUpdate&);

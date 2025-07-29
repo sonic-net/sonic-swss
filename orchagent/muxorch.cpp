@@ -1448,13 +1448,18 @@ bool MuxOrch::isMuxPortNeighbor(const IpAddress& nbr, const MacAddress& mac, str
     // skip neighbors are treated as MUX port neighbor
     if (isSkipNeighbor(nbr))
     {
+        SWSS_LOG_INFO("Skip neighbor %s treated as MUX port neighbor", nbr.to_string().c_str());
+        return true;
+    }
+
+    if (isCachedMuxNeighbor(nbr, alias))
+    {
         return true;
     }
 
     if (mux_cable_tb_.empty())
     {
-        // Check cached neighbors during warm boot
-        return isCachedMuxNeighbor(nbr, alias);
+        return false;
     }
 
     MuxCable* ptr = findMuxCableInSubnet(nbr);
@@ -1467,8 +1472,7 @@ bool MuxOrch::isMuxPortNeighbor(const IpAddress& nbr, const MacAddress& mac, str
     string port;
     if (!getMuxPort(mac, alias, port))
     {
-        // Check cached neighbors during warm boot
-        return isCachedMuxNeighbor(nbr, alias);
+        return false;
     }
 
     if (!port.empty() && isMuxExists(port))
@@ -1483,8 +1487,7 @@ bool MuxOrch::isMuxPortNeighbor(const IpAddress& nbr, const MacAddress& mac, str
         return true;
     }
 
-    // Check cached neighbors during warm boot
-    return isCachedMuxNeighbor(nbr, alias);
+    return false;
 }
 
 bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, string& alias)
@@ -1607,7 +1610,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     string alias = update.entry.alias;
     bool is_mux_neighbor = false;
     string port, old_port;
-    
+
     bool is_tunnel_route_installed = isStandaloneTunnelRouteInstalled(update.entry.ip_address);
     // Handling zero MAC neighbor updates
     if (!update.mac)
@@ -1647,7 +1650,15 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         {
             ptr->updateNeighbor(update.entry, update.add);
             is_mux_neighbor = true;
-            goto handle_redis;
+            if (update.add)
+            {
+                saveNeighborToMuxTable(update.entry.ip_address, alias);
+            }
+            else
+            {
+                removeNeighborFromMuxTable(update.entry.ip_address, alias);
+            }
+            return;
         }
     }
 
@@ -1668,7 +1679,13 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         {
             addNexthop(update.entry, old_port);
             is_mux_neighbor = true;
-            goto handle_redis;
+
+            // Save MUX neighbors for warmboot
+            if (is_mux_neighbor)
+            {
+                saveNeighborToMuxTable(update.entry.ip_address, alias);
+            }
+            return;
         }
 
         addNexthop(update.entry);
@@ -1699,19 +1716,6 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         is_mux_neighbor = true;
     }
 
-handle_redis:
-    // Save MUX neighbors for warmboot
-    if (is_mux_neighbor)
-    {
-        if (update.add)
-        {
-            saveNeighborToMuxTable(update.entry.ip_address, alias);
-        }
-        else
-        {
-            removeNeighborFromMuxTable(update.entry.ip_address, alias);
-        }
-    }
 }
 
 void MuxOrch::addNexthop(NextHopKey nh, string muxName)
@@ -2089,34 +2093,6 @@ void MuxOrch::updateCachedNeighbors()
     }
 }
 
-void MuxOrch::saveMuxNeighbors()
-{
-    SWSS_LOG_NOTICE("Saving MUX neighbors to Redis");
-    
-    // Clear existing entries
-    mux_neighbors_table_->del("*");
-    
-    // Save current MUX neighbors
-    for (const auto& entry : cached_mux_neighbors_)
-    {
-        std::string key = entry.first.to_string() + "|" + entry.second;
-        std::vector<FieldValueTuple> values;
-        values.emplace_back("ip", entry.first.to_string());
-        values.emplace_back("alias", entry.second);
-        mux_neighbors_table_->set(key, values);
-    }
-    
-    SWSS_LOG_NOTICE("Saved %zu MUX neighbors to Redis", cached_mux_neighbors_.size());
-    
-    // Clear the in-memory cache after warm boot is complete
-    // The cache is no longer needed once MUX cables are operational
-    if (!mux_cable_tb_.empty())
-    {
-        clearCachedMuxNeighbors();
-        SWSS_LOG_NOTICE("Cleared MUX neighbor cache after warm boot completion");
-    }
-}
-
 void MuxOrch::restoreMuxNeighbors()
 {
     SWSS_LOG_NOTICE("Restoring MUX neighbors from Redis");
@@ -2169,23 +2145,18 @@ void MuxOrch::removeNeighborFromMuxTable(const IpAddress& ip, const string& alia
 {
     std::string key = ip.to_string();
     mux_neighbors_table_->del(key);
-    
+
     // Also remove from in-memory cache
     cached_mux_neighbors_.erase(std::make_pair(ip, alias));
-}
-
-void MuxOrch::clearCachedMuxNeighbors()
-{
-    cached_mux_neighbors_.clear();
 }
 
 bool MuxOrch::bake()
 {
     SWSS_LOG_ENTER();
-    
+
     // Restore MUX neighbors from Redis during warm boot
     restoreMuxNeighbors();
-    
+
     return true;
 }
 
