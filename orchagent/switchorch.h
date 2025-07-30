@@ -1,10 +1,14 @@
 #pragma once
 
+#include <unordered_map>
+
 #include "acltable.h"
 #include "orch.h"
 #include "timer.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
+#include "switch/trimming/capabilities.h"
+#include "switch/trimming/helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
@@ -74,9 +78,21 @@ private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doCfgSwitchHashTableTask(Consumer &consumer);
+    void doCfgSwitchTrimmingTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
+    // Updates hash object reference after setting switch hash object attribute.
+    //  * switch_object_name: the name of the switch object with hash object
+    //    attribute change.
+    //  * switch_hash_object_attr_type:
+    //    ecmp_hash_ipv4/ecmp_hash_ipv4_in_ipv4/ecmp_hash_ipv6
+    //  * hash_object_name: the name of the new hash object that the switch
+    //    reference.
+    void updateHashObjectReference(
+        const std::string &switch_object_name,
+        const std::string &switch_hash_object_attr_type,
+        const std::string &hash_object_name);
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
@@ -89,6 +105,13 @@ private:
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
     void setSwitchIcmpOffloadCapability();
+
+    // Switch trimming
+    bool setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimming(const SwitchTrimming &trim);
 
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
@@ -152,9 +175,22 @@ private:
     // external program for orchagent pre-shutdown state check
     WarmRestartCheck m_warmRestartCheck = {false, false, false};
 
+    // A map that maps switch object name to a map which maps switch hash object
+    // attribute to hash object name.
+    // The map is used to track hash object use.
+    // An example object in the map could be
+    //   {"switch",
+    //    {{"ecmp_hash_ipv4", "hash_config_1"},
+    //     {"ecmp_hash_ipv4_in_ipv4", "hash_config_2"},
+    //     {"ecmp_hash_ipv6", "hash_config_2"},}}
+    std::unordered_map<std::string, std::unordered_map<std::string,std::string>>
+        m_switch_obj_to_hash_obj;
+
     // Switch OA capabilities
     SwitchCapabilities swCap;
+    SwitchTrimmingCapabilities trimCap;
 
     // Switch OA helper
     SwitchHelper swHlpr;
+    SwitchTrimmingHelper trimHlpr;
 };

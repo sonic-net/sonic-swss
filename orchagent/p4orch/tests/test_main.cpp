@@ -12,6 +12,7 @@ extern "C"
 #include "dbconnector.h"
 #include "directory.h"
 #include "flowcounterrouteorch.h"
+#include "hashorch.h"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
@@ -53,6 +54,7 @@ P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
+HashOrch* gHashOrch;
 Directory<Orch *> gDirectory;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
@@ -210,6 +212,7 @@ int main(int argc, char *argv[])
     sai_switch_api = &switch_api;
     sai_mirror_api = &mirror_api;
     sai_udf_api = &udf_api;
+    sai_hash_api = &hash_api;
     sai_my_mac_api = &my_mac_api;
     sai_tunnel_api = &tunnel_api;
     sai_counter_api = &counter_api;

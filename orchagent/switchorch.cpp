@@ -1,4 +1,5 @@
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <inttypes.h>
 #include <iomanip>
@@ -6,6 +7,7 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "converter.h"
+#include "hashorch.h"
 #include "notifier.h"
 #include "notificationproducer.h"
 #include "macaddress.h"
@@ -24,6 +26,7 @@ extern sai_acl_api_t *sai_acl_api;
 extern sai_hash_api_t *sai_hash_api;
 extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
+extern HashOrch *gHashOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
 
@@ -32,8 +35,16 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"fdb_unicast_miss_packet_action",      SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION},
     {"fdb_broadcast_miss_packet_action",    SAI_SWITCH_ATTR_FDB_BROADCAST_MISS_PACKET_ACTION},
     {"fdb_multicast_miss_packet_action",    SAI_SWITCH_ATTR_FDB_MULTICAST_MISS_PACKET_ACTION},
+    {"ecmp_hash_algorithm",                 SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM},
     {"ecmp_hash_seed",                      SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED},
+    {"ecmp_hash_ipv4",                      SAI_SWITCH_ATTR_ECMP_HASH_IPV4},
+    {"ecmp_hash_ipv4_in_ipv4",              SAI_SWITCH_ATTR_ECMP_HASH_IPV4_IN_IPV4},
+    {"ecmp_hash_ipv6",                      SAI_SWITCH_ATTR_ECMP_HASH_IPV6},
+    {"lag_hash_algorithm",                  SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM},
     {"lag_hash_seed",                       SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED},
+    {"lag_hash_ipv4",                       SAI_SWITCH_ATTR_LAG_HASH_IPV4},
+    {"lag_hash_ipv4_in_ipv4",               SAI_SWITCH_ATTR_LAG_HASH_IPV4_IN_IPV4},
+    {"lag_hash_ipv6",                       SAI_SWITCH_ATTR_LAG_HASH_IPV6},
     {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME},
     {"debug_shell_enable",                  SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE},
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
@@ -53,6 +64,17 @@ const map<string, sai_packet_action_t> packet_action_map =
     {"drop",    SAI_PACKET_ACTION_DROP},
     {"forward", SAI_PACKET_ACTION_FORWARD},
     {"trap",    SAI_PACKET_ACTION_TRAP}
+};
+
+const unordered_map<string, sai_hash_algorithm_t> hash_algorithm_map =
+{
+    {"crc", SAI_HASH_ALGORITHM_CRC},
+    {"xor", SAI_HASH_ALGORITHM_XOR},
+    {"random", SAI_HASH_ALGORITHM_RANDOM},
+    {"crc_32lo", SAI_HASH_ALGORITHM_CRC_32LO},
+    {"crc_32hi", SAI_HASH_ALGORITHM_CRC_32HI},
+    {"crc_ccitt", SAI_HASH_ALGORITHM_CRC_CCITT},
+    {"crc_xor", SAI_HASH_ALGORITHM_CRC_XOR}
 };
 
 const map<string, sai_switch_attr_t> switch_asic_sdk_health_event_severity_to_switch_attribute_map =
@@ -503,12 +525,13 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        ReturnCode rc;
         auto t = it->second;
         auto op = kfvOp(t);
-        bool retry = false;
 
         if (op == SET_COMMAND)
         {
+            std::vector<swss::FieldValueTuple> successful_fields_values;
             for (auto i : kfvFieldsValues(t))
             {
                 auto attribute = fvField(i);
@@ -523,14 +546,18 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                     // Check additionally 'switch_tunnel_attribute_map' for Switch Tunnel
                     if (switch_tunnel_attribute_map.find(attribute) == switch_tunnel_attribute_map.end())
                     {
-                        SWSS_LOG_ERROR("Unsupported switch attribute %s", attribute.c_str());
+                        rc = ReturnCode(swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "Unsupported switch attribute " << attribute;
+                        SWSS_LOG_ERROR("%s", rc.message().c_str());
                         break;
                     }
 
                     auto status = setSwitchTunnelVxlanParams(i);
-                    if ((status != SAI_STATUS_SUCCESS) && (handleSaiSetStatus(SAI_API_SWITCH, status) == task_need_retry))
+                    if (status != SAI_STATUS_SUCCESS)
                     {
-                        retry = true;
+                        rc = ReturnCode(swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "Fail to set tunnel vxlan params " << attribute;
+                        SWSS_LOG_ERROR("%s", rc.message().c_str());
                         break;
                     }
 
@@ -543,7 +570,7 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 attr.id = switch_attribute_map.at(attribute);
 
                 MacAddress mac_addr;
-                bool invalid_attr = false;
+                bool switch_hash_object_attr_change = false;
                 bool ret = false;
                 bool unsupported_attr = false;
                 switch (attr.id)
@@ -553,11 +580,25 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                     case SAI_SWITCH_ATTR_FDB_MULTICAST_MISS_PACKET_ACTION:
                         if (packet_action_map.find(value) == packet_action_map.end())
                         {
-                            SWSS_LOG_ERROR("Unsupported packet action %s", value.c_str());
-                            invalid_attr = true;
+                            rc = ReturnCode(swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                                 << "Unsupported packet action " << value;
+                            SWSS_LOG_ERROR("%s", rc.message().c_str());
                             break;
                         }
                         attr.value.s32 = packet_action_map.at(value);
+                        break;
+
+                    case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM:
+                    case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM:
+                        if (hash_algorithm_map.find(value) ==
+                            hash_algorithm_map.end()) {
+                            rc = ReturnCode(
+                                swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                                 << "Unsupported hash algorithm " << value;
+                            SWSS_LOG_ERROR("%s", rc.message().c_str());
+                            break;
+                        }
+                        attr.value.s32 = hash_algorithm_map.at(value);
                         break;
 
                     case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED:
@@ -581,6 +622,23 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         mac_addr = value;
                         gVxlanMacAddress = mac_addr;
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
+                        break;
+
+                    case SAI_SWITCH_ATTR_ECMP_HASH_IPV4:
+                    case SAI_SWITCH_ATTR_ECMP_HASH_IPV4_IN_IPV4:
+                    case SAI_SWITCH_ATTR_ECMP_HASH_IPV6:
+                    case SAI_SWITCH_ATTR_LAG_HASH_IPV4:
+                    case SAI_SWITCH_ATTR_LAG_HASH_IPV4_IN_IPV4:
+                    case SAI_SWITCH_ATTR_LAG_HASH_IPV6:
+                        switch_hash_object_attr_change = true;
+                        if (!gHashOrch->getHashObjectId(value,
+                                                        &attr.value.oid)) {
+                            rc = ReturnCode(
+                                    swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                                    << "Hash object with name (" << value
+                                    << ") has not been created yet.";
+                            SWSS_LOG_ERROR("%s", rc.message().c_str());
+                        }
                         break;
 
                     case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET:
@@ -607,10 +665,12 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         break;
 
                     default:
-                        invalid_attr = true;
+                        rc = ReturnCode(swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "Unsupported switch attribute " << attribute;
+                        SWSS_LOG_ERROR("%s", rc.message().c_str());
                         break;
                 }
-                if (invalid_attr)
+                if (!rc.ok())
                 {
                     /* break from kfvFieldsValues for loop */
                     SWSS_LOG_ERROR("Invalid Attribute %s", attribute.c_str());
@@ -626,29 +686,56 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to set switch attribute %s to %s, rv:%d",
-                            attribute.c_str(), value.c_str(), status);
-                    retry = (handleSaiSetStatus(SAI_API_SWITCH, status) == task_need_retry);
+                    rc = ReturnCode(status)
+                         << "Failed to set switch attribute " << attribute
+                         << " to " << value << ", rv:" << status;
+                    SWSS_LOG_ERROR("%s", rc.message().c_str());
                     break;
                 }
 
+                // Update reference count of hash objects if needed.
+                if (switch_hash_object_attr_change) {
+                    updateHashObjectReference(kfvKey(t), attribute, value);
+                }
                 SWSS_LOG_NOTICE("Set switch attribute %s to %s", attribute.c_str(), value.c_str());
+                successful_fields_values.push_back(i);
             }
-            if (retry == true)
-            {
-                it++;
-            }
-            else
-            {
-                it = consumer.m_toSync.erase(it);
-            }
+            m_publisher.publish(
+                consumer.getTableName(), kfvKey(t), kfvFieldsValues(t), rc,
+                successful_fields_values);
         }
         else
         {
-            SWSS_LOG_WARN("Unsupported operation");
-            it = consumer.m_toSync.erase(it);
+            rc = ReturnCode(swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Unsupported operation:" << op;
+            SWSS_LOG_WARN("%s", rc.message().c_str());
+            m_publisher.publish(
+                consumer.getTableName(), kfvKey(t), kfvFieldsValues(t), rc);
         }
+        it = consumer.m_toSync.erase(it);
     }
+}
+
+void SwitchOrch::updateHashObjectReference(
+    const std::string &switch_object_name,
+    const std::string &switch_hash_object_attr_type,
+    const std::string &hash_object_name) {
+    SWSS_LOG_ENTER();
+
+    auto switch_hash_attr_to_name =
+        m_switch_obj_to_hash_obj[switch_object_name];
+
+    // Decrease ref count for old hash object.
+    if (switch_hash_attr_to_name.find(switch_hash_object_attr_type) !=
+        switch_hash_attr_to_name.end()) {
+        gHashOrch->decreaseRefCount(
+            switch_hash_attr_to_name.at(switch_hash_object_attr_type));
+    }
+
+    // Increase ref count for new hash object and update
+    // m_switch_obj_to_hash_obj.
+    gHashOrch->increaseRefCount(hash_object_name);
+    switch_hash_attr_to_name[switch_hash_object_attr_type] = hash_object_name;
 }
 
 bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const
@@ -901,6 +988,235 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
     }
 }
 
+bool SwitchOrch::setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_SIZE;
+    attr.value.u32 = trim.size.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE;
+    attr.value.u8 = trim.dscp.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE;
+    attr.value.s32 = trim.queue.mode.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX;
+    attr.value.u8 = trim.queue.index.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimming(const SwitchTrimming &trim)
+{
+    SWSS_LOG_ENTER();
+
+    auto tObj = trimHlpr.getConfig();
+    auto cfgUpd = false;
+    auto qIdxBak = false;
+
+    if (!trimCap.isSwitchTrimmingSupported())
+    {
+        SWSS_LOG_WARN("Switch trimming configuration is not supported: skipping ...");
+        return true;
+    }
+
+    if (trim.size.is_set)
+    {
+        if (!tObj.size.is_set || (tObj.size.value != trim.size.value))
+        {
+            if (!setSwitchTrimmingSizeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming size in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.size.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming size configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.dscp.is_set)
+    {
+        if (!tObj.dscp.is_set || (tObj.dscp.value != trim.dscp.value))
+        {
+            if (!setSwitchTrimmingDscpSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming DSCP in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.dscp.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming DSCP configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.queue.mode.is_set)
+    {
+        if (!tObj.queue.mode.is_set || (tObj.queue.mode.value != trim.queue.mode.value))
+        {
+            if (!trimCap.validateQueueModeCap(trim.queue.mode.value))
+            {
+                SWSS_LOG_ERROR("Failed to validate switch trimming queue mode: capability is not supported");
+                return false;
+            }
+
+            if (!setSwitchTrimmingQueueModeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming queue mode in SAI");
+                return false;
+            }
+
+            if (trimHlpr.isStaticQueueMode(tObj))
+            {
+                qIdxBak = true;
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.queue.mode.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming queue configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.queue.index.is_set)
+    {
+        if (!tObj.queue.index.is_set || (tObj.queue.index.value != trim.queue.index.value))
+        {
+            if (!setSwitchTrimmingQueueIndexSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming queue index in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+
+    // Don't update internal cache when config remains unchanged
+    if (!cfgUpd)
+    {
+        SWSS_LOG_NOTICE("Switch trimming in SAI is up-to-date");
+        return true;
+    }
+
+    if (qIdxBak) // Override queue index configuration during transition from static -> dynamic
+    {
+        auto cfg = trim;
+        cfg.queue.index = tObj.queue.index;
+        trimHlpr.setConfig(cfg);
+    }
+    else // Regular configuration update
+    {
+        trimHlpr.setConfig(trim);
+    }
+
+    SWSS_LOG_NOTICE("Set switch trimming in SAI");
+
+    return true;
+}
+
+void SwitchOrch::doCfgSwitchTrimmingTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        SWSS_LOG_INFO("KEY: %s, OP: %s", key.c_str(), op.c_str());
+
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("Failed to parse switch trimming key: empty string");
+            it = map.erase(it);
+            continue;
+        }
+
+        SwitchTrimming trim;
+
+        if (op == SET_COMMAND)
+        {
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+
+                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+
+                trim.fieldValueMap[fieldName] = fieldValue;
+            }
+
+            if (trimHlpr.parseConfig(trim))
+            {
+                if (!setSwitchTrimming(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming: ASIC and CONFIG DB are diverged");
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming: operation is not supported: ASIC and CONFIG DB are diverged");
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation(%s)", op.c_str());
+        }
+
+        it = map.erase(it);
+    }
+}
+
 void SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const string &severityString, const string &suppressed_category_list, bool isInitializing)
 {
     sai_status_t status;
@@ -1045,6 +1361,10 @@ void SwitchOrch::doTask(Consumer &consumer)
     else if (tableName == CFG_SWITCH_HASH_TABLE_NAME)
     {
         doCfgSwitchHashTableTask(consumer);
+    }
+    else if (tableName == CFG_SWITCH_TRIMMING_TABLE_NAME)
+    {
+        doCfgSwitchTrimmingTableTask(consumer);
     }
     else if (tableName == CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME)
     {

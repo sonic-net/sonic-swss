@@ -19,6 +19,7 @@ namespace dashrouteorch_test
 {
     DEFINE_SAI_API_MOCK(dash_outbound_routing, outbound_routing);
     using namespace mock_orch_test;
+    using ::testing::InSequence;
     class DashRouteOrchTest : public MockDashOrchTest
     {
         void PostSetUp()
@@ -42,12 +43,15 @@ namespace dashrouteorch_test
 
     TEST_F(DashRouteOrchTest, RouteWithMissingTunnelNotAdded)
     {
-        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+            EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
+        }
         AddOutboundRoutingGroup();
-        AddOutboundRoutingEntry();
+        AddOutboundRoutingEntry(false);
         
-        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
         AddTunnel();
-        static_cast<Orch *>(m_DashRouteOrch)->doTask();
+        AddOutboundRoutingEntry();
     }
 }
