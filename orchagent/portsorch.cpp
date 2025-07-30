@@ -6183,18 +6183,6 @@ bool PortsOrch::initializePort(Port &port)
         initializeSchedulerGroups(port);
     }
 
-    /*
-     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
-     */
-    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
-
-    /* Create host interface */
-    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
-    {
-        SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
-        return false;
-    }
-
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
     bool exist = m_portTable->get(port.m_alias, tuples);
@@ -6247,6 +6235,18 @@ bool PortsOrch::initializePort(Port &port)
         {
             SWSS_LOG_ERROR("Failed to get port (%s) flap_count: %s", port.m_alias.c_str(), e.what());
         }
+    }
+
+    /*
+     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
+     */
+    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+
+    /* Create host interface */
+    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
+    {
+        SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
+        return false;
     }
 
     /* initialize port admin status */
