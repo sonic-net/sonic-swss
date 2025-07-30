@@ -161,6 +161,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
+                $(top_srcdir)/orchagent/hashorch.cpp \
                 $(top_srcdir)/orchagent/dash/pbutils.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
                 $(top_srcdir)/orchagent/twamporch.cpp \

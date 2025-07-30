@@ -47,6 +47,7 @@
 #include "icmporch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
+#include "hashorch.h"
 #include "twamporch.h"
 #include "stporch.h"
 #include "dash/dashenifwdorch.h"

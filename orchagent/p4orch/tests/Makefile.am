@@ -26,6 +26,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/switch/trimming/capabilities.cpp \
 		       $(ORCHAGENT_DIR)/switch/trimming/helper.cpp \
 		       $(ORCHAGENT_DIR)/switchorch.cpp \
+                       $(ORCHAGENT_DIR)/hashorch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(top_srcdir)/lib/recorder.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \
