@@ -106,6 +106,12 @@ jobs:
         libdbus-1-dev \
         libteam-dev
       sudo pip3 install lcov_cobertura
+      sudo apt-get install -y redis-server
+      sudo sed -i 's/notify-keyspace-events ""/notify-keyspace-events AKE/' /etc/redis/redis.conf
+      sudo sed -ri 's/^# unixsocket/unixsocket/' /etc/redis/redis.conf
+      sudo sed -ri 's/^unixsocketperm .../unixsocketperm 777/' /etc/redis/redis.conf
+      sudo sed -ri 's/redis-server.sock/redis.sock/' /etc/redis/redis.conf
+      sudo service redis-server restart
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -218,6 +224,10 @@ jobs:
       rm -rf download
     workingDirectory: $(Build.ArtifactStagingDirectory)
     displayName: "Install sonic swss common and sairedis"
+  - script: |
+      cd countersyncd
+      cargo test
+    displayName: "Test countersyncd"
   - script: |
       set -ex
       tar czf pytest.tgz tests
