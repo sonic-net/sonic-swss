@@ -15,6 +15,7 @@ CFLAGS_SAI = -I /usr/include/sai
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 nvda_port_trim_drop.lua \
 		 eliminate_events.lua \
 		 rif_rates.lua \
 		 pfc_detect_marvell_teralynx.lua  \
