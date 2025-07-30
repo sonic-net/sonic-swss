@@ -566,7 +566,6 @@ void MuxCable::rollbackStateChange()
     bool success = false;
 
     nbr_handler_->clearBulkers();
-    gNeighOrch->clearBulkers();
 
     switch (prev_state_)
     {
