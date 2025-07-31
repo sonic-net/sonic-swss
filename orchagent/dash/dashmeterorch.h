@@ -20,6 +20,9 @@
 #include "dash_api/meter_policy.pb.h"
 #include "dash_api/meter_rule.pb.h"
 
+#define METER_STAT_COUNTER_FLEX_COUNTER_GROUP "METER_STAT_COUNTER"
+#define METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+
 struct MeterPolicyContext
 {
     std::string meter_policy;
@@ -71,8 +74,13 @@ public:
     int32_t getMeterPolicyEniBindCount(const std::string& meter_policy) const;
     void incrMeterPolicyEniBindCount(const std::string& meter_policy);
     void decrMeterPolicyEniBindCount(const std::string& meter_policy);
+    void addEniToMeterFC(sai_object_id_t oid, const std::string& name);
+    void removeEniFromMeterFC(sai_object_id_t oid, const std::string& name);
+    void handleMeterFCStatusUpdate(bool is_enabled);
 
 private:
+
+    void doTask(swss::SelectableTimer&);
     void doTask(ConsumerBase &consumer);
     void doTaskMeterPolicyTable(ConsumerBase &consumer);
     void doTaskMeterRuleTable(ConsumerBase &consumer);
@@ -97,4 +105,12 @@ private:
     MeterPolicyTable meter_policy_entries_;
     MeterRuleTable meter_rule_entries_;
     ObjectBulker<sai_dash_meter_api_t> meter_rule_bulker_;
+    bool m_meter_fc_status = false;
+    FlexCounterManager m_meter_stat_manager;
+    std::unordered_set<std::string> m_meter_counter_stats;
+    std::map<sai_object_id_t, std::string> m_meter_stat_work_queue;
+    std::unique_ptr<swss::Table> m_vid_to_rid_table;
+    std::shared_ptr<swss::DBConnector> m_counter_db;
+    std::shared_ptr<swss::DBConnector> m_asic_db;
+    swss::SelectableTimer* m_meter_fc_update_timer = nullptr;
 };
