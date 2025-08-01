@@ -64,9 +64,12 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
 
 } // namespace
 
-ResponsePublisher::ResponsePublisher(const std::string &dbName, bool buffered, bool db_write_thread)
-    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)), m_buffered(buffered)
-{
+ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered,
+                                     bool db_write_thread,
+                                     swss::ZmqServer* zmqServer)
+    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)),
+      m_buffered(buffered),
+      m_zmqServer(zmqServer) {
     if (m_buffered)
     {
         m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
@@ -101,15 +104,27 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
                                 const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
                                 const std::vector<swss::FieldValueTuple> &state_attrs, bool replace)
 {
-    std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
-    swss::NotificationProducer notificationProducer{m_ntf_pipe.get(), response_channel, m_buffered};
-
     auto intent_attrs_copy = intent_attrs;
     // Add error message as the first field-value-pair.
     swss::FieldValueTuple err_str("err_str", PrependedComponent(status) + status.message());
     intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
-    // Sends the response to the notification channel.
-    notificationProducer.send(status.codeStr(), key, intent_attrs_copy);
+    std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
+
+    if (m_zmqServer != nullptr) {
+      auto intent_attrs_zmq_copy = intent_attrs;
+      // Add status code and error message as the first field-value-pair.
+      swss::FieldValueTuple fvs(status.codeStr(),
+                                PrependedComponent(status) + status.message());
+      intent_attrs_zmq_copy.insert(intent_attrs_zmq_copy.begin(), fvs);
+      // Queue the response.
+      responses[table].push_back(
+          swss::KeyOpFieldsValuesTuple{key, SET_COMMAND, intent_attrs_zmq_copy});
+    } else {
+      // Sends the response to the notification channel.
+      swss::NotificationProducer notificationProducer{
+          m_ntf_pipe.get(), response_channel, m_buffered};
+      notificationProducer.send(status.codeStr(), key, intent_attrs_copy);
+    }
     RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr());
 
     // Write to the DB only if:
@@ -203,9 +218,19 @@ void ResponsePublisher::writeToDBInternal(const std::string &table, const std::s
     }
 }
 
-void ResponsePublisher::flush()
-{
-    m_ntf_pipe->flush();
+void ResponsePublisher::flush(bool warmboot) {
+    if (m_zmqServer != nullptr) {
+      // During warmboot, we cannot send response message over ZMQ in one-to-one
+      // sync mode.
+      if (!warmboot) {
+        for (const auto& response : responses) {
+          m_zmqServer->sendMsg("APPL_DB", response.first, response.second);
+        }
+      }
+      responses.clear();
+    } else {
+      m_ntf_pipe->flush();
+    }
     if (m_update_thread != nullptr)
     {
         {
