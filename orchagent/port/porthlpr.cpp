@@ -1224,7 +1224,6 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-
         else if (field == PORT_DAMPING_ALGO)
         {
             if (!this->parsePortLinkEventDampingAlgorithm(port, field, value))
@@ -1267,7 +1266,6 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-
         else if (field == PORT_MODE)
         {
             /* Placeholder to prevent warning. Not needed to be parsed here.

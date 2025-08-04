@@ -35,8 +35,8 @@ int main(int argc, char **argv)
 
         PortMgr portmgr(&cfgDb, &appDb, &stateDb, cfg_port_tables);
         vector<Orch *> cfgOrchList = {&portmgr};
-        swss::Select s;
 
+        swss::Select s;
         for (Orch *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());

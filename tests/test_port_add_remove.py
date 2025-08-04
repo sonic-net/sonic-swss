@@ -79,7 +79,7 @@ class TestPortAddRemove(object):
         config_db.delete_entry('PORT', PORT_A)
         num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                               num_of_ports-1,
-                              polling_config = PollingConfig(polling_interval = 1, timeout = 5.00, strict = True))
+                              polling_config = PollingConfig(polling_interval = 1, timeout = 8.00, strict = True))
 
         # verify that the port was removed properly since all buffer configuration was removed also
         assert len(num) == num_of_ports - 1

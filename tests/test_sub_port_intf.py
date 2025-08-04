@@ -122,7 +122,7 @@ class TestSubPortIntf(object):
             return "PortChannel"+intf_index+VLAN_SUB_INTERFACE_SEPARATOR+sub_intf_idx
         else:
             return str(port_name)
-
+   
     def get_port_longname(self, port_name):
         if port_name is None:
            return None
@@ -1182,10 +1182,10 @@ class TestSubPortIntf(object):
                 "SAI_ROUTER_INTERFACE_ATTR_PORT_ID": parent_port_oid,
             }
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
-            #If subintf mtu deleted, it inherits from parent
+            #If subintf mtu deleted, it inherits from parent 
             if vrf_name == self.VRF_UNDER_TEST or vrf_name == self.VNET_UNDER_TEST:
                 if parent_port.startswith(ETHERNET_PREFIX):
-                    fv_dict["SAI_ROUTER_INTERFACE_ATTR_MTU"] = ETHERNET_PORT_DEFAULT_MTU
+                    fv_dict["SAI_ROUTER_INTERFACE_ATTR_MTU"] = ETHERNET_PORT_DEFAULT_MTU 
             self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
         else:
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)

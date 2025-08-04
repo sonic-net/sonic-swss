@@ -2321,7 +2321,7 @@ class TestRouterInterface(object):
     def test_interfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
         self.loopback_action_test("Ethernet8", "drop")
-
+        
     def test_interfaceLoopbackActionForward(self, dvs, testlog):
         self.setup_db(dvs)
         self.loopback_action_test("Ethernet8", "forward")
@@ -2329,7 +2329,7 @@ class TestRouterInterface(object):
     def test_subInterfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
         self.loopback_action_test("Ethernet8.1", "drop")
-
+        
     def test_subInterfaceLoopbackActionForward(self, dvs, testlog):
         self.setup_db(dvs)
         self.loopback_action_test("Ethernet8.1", "forward")
@@ -2339,7 +2339,7 @@ class TestRouterInterface(object):
         self.create_vlan("10")
         self.loopback_action_test("Vlan10", "drop")
         self.remove_vlan("10")
-
+        
     def test_vlanInterfaceLoopbackActionForward(self, dvs, testlog):
         self.setup_db(dvs)
         self.create_vlan("20")
@@ -2351,7 +2351,7 @@ class TestRouterInterface(object):
         self.create_port_channel("PortChannel009")
         self.loopback_action_test("PortChannel009", "drop")
         self.remove_port_channel("PortChannel009")
-
+        
     def test_portChannelInterfaceLoopbackActionForward(self, dvs, testlog):
         self.setup_db(dvs)
         self.create_port_channel("PortChannel010")
