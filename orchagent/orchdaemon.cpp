@@ -68,6 +68,7 @@ TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
+HFTelOrch *gHFTOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -232,7 +233,8 @@ bool OrchDaemon::init()
     vector<string> stp_tables = {
         APP_STP_VLAN_INSTANCE_TABLE_NAME,
         APP_STP_PORT_STATE_TABLE_NAME,
-        APP_STP_FASTAGEING_FLUSH_TABLE_NAME
+        APP_STP_FASTAGEING_FLUSH_TABLE_NAME,
+        APP_STP_INST_PORT_FLUSH_TABLE_NAME
     };
     gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
     gDirectory.set(gStpOrch);
@@ -822,6 +824,21 @@ bool OrchDaemon::init()
     TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
     m_orchList.push_back(twamp_orch);
 
+    if (HFTelOrch::isSupportedHFTel(gSwitchId))
+    {
+        const vector<string> stel_tables = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
+        };
+        gHFTOrch = new HFTelOrch(m_configDb, m_stateDb, stel_tables);
+        m_orchList.push_back(gHFTOrch);
+        SWSS_LOG_NOTICE("High Frequency Telemetry is supported on this platform");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("High Frequency Telemetry is not supported on this platform");
+    }
+
     if (WarmStart::isWarmStart())
     {
         bool suc = warmRestoreAndSyncUp();
@@ -1265,7 +1282,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_HA_SCOPE_TABLE_NAME
     };
 
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
@@ -1300,6 +1317,13 @@ bool DpuOrchDaemon::init()
     DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
 
+    vector<string> dash_port_map_tables = {
+        APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
+        APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
+    };
+    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_applDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
+    gDirectory.set(dash_port_map_orch);
+
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
@@ -1307,6 +1331,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_tunnel_orch);
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
+    addOrchList(dash_port_map_orch);
 
     return true;
 }

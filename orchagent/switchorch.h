@@ -108,7 +108,9 @@ private:
 
     // Switch trimming
     bool setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpModeSai(const SwitchTrimming &trim) const;
     bool setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingTcSai(const SwitchTrimming &trim) const;
     bool setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const;
     bool setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const;
     bool setSwitchTrimming(const SwitchTrimming &trim);

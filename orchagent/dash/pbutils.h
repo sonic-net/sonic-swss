@@ -18,6 +18,8 @@ bool to_sai(const dash::types::IpPrefix &pb_prefix, sai_ip_prefix_t &sai_prefix)
 
 bool to_sai(const google::protobuf::RepeatedPtrField<dash::types::IpPrefix> &pb_prefixes, std::vector<sai_ip_prefix_t> &sai_prefixes);
 
+bool to_sai(const dash::types::ValueOrRange &pb_range, sai_u32_range_t &sai_range);
+
 template<typename RangeType>
 bool to_sai(const dash::types::ValueOrRange &pb_range, RangeType &sai_range)
 {
@@ -81,3 +83,9 @@ std::string to_string(const dash::types::IpAddress &pb_address);
 sai_uint16_t to_sai(const dash::types::HaRole ha_role);
 
 dash::types::HaRole to_pb(const sai_dash_ha_role_t ha_role);
+
+bool to_pb(const std::string &ha_role, dash::types::HaRole &pb_ha_role);
+
+bool to_pb(const std::string &ha_owner, dash::types::HaOwner &pb_ha_owner);
+
+bool to_pb(const std::string &ha_scope, dash::types::HaScope &pb_ha_scope);

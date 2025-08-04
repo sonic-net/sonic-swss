@@ -589,7 +589,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize counter table */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+    // m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+    m_counterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP));
     m_counterSysPortTable = unique_ptr<Table>(
                     new Table(m_counter_db.get(), COUNTERS_SYSTEM_PORT_NAME_MAP));
     m_counterLagTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_LAG_NAME_MAP));
@@ -3613,18 +3614,21 @@ void PortsOrch::updateDbPortOperError(Port& port, PortOperErrorEvent *pevent)
 {
     SWSS_LOG_ENTER();
 
+    auto time = pevent->getEventTime();
     auto key = pevent->getDbKey();
     vector<FieldValueTuple> tuples;
     FieldValueTuple tup1("oper_error_status", std::to_string(port.m_oper_error_status));
     tuples.push_back(tup1);
 
-    size_t count = pevent->getErrorCount();
-    FieldValueTuple tup2(key + "_count", std::to_string(count));
+    FieldValueTuple tup2("oper_error_status_time", time);
     tuples.push_back(tup2);
 
-    auto time = pevent->getEventTime();
-    FieldValueTuple tup3(key + "_time", time);
+    size_t count = pevent->getErrorCount();
+    FieldValueTuple tup3(key + "_count", std::to_string(count));
     tuples.push_back(tup3);
+
+    FieldValueTuple tup4(key + "_time", time);
+    tuples.push_back(tup4);
 
     m_portOpErrTable.set(port.m_alias, tuples);
 }
@@ -3763,7 +3767,8 @@ bool PortsOrch::initPort(const PortConfig &port)
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
                 vector<FieldValueTuple> fields;
                 fields.push_back(tuple);
-                m_counterTable->set("", fields);
+                // m_counterTable->set("", fields);
+                m_counterNameMapUpdater->setCounterNameMap(p.m_alias, p.m_port_id);
 
                 // Install a flex counter for this port to track stats
                 auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
@@ -3868,7 +3873,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     }
 
     /* remove port name map from counter table */
-    m_counterTable->hdel("", alias);
+    // m_counterTable->hdel("", alias);
+    m_counterNameMapUpdater->delCounterNameMap(alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -6177,18 +6183,6 @@ bool PortsOrch::initializePort(Port &port)
         initializeSchedulerGroups(port);
     }
 
-    /*
-     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
-     */
-    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
-
-    /* Create host interface */
-    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
-    {
-        SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
-        return false;
-    }
-
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
     bool exist = m_portTable->get(port.m_alias, tuples);
@@ -6241,6 +6235,18 @@ bool PortsOrch::initializePort(Port &port)
         {
             SWSS_LOG_ERROR("Failed to get port (%s) flap_count: %s", port.m_alias.c_str(), e.what());
         }
+    }
+
+    /*
+     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
+     */
+    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+
+    /* Create host interface */
+    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
+    {
+        SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
+        return false;
     }
 
     /* initialize port admin status */

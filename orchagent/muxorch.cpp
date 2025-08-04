@@ -553,6 +553,10 @@ void MuxCable::rollbackStateChange()
     st_chg_in_progress_ = true;
     state_ = prev_state_;
     bool success = false;
+
+    nbr_handler_->clearBulkers();
+    gNeighOrch->clearBulkers();
+
     switch (prev_state_)
     {
         case MuxState::MUX_STATE_ACTIVE:
@@ -1238,6 +1242,20 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
     }
 
     return it->second.nh_id;
+}
+
+sai_object_id_t MuxOrch::getTunnelNextHopId()
+{
+    if (!mux_peer_switch_.isZero())
+    {
+        auto it = mux_tunnel_nh_.find(mux_peer_switch_);
+        if (it != mux_tunnel_nh_.end())
+        {
+            return it->second.nh_id;
+        }
+    }
+
+    return SAI_NULL_OBJECT_ID;
 }
 
 /**

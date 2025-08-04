@@ -24,3 +24,5 @@ void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                      sai_switch_asic_sdk_health_category_t category,
                                      sai_switch_health_data_t data,
                                      const sai_u8_list_t description);
+
+void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id);
