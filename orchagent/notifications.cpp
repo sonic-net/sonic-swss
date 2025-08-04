@@ -127,3 +127,7 @@ void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                             data,
                                             description);
 }
+
+void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id)
+{
+}

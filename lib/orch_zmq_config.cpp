@@ -35,12 +35,20 @@ std::set<std::string> swss::load_zmq_tables()
 int swss::get_zmq_port()
 {
     auto zmq_port = ORCH_ZMQ_PORT;
-    if (const char* nsid = std::getenv("NAMESPACE_ID"))
+    const char* nsid = std::getenv("NAMESPACE_ID");
+    std::string nsid_str = nsid ? std::string(nsid) : "";
+    if (!nsid_str.empty())
     {
-        // namespace start from 0, using original ZMQ port for global namespace
-        zmq_port += atoi(nsid) + 1;
+        try
+        {
+            // namespace start from 0, using original ZMQ port for global namespace
+            zmq_port += std::stoi(nsid) + 1;
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Failed to convert %s to int, fallback to default port", nsid_str.c_str());
+        }
     }
-
     return zmq_port;
 }
 
