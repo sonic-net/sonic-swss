@@ -56,6 +56,12 @@ static const std::unordered_map<dash::eni::EniMode, sai_dash_eni_mode_t> eniMode
     { dash::eni::MODE_FNIC, SAI_DASH_ENI_MODE_FNIC }
 };
 
+static const std::unordered_map<string, sai_direction_lookup_entry_action_t> directionLookupActionMap =
+{
+    { "src_mac", SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION },
+    { "dst_mac", SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_INBOUND_DIRECTION }
+};
+
 DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tableName, zmqServer),
     m_eni_stat_manager(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
@@ -186,7 +192,14 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     direction_lookup_entry.switch_id = gSwitchId;
     direction_lookup_entry.vni = entry.vm_vni();
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION;
-    appliance_attr.value.u32 = SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION;
+    if (entry.has_outbound_direction_lookup())
+    {
+        appliance_attr.value.u32 = directionLookupActionMap.at(entry.outbound_direction_lookup());
+    }
+    else
+    {
+        appliance_attr.value.u32 = SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION;
+    }
     direction_lookup_attrs.push_back(appliance_attr);
 
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE;
@@ -672,7 +685,9 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         }
     }
 
+    addEniMapEntry(eni_id, eni);
     addEniToFC(eni_id, eni);
+    dash_meter_orch->addEniToMeterFC(eni_id,  eni);
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_ENI);
 
@@ -810,8 +825,11 @@ bool DashOrch::removeEniObject(const string& eni)
     SWSS_LOG_ENTER();
 
     EniEntry entry = eni_entries_[eni];
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
 
+    dash_meter_orch->removeEniFromMeterFC(entry.eni_id, eni);
     removeEniFromFC(entry.eni_id, eni);
+    removeEniMapEntry(entry.eni_id, eni);
 
     sai_status_t status = sai_dash_eni_api->remove_eni(entry.eni_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -829,7 +847,6 @@ bool DashOrch::removeEniObject(const string& eni)
         }
     }
 
-    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ? 
                                      entry.metadata.v4_meter_policy_id() : "";
     const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ? 
@@ -1277,7 +1294,6 @@ void DashOrch::removeEniFromFC(sai_object_id_t oid, const string &name)
         return;
     }
 
-    m_eni_name_table->hdel("", name);
     m_eni_stat_manager.clearCounterIdList(oid);
     SWSS_LOG_INFO("Unregistering FC for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
@@ -1297,6 +1313,22 @@ void DashOrch::refreshEniFCStats(bool install)
     }
 }
 
+void DashOrch::refreshMeterFCStats(bool install)
+{
+    DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+    for (auto it = eni_entries_.begin(); it != eni_entries_.end(); it++)
+    {
+        if (install)
+        {
+            dash_meter_orch->addEniToMeterFC(it->second.eni_id, it->first);
+        }
+        else
+        {
+            dash_meter_orch->removeEniFromMeterFC(it->second.eni_id, it->first);
+        }
+    }
+}
+
 void DashOrch::handleFCStatusUpdate(bool enabled)
 {
     bool prev_enabled = m_eni_fc_status;
@@ -1311,6 +1343,35 @@ void DashOrch::handleFCStatusUpdate(bool enabled)
         refreshEniFCStats(true);
         m_fc_update_timer->start();
     }
+}
+
+void DashOrch::addEniMapEntry(sai_object_id_t oid, const string &name) {
+    SWSS_LOG_ENTER();
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Cannot add ENI map entry with NULL OID for eni %s", name.c_str());
+        return;
+    }
+
+    const auto id = sai_serialize_object_id(oid);
+    SWSS_LOG_INFO("Adding ENI map entry for %s, id: %s", name.c_str(), id.c_str());
+    std::vector<FieldValueTuple> eniNameFvs;
+    eniNameFvs.emplace_back(name, id);
+    m_eni_name_table->set("", eniNameFvs);
+}
+
+void DashOrch::removeEniMapEntry(sai_object_id_t oid, const string &name) {
+    SWSS_LOG_ENTER();
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Cannot remove ENI map entry on NULL OID for eni %s", name.c_str());
+        return;
+    }
+
+    m_eni_name_table->hdel("", name);
+    SWSS_LOG_INFO("Removing ENI map entry for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
 
 void DashOrch::addEniToFC(sai_object_id_t oid, const string &name)
@@ -1345,9 +1406,6 @@ void DashOrch::doTask(SelectableTimer &timer)
         if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering FC for ENI: %s, id %s", it->second.c_str(), id.c_str());
-            std::vector<FieldValueTuple> eniNameFvs;
-            eniNameFvs.emplace_back(it->second, id);
-            m_eni_name_table->set("", eniNameFvs);
 
             m_eni_stat_manager.setCounterIdList(it->first, CounterType::ENI, m_counter_stats);
             it = m_eni_stat_work_queue.erase(it);
