@@ -464,10 +464,10 @@ bool DashPortMapOrch::addPortMapRangePost(DashPortMapRangeBulkContext &ctxt)
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_EXECUTED)
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            SWSS_LOG_INFO("Port map range for %s not created, will retry later", ctxt.parent_map_id.c_str());
-            return false;
+            SWSS_LOG_INFO("Port map range for %s already exists", ctxt.parent_map_id.c_str());
+            return true;
         }
         SWSS_LOG_ERROR("Failed to create port map range for %s, status: %s", ctxt.parent_map_id.c_str(), sai_serialize_status(status).c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, status);
@@ -523,10 +523,10 @@ bool DashPortMapOrch::removePortMapRangePost(DashPortMapRangeBulkContext &ctxt)
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_EXECUTED)
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
-            SWSS_LOG_INFO("Port map range for %s not removed, will retry later", ctxt.parent_map_id.c_str());
-            return false;
+            SWSS_LOG_INFO("Port map range for %s already removed", ctxt.parent_map_id.c_str());
+            return true;
         }
         SWSS_LOG_ERROR("Failed to remove port map range for %s, status: %s", ctxt.parent_map_id.c_str(), sai_serialize_status(status).c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, status);
