@@ -7,7 +7,7 @@
 #include "crmorch.h"
 #include "saihelper.h"
 #include "table.h"
-#include "taskworker.h" 
+#include "taskworker.h"
 #include "pbutils.h"
 #include "converter.h"
 
@@ -226,7 +226,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     ha_set_attr_list[2].id = SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT;
     ha_set_attr_list[2].value.u16 = static_cast<sai_uint16_t>(entry.cp_data_channel_port());
-    
+
     ha_set_attr_list[3].id = SAI_HA_SET_ATTR_DP_CHANNEL_DST_PORT;
     ha_set_attr_list[3].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_dst_port());
 
@@ -417,33 +417,57 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     }
     sai_object_id_t ha_set_oid = ha_set_it->second.ha_set_id;
 
-    sai_ip_address_t sai_vip_v4 = {};
-    sai_ip_address_t sai_vip_v6 = {};
-    to_sai(ha_set_it->second.metadata.vip_v4(), sai_vip_v4);
-    to_sai(ha_set_it->second.metadata.vip_v6(), sai_vip_v6);
-
-    const uint32_t attr_count = 4;
-    sai_attribute_t ha_scope_attrs[attr_count]={};
+    vector<sai_attribute_t> ha_scope_attrs;
     sai_status_t status;
-    sai_object_id_t sai_ha_scope_oid = 0UL;
+    sai_object_id_t sai_ha_scope_oid = SAI_NULL_OBJECT_ID;
 
-    ha_scope_attrs[0].id = SAI_HA_SCOPE_ATTR_HA_SET_ID;
-    ha_scope_attrs[0].value.oid = ha_set_oid;
+    sai_attribute_t ha_set_attr = {};
+    ha_set_attr.id = SAI_HA_SCOPE_ATTR_HA_SET_ID;
+    ha_set_attr.value.oid = ha_set_oid;
+    ha_scope_attrs.push_back(ha_set_attr);
 
     // TODO: add ha_role to attribute value enum
-    ha_scope_attrs[1].id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
-    ha_scope_attrs[1].value.u16 = to_sai(entry.ha_role());
+    sai_attribute_t ha_role_attr = {};
+    ha_role_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
+    ha_role_attr.value.u16 = to_sai(entry.ha_role());
+    ha_scope_attrs.push_back(ha_role_attr);
 
-    ha_scope_attrs[2].id = SAI_HA_SCOPE_ATTR_VIP_V4;
-    ha_scope_attrs[2].value.ipaddr = sai_vip_v4;
+    if (ha_set_it->second.metadata.has_vip_v4() && ha_set_it->second.metadata.vip_v4().has_ipv4())
+    {
+        sai_ip_address_t sai_vip_v4 = {};
+        if (to_sai(ha_set_it->second.metadata.vip_v4(), sai_vip_v4))
+        {
+            sai_attribute_t vip_v4_attr = {};  // Create new attribute for V4
+            vip_v4_attr.id = SAI_HA_SCOPE_ATTR_VIP_V4;
+            vip_v4_attr.value.ipaddr = sai_vip_v4;
+            ha_scope_attrs.push_back(vip_v4_attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to convert VIP V4 for HA Scope %s", key.c_str());
+        }
+    }
 
-    ha_scope_attrs[3].id = SAI_HA_SCOPE_ATTR_VIP_V6;
-    ha_scope_attrs[3].value.ipaddr = sai_vip_v6;
+    if (ha_set_it->second.metadata.has_vip_v6() && !ha_set_it->second.metadata.vip_v6().ipv6().empty())
+    {
+        sai_ip_address_t sai_vip_v6 = {};
+        if (to_sai(ha_set_it->second.metadata.vip_v6(), sai_vip_v6))
+        {
+            sai_attribute_t vip_v6_attr = {};  // Create new attribute for V6
+            vip_v6_attr.id = SAI_HA_SCOPE_ATTR_VIP_V6;
+            vip_v6_attr.value.ipaddr = sai_vip_v6;
+            ha_scope_attrs.push_back(vip_v6_attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to convert VIP V6 for HA Scope %s", key.c_str());
+        }
+    }
 
     status = sai_dash_ha_api->create_ha_scope(&sai_ha_scope_oid,
                                          gSwitchId,
-                                         attr_count,
-                                         ha_scope_attrs);
+                                         static_cast<uint32_t>(ha_scope_attrs.size()),
+                                         ha_scope_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -851,23 +875,23 @@ bool DashHaOrch::convertKfvToHaSetPb(const std::vector<FieldValueTuple> &kfv, da
         }
         else if (field == "vip_v4")
         {
-            swss::IpAddress ip(value);
-            if (!ip.isV4())
+            dash::types::IpAddress temp_ip;
+            if (!to_pb(value, temp_ip) || !temp_ip.has_ipv4())
             {
                 SWSS_LOG_ERROR("Invalid IPv4 address %s", value.c_str());
                 return false;
             }
-            entry.mutable_vip_v4()->set_ipv4(ip.getV4Addr());
+            entry.mutable_vip_v4()->CopyFrom(temp_ip);
         }
         else if (field == "vip_v6")
         {
-            swss::IpAddress ip6(value);
-            if (ip6.isV4())
+            dash::types::IpAddress temp_ip;
+            if (!to_pb(value, temp_ip) || !temp_ip.has_ipv6())
             {
                 SWSS_LOG_ERROR("Invalid IPv6 address %s", value.c_str());
                 return false;
             }
-            entry.mutable_vip_v6()->set_ipv6(value);
+            entry.mutable_vip_v6()->CopyFrom(temp_ip);
         }
         else if (field == "owner")
         {
@@ -889,35 +913,26 @@ bool DashHaOrch::convertKfvToHaSetPb(const std::vector<FieldValueTuple> &kfv, da
         }
         else if (field == "local_npu_ip")
         {
-            swss::IpAddress ip(value);
-            if (ip.isV4())
+            if (!to_pb(value, *entry.mutable_local_npu_ip()))
             {
-                entry.mutable_local_npu_ip()->set_ipv4(ip.getV4Addr());
-            } else
-            {
-                entry.mutable_local_npu_ip()->set_ipv6(value);
+                SWSS_LOG_ERROR("Invalid IP address %s", value.c_str());
+                return false;
             }
         }
         else if (field == "local_ip")
         {
-            swss::IpAddress local_ip(value);
-            if (local_ip.isV4())
+            if (!to_pb(value, *entry.mutable_local_ip()))
             {
-                entry.mutable_local_ip()->set_ipv4(local_ip.getV4Addr());
-            } else
-            {
-                entry.mutable_local_ip()->set_ipv6(value);
+                SWSS_LOG_ERROR("Invalid IP address %s", value.c_str());
+                return false;
             }
         }
         else if (field == "peer_ip")
         {
-            swss::IpAddress peer_ip(value);
-            if (peer_ip.isV4())
+            if (!to_pb(value, *entry.mutable_peer_ip()))
             {
-                entry.mutable_peer_ip()->set_ipv4(peer_ip.getV4Addr());
-            } else
-            {
-                entry.mutable_peer_ip()->set_ipv6(value);
+                SWSS_LOG_ERROR("Invalid IP address %s", value.c_str());
+                return false;
             }
         }
         else if (field == "cp_data_channel_port")

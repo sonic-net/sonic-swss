@@ -89,3 +89,5 @@ bool to_pb(const std::string &ha_role, dash::types::HaRole &pb_ha_role);
 bool to_pb(const std::string &ha_owner, dash::types::HaOwner &pb_ha_owner);
 
 bool to_pb(const std::string &ha_scope, dash::types::HaScope &pb_ha_scope);
+
+bool to_pb(const std::string &ip_address, dash::types::IpAddress &pb_address);
