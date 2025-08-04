@@ -94,6 +94,7 @@ public:
     sai_object_id_t getNextHopId(const NextHopKey);
     MuxNeighbor getNeighbors() const { return neighbors_; };
     string getAlias() const { return alias_; };
+    void clearBulkers() { gRouteBulker.clear(); };
 
 private:
     bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);

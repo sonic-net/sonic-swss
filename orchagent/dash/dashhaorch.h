@@ -66,6 +66,16 @@ protected:
     bool register_ha_set_notifier();
     bool register_ha_scope_notifier();
 
+    bool convertKfvToHaSetPb(
+        const std::vector<swss::FieldValueTuple> &kfv,
+        dash::ha_set::HaSet &entry
+    );
+
+    bool convertKfvToHaScopePb(
+        const std::vector<swss::FieldValueTuple> &kfv,
+        dash::ha_scope::HaScope &entry
+    );
+
     std::string getHaSetObjectKey(const sai_object_id_t ha_set_id);
     std::string getHaScopeObjectKey(const sai_object_id_t ha_scope_id);
     std::time_t getNowTime(){

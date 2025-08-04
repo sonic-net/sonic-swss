@@ -15,66 +15,92 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 - [Known Issues/FAQs](#known-issues)
 
 ## Setting up your test environment
-1. In order to set up your test environment you will need:
+### System Requirements
 
-    - A machine running Ubuntu 18.04 or 20.04
-    - A `generic` Linux kernel to install `team`
-    - `python3`
+  To set up your test environment, you will need:
 
-    You can check these dependencies with the following:
+  - A machine running **Ubuntu 22.04**
+  - **Python 3**
 
-    ```
-    cat /etc/os-release | grep ".*18.04\|20.04.*"
-    uname -r | grep generic
-    python3 --version
-    ```
-    **Note:** Make sure that `uname -r | grep generic` outputs something. It is necessary to run a generic image in order to add the `team` module
-    to the kernel. To install a generic image, you can use the following command (you can adjust the version of the image):
-    ```
-    sudo apt install linux-image-5.15.0-107-generic linux-headers-5.15.0-107-generic linux-modules-5.15.0-107-generic linux-modules-extra-5.15.0-107-generic
-    ```
-    After installing the generic image, you should either remove all other installed images, or select the new image during the boot process (safer option).
+  You can check these dependencies with the following commands:
 
-3. [Install Docker CE](https://docs.docker.com/install/linux/docker-ce/ubuntu/). Be sure to follow the [post-install instructions](https://docs.docker.com/install/linux/linux-postinstall/) so that you don't need sudo privileges to run docker commands.
+  ```bash
+  cat /etc/os-release | grep ".*22.04*"
+  uname -r | grep generic
+  python3 --version
+  ```
+### Team Kernel Module
 
-4. Install the external dependencies needed to run the tests.
+  **Note:**  
+  Check if the `team` kernel module is already installed by running:
 
-    ```
-    sudo modprobe team
-    sudo apt install python3-pip net-tools bridge-utils ethtool vlan libnl-nf-3-200 libnl-cli-3-200
-    sudo pip3 install docker pytest flaky redis distro dataclasses fstring
-    ```
+  ```bash
+  lsmod | grep team
+  ```
 
-    If you are running **Ubuntu 18.04** you will need to install this package:
-    ```
-    sudo apt install libhiredis0.13
-    ```
-    ****Dash testcases aren't supported in Ubuntu 18.04****
+  If the output is non-empty, you're good to proceed to the next step.  
+  If the output is empty, run the following script to install the necessary modules:
 
-    If you are running **Ubuntu 20.04** you will need to install this package:
-    ```
-    sudo apt install libhiredis0.14
-    ```
-    If you want to run DASH testcases, please download and install the latest ubuntu20.04 [dependencies](https://dev.azure.com/mssonic/build/_build?definitionId=1055&_a=summary&repositoryFilter=158&branchFilter=11237%2C11237%2C11237%2C11237%2C11237) of DASH from Azp.
+```bash
+sudo .azure-pipelines/build_and_install_module.sh
+```
 
-5. Install `swsscommon`.
+Once the script completes successfully, verify again:
 
-    ```
-    sudo dpkg -i libswsscommon_1.0.0_amd64.deb python3-swsscommon_1.0.0_amd64.deb
-    ```
+```bash
+lsmod | grep team
+```
 
-    You can get these two packages by:
-    - [Building it from scratch](https://github.com/sonic-net/sonic-swss-common)
-    - Downloading the latest build from Azure:
-      - [Ubuntu 20.04](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&definitionId=9&artifactName=sonic-swss-common.amd64.ubuntu20_04)
+### Install Docker CE
 
-6. Load the `docker-sonic-vs.gz` file into docker. You can get the image by:
-    - [Building it from scratch](https://github.com/sonic-net/sonic-buildimage)
-    - Downloading the latest build from Azure:
-      - [docker-sonic-vs-asan.gz](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs-asan.gz)
-      - [docker-sonic-vs.gz](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs.gz)
+  Install [Docker CE](https://docs.docker.com/engine/install/ubuntu/) from the official documentation.
 
-    Once you have the file, you can load it into docker by running `docker load < docker-sonic-vs.gz`.
+  **Important:** Follow the [post-install instructions](https://docs.docker.com/engine/install/linux-postinstall/) to avoid needing `sudo` for Docker commands.
+  
+
+### Install External Dependencies
+
+  Install packages required for running the VS tests:
+
+```bash
+sudo apt-get install -y net-tools bridge-utils vlan libzmq3-dev libzmq5 \
+  libboost-serialization1.74.0 libboost1.74-dev libboost-dev \
+  libhiredis0.14 libyang-dev
+
+sudo apt install -y python3-pip net-tools bridge-utils ethtool vlan \
+  libnl-nf-3-200 libnl-cli-3-200
+
+sudo pip3 install docker pytest flaky redis distro dataclasses fstring \
+  exabgp docker lcov_cobertura
+```
+
+### Install DASH Dependencies (Ubuntu 22.04)
+
+[Download latest artifacts](https://dev.azure.com/mssonic/build/_build?definitionId=1055&_a=summary&repositoryFilter=158&branchFilter=11237%2C11237%2C11237%2C11237%2C11237)
+
+```bash
+sudo dpkg -i libdashapi.deb libprotobuf32.deb
+```
+
+### Install swsscommon
+
+[Download latest artifacts](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&definitionId=9&artifactName=sonic-swss-common.amd64.ubuntu22_04)
+
+```bash
+sudo dpkg -i libswsscommon.deb
+sudo dpkg -i python_swsscommon.deb
+```
+
+### Download the latest `docker-sonic-vs.gz` file from Azure build artifacts.
+
+```bash
+wget -O docker-sonic-vs.gz "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs.gz"
+```
+  Load the image into Docker:
+
+```bash
+docker load < docker-sonic-vs.gz
+```
 
 ## Running the tests
 ```
