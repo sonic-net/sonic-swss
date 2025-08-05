@@ -170,6 +170,14 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         lag_update = false;
     }
 
+    if (lag_update)
+    {
+        /* Create the team instance */
+        auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+        m_teamSelectables[lagName] = sync;
+        m_selectablesToAdd.insert(lagName);
+    }
+
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
     if (m_warmstart)
@@ -180,26 +188,21 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     {
         m_stateLagTable.set(lagName, fvVector);
     }
-
-    if (lag_update)
-    {
-        /* Create the team instance */
-        auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
-        m_teamSelectables[lagName] = sync;
-        m_selectablesToAdd.insert(lagName);
-    }
 }
 
 void TeamSync::removeLag(const string &lagName)
 {
-    /* Delete all members */
-    auto selectable = m_teamSelectables[lagName];
-    for (auto it : selectable->m_lagMembers)
+    if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
     {
-        m_lagMemberTable.del(lagName + ":" + it.first);
+        /* Delete all members */
+        auto selectable = m_teamSelectables[lagName];
+        for (auto it : selectable->m_lagMembers)
+        {
+            m_lagMemberTable.del(lagName + ":" + it.first);
 
-        SWSS_LOG_INFO("Remove member %s before removing LAG %s",
-                it.first.c_str(), lagName.c_str());
+            SWSS_LOG_INFO("Remove member %s before removing LAG %s",
+                    it.first.c_str(), lagName.c_str());
+        }
     }
 
     /* Delete the LAG */
