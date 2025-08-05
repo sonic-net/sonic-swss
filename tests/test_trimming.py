@@ -3,6 +3,7 @@ import time
 import logging
 
 from typing import NamedTuple
+from swsscommon import swsscommon
 
 import buffer_model
 
@@ -57,44 +58,138 @@ def dynamicModel(dvs):
 
 
 @pytest.fixture(scope="class")
-def switchCounters(dvs):
+def switchCounters(request, dvs_flex_counter_manager):
     trimlogger.info("Initialize switch counters")
-    dvs.runcmd("counterpoll switch interval 1000")
-    dvs.runcmd("counterpoll switch enable")
+
+    request.cls.dvs_flex_counter.set_interval("SWITCH", "1000")
+    request.cls.dvs_flex_counter.set_status("SWITCH", "enable")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "enable",
+        swsscommon.POLL_INTERVAL_FIELD: "1000",
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="SWITCH_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     yield
-    dvs.runcmd("counterpoll switch disable")
-    dvs.runcmd("counterpoll switch interval 60000")
+
+    request.cls.dvs_flex_counter.set_status("SWITCH", "disable")
+    request.cls.dvs_flex_counter.set_interval("SWITCH", "60000")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "disable",
+        swsscommon.POLL_INTERVAL_FIELD: "60000",
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="SWITCH_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     trimlogger.info("Deinitialize switch counters")
 
 
 @pytest.fixture(scope="class")
-def portCounters(dvs):
+def portCounters(request, dvs_flex_counter_manager):
     trimlogger.info("Initialize port counters")
-    dvs.runcmd("counterpoll port enable")
+
+    request.cls.dvs_flex_counter.set_status("PORT", "enable")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "enable"
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="PORT_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     yield
-    dvs.runcmd("counterpoll port disable")
+
+    request.cls.dvs_flex_counter.set_status("PORT", "disable")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "disable",
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="PORT_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     trimlogger.info("Deinitialize port counters")
 
 
 @pytest.fixture(scope="class")
-def pgCounters(dvs):
+def pgCounters(request, dvs_flex_counter_manager):
     trimlogger.info("Initialize priority group counters")
-    dvs.runcmd("counterpoll watermark interval 10000")
-    dvs.runcmd("counterpoll watermark enable")
+
+    request.cls.dvs_flex_counter.set_interval("PG_WATERMARK", "1000")
+    request.cls.dvs_flex_counter.set_status("PG_WATERMARK", "enable")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "enable",
+        swsscommon.POLL_INTERVAL_FIELD: "1000",
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="PG_WATERMARK_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     yield
-    dvs.runcmd("counterpoll watermark disable")
-    dvs.runcmd("counterpoll watermark interval 60000")
+
+    request.cls.dvs_flex_counter.set_status("PG_WATERMARK", "disable")
+    request.cls.dvs_flex_counter.set_interval("PG_WATERMARK", "60000")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "disable",
+        swsscommon.POLL_INTERVAL_FIELD: "60000",
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="PG_WATERMARK_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     trimlogger.info("Deinitialize priority group counters")
 
 
 @pytest.fixture(scope="class")
-def queueCounters(dvs):
+def queueCounters(request, dvs_flex_counter_manager):
     trimlogger.info("Initialize queue counters")
-    dvs.runcmd("counterpoll queue interval 1000")
-    dvs.runcmd("counterpoll queue enable")
+
+    request.cls.dvs_flex_counter.set_interval("QUEUE", "1000")
+    request.cls.dvs_flex_counter.set_status("QUEUE", "enable")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "enable",
+        swsscommon.POLL_INTERVAL_FIELD: "1000",
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="QUEUE_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     yield
-    dvs.runcmd("counterpoll queue disable")
-    dvs.runcmd("counterpoll queue interval 10000")
+
+    request.cls.dvs_flex_counter.set_status("QUEUE", "disable")
+    request.cls.dvs_flex_counter.set_interval("QUEUE", "10000")
+
+    attr_dict = {
+        swsscommon.FLEX_COUNTER_STATUS_FIELD: "disable",
+        swsscommon.POLL_INTERVAL_FIELD: "10000",
+    }
+
+    request.cls.dvs_flex_counter.verify_flex_counter(
+        stat_name="QUEUE_STAT_COUNTER",
+        qualifiers=attr_dict
+    )
+
     trimlogger.info("Deinitialize queue counters")
 
 

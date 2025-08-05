@@ -67,7 +67,6 @@ extern bool gIsNatSupported;
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
 
-string gMyPlatform = "";
 string gMySwitchType = "";
 string gMySwitchSubType = "";
 int32_t gVoqMySwitchId = -1;
@@ -168,51 +167,6 @@ void init_gearbox_phys(DBConnector *applDb)
         }
     }
     delete tmpGearboxTable;
-}
-
-bool parsePlatform(string &platform, Table &table)
-{
-    const string key = "localhost";
-    const string field = "platform";
-
-    string value;
-
-    if (!table.hget(key, field, value))
-    {
-        SWSS_LOG_ERROR("Failed to get key(%s)", field.c_str());
-        return false;
-    }
-
-    if (value.empty())
-    {
-        SWSS_LOG_ERROR("Platform is not configured");
-        return false;
-    }
-
-    platform = value;
-
-    return true;
-}
-
-bool initSystemInfo(const DBConnector &cfgDb)
-{
-    Table cfgDeviceMetaDataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
-
-    try
-    {
-        if (!parsePlatform(gMyPlatform, cfgDeviceMetaDataTable))
-        {
-            SWSS_LOG_ERROR("Failed to parse platform");
-            return false;
-        }
-    }
-    catch (const std::exception &e)
-    {
-        SWSS_LOG_ERROR("Failed to parse system info: %s", e.what());
-        return false;
-    }
-
-    return true;
 }
 
 void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_sub_type)
@@ -583,11 +537,6 @@ int main(int argc, char **argv)
     {
         SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
         zmq_server = create_zmq_server(zmq_server_address, vrf);
-    }
-
-    if (!initSystemInfo(config_db))
-    {
-        SWSS_LOG_ERROR("Failed to get system configuration");
     }
 
     // Get switch_type

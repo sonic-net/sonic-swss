@@ -12,7 +12,6 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
-string gMyPlatform = "x86_64-kvm_x86_64-r0";
 string gMySwitchType = "switch";
 string gMySwitchSubType = "SmartSwitch";
 int32_t gVoqMySwitchId = 0;
