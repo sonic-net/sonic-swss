@@ -553,6 +553,10 @@ void MuxCable::rollbackStateChange()
     st_chg_in_progress_ = true;
     state_ = prev_state_;
     bool success = false;
+
+    nbr_handler_->clearBulkers();
+    gNeighOrch->clearBulkers();
+
     switch (prev_state_)
     {
         case MuxState::MUX_STATE_ACTIVE:
@@ -1240,6 +1244,20 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
     return it->second.nh_id;
 }
 
+sai_object_id_t MuxOrch::getTunnelNextHopId()
+{
+    if (!mux_peer_switch_.isZero())
+    {
+        auto it = mux_tunnel_nh_.find(mux_peer_switch_);
+        if (it != mux_tunnel_nh_.end())
+        {
+            return it->second.nh_id;
+        }
+    }
+
+    return SAI_NULL_OBJECT_ID;
+}
+
 /**
  * @brief updates the given route to point to a single active NH or tunnel
  * @param pfx IpPrefix of route to update
@@ -1286,7 +1304,13 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
         NeighborEntry neighbor;
         MacAddress mac;
 
-        gNeighOrch->getNeighborEntry(nexthop, neighbor, mac);
+        if (!gNeighOrch->getNeighborEntry(nexthop, neighbor, mac))
+        {
+            // Not able to get neighbor entry, so skip.
+            SWSS_LOG_NOTICE("Neighbor entry for nexthop %s not found.",
+                            nexthop.to_string().c_str());
+            continue;
+        }
 
         if (isNeighborActive(neighbor.ip_address, mac, neighbor.alias))
         {
@@ -1631,14 +1655,28 @@ void MuxOrch::update(SubjectType type, void *cntx)
             }
             else
             {
-                updateNeighbor(*update);
+                try
+                {
+                    updateNeighbor(*update);
+                }
+                catch (const std::exception& e)
+                {
+                    SWSS_LOG_ERROR("Exception caught while updating neighbor. Error: %s", e.what());
+                }
             }
             break;
         }
         case SUBJECT_TYPE_FDB_CHANGE:
         {
             FdbUpdate *update = static_cast<FdbUpdate *>(cntx);
-            updateFdb(*update);
+            try
+            {
+                updateFdb(*update);
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_ERROR("Exception caught while updating FDB. Error: %s", e.what());
+            }
             break;
         }
         default:

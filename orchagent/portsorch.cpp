@@ -34,6 +34,7 @@
 #include "switchorch.h"
 #include "stringutility.h"
 #include "subscriberstatetable.h"
+#include "warm_restart.h"
 
 #include "saitam.h"
 
@@ -255,7 +256,8 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S13,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15,
-    SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS
+    SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
+    SAI_PORT_STAT_TRIM_PACKETS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -292,6 +294,7 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_BYTES,
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
+    SAI_QUEUE_STAT_TRIM_PACKETS
 };
 static const vector<sai_queue_stat_t> voq_stat_ids =
 {
@@ -579,13 +582,15 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                 ref(wred_port_stat_manager),
                 ref(wred_queue_stat_manager)
             }),
-        m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
+        m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 })),
+        m_isWarmRestoreStage(WarmStart::isWarmStart())
 {
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+    // m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+    m_counterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP));
     m_counterSysPortTable = unique_ptr<Table>(
                     new Table(m_counter_db.get(), COUNTERS_SYSTEM_PORT_NAME_MAP));
     m_counterLagTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_LAG_NAME_MAP));
@@ -814,13 +819,29 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_defaultVlan = attrs[1].value.oid;
     }
 
-    /* Get System ports */
-    getSystemPorts();
-
     if (gMySwitchType != "dpu")
     {
+        // System Ports not supported on dpu
+        // Get System ports
+        getSystemPorts();
+
         removeDefaultVlanMembers();
         removeDefaultBridgePorts();
+    }
+
+    // Enable fdb event notifications after all ports are removed from default 1Q bridge
+    // If fdb entry is learnt before this point, reference count will be incremented and
+    // the port will not be removed from the bridge
+    if (gMySwitchType != "dpu")
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+        attr.value.ptr = (void *)on_fdb_event;
+        if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY attribute");
+            throw runtime_error("PortsOrch initialization failure (failed to set fdb event notify)");
+        }
     }
 
     /* Add port oper status notification support */
@@ -3594,18 +3615,21 @@ void PortsOrch::updateDbPortOperError(Port& port, PortOperErrorEvent *pevent)
 {
     SWSS_LOG_ENTER();
 
+    auto time = pevent->getEventTime();
     auto key = pevent->getDbKey();
     vector<FieldValueTuple> tuples;
     FieldValueTuple tup1("oper_error_status", std::to_string(port.m_oper_error_status));
     tuples.push_back(tup1);
 
-    size_t count = pevent->getErrorCount();
-    FieldValueTuple tup2(key + "_count", std::to_string(count));
+    FieldValueTuple tup2("oper_error_status_time", time);
     tuples.push_back(tup2);
 
-    auto time = pevent->getEventTime();
-    FieldValueTuple tup3(key + "_time", time);
+    size_t count = pevent->getErrorCount();
+    FieldValueTuple tup3(key + "_count", std::to_string(count));
     tuples.push_back(tup3);
+
+    FieldValueTuple tup4(key + "_time", time);
+    tuples.push_back(tup4);
 
     m_portOpErrTable.set(port.m_alias, tuples);
 }
@@ -3744,7 +3768,8 @@ bool PortsOrch::initPort(const PortConfig &port)
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
                 vector<FieldValueTuple> fields;
                 fields.push_back(tuple);
-                m_counterTable->set("", fields);
+                // m_counterTable->set("", fields);
+                m_counterNameMapUpdater->setCounterNameMap(p.m_alias, p.m_port_id);
 
                 // Install a flex counter for this port to track stats
                 auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
@@ -3789,6 +3814,12 @@ bool PortsOrch::initPort(const PortConfig &port)
                 if (p.m_host_tx_queue_configured && p.m_queue_ids.size() > p.m_host_tx_queue)
                 {
                     createPortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
+                }
+
+                // In warm-reboot postPortInit is postponed.
+                if (!m_isWarmRestoreStage)
+                {
+                    postPortInit(m_portList[alias]);
                 }
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
@@ -3843,7 +3874,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     }
 
     /* remove port name map from counter table */
-    m_counterTable->hdel("", alias);
+    // m_counterTable->hdel("", alias);
+    m_counterNameMapUpdater->delCounterNameMap(alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -4201,9 +4233,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    initPortSupportedSpeeds(it->second.key, m_portListLaneMap[it->first]);
-                    initPortSupportedFecModes(it->second.key, m_portListLaneMap[it->first]);
-
                     it++;
                 }
 
@@ -4222,9 +4251,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             // Failure has been recorded in initPort
                             continue;
                         }
-
-                        initPortSupportedSpeeds(cit.key, m_portListLaneMap[cit.lanes.value]);
-                        initPortSupportedFecModes(cit.key, m_portListLaneMap[cit.lanes.value]);
                     }
                 }
 
@@ -5688,6 +5714,16 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
         Port lag, port;
         if (!getPort(lag_alias, lag))
         {
+            if (gMySwitchType == "voq")
+            {
+                size_t pos = lag_alias.find('|');
+                std::string port_hostname = (pos != std::string::npos) ? lag_alias.substr(0, pos) : lag_alias;
+                if (gMyHostName == port_hostname)
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
             SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
             it++;
             continue;
@@ -5826,6 +5862,40 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+}
+
+void PortsOrch::onWarmBootEnd()
+{
+    SWSS_LOG_ENTER();
+
+    m_isWarmRestoreStage = false;
+
+    /* Start dynamic state sync up */
+    refreshPortStatus();
+
+    // Do post boot port initialization
+    for (auto& it: m_portList)
+    {
+        Port& port = it.second;
+
+        if (port.m_type == Port::PHY)
+        {
+            postPortInit(it.second);
+        }
+    }
+}
+
+void PortsOrch::postPortInit(Port& p)
+{
+    SWSS_LOG_ENTER();
+
+    if (gMySwitchType != "dpu")
+    {
+        initializePortBufferMaximumParameters(p);
+    }
+
+    initPortSupportedSpeeds(p.m_alias, p.m_port_id);
+    initPortSupportedFecModes(p.m_alias, p.m_port_id);
 }
 
 void PortsOrch::doTask()
@@ -6112,19 +6182,6 @@ bool PortsOrch::initializePort(Port &port)
         initializePriorityGroups(port);
         initializeQueues(port);
         initializeSchedulerGroups(port);
-        initializePortBufferMaximumParameters(port);
-    }
-
-    /*
-     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
-     */
-    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
-
-    /* Create host interface */
-    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
-    {
-        SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
-        return false;
     }
 
     /* Check warm start states */
@@ -6179,6 +6236,18 @@ bool PortsOrch::initializePort(Port &port)
         {
             SWSS_LOG_ERROR("Failed to get port (%s) flap_count: %s", port.m_alias.c_str(), e.what());
         }
+    }
+
+    /*
+     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
+     */
+    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+
+    /* Create host interface */
+    if (!addHostIntfs(port, port.m_alias, port.m_hif_id, isUp))
+    {
+        SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
+        return false;
     }
 
     /* initialize port admin status */

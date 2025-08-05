@@ -13,6 +13,7 @@
 #define private public
 #include "dashorch.h"
 #include "dashrouteorch.h"
+#include "dashmeterorch.h"
 #include "bufferorch.h"
 #include "qosorch.h"
 #define protected public
@@ -36,7 +37,9 @@
 #undef private 
 #include "directory.h"
 #include "dashvnetorch.h"
+#include "dashhaorch.h"
 #include "dashtunnelorch.h"
+#include "dashportmaporch.h"
 
 extern int gBatchSize;
 
@@ -103,6 +106,7 @@ extern sai_tam_api_t* sai_tam_api;
 extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
+extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_stp_api_t* sai_stp_api;
 extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
@@ -110,4 +114,7 @@ extern sai_dash_vnet_api_t* sai_dash_vnet_api;
 extern sai_dash_appliance_api_t* sai_dash_appliance_api;
 extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
 extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
+extern sai_dash_meter_api_t* sai_dash_meter_api;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
+extern sai_dash_outbound_port_map_api_t* sai_dash_outbound_port_map_api;
+extern sai_dash_trusted_vni_api_t* sai_dash_trusted_vni_api;
