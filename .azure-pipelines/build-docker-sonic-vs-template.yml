@@ -81,6 +81,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
