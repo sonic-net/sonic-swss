@@ -4,6 +4,7 @@
 #include <net/if.h>
 #include <stdexcept>
 #include "subintf.h"
+#include <cstdint>
 
 using namespace swss;
 
