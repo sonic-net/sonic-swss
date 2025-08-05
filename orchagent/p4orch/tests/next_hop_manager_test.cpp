@@ -241,7 +241,7 @@ class NextHopManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+	gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
     }
 
     ~NextHopManagerTest()
