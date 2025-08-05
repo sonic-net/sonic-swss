@@ -3,6 +3,7 @@
 #include "orch.h"
 #include "sai.h"
 #include "saiextensions.h"
+#include "bfdorch.h"
 #include "dashorch.h"
 #include "crmorch.h"
 #include "saihelper.h"
