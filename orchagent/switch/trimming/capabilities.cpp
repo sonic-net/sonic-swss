@@ -469,7 +469,7 @@ void SwitchTrimmingCapabilities::queryTrimQueueModeEnumCapabilities()
     else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) to query enum value capabilities",
+            "Failed to get attribute(%s) enum value capabilities",
             toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str()
         );
         return;
