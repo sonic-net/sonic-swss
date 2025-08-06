@@ -66,7 +66,9 @@ class TestRouteBase(object):
 
     def check_route_state(self, prefix, value):
         found = False
-        for _ in range(10):  # Try for up to ~10 seconds
+        fvs = {}
+        
+        for _ in range(5):  # Try for up to ~5 seconds
             route_entries = self.sdb.get_keys("ROUTE_TABLE")
             for key in route_entries:
                 if key != prefix:
