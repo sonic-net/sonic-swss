@@ -23,7 +23,7 @@ def dynamic_buffer(dvs):
 
 
 @pytest.mark.usefixtures('dvs_port_manager')
-@pytest.mark.usefixtures("dynamic_buffer")
+@pytest.mark.usefixtures("dynamic_buffer")    
 class TestPortAddRemove(object):
 
     def set_mmu(self,dvs):
@@ -74,17 +74,17 @@ class TestPortAddRemove(object):
 
         # Shutdown interface
         dvs.port_admin_set(PORT_A, 'down')
-
+                
         # try to remove this port
         config_db.delete_entry('PORT', PORT_A)
         num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                               num_of_ports-1,
-                              polling_config = PollingConfig(polling_interval = 1, timeout = 8.00, strict = True))
+                              polling_config = PollingConfig(polling_interval = 1, timeout = 5.00, strict = True))
 
         # verify that the port was removed properly since all buffer configuration was removed also
         assert len(num) == num_of_ports - 1
 
-        # set back the port
+        # set back the port 
         config_db.update_entry("PORT", PORT_A, port_info)
 
         # verify that the port has been readded
@@ -136,9 +136,9 @@ class TestPortAddRemove(object):
         # verify that the port wasn't removed since we still have buffer cfg
         assert len(num) == num_of_ports - 1
 
-        # set back the port as it is required for next test
+        # set back the port as it is required for next test 
         config_db.update_entry("PORT", PORT_A, port_info)
-
+       
 
 
     @pytest.mark.parametrize("scenario", ["one_port", "all_ports"])
@@ -153,7 +153,7 @@ class TestPortAddRemove(object):
 
         # get the number of ports before removal
         num_of_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
-
+        
         # remove buffer pg cfg for the port
         if scenario == "all_ports":
             ports = config_db.get_keys('PORT')
@@ -162,7 +162,7 @@ class TestPortAddRemove(object):
         else:
             assert False
 
-        # delete all PGs and QUEUEs from the relevant ports
+        # delete all PGs and QUEUEs from the relevant ports 
         pgs = config_db.get_keys('BUFFER_PG')
         queues = config_db.get_keys('BUFFER_QUEUE')
 
@@ -189,13 +189,13 @@ class TestPortAddRemove(object):
             for key in ports:
                 config_db.delete_entry('PORT',key)
                 app_db.wait_for_deleted_entry("PORT_TABLE", key)
-
+    
             # verify remove port
             num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                                           num_of_ports-len(ports))
 
             assert len(num) == num_of_ports-len(ports)
-
+            
             # add port
             """
             DELETE_CREATE_ITERATIONS defines the number of iteration of delete and create to  ports,
@@ -206,38 +206,38 @@ class TestPortAddRemove(object):
                 config_db.update_entry("PORT", key, ports_info[key])
                 app_db.wait_for_entry('PORT_TABLE',key)
 
-            # verify add port
+            # verify add port            
             num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
                                   num_of_ports)
 
             assert len(num) == num_of_ports
-
-            time.sleep((i%2)+1)
-
+                
+            time.sleep((i%2)+1)           
+            
         # run ping
         dvs.setup_db()
 
         dvs.create_vlan("6")
         dvs.create_vlan_member("6", PORT_A)
         dvs.create_vlan_member("6", PORT_B)
-
+        
         port_entry_a = state_db.get_entry("PORT_TABLE",PORT_A)
         port_entry_b = state_db.get_entry("PORT_TABLE",PORT_B)
         port_admin_a = port_entry_a['admin_status']
         port_admin_b = port_entry_b['admin_status']
-
+        
         dvs.set_interface_status("Vlan6", "up")
         dvs.add_ip_address("Vlan6", "6.6.6.1/24")
         dvs.set_interface_status(PORT_A, "up")
         dvs.set_interface_status(PORT_B, "up")
-
+        
         dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
         dvs.servers[16].runcmd("ip route add default via 6.6.6.1")
         dvs.servers[17].runcmd("ifconfig eth0 6.6.6.7/24 up")
         dvs.servers[17].runcmd("ip route add default via 6.6.6.1")
-
+        
         time.sleep(2)
-
+        
         rc = dvs.servers[16].runcmd("ping -c 1 6.6.6.7")
         assert rc == 0
 
