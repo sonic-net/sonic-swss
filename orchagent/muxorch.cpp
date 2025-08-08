@@ -2059,7 +2059,9 @@ void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp)
     NeighborEntry neighbor;
     MacAddress mac;
 
-    if(!gNeighOrch->getNeighborEntry(neighborIp, neighbor, mac))
+    // remove the route prefix if its not a mux neighbor
+    if (!gNeighOrch->getNeighborEntry(neighborIp, neighbor, mac) ||
+            !isMuxPortNeighbor(neighborIp, mac, neighbor.alias))
     {
         IpPrefix pfx = neighborIp.to_string();
         remove_route(pfx);
