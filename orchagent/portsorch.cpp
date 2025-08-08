@@ -3726,6 +3726,44 @@ string PortsOrch::getWredQueueFlexCounterTableKey(string key)
     return string(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
+bool PortsOrch::querySupportedPortStats(sai_object_id_t port_id, vector<sai_port_stat_t>& stat_ids)
+ {
+     sai_attr_capability_t capability;
+     bool extendedCountersSupported = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                                             SAI_PORT_ATTR_PORT_STAT_EXTENDED,
+                                             &capability) == SAI_STATUS_SUCCESS;
+
+     if (extendedCountersSupported)
+     {
+         sai_attribute_t attr;
+         vector<sai_port_stat_t> supported_counters(80); // Preallocate space
+         attr.value.s32list.count = static_cast<uint32_t>(supported_counters.size());
+         attr.value.s32list.list = reinterpret_cast<sai_int32_t*>(supported_counters.data());
+         attr.id = SAI_PORT_ATTR_PORT_STAT_EXTENDED;
+
+         sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+         if (status == SAI_STATUS_SUCCESS)
+         {
+             supported_counters.resize(attr.value.s32list.count);
+             stat_ids = supported_counters;
+             SWSS_LOG_DEBUG("Queried %zu extended port stats for port 0x%" PRIx64, stat_ids.size(), port_id);
+             return true;
+         }
+         else
+         {
+             SWSS_LOG_ERROR("Failed to query extended port stats for port 0x%" PRIx64 ", status: %d", port_id, status);
+         }
+     }
+     else
+     {
+         SWSS_LOG_DEBUG("Extended port stats not supported, using default port stat counters");
+     }
+
+     // Fallback to default port stats
+     stat_ids = port_stat_ids;
+     return false;
+ }
+
 bool PortsOrch::initPort(const PortConfig &port)
 {
     SWSS_LOG_ENTER();
@@ -3767,7 +3805,10 @@ bool PortsOrch::initPort(const PortConfig &port)
                 /* Add port name map to counter table */
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
                 vector<FieldValueTuple> fields;
-                fields.push_back(tuple);
+                fields.push_back(tuple);           
+				m_counterTable->set("", fields);
+                vector<sai_port_stat_t> stat_ids;
+                bool query_success = false;
                 // m_counterTable->set("", fields);
                 m_counterNameMapUpdater->setCounterNameMap(p.m_alias, p.m_port_id);
 
@@ -3777,9 +3818,16 @@ bool PortsOrch::initPort(const PortConfig &port)
                 If they are enabled, install the counters immediately */
                 if (flex_counters_orch->getPortCountersState())
                 {
-                    auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
-                    port_stat_manager.setCounterIdList(p.m_port_id,
-                            CounterType::PORT, port_counter_stats);
+                	vector<sai_port_stat_t> stat_ids;
+                    bool query_success = querySupportedPortStats(p.m_port_id, stat_ids);
+
+                    if (!query_success)
+                    {
+                        SWSS_LOG_DEBUG("Using default port stats for port 0x%" PRIx64, p.m_port_id);
+                    }
+
+                    auto port_counter_stats = generateCounterStats(stat_ids, sai_serialize_port_stat);                    
+					port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_counter_stats);
                     auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
                     if (p.m_system_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
