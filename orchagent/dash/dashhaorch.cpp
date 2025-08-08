@@ -3,6 +3,7 @@
 #include "orch.h"
 #include "sai.h"
 #include "saiextensions.h"
+#include "bfdorch.h"
 #include "dashorch.h"
 #include "crmorch.h"
 #include "saihelper.h"
@@ -20,6 +21,8 @@ extern sai_dash_ha_api_t*   sai_dash_ha_api;
 extern sai_dash_eni_api_t*  sai_dash_eni_api;
 extern sai_object_id_t      gSwitchId;
 extern sai_switch_api_t*    sai_switch_api;
+
+extern BfdOrch *gBfdOrch;
 
 static const map<sai_ha_set_event_t, string> sai_ha_set_event_type_name =
 {
@@ -725,6 +728,37 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
     }
 }
 
+void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple tuple = it->second;
+        const auto& key = kfvKey(tuple);
+        const auto& op = kfvOp(tuple);
+
+        SWSS_LOG_DEBUG("Processing BFD Session table");
+
+        if (op == SET_COMMAND)
+        {
+            gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+            it = consumer.m_toSync.erase(it);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            gBfdOrch->removeSoftwareBfdSession(key);
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation %s for BFD Session table", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
 void DashHaOrch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
@@ -736,7 +770,12 @@ void DashHaOrch::doTask(ConsumerBase &consumer)
     else if (consumer.getTableName() == APP_DASH_HA_SCOPE_TABLE_NAME)
     {
         doTaskHaScopeTable(consumer);
-    } else
+    }
+    else if (consumer.getTableName() ==  APP_BFD_SESSION_TABLE_NAME)
+    {
+        doTaskBfdSessionTable(consumer);
+    }
+    else
     {
         SWSS_LOG_ERROR("Unknown table: %s", consumer.getTableName().c_str());
     }
