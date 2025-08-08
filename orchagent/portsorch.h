@@ -398,6 +398,8 @@ private:
     void initializeSchedulerGroups(Port &port);
     void initializeVoqs(Port &port);
 
+    bool querySupportedPortStats(sai_object_id_t port_id, vector<sai_port_stat_t>& stat_ids);
+
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
