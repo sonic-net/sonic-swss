@@ -2047,7 +2047,8 @@ def dvs_hash_manager(request, dvs):
 @pytest.fixture(scope="class")
 def dvs_switch_manager(request, dvs):
     request.cls.dvs_switch = dvs_switch.DVSSwitch(dvs.get_asic_db(),
-                                                  dvs.get_config_db())
+                                                  dvs.get_config_db(),
+                                                  dvs.get_counters_db())
 
 @pytest.fixture(scope="class")
 def dvs_twamp_manager(request, dvs):
