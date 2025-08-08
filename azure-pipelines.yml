@@ -27,17 +27,36 @@ schedules:
     - 201???
   always: true
 
+resources:
+  repositories:
+  - repository: sonic-mgmt
+    type: github
+    name: sonic-net/sonic-mgmt
+    ref: master
+    endpoint: sonic-net
+  - repository: buildimage
+    type: github
+    name: sonic-net/sonic-buildimage
+    endpoint: sonic-net
+    ref: master
+
 parameters:
   - name: debian_version
     type: string
     default: bookworm
 
 variables:
+  - template: .azure-pipelines/azure-pipelines-repd-build-variables.yml@buildimage
+  - template: .azure-pipelines/template-variables.yml@buildimage
   - name: BUILD_BRANCH
     ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
       value: $(System.PullRequest.TargetBranch)
     ${{ else }}:
       value: $(Build.SourceBranchName)
+  - name: CACHE_MODE
+    value: rcache
+  - name: ENABLE_FIPS
+    value: y
 
 stages:
 - stage: Build
@@ -158,3 +177,61 @@ stages:
       swss_artifact_name: sonic-swss-${{ parameters.debian_version }}
       artifact_name: sonic-gcov
       archive_gcov: true
+
+- stage: BuildVS
+  pool: sonicbld-1es
+  jobs:
+  - template: .azure-pipelines/azure-pipelines-build.yml@buildimage
+    parameters:
+      buildOptions: 'USERNAME=admin SONIC_BUILD_JOBS=$(nproc) BUILD_MULTIASIC_KVM=y INCLUDE_DHCP_SERVER=y ${{ variables.VERSION_CONTROL_OPTIONS }}'
+      jobGroups:
+      - name: vs
+      SUBMODULE: sonic-swss
+      COMMIT_ID: $(Build.SourceVersion)
+
+- stage: Build
+  pool: sonicbld-1es
+  dependsOn: []
+  jobs:
+  - template: .azure-pipelines/azure-pipelines-build.yml@buildimage
+    parameters:
+      buildOptions: 'USERNAME=admin SONIC_BUILD_JOBS=$(nproc) ${{ variables.VERSION_CONTROL_OPTIONS }}'
+      jobGroups:
+      - name: broadcom
+        variables:
+          swi_image: yes
+          docker_syncd_rpc_image: yes
+          platform_rpc: brcm
+          INCLUDE_RESTAPI: y
+      - name: mellanox
+        variables:
+          dbg_image: yes
+          docker_syncd_rpc_image: yes
+          platform_rpc: mlnx
+      - name: marvell-prestera-arm64
+        pool: sonicbld-arm64
+        variables:
+           PLATFORM_NAME: marvell-prestera
+           PLATFORM_ARCH: arm64
+      - name: marvell-prestera-armhf
+        pool: sonicbld-armhf
+        timeoutInMinutes: 1200
+        variables:
+          PLATFORM_NAME: marvell-prestera
+          PLATFORM_ARCH: armhf
+          INCLUDE_RESTAPI: y
+      SUBMODULE: sonic-swss
+      COMMIT_ID: $(Build.SourceVersion)
+
+- stage: Test
+  dependsOn: BuildVS
+  condition: and(succeeded(), and(ne(stageDependencies.BuildVS.outputs['vs.SetVar.SKIP_VSTEST'], 'YES'), in(dependencies.BuildVS.result, 'Succeeded', 'SucceededWithIssues')))
+  variables:
+  - group: SONiC-Elastictest
+  - name: inventory
+    value: veos_vtb
+  - name: testbed_file
+    value: vtestbed.csv
+
+  jobs:
+    - template: .azure-pipelines/pr_test_template.yml@sonic-mgmt
