@@ -8364,8 +8364,6 @@ void PortsOrch::generatePortCounterMap()
         return;
     }
 
-    auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
-    auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -8373,6 +8371,16 @@ void PortsOrch::generatePortCounterMap()
         {
             continue;
         }
+		vector<sai_port_stat_t> stat_ids;
+		bool query_success = querySupportedPortStats(it.second.m_port_id, stat_ids);
+		
+		if (!query_success)
+		{
+			SWSS_LOG_DEBUG("Using default port stat counters for port 0x%" PRIx64, it.second.m_port_id);
+		}
+		
+		auto port_counter_stats = generateCounterStats(stat_ids, sai_serialize_port_stat);
+		auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
         port_stat_manager.setCounterIdList(it.second.m_port_id,
                 CounterType::PORT, port_counter_stats);
         if (it.second.m_system_side_id)
