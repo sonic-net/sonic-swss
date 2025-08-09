@@ -607,14 +607,16 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
 
     /* Initialize queue tables */
-    m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
+    m_queueCounterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_QUEUE_NAME_MAP));
+    // m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
     m_voqTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_VOQ_NAME_MAP));
     m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
     m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
     m_queueTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_TYPE_MAP));
 
     /* Initialize ingress priority group tables */
-    m_pgTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_NAME_MAP));
+    m_pgCounterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PG_NAME_MAP));
+    // m_pgTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_NAME_MAP));
     m_pgPortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_PORT_MAP));
     m_pgIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_INDEX_MAP));
 
@@ -7724,6 +7726,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
 
+        m_queueCounterNameMapUpdater->setCounterNameMap(name.str(), queue_ids[queueIndex]);
         queueVector.emplace_back(name.str(), id);
         if (voq)
         {
@@ -7755,7 +7758,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
     }
     else
     {
-        m_queueTable->set("", queueVector);
+        // m_queueTable->set("", queueVector);
         CounterCheckOrch::getInstance().addPort(port);
     }
     m_queuePortTable->set("", queuePortVector);
@@ -7952,7 +7955,8 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
 
-        queueVector.emplace_back(name.str(), id);
+        m_queueCounterNameMapUpdater->setCounterNameMap(name.str(), port.m_queue_ids[queueIndex]);
+        // queueVector.emplace_back(name.str(), id);
         queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
 
         auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
@@ -7974,7 +7978,7 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
         }
     }
 
-    m_queueTable->set("", queueVector);
+    // m_queueTable->set("", queueVector);
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
     m_queueTypeTable->set("", queueTypeVector);
@@ -8008,7 +8012,8 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, b
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
         // Remove the queue counter from counters DB maps
-        m_queueTable->hdel("", name.str());
+        m_queueCounterNameMapUpdater->delCounterNameMap(name.str());
+        // m_queueTable->hdel("", name.str());
         m_queuePortTable->hdel("", id);
 
         sai_queue_type_t queueType;
@@ -8095,13 +8100,14 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgS
 
         const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
 
-        pgVector.emplace_back(name.str(), id);
+        m_pgCounterNameMapUpdater->setCounterNameMap(name.str(), port.m_priority_group_ids[pgIndex]);
+        // pgVector.emplace_back(name.str(), id);
         pgPortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
         pgIndexVector.emplace_back(id, to_string(pgIndex));
 
     }
 
-    m_pgTable->set("", pgVector);
+    // m_pgTable->set("", pgVector);
     m_pgPortTable->set("", pgPortVector);
     m_pgIndexTable->set("", pgIndexVector);
 
@@ -8133,7 +8139,8 @@ void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
 
         const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
 
-        pgVector.emplace_back(name.str(), id);
+        m_pgCounterNameMapUpdater->setCounterNameMap(name.str(), port.m_priority_group_ids[pgIndex]);
+        // pgVector.emplace_back(name.str(), id);
         pgPortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
         pgIndexVector.emplace_back(id, to_string(pgIndex));
 
@@ -8150,7 +8157,7 @@ void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
         }
     }
 
-    m_pgTable->set("", pgVector);
+    // m_pgTable->set("", pgVector);
     m_pgPortTable->set("", pgPortVector);
     m_pgIndexTable->set("", pgIndexVector);
 
@@ -8288,7 +8295,8 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
         const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
 
         // Remove the pg counter from counters DB maps
-        m_pgTable->hdel("", name.str());
+        m_pgCounterNameMapUpdater->delCounterNameMap(name.str());
+        // m_pgTable->hdel("", name.str());
         m_pgPortTable->hdel("", id);
         m_pgIndexTable->hdel("", id);
 
