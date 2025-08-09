@@ -1,4 +1,4 @@
 swssconfig/sample/netbouncer.json etc/swss/config.d
 neighsyncd/restore_neighbors.py usr/bin
 fpmsyncd/bgp_eoiu_marker.py  usr/bin
-countersyncd/target/release/countersyncd usr/bin
+target/release/countersyncd usr/bin
