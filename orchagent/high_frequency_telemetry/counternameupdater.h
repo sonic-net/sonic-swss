@@ -50,4 +50,6 @@ private:
     std::string m_table_name;
     swss::DBConnector m_connector;
     swss::Table m_counters_table;
+
+    std::string unify_counter_name(const std::string &counter_name);
 };
