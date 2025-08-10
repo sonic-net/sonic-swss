@@ -4146,7 +4146,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 return true;
             };
 
-            if (m_portList.find(key) == m_portList.end())
+            const bool portExists = m_portList.count(key) > 0;
+            if (!portExists)
             {
                 // Aggregate configuration while the port is not created.
                 auto &fvMap = m_portConfigMap[key];
@@ -4178,18 +4179,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
             }
 
-            // TODO:
-            // Fix the issue below
-            // After PortConfigDone, while waiting for "PortInitDone" and the first gBufferOrch->isPortReady(alias),
-            // the complete m_lanesAliasSpeedMap may be populated again, so initPort() will be called more than once
-            // for the same port.
-
             /* Once all ports received, go through the each port and perform appropriate actions:
              * 1. Remove ports which don't exist anymore
              * 2. Create new ports
              * 3. Initialize all ports
              */
-            if (getPortConfigState() != PORT_CONFIG_MISSING)
+            if (getPortConfigState() == PORT_CONFIG_RECEIVED)
             {
                 std::vector<PortConfig> portsToAddList;
                 std::vector<sai_object_id_t> portsToRemoveList;
@@ -4256,8 +4251,27 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 setPortConfigState(PORT_CONFIG_DONE);
             }
+            else if (getPortConfigState() == PORT_CONFIG_DONE)
+            {
+                // Add and initialize the port
+                if (!portExists)
+                {
+                    std::vector<PortConfig> portsToAddList { pCfg };
 
-            if (getPortConfigState() != PORT_CONFIG_DONE)
+                    if (!addPortBulk(portsToAddList))
+                    {
+                        SWSS_LOG_ERROR("Failed to add port %s", pCfg.key.c_str());
+                        it++;
+                        continue;
+                    }
+
+                    if (!initPort(pCfg))
+                    {
+                        continue;
+                    }
+                }
+            }
+            else
             {
                 // Not yet receive PortConfigDone. Save it for future retry
                 it++;
