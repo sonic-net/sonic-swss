@@ -1518,44 +1518,14 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
     const auto it = m_scheduler_group_port_info.find(port.m_port_id);
     if (it == m_scheduler_group_port_info.end())
     {
-        /* Get max sched groups count */
-        attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
-        sai_status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (SAI_STATUS_SUCCESS != sai_status)
-        {
-            SWSS_LOG_ERROR("Failed to get number of scheduler groups for port:%s", port.m_alias.c_str());
-            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
-            if (handle_status != task_process_status::task_success)
-            {
-                return SAI_NULL_OBJECT_ID;
-            }
-        }
-
-        /* Get total groups list on the port */
-        uint32_t groups_count = attr.value.u32;
-        std::vector<sai_object_id_t> groups(groups_count);
-
-        attr.id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
-        attr.value.objlist.list = groups.data();
-        attr.value.objlist.count = groups_count;
-        sai_status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (SAI_STATUS_SUCCESS != sai_status)
-        {
-            SWSS_LOG_ERROR("Failed to get scheduler group list for port:%s", port.m_alias.c_str());
-            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
-            if (handle_status != task_process_status::task_success)
-            {
-                return SAI_NULL_OBJECT_ID;
-            }
-        }
-
+        size_t groups_count = port.m_scheduler_group_ids.size();
         m_scheduler_group_port_info[port.m_port_id] = {
-            .groups = std::move(groups),
+            .groups = port.m_scheduler_group_ids,
             .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count),
             .group_has_been_initialized = std::vector<bool>(groups_count)
         };
 
-        SWSS_LOG_INFO("Port %s has been initialized with %u group(s)", port.m_alias.c_str(), groups_count);
+        SWSS_LOG_INFO("Port %s has been initialized with %zu group(s)", port.m_alias.c_str(), groups_count);
     }
 
     /* Lookup groups to which queue belongs */
