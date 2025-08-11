@@ -43,6 +43,7 @@ namespace portmgr_ut
         Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
         // Port is not ready, verify that doTask does not handle port configuration
+        
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
             {"index", "1"}
@@ -53,8 +54,6 @@ namespace portmgr_ut
         ASSERT_TRUE(mockCallArgs.empty());
         std::vector<FieldValueTuple> values;
         app_port_table.get("Ethernet0", values);
-        
-        // Verify default values
         auto value_opt = swss::fvsGetValue(values, "mtu", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
@@ -68,13 +67,11 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("1", value_opt.get());
 
-        // Set port state to ok, verify that doTask handles port configuration
+        // Set port state to ok, verify that doTask handle port configuration
         state_port_table.set("Ethernet0", {
             {"state", "ok"}
         });
         m_portMgr->doTask();
-        
-        // Only MTU and admin status should be configured (DHCP rate limit is empty by default)
         ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
@@ -89,8 +86,7 @@ namespace portmgr_ut
         value_opt = swss::fvsGetValue(values, "admin_status", true);
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("up", value_opt.get());
-
-        // Test explicit DHCP rate limit configuration
+		// Test explicit DHCP rate limit configuration
         mockCallArgs.clear();
         cfg_port_table.set("Ethernet0", {
             {"dhcp_rate_limit", "100"}
@@ -120,7 +116,7 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[1]);
     }
-     
+
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
@@ -142,7 +138,6 @@ namespace portmgr_ut
             {"index", "1"},
             {"mtu", "1518"},
             {"admin_status", "up"}
-
         });
 
         m_portMgr->addExistingData(&cfg_port_table);
@@ -156,7 +151,6 @@ namespace portmgr_ut
         ASSERT_EQ(size_t(2), mockCallArgs.size());
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
-
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTDefaultTimestampTemplate)
