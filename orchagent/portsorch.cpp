@@ -4265,10 +4265,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    if (!initPort(pCfg))
-                    {
-                        continue;
-                    }
+                    initPort(pCfg); // Failure has been recorded in initPort
                 }
             }
             else
