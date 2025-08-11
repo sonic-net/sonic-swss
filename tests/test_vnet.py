@@ -2650,7 +2650,7 @@ class TestVnetOrch(object):
     '''
     Test 28 - Test for Single endpoint priority vnet tunnel routes. Test with local endpoint.
     '''
-    def test_vnet_orch_28(self, dvs, testlog):
+    def test_vnet_orch_28(self, dvs, dvs_acl, testlog):
         self.setup_db(dvs)
         self.clear_srv_config(dvs)
 
@@ -2669,6 +2669,9 @@ class TestVnetOrch(object):
 
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
+        # no acl rule before creating vnet route
+        dvs_acl.verify_no_acl_rules()
+
         # create l3 interface
         self.create_l3_intf("Ethernet8", "")
 
@@ -2683,6 +2686,13 @@ class TestVnetOrch(object):
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
+
+        # verify tunnel term acl 
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
+        }
+        intf_id = dvs.asic_db.port_name_map["Ethernet8"]
+        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, intf_id, priority="9998")
 
         # default monitor session status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
