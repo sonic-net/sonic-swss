@@ -130,6 +130,7 @@ class TestRouteBase(object):
         dvs.servers[1].runcmd("ip address flush dev eth0")
         dvs.servers[2].runcmd("ip address flush dev eth0")
         dvs.servers[3].runcmd("ip address flush dev eth0")
+        self.remove_route_entry("0.0.0.0/0")
 
 class TestRoute(TestRouteBase):
     """ Functionality tests for route """
