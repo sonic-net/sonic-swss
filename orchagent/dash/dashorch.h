@@ -59,6 +59,8 @@ public:
     void handleFCStatusUpdate(bool is_enabled);
     dash::types::IpAddress getApplianceVip();
     bool hasApplianceEntry();
+    void clearMeterFCStats();
+    void refreshMeterFCStats(bool);
 
 private:
     ApplianceTable appliance_entries_;
@@ -110,6 +112,8 @@ private:
     swss::SelectableTimer* m_fc_update_timer = nullptr;
 
     void doTask(swss::SelectableTimer&);
+    void addEniMapEntry(sai_object_id_t oid, const std::string& name);
+    void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
     void addEniToFC(sai_object_id_t oid, const std::string& name);
     void removeEniFromFC(sai_object_id_t oid, const std::string& name);
     void refreshEniFCStats(bool);
