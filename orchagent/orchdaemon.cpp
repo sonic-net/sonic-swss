@@ -1278,7 +1278,8 @@ bool DpuOrchDaemon::init()
 
     vector<string> dash_ha_tables = {
         APP_DASH_HA_SET_TABLE_NAME,
-        APP_DASH_HA_SCOPE_TABLE_NAME
+        APP_DASH_HA_SCOPE_TABLE_NAME,
+        APP_BFD_SESSION_TABLE_NAME
     };
 
     DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
