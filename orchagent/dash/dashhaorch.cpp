@@ -402,7 +402,17 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
         return success;
     }
 
-    auto ha_set_it = m_ha_set_entries.find(entry.ha_set_id());
+    std::map<std::string, HaSetEntry>::iterator ha_set_it;
+    if (!entry.ha_set_id().empty())
+    {
+        ha_set_it = m_ha_set_entries.find(entry.ha_set_id());
+    }
+    else
+    {
+        /* ha_set_id field in ha_scope_table was added as a revision of detailed HLD, adding backward compatibility for ha_set_id mapping. */
+        ha_set_it = m_ha_set_entries.find(key);
+    }
+
     if (ha_set_it == m_ha_set_entries.end())
     {
         // If there is no HA Set entry, we cannot create HA Scope.
@@ -987,7 +997,6 @@ bool DashHaOrch::convertKfvToHaSetPb(const std::vector<FieldValueTuple> &kfv, da
         else
         {
             SWSS_LOG_WARN("Unknown field %s in HA Set entry", field.c_str());
-            return false;
         }
     }
     return true;
