@@ -86,7 +86,7 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 
 bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate_limit)
 {
-    // If dhcp_rate_limit is not configured (empty string), do nothing
+    // for empty string  do nothing
     if (dhcp_rate_limit.empty())
     {
         SWSS_LOG_DEBUG("DHCP rate limit not configured for port %s, skipping TC configuration", alias.c_str());
@@ -106,7 +106,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
         }
         else
         {
-            // tc qdisc del dev <port_name> handle ffff: ingress
+            // Delete filter when dhcp-rate limit is set to zero
             cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
         }
 
