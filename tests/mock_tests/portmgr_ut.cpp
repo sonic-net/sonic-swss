@@ -191,6 +191,114 @@ namespace portmgr_ut
         ASSERT_FALSE(value_opt);
     }
 
+    TEST_F(PortMgrTest, DHCPRateLimitEmptyConfig)
+    {
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    // Set port state to ok first
+    state_port_table.set("Ethernet0", {
+        {"state", "ok"}
+    });
+
+    // Test empty DHCP rate limit configuration
+    mockCallArgs.clear();
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", ""}  // Empty string should skip TC configuration
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Verify no TC commands were executed
+    ASSERT_TRUE(mockCallArgs.empty());
+
+    // Verify the empty value was written to APP_DB
+    std::vector<FieldValueTuple> values;
+    app_port_table.get("Ethernet0", values);
+    auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ("", value_opt.get());
+    }
+
+    TEST_F(PortMgrTest, DHCPRateLimitPortNotReady)
+    {
+    Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    // Port is not ready (no state entry)
+    mockCallArgs.clear();
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "100"}
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Verify no TC commands were executed
+    ASSERT_TRUE(mockCallArgs.empty());
+
+    // Verify the value was still written to APP_DB
+    std::vector<FieldValueTuple> values;
+    app_port_table.get("Ethernet0", values);
+    auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ("100", value_opt.get());
+    }
+
+    TEST_F(PortMgrTest, DHCPRateLimitExceptionHandling)
+    {
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    // Set port state to ok first
+    state_port_table.set("Ethernet0", {
+        {"state", "ok"}
+    });
+
+    // Mock exec to throw an exception
+    mockCallArgs.clear();
+    testing::internal::CaptureStderr();
+    EXPECT_CALL(*MockExec::getInstance(), exec(_, _))
+        .WillOnce(Throw(std::runtime_error("Test exception")));
+
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "100"}
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Verify the exception was caught and logged
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(output.find("Exception in DHCP rate limit configuration") != std::string::npos);
+    }
+
+    TEST_F(PortMgrTest, DHCPRateLimitUnknownExceptionHandling)
+    {
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    // Set port state to ok first
+    state_port_table.set("Ethernet0", {
+        {"state", "ok"}
+    });
+
+    // Mock exec to throw an unknown exception
+    mockCallArgs.clear();
+    testing::internal::CaptureStderr();
+    EXPECT_CALL(*MockExec::getInstance(), exec(_, _))
+        .WillOnce(Throw(42));  // Throw something that's not an exception
+
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "100"}
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Verify the unknown exception was caught and logged
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(output.find("Unknown exception in DHCP rate limit configuration") != std::string::npos);
+    }
+
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
