@@ -4,6 +4,9 @@ P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
 DASH_ORCH_DIR = $(top_srcdir)/orchagent/dash
 DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
 
+CFLAGS = -g -O0
+CXXFLAGS = -g -O0
+
 CFLAGS_SAI = -I /usr/include/sai
 
 TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
@@ -62,15 +65,24 @@ tests_SOURCES = aclorch_ut.cpp \
                 switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
+                dashenifwdorch_ut.cpp \
                 dashorch_ut.cpp \
+                dashvnetorch_ut.cpp \
+                dashhaorch_ut.cpp \
+                dashrouteorch_ut.cpp \
+                dashportmaporch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
                 mock_orch_test.cpp \
+                mock_dash_orch_test.cpp \
+                zmq_orch_ut.cpp \
+                mock_saihelper.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/lib/recorder.cpp \
+                $(top_srcdir)/lib/orch_zmq_config.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
@@ -90,6 +102,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \
                 $(top_srcdir)/orchagent/tunneldecaporch.cpp \
                 $(top_srcdir)/orchagent/qosorch.cpp \
+                $(top_srcdir)/orchagent/buffer/bufferhelper.cpp \
                 $(top_srcdir)/orchagent/bufferorch.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
@@ -103,6 +116,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/saiattr.cpp \
                 $(top_srcdir)/orchagent/switch/switch_capabilities.cpp \
                 $(top_srcdir)/orchagent/switch/switch_helper.cpp \
+                $(top_srcdir)/orchagent/switch/trimming/capabilities.cpp \
+                $(top_srcdir)/orchagent/switch/trimming/helper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
@@ -112,6 +127,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/vrforch.cpp \
                 $(top_srcdir)/orchagent/countercheckorch.cpp \
                 $(top_srcdir)/orchagent/vxlanorch.cpp \
+                $(top_srcdir)/orchagent/tunneltermhelper.cpp \
                 $(top_srcdir)/orchagent/vnetorch.cpp \
                 $(top_srcdir)/orchagent/dtelorch.cpp \
                 $(top_srcdir)/orchagent/flexcounterorch.cpp \
@@ -126,23 +142,37 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/macsecorch.cpp \
                 $(top_srcdir)/orchagent/lagid.cpp \
                 $(top_srcdir)/orchagent/bfdorch.cpp \
+                $(top_srcdir)/orchagent/icmporch.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashenifwdinfo.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclgroupmgr.cpp \
                 $(top_srcdir)/orchagent/dash/dashtagmgr.cpp \
                 $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashtunnelorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
                 $(top_srcdir)/orchagent/dash/pbutils.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
                 $(top_srcdir)/orchagent/twamporch.cpp \
-                $(top_srcdir)/orchagent/stporch.cpp
+                $(top_srcdir)/orchagent/stporch.cpp \
+                $(top_srcdir)/orchagent/nexthopkey.cpp \
+                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelorch.cpp \
+                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelprofile.cpp \
+                $(top_srcdir)/orchagent/high_frequency_telemetry/counternameupdater.cpp \
+                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelutils.cpp \
+                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp
+
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
@@ -244,6 +274,7 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          mock_dbconnector.cpp \
                          mock_table.cpp \
                          mock_hiredis.cpp \
+                         $(top_srcdir)/lib/orch_zmq_config.cpp \
                          $(top_srcdir)/warmrestart/ \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp

@@ -30,6 +30,8 @@ from dvslib import dvs_policer
 from dvslib import dvs_hash
 from dvslib import dvs_switch
 from dvslib import dvs_twamp
+from dvslib import dvs_buffer
+from dvslib import dvs_queue
 
 from buffer_model import enable_dynamic_buffer
 
@@ -376,7 +378,11 @@ class DockerVirtualSwitch:
 
         # Dynamically create a DVS container and servers
         else:
-            self.ctn_sw = self.client.containers.run("debian:jessie",
+            if 'DEFAULT_CONTAINER_REGISTRY' in os.environ:
+                cr_prefix = os.environ['DEFAULT_CONTAINER_REGISTRY'].rstrip("/") + "/"
+            else:
+                cr_prefix = ''
+            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:jessie",
                                                      privileged=True,
                                                      detach=True,
                                                      command="bash",
@@ -462,7 +468,7 @@ class DockerVirtualSwitch:
                 self.runcmd('supervisorctl stop all')
 
             # Generate the converage info by lcov and copy to the host
-            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
+            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info && lcov --add-tracefile /tmp/coverage.info -o /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
             subprocess.getstatusoutput(cmd)
             cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; find . -name *.gcda -type f   -exec tar -rf /tmp/gcda.tar {{}} \\;'"
             subprocess.getstatusoutput(cmd)
@@ -763,6 +769,12 @@ class DockerVirtualSwitch:
     def stop_fpmsyncd(self):
         self.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
         time.sleep(1)
+
+    def disable_fpmsyncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl stop fpmsyncd'])
+
+        # Let's give fpmsyncd a chance to connect to Zebra.
+        time.sleep(5)
 
     # deps: warm_reboot
     def SubscribeAppDbObject(self, objpfx):
@@ -1109,6 +1121,28 @@ class DockerVirtualSwitch:
         tbl.set(interface, fvs)
         time.sleep(1)
 
+    def get_interface_oper_status(self, interface):
+        _, output = self.runcmd(f"ip --brief address show {interface}")
+        state = output.split()[1]
+        return state
+
+    def get_interface_link_local_ipv6(self, interface, subnet=False):
+        """
+        If subnet is True, the returned address will include the subnet length (e.g., fe80::aa:bbff:fecc:ddee/64)
+        """
+        _, output = self.runcmd(f"ip --brief address show {interface}")
+        ipv6 = output.split()[2]
+        if not subnet:
+            slash = ipv6.find('/')
+            if slash > 0:
+                ipv6 = ipv6[0:slash]
+        return ipv6
+
+    def get_interface_mac(self, interface):
+        _, output = self.runcmd(f"ip --brief link show {interface}")
+        mac = output.split()[2]
+        return mac
+
     # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan, sub port intf
     def add_ip_address(self, interface, ip, vrf_name=None):
         if interface.startswith("PortChannel"):
@@ -1364,6 +1398,11 @@ class DockerVirtualSwitch:
         fvs = swsscommon.FieldValuePairs([("nat_zone", nat_zone)])
         tbl.set(interface, fvs)
         time.sleep(1)
+
+    # db
+    def delete_entry_tbl(self, db, table, key):
+        tbl = swsscommon.Table(db, table)
+        tbl._del(key)
 
     # deps: acl, crm, fdb
     def setReadOnlyAttr(self, obj, attr, val):
@@ -1982,7 +2021,8 @@ def dvs_vlan_manager(request, dvs):
 def dvs_port_manager(request, dvs):
     request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
                                             dvs.get_app_db(),
-                                            dvs.get_config_db())
+                                            dvs.get_config_db(),
+                                            dvs.get_counters_db())
 
 
 @pytest.fixture(scope="class")
@@ -2006,7 +2046,8 @@ def dvs_hash_manager(request, dvs):
 
 @pytest.fixture(scope="class")
 def dvs_switch_manager(request, dvs):
-    request.cls.dvs_switch = dvs_switch.DVSSwitch(dvs.get_asic_db())
+    request.cls.dvs_switch = dvs_switch.DVSSwitch(dvs.get_asic_db(),
+                                                  dvs.get_config_db())
 
 @pytest.fixture(scope="class")
 def dvs_twamp_manager(request, dvs):
@@ -2015,6 +2056,20 @@ def dvs_twamp_manager(request, dvs):
                                                dvs.get_state_db(),
                                                dvs.get_counters_db(),
                                                dvs.get_app_db())
+
+@pytest.fixture(scope="class")
+def dvs_buffer_manager(request, dvs):
+    request.cls.dvs_buffer = dvs_buffer.DVSBuffer(dvs.get_asic_db(),
+                                                  dvs.get_app_db(),
+                                                  dvs.get_config_db(),
+                                                  dvs.get_state_db(),
+                                                  dvs.get_counters_db())
+
+@pytest.fixture(scope="class")
+def dvs_queue_manager(request, dvs):
+    request.cls.dvs_queue = dvs_queue.DVSQueue(dvs.get_asic_db(),
+                                               dvs.get_config_db(),
+                                               dvs.get_counters_db())
 
 ##################### DPB fixtures ###########################################
 def create_dpb_config_file(dvs):

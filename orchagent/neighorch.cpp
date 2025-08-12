@@ -23,6 +23,7 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
+extern string gMyHostName;
 
 const int neighorch_pri = 30;
 
@@ -40,8 +41,8 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     m_fdbOrch->attach(this);
 
     // Some UTs instantiate NeighOrch but gBfdOrch is null, it is not null in orchagent
-    if (gBfdOrch) 
-    {  
+    if (gBfdOrch)
+    {
         gBfdOrch->attach(this);
     }
 
@@ -1839,6 +1840,8 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
+        size_t pos = alias.find('|');
+        std::string port_hostname = (pos != std::string::npos) ? alias.substr(0, pos) : alias;
         if(gIntfsOrch->isLocalSystemPortIntf(alias))
         {
             //Synced local neighbor. Skip
@@ -2400,4 +2403,10 @@ bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
         }
     }
     return rc;
+}
+
+void NeighOrch::clearBulkers()
+{
+    gNeighBulker.clear();
+    gNextHopBulker.clear();
 }

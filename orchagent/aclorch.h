@@ -51,6 +51,9 @@
 #define MATCH_INNER_IP_PROTOCOL "INNER_IP_PROTOCOL"
 #define MATCH_INNER_L4_SRC_PORT "INNER_L4_SRC_PORT"
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
+#define MATCH_INNER_SRC_MAC     "INNER_SRC_MAC"
+#define MATCH_INNER_DST_MAC     "INNER_DST_MAC"
+#define MATCH_INNER_SRC_IP      "INNER_SRC_IP"
 #define MATCH_BTH_OPCODE        "BTH_OPCODE"
 #define MATCH_AETH_SYNDROME     "AETH_SYNDROME"
 #define MATCH_TUNNEL_TERM       "TUNNEL_TERM"
@@ -62,6 +65,7 @@
 #define ACTION_PACKET_ACTION                "PACKET_ACTION"
 #define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
 #define ACTION_DO_NOT_NAT_ACTION            "DO_NOT_NAT_ACTION"
+#define ACTION_DISABLE_TRIM                 "DISABLE_TRIM_ACTION"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
@@ -74,12 +78,14 @@
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
+#define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
 
-#define PACKET_ACTION_FORWARD     "FORWARD"
-#define PACKET_ACTION_DROP        "DROP"
-#define PACKET_ACTION_COPY        "COPY"
-#define PACKET_ACTION_REDIRECT    "REDIRECT"
-#define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
+#define PACKET_ACTION_FORWARD      "FORWARD"
+#define PACKET_ACTION_DROP         "DROP"
+#define PACKET_ACTION_COPY         "COPY"
+#define PACKET_ACTION_REDIRECT     "REDIRECT"
+#define PACKET_ACTION_DO_NOT_NAT   "DO_NOT_NAT"
+#define PACKET_ACTION_DISABLE_TRIM "DISABLE_TRIM"
 
 #define DTEL_FLOW_OP_NOP        "NOP"
 #define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
@@ -398,6 +404,16 @@ protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
 };
 
+class AclRuleInnerSrcMacRewrite: public AclRule
+ {
+ public:
+     AclRuleInnerSrcMacRewrite(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = true);
+
+     bool validateAddAction(string attr_name, string attr_value);
+     bool validate();
+     void onUpdate(SubjectType, void *) override;
+ };
+ 
 class AclRuleMirror: public AclRule
 {
 public:

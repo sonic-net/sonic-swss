@@ -11,6 +11,7 @@
 #define private public
 #include "pfcactionhandler.h"
 #include "switchorch.h"
+#include "notifications.h"
 #include <sys/mman.h>
 #undef private
 #define private public
@@ -20,6 +21,7 @@
 #include <sstream>
 
 extern redisReply *mockReply;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 using ::testing::_;
 using ::testing::StrictMock;
 
@@ -91,9 +93,9 @@ namespace portsorch_test
     uint32_t set_pt_interface_id_count = false;
     uint32_t set_pt_timestamp_template_count = false;
     uint32_t set_port_tam_count = false;
-    uint32_t set_pt_interface_id_failures;
-    uint32_t set_pt_timestamp_template_failures;
-    uint32_t set_port_tam_failures;
+    uint32_t set_pt_interface_id_failures = 0;
+    uint32_t set_pt_timestamp_template_failures = 0;
+    uint32_t set_port_tam_failures = 0;
     bool set_link_event_damping_success = true;
     uint32_t _sai_set_link_event_damping_algorithm_count;
     uint32_t _sai_set_link_event_damping_config_count;
@@ -236,7 +238,7 @@ namespace portsorch_test
     {
         if (attr[0].id == SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD)
         {
-            *_sai_syncd_notifications_count =+ 1;
+            *_sai_syncd_notifications_count = *_sai_syncd_notifications_count + 1;
             *_sai_syncd_notification_event = attr[0].value.s32;
         }
 	else if (attr[0].id == SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION)
@@ -535,6 +537,14 @@ namespace portsorch_test
             ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>), nullptr);
             gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler> = new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(m_config_db.get(), pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
 
+            vector<string> mlag_tables = {
+                { CFG_MCLAG_TABLE_NAME },
+                { CFG_MCLAG_INTF_TABLE_NAME }
+            };
+
+            ASSERT_EQ(gMlagOrch, nullptr);
+            gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
+ 
         }
 
         virtual void TearDown() override
@@ -563,7 +573,8 @@ namespace portsorch_test
             gQosOrch = nullptr;
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
-
+            delete gMlagOrch;
+            gMlagOrch = nullptr;
             // clear orchs saved in directory
             gDirectory.m_values.clear();
         }
@@ -679,6 +690,12 @@ namespace portsorch_test
             consumer->readData();
             gPortsOrch->doTask(*consumer);
             mockReply = nullptr;
+
+            // Call the orchagent port state change callback method with zmq mode
+            sai_redis_communication_mode_t oldRedisCommunicationMode = gRedisCommunicationMode;
+            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
+            on_port_state_change(1, &port_oper_status);
+            gRedisCommunicationMode = oldRedisCommunicationMode;
 
             gPortsOrch->getPort("Ethernet0", port);
             ASSERT_TRUE(port.m_oper_status == oper_status);
@@ -808,7 +825,7 @@ namespace portsorch_test
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }
-            else if (fvField(valueTuple) == "high ber_error_count")
+            else if (fvField(valueTuple) == "high_ber_error_count")
             {
                 ASSERT_TRUE(fvValue(valueTuple) == "1");
             }
@@ -874,6 +891,7 @@ namespace portsorch_test
                 { "lanes",               lanes.str() },
                 { "speed",               "100000"    },
                 { "autoneg",             "off"       },
+                { "unreliable_los",      "off"       },
                 { "adv_speeds",          "all"       },
                 { "interface_type",      "none"      },
                 { "adv_interface_types", "all"       },
@@ -947,6 +965,7 @@ namespace portsorch_test
             SET_COMMAND, {
                 { "speed",               "100000"            },
                 { "autoneg",             "on"                },
+                { "unreliable_los",      "on"                },
                 { "adv_speeds",          "1000,10000,100000" },
                 { "interface_type",      "CR"                },
                 { "adv_interface_types", "CR,CR2,CR4,CR8"    },
@@ -975,6 +994,9 @@ namespace portsorch_test
 
         // Verify auto-negotiation
         ASSERT_TRUE(p.m_autoneg);
+
+        // Verify unreliablelos
+        ASSERT_TRUE(p.m_unreliable_los);
 
         // Verify advertised speed
         std::set<std::uint32_t> adv_speeds = { 1000, 10000, 100000 };
@@ -1049,23 +1071,24 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvList = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "preemphasis", "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
-                { "idriver",     "0x5,0x3,0x4,0x1"             },
-                { "ipredriver",  "0x1,0x4,0x3,0x5"             },
-                { "pre1",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre2",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre3",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "main",        "0x90,0x92,0x91,0x93"         },
-                { "post1",       "0x10,0x12,0x11,0x13"         },
-                { "post2",       "0x10,0x12,0x11,0x13"         },
-                { "post3",       "0x10,0x12,0x11,0x13"         },
-                { "attn",        "0x80,0x82,0x81,0x83"         },
-                { "ob_m2lp",     "0x4,0x6,0x5,0x7"             },
-                { "ob_alev_out", "0xf,0x11,0x10,0x12"          },
-                { "obplev",      "0x69,0x6b,0x6a,0x6c"         },
-                { "obnlev",      "0x5f,0x61,0x60,0x62"         },
-                { "regn_bfm1p",  "0x1e,0x20,0x1f,0x21"         },
-                { "regn_bfm1n",  "0xaa,0xac,0xab,0xad"         }
+                { "preemphasis",   "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
+                { "idriver",       "0x5,0x3,0x4,0x1"             },
+                { "ipredriver",    "0x1,0x4,0x3,0x5"             },
+                { "pre1",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre2",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre3",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "main",          "0x90,0x92,0x91,0x93"         },
+                { "post1",         "0x10,0x12,0x11,0x13"         },
+                { "post2",         "0x10,0x12,0x11,0x13"         },
+                { "post3",         "0x10,0x12,0x11,0x13"         },
+                { "attn",          "0x80,0x82,0x81,0x83"         },
+                { "unreliable_los","off"                         },
+                { "ob_m2lp",       "0x4,0x6,0x5,0x7"             },
+                { "ob_alev_out",   "0xf,0x11,0x10,0x12"          },
+                { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
+                { "obnlev",        "0x5f,0x61,0x60,0x62"         },
+                { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
+                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         }
             }
         }};
 
@@ -1147,6 +1170,9 @@ namespace portsorch_test
         // Verify regn_bfm1n
         std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
         ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
+
+        // Verify unreliablelos
+        ASSERT_EQ(p.m_unreliable_los, false);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
@@ -1307,17 +1333,16 @@ namespace portsorch_test
         ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
 
         // Get queue info
-        string type;
+        sai_queue_type_t type;
         uint8_t index;
         auto queue_id = port.m_queue_ids[0];
         auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
-        type = "";
         index = 255;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
         ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
 
@@ -1661,6 +1686,12 @@ namespace portsorch_test
         _hook_sai_port_api();
         _hook_sai_switch_api();
 
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Port p;
         std::deque<KeyOpFieldsValuesTuple> kfvList;
@@ -1713,8 +1744,9 @@ namespace portsorch_test
         consumer->addToSync(kfvList);
 
         static_cast<Orch*>(gPortsOrch)->doTask();
-
-        ASSERT_EQ(set_pt_interface_id_fail, 1);
+        ASSERT_EQ(set_pt_interface_id_failures, 1);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_pt_interface_id_fail = false;
 
@@ -1737,6 +1769,8 @@ namespace portsorch_test
         static_cast<Orch*>(gPortsOrch)->doTask();
 
         ASSERT_EQ(set_pt_timestamp_template_failures, 1);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_pt_timestamp_template_fail = false;
 
@@ -1758,7 +1792,9 @@ namespace portsorch_test
 
         static_cast<Orch*>(gPortsOrch)->doTask();
 
-        ASSERT_EQ(set_port_tam_fail, 1);
+        ASSERT_EQ(set_port_tam_failures, 1);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_port_tam_fail = false;
 
@@ -2529,7 +2565,7 @@ namespace portsorch_test
                            }});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(entries);
-        ASSERT_DEATH({static_cast<Orch *>(gPortsOrch)->doTask();}, "");
+        gPortsOrch->doTask();
 
         ASSERT_EQ(*_sai_syncd_notifications_count, 1);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
@@ -2685,6 +2721,7 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
+            portTable.set(it.first, {{"oper_status", "up"}});
             transceieverInfoTable.set(it.first, {});
         }
 
@@ -2752,6 +2789,62 @@ namespace portsorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
             ASSERT_TRUE(attr.value.booldata);
         }
+
+        // Verify host if configuration
+        for (const auto& iter: ports)
+        {
+            const auto& portName = iter.first;
+
+            Port port;
+            gPortsOrch->getPort(portName, port);
+
+            ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+
+            attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+            status = sai_hostif_api->get_hostif_attribute(port.m_hif_id, 1, &attr);
+
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            ASSERT_TRUE(attr.value.booldata);
+        }
+    }
+
+    TEST_F(PortsOrchTest, PortHostIfCreateFailed)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto original_api = sai_hostif_api->create_hostif;
+        auto hostIfSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->create_hostif);
+        hostIfSpy->callFake([&](sai_object_id_t*, sai_object_id_t, uint32_t, const sai_attribute_t*) -> sai_status_t {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+        );
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        sai_hostif_api->create_hostif = original_api;
+
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        ASSERT_FALSE(port.m_init);
     }
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
@@ -3066,6 +3159,60 @@ namespace portsorch_test
         queueConsumer->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty()); // queue should be processed now
         ts.clear();
+    }
+
+    /* This test passes an incorrect LAG entry and verifies that this entry is not
+     * erased from the consumer table.
+     */
+    TEST_F(PortsOrchTest, LagMemberCanNotBeLocated)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        /*
+         * Next we will prepare some configuration data to be consumed by PortsOrch
+         * 32 Ports, 1 LAG, 1 port is an invalid LAG member.
+         */
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        lagTable.set("PortChannel999",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+
+        // Add invalid lag member
+        lagMemberTable.set(
+            std::string("InvalidLagMember") + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
+            { {"status", "enabled"} });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // verify there is a pending task to do.
+        vector<string> ts;
+        auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        ts.clear();
+        consumer->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty());
     }
 
     /* This test checks that a LAG member validation happens on orchagent level
@@ -3397,4 +3544,52 @@ namespace portsorch_test
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
 
+    struct PostPortInitTests : PortsOrchTest
+    {
+    };
+
+    // This test ensures post port initialization is performed when calling onWarmBootEnd()
+    TEST_F(PostPortInitTests, PortPostInit)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table stateTable = Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE);
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // Set warm boot flag
+        gPortsOrch->m_isWarmRestoreStage = true;
+
+        gPortsOrch->bake();
+        gPortsOrch->doTask();
+
+        std::string value;
+        bool stateDbSet;
+
+        // At this point postPortInit() hasn't been called yet, so don't expect
+        // to find "max_priority_groups" field in STATE_DB
+        stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
+        ASSERT_FALSE(stateDbSet);
+
+        gPortsOrch->onWarmBootEnd();
+
+        // Now the field "max_priority_groups" is set
+        stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
+        ASSERT_TRUE(stateDbSet);
+    }
 }

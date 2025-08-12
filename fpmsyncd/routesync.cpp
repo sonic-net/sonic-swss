@@ -6,6 +6,7 @@
 #include "netmsg.h"
 #include "ipprefix.h"
 #include "dbconnector.h"
+#include "lib/orch_zmq_config.h"
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
@@ -13,6 +14,7 @@
 #include "converter.h"
 #include <string.h>
 #include <arpa/inet.h>
+#include <linux/nexthop.h>
 
 using namespace std;
 using namespace swss;
@@ -32,6 +34,11 @@ using namespace swss;
 #ifndef NDA_RTA
 #define NDA_RTA(r)                                                             \
     ((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct ndmsg))))
+#endif
+
+#ifndef NHA__RTA
+#define NHA_RTA(r)                                                             \
+    ((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct nhmsg))))
 #endif
 
 #define VXLAN_VNI             0
@@ -106,6 +113,8 @@ enum {
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
 };
 
+#define MAX_MULTIPATH_NUM 514
+
 /* Returns name of the protocol passed number represents */
 static string getProtocolString(int proto)
 {
@@ -137,11 +146,14 @@ static decltype(auto) makeNlAddr(const T& ip)
 
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
-    m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
+    // When the feature ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED is enabled, route events must be sent to orchagent via the ZMQ channel.
+    m_zmqClient(create_local_zmq_client(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false)),
+    m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
+    m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
+    m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
     m_nl_sock(NULL), m_link_cache(NULL)
@@ -149,6 +161,31 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+}
+
+void RouteSync::setRouteWithWarmRestart(const std::string& key,
+                                      const std::vector<FieldValueTuple>& fvVector,
+                                      shared_ptr<ProducerStateTable> table,
+                                      const std::string& cmd)
+{
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+
+    if (!warmRestartInProgress)
+    {
+        if (cmd == SET_COMMAND)
+        {
+            table->set(key, fvVector);
+        }
+        else if (cmd == DEL_COMMAND)
+        {
+            table->del(key);
+        }
+    }
+    else
+    {
+        const KeyOpFieldsValuesTuple kfv = std::make_tuple(key, cmd, fvVector);
+        m_warmStartHelper.insertRefreshMap(kfv);
+    }
 }
 
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
@@ -436,7 +473,7 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
     return true;
 }
 
-void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,  
+void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,
                    string& mac_list, string& intf_list)
 {
     nexthops  += NHG_DELIMITER;
@@ -766,27 +803,12 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
      * Upon arrival of a delete msg we could either push the change right away,
      * or we could opt to defer it if we are going through a warm-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
     if (nlmsg_type == RTM_DELROUTE)
     {
-        if (!warmRestartInProgress)
-        {
-            m_routeTable.del(destipprefix);
-            return;
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
-                          destipprefix);
-
-            vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                               DEL_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
-            return;
-        }
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
+        return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
@@ -850,29 +872,11 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     fvVector.push_back(vni);
     fvVector.push_back(mac);
     fvVector.push_back(proto);
-
-    if (!warmRestartInProgress)
-    {
-        m_routeTable.set(destipprefix, fvVector);
-        SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
-                       destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
-                       proto_str.c_str());
-    }
-
-    /*
-     * During routing-stack restarting scenarios route-updates will be temporarily
-     * put on hold by warm-reboot logic.
-     */
-    else
-    {
-        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s vtep:%s vni:%s mac:%s",
-                      destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str());
-
-        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                           SET_COMMAND,
-                                                           fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
-    }
+    
+    setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+    SWSS_LOG_INFO("RouteTable set EVPN msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
+                  destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
+                  proto_str.c_str());
     return;
 }
 
@@ -1074,36 +1078,24 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
     if (nlmsg_type == RTM_DELROUTE)
     {
-        string srv6SidListTableKey = routeTableKey;
+        string routeTableKeyStr = string(routeTableKey);
+        string srv6SidListTableKey = routeTableKeyStr;
 
-        if (!warmRestartInProgress)
-        {
-            m_routeTable.del(routeTableKey);
-            m_srv6SidListTable.del(srv6SidListTableKey);
-            return;
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
-                          routeTableKey);
 
-            vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(routeTableKey,
-                                                               DEL_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
-            return;
-        }
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(routeTableKeyStr, fvVector, m_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("SRV6 RouteTable del msg: %s", routeTableKeyStr.c_str());
+        m_srv6SidListTable.del(srv6SidListTableKey);
+        return;
     }
     else if (nlmsg_type == RTM_NEWROUTE)
     {
+        string routeTableKeyStr = string(routeTableKey);
         /* Write SID list to SRV6_SID_LIST_TABLE */
 
-        string srv6SidListTableKey = routeTableKey;
+        string srv6SidListTableKey = routeTableKeyStr;
 
         vector<FieldValueTuple> fvVectorSidList;
 
@@ -1126,28 +1118,9 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
             FieldValueTuple seg_src("seg_src", src_addr_str);
             fvVectorRoute.push_back(seg_src);
         }
-        if (!warmRestartInProgress)
-        {
-            m_routeTable.set(routeTableKey, fvVectorRoute);
-            SWSS_LOG_DEBUG("RouteTable set msg: %s vpn_sid: %s src_addr:%s",
-                        routeTableKey, vpn_sid_str.c_str(),
-                        src_addr_str.c_str());
-        }
-
-        /*
-        * During routing-stack restarting scenarios route-updates will be
-        * temporarily put on hold by warm-reboot logic.
-        */
-        else
-        {
-            SWSS_LOG_INFO(
-                "Warm-Restart mode: RouteTable set msg: %s vpn_sid:%s src_addr:%s",
-                routeTableKey, vpn_sid_str.c_str(), src_addr_str.c_str());
-
-            const KeyOpFieldsValuesTuple kfv =
-                std::make_tuple(routeTableKey, SET_COMMAND, fvVectorRoute);
-            m_warmStartHelper.insertRefreshMap(kfv);
-        }
+        setRouteWithWarmRestart(routeTableKeyStr, fvVectorRoute, m_routeTable, SET_COMMAND);
+        SWSS_LOG_INFO("SRV6 RouteTable set msg: %s vpn_sid:%s src_addr:%s",
+                      routeTableKeyStr.c_str(), vpn_sid_str.c_str(), src_addr_str.c_str());
     }
 
     return;
@@ -1444,11 +1417,21 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     if ((h->nlmsg_type != RTM_NEWROUTE)
         && (h->nlmsg_type != RTM_DELROUTE)
         && (h->nlmsg_type != RTM_NEWSRV6LOCALSID)
-        && (h->nlmsg_type != RTM_DELSRV6LOCALSID))
+        && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
+        && (h->nlmsg_type != RTM_NEWNEXTHOP)
+        && (h->nlmsg_type != RTM_DELNEXTHOP)
+    )
         return;
 
+    if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+    }
+    else
+    {
+        len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
+    }
     /* Length validity. */
-    len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
     if (len < 0) 
     {
         SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
@@ -1457,6 +1440,12 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         return;
     }
 
+    if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        onNextHopMsg(h, len);
+        return;
+    }
+    
     if ((h->nlmsg_type == RTM_NEWSRV6LOCALSID)
         || (h->nlmsg_type == RTM_DELSRV6LOCALSID))
     {
@@ -1481,8 +1470,6 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
             onEvpnRouteMsg(h, len);
             break;
     }
-
-    return;
 }
 
 void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
@@ -1581,27 +1568,13 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
      * Upon arrival of a delete msg we could either push the change right away,
      * or we could opt to defer it if we are going through a warm-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
     if (nlmsg_type == RTM_DELROUTE)
     {
-        if (!warmRestartInProgress)
-        {
-            m_routeTable.del(destipprefix);
-            return;
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
-                          destipprefix);
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
+        return;
 
-            vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                               DEL_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
-            return;
-        }
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
@@ -1613,6 +1586,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     {
         sendOffloadReply(route_obj);
     }
+    auto proto_num = rtnl_route_get_protocol(route_obj);
+    auto proto_str = getProtocolString(proto_num);
+    FieldValueTuple proto("protocol", proto_str);
 
     switch (rtnl_route_get_type(route_obj))
     {
@@ -1621,7 +1597,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             vector<FieldValueTuple> fvVector;
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
-            m_routeTable.set(destipprefix, fvVector);
+            fvVector.push_back(proto);
+            setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+            SWSS_LOG_INFO("RouteTable set blackhole msg: %s", destipprefix);
             return;
         }
         case RTN_UNICAST:
@@ -1637,107 +1615,253 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             return;
     }
 
-    struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
-    if (!nhs)
-    {
-        SWSS_LOG_INFO("Nexthop list is empty for %s", destipprefix);
-        return;
-    }
-
-    /* Get nexthop lists */
+    vector<FieldValueTuple> fvVector;
     string gw_list;
     string intf_list;
     string mpls_list;
-    getNextHopList(route_obj, gw_list, mpls_list, intf_list);
-    string weights = getNextHopWt(route_obj);
+    string weights;
 
-    vector<string> alsv = tokenize(intf_list, NHG_DELIMITER);
-    for (auto alias : alsv)
+    string nhg_id_key;
+    uint32_t nhg_id = rtnl_route_get_nh_id(route_obj);
+    if(nhg_id)
     {
-        /*
-         * An FRR behavior change from 7.2 to 7.5 makes FRR update default route to eth0 in interface
-         * up/down events. Skipping routes to eth0 or docker0 to avoid such behavior
-         */
-        if (alias == "eth0" || alias == "docker0")
+        const auto itg = m_nh_groups.find(nhg_id);
+        if(itg == m_nh_groups.end())
         {
-            SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
-                    destipprefix, gw_list.c_str(), intf_list.c_str());
-            // If intf_list has only this interface, that means all of the next hops of this route 
-            // have been removed and the next hop on the eth0/docker0 has become the only next hop. 
-            // In this case since we do not want the route with next hop on eth0/docker0, we return. 
-            // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data 
-            // path will be left with stale route entry
-            if(alsv.size() == 1)
+            SWSS_LOG_ERROR("NextHop group id %d not found. Dropping the route %s", nhg_id, destipprefix);
+            return;
+        }
+        NextHopGroup& nhg = itg->second;
+        if(nhg.group.size() == 0)
+        {
+        // Using route-table only for single next-hop
+        string nexthops = nhg.nexthop.empty() ? (rtnl_route_get_family(route_obj) == AF_INET ? "0.0.0.0" : "::") : nhg.nexthop;
+        string ifnames, weights;
+
+        getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
+
+        FieldValueTuple gw("nexthop", nexthops.c_str());
+        FieldValueTuple intf("ifname", ifnames.c_str());
+        fvVector.push_back(gw);
+        fvVector.push_back(intf);
+
+        SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+        }
+        else
+        {
+            nhg_id_key = getNextHopGroupKeyAsString(nhg_id);
+            FieldValueTuple nhg("nexthop_group", nhg_id_key.c_str());
+            fvVector.push_back(nhg);
+            installNextHopGroup(nhg_id);
+        }
+
+        fvVector.push_back(proto);
+
+    }
+    else
+    {
+        struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
+        if (!nhs)
+        {
+            SWSS_LOG_INFO("Nexthop list is empty for %s", destipprefix);
+            return;
+        }
+
+        /* Get nexthop lists */
+
+        getNextHopList(route_obj, gw_list, mpls_list, intf_list);
+        weights = getNextHopWt(route_obj);
+
+        vector<string> alsv = tokenize(intf_list, NHG_DELIMITER);
+
+        if (alsv.size() == 1)
+        {
+            if (alsv[0] == "eth0" || alsv[0] == "docker0")
             {
-                if (!warmRestartInProgress)
+                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                            destipprefix, gw_list.c_str(), intf_list.c_str());
+                vector<FieldValueTuple> fvVector;
+                setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
+                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0 route: %s", destipprefix);
+                return;
+            }
+        }
+        else
+        {
+            for (auto alias : alsv)
+            {
+                /*
+                * A change in FRR behavior from version 7.2 to 7.5 causes the default route to be updated to eth0
+                * during interface up/down events. This skips routes to eth0 or docker0 to avoid such behavior.
+                */
+                if (alias == "eth0" || alias == "docker0")
                 {
-                    SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
-                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-                    m_routeTable.del(destipprefix);
-                }
-                else
-                {
-                    SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
-                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-                    vector<FieldValueTuple> fvVector;
-                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                                       DEL_COMMAND,
-                                                                       fvVector);
-                    m_warmStartHelper.insertRefreshMap(kfv);
+                    SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                                destipprefix, gw_list.c_str(), intf_list.c_str());
+                    continue;
                 }
             }
-            return;
+        }
+
+
+        FieldValueTuple gw("nexthop", gw_list);
+        FieldValueTuple intf("ifname", intf_list);
+
+        fvVector.push_back(proto);
+        fvVector.push_back(gw);
+        fvVector.push_back(intf);
+        if (!mpls_list.empty())
+        {
+            FieldValueTuple mpls_nh("mpls_nh", mpls_list);
+            fvVector.push_back(mpls_nh);
+        }
+        if (!weights.empty())
+        {
+            FieldValueTuple wt("weight", weights);
+            fvVector.push_back(wt);
         }
     }
 
-    auto proto_num = rtnl_route_get_protocol(route_obj);
-    auto proto_str = getProtocolString(proto_num);
-
-    vector<FieldValueTuple> fvVector;
-    FieldValueTuple proto("protocol", proto_str);
-    FieldValueTuple gw("nexthop", gw_list);
-    FieldValueTuple intf("ifname", intf_list);
-
-    fvVector.push_back(proto);
-    fvVector.push_back(gw);
-    fvVector.push_back(intf);
-    if (!mpls_list.empty())
+    if (nhg_id)
     {
-        FieldValueTuple mpls_nh("mpls_nh", mpls_list);
-        fvVector.push_back(mpls_nh);
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+        SWSS_LOG_INFO("RouteTable set msg with NHG: %s nhg_id:%d", destipprefix, nhg_id);
     }
-    if (!weights.empty())
-    {
-        FieldValueTuple wt("weight", weights);
-        fvVector.push_back(wt);
-    }
-
-    if (!warmRestartInProgress)
-    {
-        m_routeTable.set(destipprefix, fvVector);
-        SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s %s", destipprefix,
-                       gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-    }
-
-    /*
-     * During routing-stack restarting scenarios route-updates will be temporarily
-     * put on hold by warm-reboot logic.
-     */
     else
     {
-        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s %s %s %s", destipprefix,
-                      gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                           SET_COMMAND,
-                                                           fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
+        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+        SWSS_LOG_INFO("RouteTable set msg: %s nexthop:%s ifname:%s mpls:%s weight:%s",
+                      destipprefix, gw_list.c_str(), intf_list.c_str(),
+                      mpls_list.empty() ? "na" : mpls_list.c_str(),
+                      weights.empty() ? "na" : weights.c_str());
     }
 }
 
-/* 
+/*
+ * Handle Nexthop msg
+ * @arg nlmsghdr      Netlink messaged
+ */
+void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
+{
+    int nlmsg_type = h->nlmsg_type;
+    uint32_t id = 0;
+    unsigned char addr_family;
+    int32_t ifindex = -1, grp_count = 0;
+    string ifname;
+    struct nhmsg *nhm = NULL;
+    struct rtattr *tb[NHA_MAX + 1] = {};
+    struct in_addr ipv4 = {0};
+    struct in6_addr ipv6 = {0};
+    char gateway[INET6_ADDRSTRLEN] = {0};
+    char ifname_unknown[IFNAMSIZ] = "unknown";
+
+    nhm = (struct nhmsg *)NLMSG_DATA(h);
+
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    struct rtattr* rta = NHA_RTA(nhm);
+    #pragma GCC diagnostic pop
+
+    netlink_parse_rtattr(tb, NHA_MAX, rta, len);
+
+    if (!tb[NHA_ID]) {
+        SWSS_LOG_ERROR(
+            "Nexthop group without an ID received from the zebra");
+        return;
+    }
+
+    /* We use the ID key'd nhg table for kernel updates */
+    id = *((uint32_t *)RTA_DATA(tb[NHA_ID]));
+
+    addr_family = nhm->nh_family;
+
+    if (nlmsg_type == RTM_NEWNEXTHOP)
+    {
+        if (tb[NHA_GROUP])
+        {
+            SWSS_LOG_INFO("New nexthop group message!");
+
+            struct nexthop_grp *nha_grp = (struct nexthop_grp *)RTA_DATA(tb[NHA_GROUP]);
+            grp_count = (int)(RTA_PAYLOAD(tb[NHA_GROUP]) / sizeof(*nha_grp));
+
+            if (grp_count > MAX_MULTIPATH_NUM)
+            {
+                SWSS_LOG_ERROR("Nexthop group count (%d) exceeds the maximum allowed (%d). Clamping to maximum.", grp_count, MAX_MULTIPATH_NUM);
+                grp_count = MAX_MULTIPATH_NUM;
+            }
+
+            vector<pair<uint32_t, uint8_t>> group(grp_count);
+            for (int i = 0; i < grp_count; i++)
+            {
+                group[i] = std::make_pair(nha_grp[i].id, nha_grp[i].weight + 1);
+            }
+
+            auto it = m_nh_groups.find(id);
+            if (it != m_nh_groups.end())
+            {
+                NextHopGroup &nhg = it->second;
+                nhg.group = group;
+                if (nhg.installed)
+                {
+                    updateNextHopGroupDb(nhg);
+                }
+            }
+            else
+            {
+                m_nh_groups.insert({id, NextHopGroup(id, group)});
+            }
+        }
+        else
+        {
+            if (tb[NHA_GATEWAY])
+            {
+                if (addr_family == AF_INET)
+                {
+                    memcpy(&ipv4, (void *)RTA_DATA(tb[NHA_GATEWAY]), 4);
+                    inet_ntop(AF_INET, &ipv4, gateway, INET_ADDRSTRLEN);
+                }
+                else if (addr_family == AF_INET6)
+                {
+                    memcpy(&ipv6, (void *)RTA_DATA(tb[NHA_GATEWAY]), 16);
+                    inet_ntop(AF_INET6, &ipv6, gateway, INET6_ADDRSTRLEN);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unexpected nexthop address family");
+                    return;
+                }
+            }
+
+            if (tb[NHA_OIF])
+            {
+                ifindex = *((int32_t *)RTA_DATA(tb[NHA_OIF]));
+                char if_name[IFNAMSIZ] = {0};
+                if (!getIfName(ifindex, if_name, IFNAMSIZ))
+                {
+                    strcpy(if_name, ifname_unknown);
+                }
+                ifname = string(if_name);
+                if (ifname == "eth0" || ifname == "docker0")
+                {
+                    SWSS_LOG_DEBUG("Skip routes to interface: %s id[%d]", ifname.c_str(), id);
+                    return;
+                }
+            }
+
+            SWSS_LOG_DEBUG("Received: id[%d], if[%d/%s] address[%s]", id, ifindex, ifname.c_str(), gateway);
+            m_nh_groups.insert({id, NextHopGroup(id, string(gateway), ifname)});
+        }
+    }
+    else if (nlmsg_type == RTM_DELNEXTHOP)
+    {
+        SWSS_LOG_DEBUG("NextHopGroup del event: %d", id);
+        deleteNextHopGroup(id);
+    }
+
+    return;
+}
+
+/*
  * Handle label route
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
@@ -1755,7 +1879,9 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        m_label_routeTable.del(destaddr);
+        vector<FieldValueTuple> fvVector;
+        setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, DEL_COMMAND);
+        SWSS_LOG_INFO("LabelRouteTable del msg: %s", destaddr);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -1776,6 +1902,10 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    auto proto_num = rtnl_route_get_protocol(route_obj);
+    auto proto_str = getProtocolString(proto_num);
+    FieldValueTuple proto("protocol", proto_str);
+
     switch (rtnl_route_get_type(route_obj))
     {
         case RTN_BLACKHOLE:
@@ -1783,7 +1913,9 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
             vector<FieldValueTuple> fvVector;
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
-            m_label_routeTable.set(destaddr, fvVector);
+            fvVector.push_back(proto);
+            setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, SET_COMMAND);
+            SWSS_LOG_INFO("LabelRouteTable set blackhole msg: %s", destaddr);
             return;
         }
         case RTN_UNICAST:
@@ -1826,7 +1958,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     }
     fvVector.push_back(mpls_pop);
 
-    m_label_routeTable.set(destaddr, fvVector);
+    setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, SET_COMMAND);
     SWSS_LOG_INFO("LabelRouteTable set msg: %s %s %s %s", destaddr,
                   gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 }
@@ -2181,14 +2313,12 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
         /* Get the weight of next hop */
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
-        if (weight)
+        if (weight == 0)
         {
-            result += to_string(weight);
+            SWSS_LOG_INFO("Using default weight of 1 for nexthop");
+            weight = 1; // default weight is 1
         }
-        else
-        {
-            return "";
-        }
+        result += to_string(weight);
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {
@@ -2322,6 +2452,14 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
         return;
     }
 
+    // When a route is programmed without FRR knowledge protocol will be empty.
+    if (protocol.empty())
+    {
+        SWSS_LOG_NOTICE("Received response for prefix %s(%s) without protol, ignoring ",
+            prefix.to_string().c_str(), vrfName.c_str());
+        return;
+    }
+
     auto routeObject = makeUniqueWithDestructor(rtnl_route_alloc(), rtnl_route_put);
     auto dstAddr = makeNlAddr(prefix);
 
@@ -2402,5 +2540,142 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
     {
         m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
+    }
+}
+
+/*
+ * Get nexthop group key as string
+ * @arg id     next hop group id
+ *
+ * Return nexthop group key
+ */
+const string RouteSync::getNextHopGroupKeyAsString(uint32_t id) const
+{
+    return to_string(id);
+}
+
+/*
+ * update the nexthop group entry
+ * @arg nh_id     nexthop group id
+ *
+ */
+void RouteSync::installNextHopGroup(uint32_t nh_id)
+{
+    auto git = m_nh_groups.find(nh_id);
+    if(git == m_nh_groups.end())
+    {
+        SWSS_LOG_ERROR("Nexthop not found: %d", nh_id);
+        return;
+    }
+
+    NextHopGroup& nhg = git->second;
+
+    if(nhg.installed)
+    {
+        //Nexthop group already installed
+        return;
+    }
+    nhg.installed = true;
+    updateNextHopGroupDb(nhg);
+}
+
+/*
+ * delete the nexthop group entry
+ * @arg nh_id     nexthop group id
+ *
+ */
+void RouteSync::deleteNextHopGroup(uint32_t nh_id)
+{
+    auto git = m_nh_groups.find(nh_id);
+    if(git == m_nh_groups.end())
+    {
+        SWSS_LOG_ERROR("Nexthop not found: %d", nh_id);
+        return;
+    }
+
+    NextHopGroup& nhg = git->second;
+
+    if(nhg.installed)
+    {
+        string key = getNextHopGroupKeyAsString(nh_id);
+        m_nexthop_groupTable.del(key.c_str());
+        SWSS_LOG_DEBUG("NextHopGroup table del: key [%s]", key.c_str());
+    }
+    m_nh_groups.erase(git);
+}
+
+/*
+ * update the nexthop group table in database
+ * @arg nhg     the nexthop group
+ *
+ */
+void RouteSync::updateNextHopGroupDb(const NextHopGroup& nhg)
+{
+    vector<FieldValueTuple> fvVector;
+    string nexthops;
+    string ifnames;
+    string weights;
+    string key = getNextHopGroupKeyAsString(nhg.id);
+    getNextHopGroupFields(nhg, nexthops, ifnames, weights);
+
+    FieldValueTuple nh("nexthop", nexthops.c_str());
+    FieldValueTuple ifname("ifname", ifnames.c_str());
+    fvVector.push_back(nh);
+    fvVector.push_back(ifname);
+    if(!weights.empty())
+    {
+        FieldValueTuple wg("weight", weights.c_str());
+        fvVector.push_back(wg);
+    }
+    SWSS_LOG_INFO("NextHopGroup table set: key [%s] nexthop[%s] ifname[%s] weight[%s]", key.c_str(), nexthops.c_str(), ifnames.c_str(), weights.c_str());
+
+    m_nexthop_groupTable.set(key.c_str(), fvVector);
+}
+
+/*
+ * generate the database fields.
+ * @arg nhg     the nexthop group
+ *
+ */
+void RouteSync::getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af /*= AF_INET*/)
+{
+    if(nhg.group.size() == 0)
+    {
+        if(!nhg.nexthop.empty())
+        {
+            nexthops = nhg.nexthop;
+        }
+        else
+        {
+            nexthops = af == AF_INET ? "0.0.0.0" : "::";
+        }
+        ifnames = nhg.intf;
+    }
+    else
+    {
+        int i = 0;
+        for(const auto& nh : nhg.group)
+        {
+            uint32_t id = nh.first;
+            auto itr = m_nh_groups.find(id);
+            if(itr == m_nh_groups.end())
+            {
+                SWSS_LOG_ERROR("NextHop group is incomplete: %d", nhg.id);
+                return;
+            }
+
+            NextHopGroup& nhgr = itr->second;
+            string weight = to_string(nh.second);
+            if(i)
+            {
+                nexthops += NHG_DELIMITER;
+                ifnames += NHG_DELIMITER;
+                weights += NHG_DELIMITER;
+            }
+            nexthops += nhgr.nexthop.empty() ? (af == AF_INET ? "0.0.0.0" : "::") : nhgr.nexthop;
+            ifnames += nhgr.intf;
+            weights += weight;
+            ++i;
+        }
     }
 }

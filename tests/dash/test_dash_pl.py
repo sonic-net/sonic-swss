@@ -23,13 +23,16 @@ from swsscommon.swsscommon import (
     APP_DASH_ENI_ROUTE_TABLE_NAME,
     APP_DASH_ROUTING_TYPE_TABLE_NAME,
     APP_DASH_ROUTE_GROUP_TABLE_NAME,
+    APP_DASH_TUNNEL_TABLE_NAME
 )
 
 DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
+
 @pytest.fixture(autouse=True)
-def common_setup_teardown(dash_db: DashDB):
+def common_setup_teardown(dash_db: DashDB, dvs):
+    dvs.runcmd("swssloglevel -l INFO -c orchagent") 
     dash_db.set_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID, APPLIANCE_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1, VNET_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID, ENI_CONFIG)
@@ -40,14 +43,7 @@ def common_setup_teardown(dash_db: DashDB):
 
     yield
 
-    dash_db.remove_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID)
-    dash_db.remove_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1)
-    dash_db.remove_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1)
-    dash_db.remove_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP1)
-    dash_db.remove_app_db_entry(APP_DASH_ENI_TABLE_NAME, ENI_ID)
-    dash_db.remove_app_db_entry(APP_DASH_VNET_TABLE_NAME, VNET1)
-    dash_db.remove_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID)
-    dash_db.remove_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK)
+    # cleanup is handled automatically by the dash_db fixture
 
 
 def test_pl_eni_attrs(dash_db: DashDB):
@@ -60,6 +56,7 @@ def test_pl_eni_attrs(dash_db: DashDB):
     assert_sai_attribute_exists(SAI_ENI_ATTR_PL_SIP, eni_attrs, PL_ENCODING_IP)
     assert_sai_attribute_exists(SAI_ENI_ATTR_PL_SIP_MASK, eni_attrs, PL_ENCODING_MASK)
 
+
 def test_pl_eni_override_underlay_sip(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1, ROUTE_VNET_CONFIG_UNDERLAY_SIP)
     dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
@@ -67,6 +64,7 @@ def test_pl_eni_override_underlay_sip(dash_db: DashDB):
     outbound_routing_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY")
     outbound_routing_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY", outbound_routing_keys[0])
     assert_sai_attribute_exists(SAI_OUTBOUND_ROUTING_ENTRY_ATTR_UNDERLAY_SIP, outbound_routing_attrs, PL_UNDERLAY_SIP2)
+
 
 def test_pl_outbound_ca_to_pa_attrs(dash_db: DashDB):
     outbound_ca_to_pa_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY")
@@ -80,3 +78,21 @@ def test_pl_outbound_ca_to_pa_attrs(dash_db: DashDB):
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY, outbound_attrs, ENCAP_VNI)
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION, outbound_attrs, SAI_DASH_ENCAPSULATION_NVGRE)
     assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP, outbound_attrs, UNDERLAY_IP)
+
+    dash_db.set_app_db_entry(APP_DASH_VNET_MAPPING_TABLE_NAME, VNET1, VNET_MAP_IP2, VNET_MAPPING_CONFIG_PLNSG)
+    dash_db.set_app_db_entry(APP_DASH_TUNNEL_TABLE_NAME, TUNNEL1, TUNNEL1_CONFIG)
+    new_keys = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY", old_keys=outbound_ca_to_pa_keys)
+    assert len(new_keys) == 1, f"Expected 1 new outbound ca to pa entries, found {len(new_keys)}"
+    tunnels = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_DASH_TUNNEL")
+    assert len(tunnels) == 1, f"Expected 1 tunnel, found {len(tunnels)}"
+
+    outbound_attrs = dash_db.get_asic_db_entry("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY", new_keys[0])
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION, outbound_attrs, SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP, outbound_attrs, PL_OVERLAY_SIP)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK, outbound_attrs, PL_OVERLAY_SIP_MASK)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP, outbound_attrs, PL_OVERLAY_DIP)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP_MASK, outbound_attrs, PL_OVERLAY_DIP_MASK)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY, outbound_attrs, ENCAP_VNI)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION, outbound_attrs, SAI_DASH_ENCAPSULATION_NVGRE)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP, outbound_attrs, UNDERLAY_IP)
+    assert_sai_attribute_exists(SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_TUNNEL_ID, outbound_attrs, tunnels[0])
