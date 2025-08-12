@@ -1,4 +1,5 @@
 #include "pbutils.h"
+#include <arpa/inet.h>
 
 
 using namespace std;
@@ -275,4 +276,34 @@ bool to_pb(const std::string &ha_scope, dash::types::HaScope &pb_ha_scope)
     }
 
     return true;
+}
+
+bool to_pb(const std::string &ip_address, dash::types::IpAddress &pb_address)
+{
+    SWSS_LOG_ENTER();
+
+    if (ip_address.empty())
+    {
+        SWSS_LOG_WARN("Empty IP address string");
+        return false;
+    }
+
+    uint8_t buf[16];
+
+    if (inet_pton(AF_INET, ip_address.c_str(), buf) == 1)
+    {
+        uint32_t ipv4;
+        std::memcpy(&ipv4, buf, 4);
+        pb_address.set_ipv4(ipv4);
+        return true;
+    }
+
+    if (inet_pton(AF_INET6, ip_address.c_str(), buf) == 1)
+    {
+        pb_address.set_ipv6(std::string(reinterpret_cast<char*>(buf), 16));
+        return true;
+    }
+
+    SWSS_LOG_WARN("Invalid IP address format: %s", ip_address.c_str());
+    return false;
 }
