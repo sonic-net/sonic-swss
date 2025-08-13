@@ -201,7 +201,7 @@ class TestMuxTunnelBase():
         else:
             appdb.wait_for_deleted_keys(self.APP_TUNNEL_ROUTE_TABLE_NAME, destinations)
 
-    def check_neigh_in_asic_db(self, asicdb, ip, expected=True):
+    def check_neigh_in_asic_db(self, asicdb, ip, expected=True, no_host_route=True):
         rif_oid = self.get_vlan_rif_oid(asicdb)
         switch_oid = self.get_switch_oid(asicdb)
         neigh_key_map = {
@@ -216,7 +216,12 @@ class TestMuxTunnelBase():
 
             for key in nbr_keys:
                 if ip in key:
-                    return key
+                    if no_host_route:
+                        fvs = asicdb.get_entry(self.ASIC_NEIGH_TABLE, key)
+                        assert fvs.get("SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE") == "true"
+                        return key
+                    else:
+                        return key
 
         else:
             asicdb.wait_for_deleted_keys(self.ASIC_NEIGH_TABLE, [expected_key])
@@ -371,27 +376,43 @@ class TestMuxTunnelBase():
             self.add_neighbor(dvs, neigh_info.ipv6, "00:00:00:00:11:11")
             neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
             neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+            dvs_route.check_asicdb_route_entries(
+                [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
+            )
+            rtv4_keys = dvs_route.check_asicdb_route_entries([neigh_info.ipv4+self.IPV4_MASK])
+            rtv6_keys = dvs_route.check_asicdb_route_entries([neigh_info.ipv6+self.IPV6_MASK])
+            self.check_nexthop_in_asic_db(asicdb, rtv4_keys[0])
+            self.check_nexthop_in_asic_db(asicdb, rtv6_keys[0])
 
         try:
             self.set_mux_state(appdb, "Ethernet0", "standby")
             self.wait_for_mux_state(dvs, "Ethernet0", "standby")
 
+            # Number of NH = Neighbor NHs + 1 tunnel NH,
+            # also populates the tunnel_nh_id
+            expected_nhs = (len(neighbor_list) * 2) + 1
+            self.check_tnl_nexthop_in_asic_db(asicdb, expected_nhs)
+
             for neigh_info in neighbor_list:
-                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv4_key)
-                asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_info.ipv6_key)
+                # neighbor should not be removed
+                ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+                assert ipv4_key == neigh_info.ipv4_key
+                ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+                assert ipv6_key == neigh_info.ipv6_key
                 dvs_route.check_asicdb_route_entries(
                     [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
                 )
+                self.check_nexthop_in_asic_db(asicdb, rtv4_keys[0], True)
+                self.check_nexthop_in_asic_db(asicdb, rtv6_keys[0], True)
 
             self.set_mux_state(appdb, "Ethernet0", "active")
             self.wait_for_mux_state(dvs, "Ethernet0", "active")
 
             for neigh_info in neighbor_list:
-                dvs_route.check_asicdb_deleted_route_entries(
-                    [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
-                )
                 neigh_info.ipv4_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4)
+                self.check_nexthop_in_asic_db(asicdb, rtv4_keys[0])
                 neigh_info.ipv6_key = self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6)
+                self.check_nexthop_in_asic_db(asicdb, rtv6_keys[0])
 
         finally:
             for neigh_info in neighbor_list:
@@ -412,36 +433,46 @@ class TestMuxTunnelBase():
 
         existing_keys = asicdb.get_keys(self.ASIC_NEIGH_TABLE)
 
+        # neighbors must get added even for standby port
         self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
+
         self.add_neighbor(dvs, self.SERV2_IPV6, "00:00:00:00:00:02")
+        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+
         time.sleep(1)
 
-        # In standby mode, the entry must not be added to Neigh table but Route
-        asicdb.wait_for_matching_keys(self.ASIC_NEIGH_TABLE, existing_keys)
-        dvs_route.check_asicdb_route_entries(
-            [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
+        # neighbors use no_host_route and explicit routes are added
+        rt_keys = dvs_route.check_asicdb_route_entries(
+            [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK,
+             self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
         )
 
         # The first standby route also creates as tunnel Nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb, 3)
+        self.check_tnl_nexthop_in_asic_db(asicdb, (len(rt_keys) + 1))
 
-        # Change state to Standby. This will delete Neigh and add Route
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-
-        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v4)
-        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v6)
-        dvs_route.check_asicdb_route_entries(
+        # check for local and standby nexthop
+        rt_keys_srv1 = dvs_route.check_asicdb_route_entries(
             [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK]
         )
-
-        # Change state to Active. This will add Neigh and delete Route
-        self.set_mux_state(appdb, "Ethernet4", "active")
-
-        dvs_route.check_asicdb_deleted_route_entries(
-            [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
+        rt_keys_srv2 = dvs_route.check_asicdb_route_entries(
+             [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
         )
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[0])
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[1])
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[0], True)
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[1], True)
+
+        # Change state to Standby. check NHs should point to tunnel
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[0], True)
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv1[1], True)
+
+        # Change state to Active. Check NHs should not point to tunnel
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[0])
+        self.check_nexthop_in_asic_db(asicdb, rt_keys_srv2[1])
+
 
     def create_and_test_soc(self, appdb, asicdb, dvs, dvs_route):
 
@@ -457,11 +488,15 @@ class TestMuxTunnelBase():
 
         self.set_mux_state(appdb, "Ethernet0", "standby")
 
-        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_soc_v4)
+        # neighbor entry should not be removed
+        soc_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
+        assert soc_v4 == srv1_soc_v4
         dvs_route.check_asicdb_route_entries(
             [self.SERV1_SOC_IPV4+self.IPV4_MASK]
         )
         self.check_tunnel_route_in_app_db(dvs, [self.SERV1_SOC_IPV4+self.IPV4_MASK], expected=False)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 2)
+        self.check_route_nexthop(dvs_route, asicdb, self.SERV1_SOC_IPV4+self.IPV4_MASK, tunnel_nh_id, True)
 
         marker = dvs.add_log_marker()
 
@@ -486,42 +521,47 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, ip_1, "00:00:00:00:00:11")
         self.add_neighbor(dvs, ip_2, "00:00:00:00:00:12")
 
-        # ip_1 is on Active Mux, hence added to Host table
+        # Both ip_1 and ip_2 should be added as neighbors
+        # with no_host_route.
+        # ip_1 should have route pointing to neigh nh
+        # ip_2 should have route pointing to tunnel nh
         self.check_neigh_in_asic_db(asicdb, ip_1)
+        self.check_neigh_in_asic_db(asicdb, ip_2)
 
-        # ip_2 is on Standby Mux, hence added to Route table
-        dvs_route.check_asicdb_route_entries([ip_2+self.IPV6_MASK])
+        ip1_rt_key = dvs_route.check_asicdb_route_entries([ip_1+self.IPV6_MASK])
+        ip2_rt_key = dvs_route.check_asicdb_route_entries([ip_2+self.IPV6_MASK])
 
+        self.check_nexthop_in_asic_db(asicdb, ip1_rt_key[0])
+        self.check_nexthop_in_asic_db(asicdb, ip2_rt_key[0], True)
         # Check ip_1 move to standby mux, should be pointing to tunnel
         self.add_neighbor(dvs, ip_1, "00:00:00:00:00:12")
-
-        # ip_1 moved to standby Mux, hence added to Route table
-        dvs_route.check_asicdb_route_entries([ip_1+self.IPV6_MASK])
+        time.sleep(1)
+        self.check_nexthop_in_asic_db(asicdb, ip1_rt_key[0], True)
 
         # Check ip_2 move to active mux, should be host entry
         self.add_neighbor(dvs, ip_2, "00:00:00:00:00:11")
-
-        # ip_2 moved to active Mux, hence remove from Route table
-        dvs_route.check_asicdb_deleted_route_entries([ip_2+self.IPV6_MASK])
-        self.check_neigh_in_asic_db(asicdb, ip_2)
+        time.sleep(1)
+        self.check_nexthop_in_asic_db(asicdb, ip2_rt_key[0])
 
         # Simulate FDB aging out test case
         ip_3 = "192.168.0.200"
 
         self.add_neighbor(dvs, ip_3, "00:00:00:00:00:12")
+        time.sleep(1)
 
         # ip_3 is added to standby mux
-        dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+        ip3_rt_key = dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+        self.check_nexthop_in_asic_db(asicdb, ip3_rt_key[0], True)
 
         # Simulate FDB age out
         self.del_fdb(dvs, "00-00-00-00-00-12")
 
         # FDB ageout is not expected to change existing state of neighbor
-        dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+        self.check_nexthop_in_asic_db(asicdb, ip3_rt_key[0], True)
 
         # Change to active
         self.set_mux_state(appdb, "Ethernet4", "active")
-        dvs_route.check_asicdb_deleted_route_entries([ip_3+self.IPV4_MASK])
+        self.check_nexthop_in_asic_db(asicdb, ip3_rt_key[0])
 
         self.del_fdb(dvs, "00-00-00-00-00-11")
 
@@ -1020,6 +1060,7 @@ class TestMuxTunnelBase():
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
 
+        # continue to point to standby
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
 
@@ -1390,13 +1431,15 @@ class TestMuxTunnelBase():
 
     def check_neighbor_state(
             self, dvs, dvs_route, neigh_ip, expect_route=True,
-            expect_neigh=False, expected_mac='00:00:00:00:00:00'
+            expect_neigh=False, expected_mac='00:00:00:00:00:00',
+            no_host_route=True
         ):
         """
         Checks the status of neighbor entries in APPL and ASIC DB
         """
-        if expect_route and expect_neigh:
-            pytest.fail('expect_routes and expect_neigh cannot both be True')
+        standby_state=False
+        if expect_route and expect_neigh==False:
+            standby_state=True
         app_db = dvs.get_app_db()
         asic_db = dvs.get_asic_db()
         prefix = str(ip_network(neigh_ip))
@@ -1405,13 +1448,17 @@ class TestMuxTunnelBase():
             mac=expected_mac, expect_entry=expect_route
         )
         if expect_route:
-            self.check_tnl_nexthop_in_asic_db(asic_db)
+            if expected_mac == '00:00:00:00:00:00':
+                self.check_tnl_nexthop_in_asic_db(asic_db, 1)
+            else:
+                # expected_nhs = neighbor nh + tunnel_nh
+                self.check_tnl_nexthop_in_asic_db(asic_db, 2)
             routes = dvs_route.check_asicdb_route_entries([prefix])
             for route in routes:
-                self.check_nexthop_in_asic_db(asic_db, route, standby=expect_route)
+                self.check_nexthop_in_asic_db(asic_db, route, standby=standby_state)
         else:
             dvs_route.check_asicdb_deleted_route_entries([prefix])
-            self.check_neigh_in_asic_db(asic_db, neigh_ip, expected=expect_neigh)
+            self.check_neigh_in_asic_db(asic_db, neigh_ip, expected=expect_neigh, no_host_route=no_host_route)
 
     def execute_action(self, action, dvs, test_info):
         if action in (PING_SERV, PING_NEIGH):
@@ -1597,7 +1644,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         """ test IPv4 Mux tunnel creation """
 
         asicdb = dvs.get_asic_db()
-        
+
         encap_tc_to_dscp_map_id, encap_tc_to_queue_map_id, _, _ = setup
 
         self.create_and_test_peer(asicdb, encap_tc_to_dscp_map_id, encap_tc_to_queue_map_id)
@@ -1635,7 +1682,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         mac = intf_fdb_map["Ethernet0"]
 
         # get tunnel nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb, 5)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 8)
 
         self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
 
@@ -1685,6 +1732,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for step in neigh_miss_test_sequence:
             self.execute_action(step[TEST_ACTION], dvs, test_info)
             exp_result = step[EXPECTED_RESULT]
+            print(step)
             self.check_neighbor_state(
                 dvs, dvs_route, ip,
                 expect_route=exp_result[EXPECT_ROUTE],
@@ -1745,42 +1793,76 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         self.create_and_test_soc(appdb, asicdb, dvs, dvs_route)
 
-    def test_warm_boot_mux_state(
+    def test_standalone_tunnel_route_non_mux_neighbor_zero_mac(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
             setup_peer_switch, neighbor_cleanup, testlog
     ):
-        """
-        test mux initialization during warm boot.
-        """
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        apdb = dvs.get_app_db()
+        config_db = dvs.get_config_db()
+        asicdb = dvs.get_asic_db()
 
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.set_mux_state(appdb, "Ethernet4", "active")
-        self.set_mux_state(appdb, "Ethernet8", "standby")
+        # Add Ethernet12 to VLAN1000 but without MUX cable configuration
+        fvs = {"tagging_mode": "untagged"}
+        config_db.create_entry("VLAN_MEMBER", "Vlan1000|Ethernet12", fvs)
+        dvs.port_admin_set("Ethernet12", "up")
 
-        # Execute the warm reboot
-        dvs.runcmd("config warm_restart enable swss")
-        dvs.stop_swss()
-        dvs.start_swss()
-        dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+        # Step 1: First test that zero MAC neighbors DO create standalone tunnel routes
+        non_mux_neighbor_ip = "192.168.0.150"
+        self.add_neighbor(dvs, non_mux_neighbor_ip, "00:00:00:00:00:00")
 
-        time.sleep(5)
+        # Verify standalone tunnel route is created for zero MAC neighbor on non-MUX port
+        time.sleep(2)
+        non_mux_prefix = non_mux_neighbor_ip + self.IPV4_MASK
+        self.check_neighbor_state(dvs, dvs_route, non_mux_neighbor_ip,
+                                expect_route=True, expect_neigh=False,
+                                expected_mac='00:00:00:00:00:00')
 
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
+        # Step 2: Set up a MUX port (Ethernet0) in standby and create MUX neighbor
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.wait_for_mux_state(dvs, "Ethernet0", "standby")
 
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
+        # Add FDB entry for Ethernet0 (MUX port)
+        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-00-01")
 
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
+        # Add a neighbor on the MUX port to trigger tunnel route creation
+        mux_neighbor_ip = self.SERV1_IPV4
+        self.add_neighbor(dvs, mux_neighbor_ip, "00:00:00:00:00:01")
+
+        # Verify that standalone tunnel route is created for MUX neighbor
+        time.sleep(2)
+        mux_prefix = mux_neighbor_ip + self.IPV4_MASK
+        dvs_route.check_asicdb_route_entries([mux_prefix])
+        rtkeys_mux = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_mux[0], True)  # Should point to tunnel
+
+        # At this point we should have tunnel routes for both neighbors
+        dvs_route.check_asicdb_route_entries([non_mux_prefix, mux_prefix])
+
+        # Step 3: Test the scenario - update the zero MAC neighbor on non-MUX port
+        # with a non-zero MAC. This triggers removeStandaloneTunnelRoute, which should
+        # only remove the non-MUX neighbor's standalone tunnel route and NOT affect the MUX neighbor route
+        self.add_neighbor(dvs, non_mux_neighbor_ip, "00:aa:bb:cc:dd:ee")
+        time.sleep(1)
+
+        # Step 4: Verify that:
+        # a) The non-MUX neighbor now has a regular neighbor entry (no longer standalone tunnel route)
+        self.check_neighbor_state(dvs, dvs_route, non_mux_neighbor_ip,
+                                expect_route=False, expect_neigh=True,
+                                expected_mac='00:aa:bb:cc:dd:ee',
+                                no_host_route=False)
+
+        # b) The MUX neighbor's tunnel route is still intact
+        # This is the key test - the fix ensures removeStandaloneTunnelRoute
+        # checks if neighbor belongs to MUX port before removing routes
+        dvs_route.check_asicdb_route_entries([mux_prefix])
+        rtkeys_final = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_final[0], True)  # Should still point to tunnel
+
+        # Cleanup
+        self.del_neighbor(dvs, non_mux_neighbor_ip)
+        self.del_neighbor(dvs, mux_neighbor_ip)
+        self.del_fdb(dvs, "00-00-00-00-00-01")
+        config_db.delete_entry("VLAN_MEMBER", "Vlan1000|Ethernet12")
 
     def test_warm_boot_neighbor_restore(
         self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
@@ -1868,6 +1950,43 @@ class TestMuxTunnel(TestMuxTunnelBase):
                 self.NEIGH3_IPV6 + self.IPV6_MASK
             ]
         )
+
+    def test_warm_boot_mux_state(
+            self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        test mux initialization during warm boot.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        apdb = dvs.get_app_db()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.set_mux_state(appdb, "Ethernet8", "standby")
+
+        # Execute the warm reboot
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+
+        time.sleep(5)
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
+
+        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
