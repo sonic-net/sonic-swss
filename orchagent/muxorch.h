@@ -132,6 +132,7 @@ public:
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
     void updateRoutes();
+    void updateRoutesForNextHop(NextHopKey nh);
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
@@ -239,7 +240,7 @@ public:
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getTunnelNextHopId();
 
-    void updateRoute(const IpPrefix &pfx, bool add);
+    void updateRoute(const IpPrefix &pfx);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
     void enableCachingNeighborUpdate()

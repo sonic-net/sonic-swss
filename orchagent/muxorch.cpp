@@ -645,6 +645,7 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
     if (enable)
     {
         ret = nbr_handler_->enable(update_rt);
+        // Loop through all routes with nexthops through this mux cable when changing state
         updateRoutes();
     }
     else
@@ -655,6 +656,7 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
             SWSS_LOG_INFO("Null NH object id, retry for %s", peer_ip4_.to_string().c_str());
             return false;
         }
+        // Loop through all routes with nexthops through this mux cable when changing state
         updateRoutes();
         ret = nbr_handler_->disable(tnh);
     }
@@ -675,7 +677,8 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
     {
         mux_orch_->removeNexthop(nh);
     }
-    updateRoutes();
+
+    updateRoutesForNextHop(nh);
 }
 
 /**
@@ -683,7 +686,6 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
  */
 void MuxCable::updateRoutes()
 {
-    SWSS_LOG_INFO("Updating routes pointing to multiple mux nexthops");
     MuxNeighbor neighbors = nbr_handler_->getNeighbors();
     string alias = nbr_handler_->getAlias();
     for (auto nh = neighbors.begin(); nh != neighbors.end(); nh ++)
@@ -694,8 +696,28 @@ void MuxCable::updateRoutes()
         {
             for (auto rt = routes.begin(); rt != routes.end(); rt++)
             {
-                mux_orch_->updateRoute(rt->prefix, true);
+                SWSS_LOG_NOTICE("Checking route %s for multi-mux nexthops",
+                              rt->prefix.to_string().c_str());
+                mux_orch_->updateRoute(rt->prefix);
             }
+        }
+    }
+}
+
+/**
+ * @brief updates routes for given nexthop if part of multi-mux route
+ * @param nh NextHopKey to search routes
+ */
+void MuxCable::updateRoutesForNextHop(NextHopKey nh)
+{
+    std::set<RouteKey> routes;
+    if (gRouteOrch->getRoutesForNexthop(routes, nh))
+    {
+        SWSS_LOG_NOTICE("Updating multi-mux routes with nexthop: %s",
+                        nh.ip_address.to_string().c_str());
+        for (auto rt = routes.begin(); rt != routes.end(); rt++)
+        {
+            mux_orch_->updateRoute(rt->prefix);
         }
     }
 }
@@ -1344,19 +1366,11 @@ sai_object_id_t MuxOrch::getTunnelNextHopId()
 /**
  * @brief updates the given route to point to a single active NH or tunnel
  * @param pfx IpPrefix of route to update
- * @param remove bool only true when route is getting removed
  */
-void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
+void MuxOrch::updateRoute(const IpPrefix &pfx)
 {
     NextHopGroupKey nhg_key;
     NextHopGroupEntry nhg_entry;
-
-    if (!add)
-    {
-        SWSS_LOG_INFO("Removing route %s from mux_multi_active_nh_table",
-                      pfx.to_string().c_str());
-        return;
-    }
 
     /* get nexthop group key from syncd */
     nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
