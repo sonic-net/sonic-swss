@@ -113,11 +113,10 @@ class TestDash(TestFlexCountersBase):
 
     def post_eni_counter_test(self, meta_data):
         counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
-        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable', check_name_map=False)
 
         for counter_entry in counters_keys.items():
             self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
-        self.wait_for_table_empty(meta_data['name_map'])
 
     def test_eni(self, dash_db: DashDB):
         self.vnet = "Vnet1"

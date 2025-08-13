@@ -6,6 +6,7 @@
 #include <exception>
 #include <inttypes.h>
 #include <algorithm>
+#include <numeric>
 
 #include "sai.h"
 #include "saiextensions.h"
@@ -726,12 +727,15 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TABLE_NAME, &VNetRouteOrch::handleRoutes));
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 
+    config_db_ = shared_ptr<DBConnector>(new DBConnector("CONFIG_DB", 0));
     state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     app_db_ = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
 
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
     state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));
     monitor_session_producer_ = unique_ptr<Table>(new Table(app_db_.get(), APP_VNET_MONITOR_TABLE_NAME));
+
+    vnet_tunnel_term_acl_ = make_shared<VNetTunnelTermAcl>(config_db_.get(), app_db_.get());
 
     gBfdOrch->attach(this);
 }
@@ -2896,6 +2900,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         IpAddress ip = ip_list[idx_ip];
         bool is_local = isLocalEndpoint(vnet_name, ip);
         bool is_overlay = !is_local;
+        IpAddress nh_ip = is_local ? monitor_list[idx_ip] : ip;
         string alias = is_local ? gIntfsOrch->getRouterIntfsAlias(ip) : "";
         MacAddress mac;
         uint32_t vni = 0;
@@ -2911,6 +2916,11 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         if (!mac_list.empty() && mac_list[idx_ip] != "")
         {
             mac = MacAddress(mac_list[idx_ip]);
+        }
+
+        if (is_local)
+        {
+            vnet_tunnel_term_acl_->createAclRule(vnet_name, ip_pfx, nh_ip);
         }
 
         NextHopKey nh(ip, alias, mac, vni, is_overlay);
@@ -3156,4 +3166,149 @@ bool MonitorOrch::delOperation(const Request& request)
     vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, "" );
 
     return true;
+}
+
+VNetTunnelTermAcl::VNetTunnelTermAcl(DBConnector *cfgDb, DBConnector *appDb)
+{
+    SWSS_LOG_ENTER();
+
+    acl_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TABLE_NAME);
+    acl_table_type_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
+    acl_rule_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_RULE_TABLE_NAME);
+
+    ctx_ = make_shared<TunnelTermHelper>(cfgDb);
+}
+
+void VNetTunnelTermAcl::lazyInit()
+{
+
+    SWSS_LOG_ENTER();
+
+    if (acl_table_initialized_)
+    {
+        return;
+    }
+
+    ctx_->initialize();
+
+    vector<string> match_list = {
+        MATCH_DST_IP,
+        MATCH_DST_IPV6,
+        MATCH_TUNNEL_TERM
+    };
+    string matches = std::accumulate(std::next(match_list.begin()), match_list.end(), match_list[0], concat);
+
+    vector<string> bpoint_list = {
+        BIND_POINT_TYPE_PORT,
+        BIND_POINT_TYPE_PORTCHANNEL
+    };
+    string bpoints = std::accumulate(std::next(bpoint_list.begin()), bpoint_list.end(), bpoint_list[0], concat);
+
+    vector<FieldValueTuple> fvs = {
+        {ACL_TABLE_TYPE_MATCHES, matches},
+        {ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION},
+        {ACL_TABLE_TYPE_BPOINT_TYPES, bpoints}
+    };
+
+    acl_table_type_->set(VNET_TUNNEL_TERM_ACL_TABLE_TYPE, fvs);
+
+    std::string ports_str = "";
+    auto ports = ctx_->getBindPoints();
+    if (!ports.empty())
+    {
+        ports_str = std::accumulate(std::next(ports.begin()), ports.end(), ports[0], concat);
+    }
+
+    vector<FieldValueTuple> fvs2 = {
+        {ACL_TABLE_DESCRIPTION, "Vnet Tunnel Termination ACL"},
+        {ACL_TABLE_TYPE, VNET_TUNNEL_TERM_ACL_TABLE_TYPE},
+        {ACL_TABLE_STAGE, STAGE_INGRESS},
+        {ACL_TABLE_PORTS, ports_str}
+    };
+
+    acl_table_->set(VNET_TUNNEL_TERM_ACL_TABLE, fvs2);
+
+    acl_table_initialized_ = true;
+}
+
+bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vip, swss::IpAddress nh_ip)
+{
+    SWSS_LOG_ENTER();
+
+    lazyInit();
+
+    VNetLocEpAclRule rule;
+
+    if (getAclRule(vnet_name, vip, rule))
+    {
+        /* If there are more than one local points for the same VIP, we will not create a new rule. */
+        return true;
+    }
+
+    std::string rule_name = ctx_->getRuleName(vnet_name, vip);
+    std::string alias = ctx_->getNbrAlias(nh_ip);
+
+    if (alias.empty())
+    {
+        SWSS_LOG_ERROR("Failed to get interface alias for IP %s", nh_ip.to_string().c_str());
+        return false;
+    }
+
+    vector<FieldValueTuple> fvs = {
+        {RULE_PRIORITY, to_string(VNET_TUNNEL_TERM_ACL_BASE_PRIORITY)},
+        {MATCH_DST_IP, vip.to_string()},
+        /* This tunnel term acl is to handle a transient state in DPU failover, so the redirect can't point to a VIP.*/
+        {ACTION_REDIRECT_ACTION, alias}
+    };
+
+    acl_rule_table_->set(rule_name, fvs);
+
+    rule.rule_name = rule_name;
+    rule.vip = vip;
+    rule.nh_ip = nh_ip;
+
+    vnet_loc_ep_acl_rule_map_[vnet_name].push_back(rule);
+
+    return true;
+}
+
+bool VNetTunnelTermAcl::removeAclRule(const string vnet_name, swss::IpPrefix& vip)
+{
+    SWSS_LOG_ENTER();
+
+    VNetLocEpAclRule rule;
+
+    if (!getAclRule(vnet_name, vip, rule))
+    {
+        SWSS_LOG_ERROR("No ACL rule found for VNet %s with VIP %s", vnet_name.c_str(), vip.to_string().c_str());
+        return false;
+    }
+
+    acl_rule_table_->del(rule.rule_name);
+
+    vnet_loc_ep_acl_rule_map_[vnet_name].erase(
+        std::remove_if(vnet_loc_ep_acl_rule_map_[vnet_name].begin(),
+                       vnet_loc_ep_acl_rule_map_[vnet_name].end(),
+                       [&vip](const VNetLocEpAclRule& rule) { return rule.vip == vip; }),
+        vnet_loc_ep_acl_rule_map_[vnet_name].end());
+
+    return true;
+}
+
+bool VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix& vip, VNetLocEpAclRule& rule_found)
+{
+    auto it = vnet_loc_ep_acl_rule_map_.find(vnet_name);
+    if (it != vnet_loc_ep_acl_rule_map_.end())
+    {
+        for (const auto& rule : it->second)
+        {
+            if (rule.vip == vip)
+            {
+                rule_found = rule;
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
