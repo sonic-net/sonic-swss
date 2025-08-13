@@ -225,10 +225,6 @@ jobs:
     workingDirectory: $(Build.ArtifactStagingDirectory)
     displayName: "Install sonic swss common and sairedis"
   - script: |
-      cd countersyncd
-      cargo test
-    displayName: "Test countersyncd"
-  - script: |
       set -ex
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
@@ -242,6 +238,9 @@ jobs:
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
+  - script: |
+      cargo test
+    displayName: "Test countersyncd"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"

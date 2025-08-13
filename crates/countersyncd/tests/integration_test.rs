@@ -126,8 +126,12 @@ mod end_to_end_tests {
         let stats_reporter = StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
 
         // Spawn actor tasks  
-        let _ipfix_handle = spawn(async move {
-            IpfixActor::run(ipfix).await;
+        let _ipfix_handle = tokio::task::spawn_blocking(move || {
+            // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
+            rt.block_on(async move {
+                IpfixActor::run(ipfix).await;
+            });
         });
 
         let _stats_handle = spawn(async move {
@@ -221,8 +225,12 @@ mod end_to_end_tests {
         let stats_reporter = StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
 
         // Spawn actors
-        let _ipfix_handle = spawn(async move {
-            IpfixActor::run(ipfix).await;
+        let _ipfix_handle = tokio::task::spawn_blocking(move || {
+            // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
+            rt.block_on(async move {
+                IpfixActor::run(ipfix).await;
+            });
         });
 
         let _stats_handle = spawn(async move {

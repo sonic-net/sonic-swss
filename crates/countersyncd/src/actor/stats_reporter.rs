@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use log::{debug, info};
@@ -7,7 +8,33 @@ use tokio::{
     time::{interval, Interval},
 };
 
-use super::super::message::saistats::{SAIStats, SAIStatsMessage};
+use super::super::message::saistats::SAIStatsMessage;
+
+/// Unique key for identifying a specific counter based on the triplet
+/// (object_name, type_id, stat_id)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CounterKey {
+    pub object_name: String,
+    pub type_id: u32,
+    pub stat_id: u32,
+}
+
+impl CounterKey {
+    pub fn new(object_name: String, type_id: u32, stat_id: u32) -> Self {
+        Self {
+            object_name,
+            type_id,
+            stat_id,
+        }
+    }
+}
+
+/// Counter information including the latest value and associated metadata
+#[derive(Debug, Clone)]
+pub struct CounterInfo {
+    pub counter: u64,
+    pub last_observation_time: u64,
+}
 
 /// Trait for output writing to enable testing
 pub trait OutputWriter: Send + Sync {
@@ -73,7 +100,8 @@ impl Default for StatsReporterConfig {
 /// 
 /// The StatsReporterActor handles:
 /// - Receiving SAI statistics messages from IPFIX processor
-/// - Maintaining the latest statistics state
+/// - Maintaining the latest statistics state per counter key (object_name, type_id, stat_id)
+/// - Tracking message counts per counter key for each reporting period
 /// - Periodic reporting based on configured interval
 /// - Formatted output to terminal with optional detail levels
 pub struct StatsReporterActor<W: OutputWriter> {
@@ -83,10 +111,12 @@ pub struct StatsReporterActor<W: OutputWriter> {
     config: StatsReporterConfig,
     /// Timer for periodic reporting
     report_timer: Interval,
-    /// Latest received statistics (None if no data received yet)
-    latest_stats: Option<SAIStats>,
-    /// Counter for total messages received
-    messages_received: u64,
+    /// Latest counter values indexed by (object_name, type_id, stat_id) key
+    latest_counters: HashMap<CounterKey, CounterInfo>,
+    /// Message count per counter key for current reporting period
+    messages_per_counter: HashMap<CounterKey, u64>,
+    /// Total messages received across all counters
+    total_messages_received: u64,
     /// Counter for total reports generated
     reports_generated: u64,
     /// Output writer for dependency injection
@@ -117,8 +147,9 @@ impl<W: OutputWriter> StatsReporterActor<W> {
             stats_receiver,
             config,
             report_timer,
-            latest_stats: None,
-            messages_received: 0,
+            latest_counters: HashMap::new(),
+            messages_per_counter: HashMap::new(),
+            total_messages_received: 0,
             reports_generated: 0,
             writer,
         }
@@ -140,90 +171,128 @@ impl<W: OutputWriter> StatsReporterActor<W> {
 
     /// Updates the internal state with new statistics data.
     /// 
+    /// For each statistic in the message, updates:
+    /// - The latest counter value for the (object_name, type_id, stat_id) key
+    /// - The message count for that key in the current reporting period
+    /// 
     /// # Arguments
     /// 
-    /// * `stats` - New SAI statistics message to process
-    fn update_stats(&mut self, stats: SAIStatsMessage) {
-        self.messages_received += 1;
+    /// * `stats_msg` - New SAI statistics message to process
+    fn update_stats(&mut self, stats_msg: SAIStatsMessage) {
+        self.total_messages_received += 1;
         
-        // Convert Arc<SAIStats> to SAIStats for storage
-        match std::sync::Arc::try_unwrap(stats) {
-            Ok(stats) => {
-                debug!("Received SAI stats with {} entries, observation_time: {}", 
-                       stats.stats.len(), stats.observation_time);
-                self.latest_stats = Some(stats);
-            }
-            Err(arc_stats) => {
-                // If Arc::try_unwrap fails, clone the data
-                debug!("Cloning SAI stats due to shared ownership");
-                self.latest_stats = Some((*arc_stats).clone());
-            }
+        // Extract SAIStats from Arc
+        let stats = match std::sync::Arc::try_unwrap(stats_msg) {
+            Ok(stats) => stats,
+            Err(arc_stats) => (*arc_stats).clone(),
+        };
+        
+        debug!("Received SAI stats with {} entries, observation_time: {}", 
+               stats.stats.len(), stats.observation_time);
+
+        // Process each statistic in the message
+        for stat in stats.stats {
+            let key = CounterKey::new(
+                stat.object_name,
+                stat.type_id,
+                stat.stat_id,
+            );
+
+            // Update latest counter value
+            let counter_info = CounterInfo {
+                counter: stat.counter,
+                last_observation_time: stats.observation_time,
+            };
+            self.latest_counters.insert(key.clone(), counter_info);
+
+            // Increment message count for this counter key
+            *self.messages_per_counter.entry(key).or_insert(0) += 1;
         }
     }
 
     /// Generates and prints a statistics report to the terminal.
+    /// 
+    /// Reports all current counter values and their triplets, as well as
+    /// message counts for the current reporting period. After reporting,
+    /// clears the per-period message counters.
     fn generate_report(&mut self) {
         self.reports_generated += 1;
 
-        if let Some(stats) = self.latest_stats.clone() {
-            self.print_stats_report(&stats);
-        } else {
+        if self.latest_counters.is_empty() {
             self.writer.write_line(&format!("📊 [Report #{}] No statistics data available yet", self.reports_generated));
-            self.writer.write_line(&format!("   Messages received: {}", self.messages_received));
+            self.writer.write_line(&format!("   Total Messages Received: {}", self.total_messages_received));
+        } else {
+            self.print_counters_report();
         }
+        
+        // Clear per-period message counters for next reporting period
+        self.messages_per_counter.clear();
         
         self.writer.write_line(""); // Add blank line for readability
     }
 
-    /// Prints formatted statistics report to terminal.
+    /// Prints formatted counters report to terminal.
     /// 
-    /// # Arguments
-    /// 
-    /// * `stats` - SAI statistics to display
-    fn print_stats_report(&mut self, stats: &SAIStats) {
-        self.writer.write_line(&format!("📊 [Report #{}] SAI Statistics Report", self.reports_generated));
-        self.writer.write_line(&format!("   Timestamp: {} (observation time)", stats.observation_time));
-        self.writer.write_line(&format!("   Total Statistics: {}", stats.stats.len()));
-        self.writer.write_line(&format!("   Messages Received: {}", self.messages_received));
+    /// Shows all current counters with their triplet keys and the number of
+    /// messages received for each counter in the current reporting period.
+    fn print_counters_report(&mut self) {
+        self.writer.write_line(&format!("📊 [Report #{}] SAI Counters Report", self.reports_generated));
+        self.writer.write_line(&format!("   Total Unique Counters: {}", self.latest_counters.len()));
+        self.writer.write_line(&format!("   Total Messages Received: {}", self.total_messages_received));
 
-        if self.config.detailed && !stats.stats.is_empty() {
-            self.writer.write_line("   📈 Detailed Statistics:");
+        if self.config.detailed && !self.latest_counters.is_empty() {
+            self.writer.write_line("   📈 Detailed Counters:");
             
-            let stats_to_show = if let Some(max) = self.config.max_stats_per_report {
-                &stats.stats[..std::cmp::min(max, stats.stats.len())]
+            // Sort counters by key for consistent output
+            let mut sorted_counters: Vec<_> = self.latest_counters.iter().collect();
+            sorted_counters.sort_by(|a, b| {
+                a.0.object_name.cmp(&b.0.object_name)
+                    .then_with(|| a.0.type_id.cmp(&b.0.type_id))
+                    .then_with(|| a.0.stat_id.cmp(&b.0.stat_id))
+            });
+
+            let counters_to_show = if let Some(max) = self.config.max_stats_per_report {
+                &sorted_counters[..std::cmp::min(max, sorted_counters.len())]
             } else {
-                &stats.stats
+                &sorted_counters
             };
 
-            for (index, stat) in stats_to_show.iter().enumerate() {
+            for (index, (key, counter_info)) in counters_to_show.iter().enumerate() {
+                let messages_in_period = self.messages_per_counter.get(key).unwrap_or(&0);
+                let messages_per_second = *messages_in_period as f64 / self.config.interval.as_secs_f64();
                 self.writer.write_line(&format!(
-                    "      [{:3}] Object: {:15}, Type: {:10}, Stat: {:10}, Counter: {:15}",
+                    "      [{:3}] Object: {:15}, Type: {:10}, Stat: {:10}, Counter: {:15}, Msg/s: {:6.1}, LastTime: {}",
                     index + 1,
-                    stat.object_name,
-                    stat.type_id,
-                    stat.stat_id,
-                    stat.counter
+                    key.object_name,
+                    key.type_id,
+                    key.stat_id,
+                    counter_info.counter,
+                    messages_per_second,
+                    counter_info.last_observation_time
                 ));
             }
 
             if let Some(max) = self.config.max_stats_per_report {
-                if stats.stats.len() > max {
+                if self.latest_counters.len() > max {
                     self.writer.write_line(&format!(
-                        "      ... and {} more statistics (use max_stats_per_report: None to show all)",
-                        stats.stats.len() - max
+                        "      ... and {} more counters (use max_stats_per_report: None to show all)",
+                        self.latest_counters.len() - max
                     ));
                 }
             }
-        } else if !self.config.detailed && !stats.stats.is_empty() {
-            // Summary mode - show some aggregate information
-            let total_counter: u64 = stats.stats.iter().map(|s| s.counter).sum();
-            let unique_types = stats.stats.iter().map(|s| s.type_id).collect::<std::collections::HashSet<_>>().len();
-            let unique_labels = stats.stats.iter().map(|s| &s.object_name).collect::<std::collections::HashSet<_>>().len();
+        } else if !self.config.detailed && !self.latest_counters.is_empty() {
+            // Summary mode - show aggregate information
+            let total_counter_value: u64 = self.latest_counters.values().map(|info| info.counter).sum();
+            let unique_types = self.latest_counters.keys().map(|k| k.type_id).collect::<std::collections::HashSet<_>>().len();
+            let unique_objects = self.latest_counters.keys().map(|k| &k.object_name).collect::<std::collections::HashSet<_>>().len();
+            let total_messages_in_period: u64 = self.messages_per_counter.values().sum();
+            let messages_per_second = total_messages_in_period as f64 / self.config.interval.as_secs_f64();
             
             self.writer.write_line("   📊 Summary:");
-            self.writer.write_line(&format!("      Total Counter Value: {}", total_counter));
+            self.writer.write_line(&format!("      Total Counter Value: {}", total_counter_value));
             self.writer.write_line(&format!("      Unique Types: {}", unique_types));
-            self.writer.write_line(&format!("      Unique Objects: {}", unique_labels));
+            self.writer.write_line(&format!("      Unique Objects: {}", unique_objects));
+            self.writer.write_line(&format!("      Messages per Second: {:.1}", messages_per_second));
         }
     }
 
@@ -270,7 +339,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
 impl<W: OutputWriter> Drop for StatsReporterActor<W> {
     fn drop(&mut self) {
         info!("StatsReporter dropped after {} reports and {} messages", 
-              self.reports_generated, self.messages_received);
+              self.reports_generated, self.total_messages_received);
     }
 }
 
@@ -409,25 +478,23 @@ mod tests {
         // Verify we have some output
         assert!(!output.is_empty(), "Should have captured some output");
         
-        // Verify report header is present
-        let has_report_header = output.iter().any(|line| line.contains("SAI Statistics Report"));
-        assert!(has_report_header, "Should contain report header");
+        // Verify report header is present (now "SAI Counters Report")
+        let has_report_header = output.iter().any(|line| line.contains("SAI Counters Report"));
+        assert!(has_report_header, "Should contain counters report header");
 
-        // Verify latest timestamp is present
-        let has_latest_timestamp = output.iter().any(|line| line.contains("Timestamp: 67890"));
-        assert!(has_latest_timestamp, "Should contain the latest timestamp");
-
-        // Verify statistics count for latest data
-        let has_stats_count = output.iter().any(|line| line.contains("Total Statistics: 2"));
-        assert!(has_stats_count, "Should show correct stats count for latest data");
+        // Verify counter count for all unique counters (first 5 + 2 overlapping = 5 unique)
+        let has_counter_count = output.iter().any(|line| line.contains("Total Unique Counters: 5"));
+        assert!(has_counter_count, "Should show correct unique counters count");
 
         // Verify detailed output
-        let has_detailed = output.iter().any(|line| line.contains("Detailed Statistics:"));
-        assert!(has_detailed, "Should show detailed statistics");
+        let has_detailed = output.iter().any(|line| line.contains("Detailed Counters:"));
+        assert!(has_detailed, "Should show detailed counters");
 
-        // Verify individual stat entries (now looking for "Object:" instead of "Label:")
-        let has_stat_entry = output.iter().any(|line| line.contains("Object:") && line.contains("Type:"));
-        assert!(has_stat_entry, "Should show individual stat entries");
+        // Verify individual counter entries with new format
+        let has_counter_entry = output.iter().any(|line| 
+            line.contains("Object:") && line.contains("Type:") && line.contains("Msg/s:")
+        );
+        assert!(has_counter_entry, "Should show individual counter entries with message counts");
 
         println!("✅ Basic functionality test passed - captured {} output lines", output.len());
     }
@@ -504,9 +571,13 @@ mod tests {
         let has_unique_labels = output.iter().any(|line| line.contains("Unique Objects: 3"));
         assert!(has_unique_labels, "Should show correct unique objects count");
 
-        // Should NOT have detailed statistics
-        let has_detailed = output.iter().any(|line| line.contains("Detailed Statistics:"));
-        assert!(!has_detailed, "Should NOT show detailed statistics in summary mode");
+        // Should NOT have detailed counters
+        let has_detailed = output.iter().any(|line| line.contains("Detailed Counters:"));
+        assert!(!has_detailed, "Should NOT show detailed counters in summary mode");
+
+        // Should show messages per second
+        let has_messages_per_second = output.iter().any(|line| line.contains("Messages per Second:"));
+        assert!(has_messages_per_second, "Should show messages per second in summary mode");
 
         println!("✅ Summary mode test passed - captured {} output lines", output.len());
     }
@@ -569,8 +640,8 @@ mod tests {
         assert!(has_no_data_msg, "Should show 'no data available' message");
 
         // Verify message count is 0
-        let has_zero_messages = output.iter().any(|line| line.contains("Messages received: 0"));
-        assert!(has_zero_messages, "Should show 0 messages received");
+        let has_zero_messages = output.iter().any(|line| line.contains("Total Messages Received: 0"));
+        assert!(has_zero_messages, "Should show 0 total messages received");
 
         println!("✅ No data test passed - captured {} output lines", output.len());
     }
@@ -629,19 +700,19 @@ mod tests {
         // Verify captured output
         let output = writer_clone.get_lines();
 
-        // Find the first detailed statistics section
+        // Find the first detailed counters section
         let mut in_detailed_section = false;
-        let mut stat_entries = Vec::new();
+        let mut counter_entries = Vec::new();
         
         for line in &output {
-            if line.contains("📈 Detailed Statistics:") {
+            if line.contains("📈 Detailed Counters:") {
                 in_detailed_section = true;
                 continue;
             }
             
             if in_detailed_section {
                 if line.contains("] Object:") && line.contains("Type:") {
-                    stat_entries.push(line);
+                    counter_entries.push(line);
                 } else if line.contains("📊") || line.trim().is_empty() {
                     // End of this detailed section
                     break;
@@ -649,16 +720,16 @@ mod tests {
             }
         }
         
-        // Should show exactly 2 stat entries in the first report
-        assert_eq!(stat_entries.len(), 2, "Should show exactly 2 stat entries due to limit");
+        // Should show exactly 2 counter entries in the first report
+        assert_eq!(counter_entries.len(), 2, "Should show exactly 2 counter entries due to limit");
 
-        // Verify "more statistics" message
-        let has_more_msg = output.iter().any(|line| line.contains("and 3 more statistics"));
-        assert!(has_more_msg, "Should show 'more statistics' message");
+        // Verify "more counters" message
+        let has_more_msg = output.iter().any(|line| line.contains("and 3 more counters"));
+        assert!(has_more_msg, "Should show 'more counters' message");
 
         // Verify total count is still correct
-        let has_total_count = output.iter().any(|line| line.contains("Total Statistics: 5"));
-        assert!(has_total_count, "Should show correct total count");
+        let has_total_count = output.iter().any(|line| line.contains("Total Unique Counters: 5"));
+        assert!(has_total_count, "Should show correct total unique counters count");
 
         println!("✅ Max stats limit test passed - captured {} output lines", output.len());
     }

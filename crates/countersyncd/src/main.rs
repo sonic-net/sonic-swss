@@ -184,9 +184,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Netlink actor terminated");
     });
     
-    let ipfix_handle = spawn(async move {
-        info!("IPFIX actor started");
-        IpfixActor::run(ipfix).await;
+    // Use spawn_blocking to ensure IPFIX actor runs on a dedicated thread
+    // This is important for thread-local variables
+    let ipfix_handle = tokio::task::spawn_blocking(move || {
+        info!("IPFIX actor started on dedicated thread");
+        // Create a new runtime for async operations within this blocking thread
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
+        rt.block_on(async move {
+            IpfixActor::run(ipfix).await;
+        });
         info!("IPFIX actor terminated");
     });
 
@@ -210,7 +216,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for all actors to complete and handle any errors
     let netlink_result = netlink_handle.await;
-    let ipfix_result = ipfix_handle.await;
+    let ipfix_result = ipfix_handle.await.map_err(|e| {
+        error!("IPFIX blocking task join error: {:?}", e);
+        e
+    });
     let swss_result = swss_handle.await;
     let reporter_result = if let Some(handle) = reporter_handle {
         Some(handle.await)

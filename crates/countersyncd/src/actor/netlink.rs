@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use log::{error, warn};
+use log::{debug, error, warn};
 
 #[allow(unused_imports)]
 use neli::{
@@ -40,6 +40,8 @@ const RECONNECT_INTERVAL_MS: u64 = 1;
 const RECONNECT_MAX_ATTEMPTS: u64 = 5;
 /// Size of the buffer used for receiving netlink messages
 const BUFFER_SIZE: usize = 0xFFFF;
+/// Linux error code for "No buffer space available"
+const ENOBUFS: i32 = 105;
 
 /// Actor responsible for managing netlink socket connections and message distribution.
 /// 
@@ -236,7 +238,90 @@ impl NetlinkActor {
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to get mutable reference to buffer"))?
             .resize(size, 0);
         
-        Ok(buffer)
+        // Parse netlink message and extract payload
+        NetlinkActor::extract_payload(buffer)
+    }
+
+    /// Extracts the payload from a netlink message by parsing headers.
+    /// 
+    /// This function parses both the netlink header (nlmsghdr) and generic netlink 
+    /// header (genlmsghdr) to extract only the actual payload data, excluding headers.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `raw_buffer` - The raw buffer containing the complete netlink message
+    /// 
+    /// # Returns
+    /// 
+    /// Result containing the payload data or an IO error if parsing fails
+    fn extract_payload(raw_buffer: Arc<Vec<u8>>) -> Result<SocketBufferMessage, io::Error> {
+        // For now, let's implement a basic header parsing approach
+        // Standard netlink header is 16 bytes, generic netlink header is 4 bytes
+        const NLMSG_HDRLEN: usize = 16; // sizeof(struct nlmsghdr)
+        const GENL_HDRLEN: usize = 4;   // sizeof(struct genlmsghdr)
+        const TOTAL_HEADER_SIZE: usize = NLMSG_HDRLEN + GENL_HDRLEN;
+        
+        if raw_buffer.len() < TOTAL_HEADER_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Buffer too small: {} bytes, expected at least {}", 
+                       raw_buffer.len(), TOTAL_HEADER_SIZE)
+            ));
+        }
+        
+        // Extract netlink message length from header (first 4 bytes, little-endian)
+        let nl_len = u32::from_le_bytes([
+            raw_buffer[0], raw_buffer[1], raw_buffer[2], raw_buffer[3]
+        ]) as usize;
+        
+        // Validate message length
+        if nl_len < TOTAL_HEADER_SIZE || nl_len > raw_buffer.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid netlink message length: {} (buffer size: {})", 
+                       nl_len, raw_buffer.len())
+            ));
+        }
+        
+        // Debug: Print headers only when debug logging is enabled
+        if log::log_enabled!(log::Level::Debug) {
+            debug!("Netlink Header (16 bytes): {:02x?}", &raw_buffer[0..16]);
+            let nl_type = u16::from_le_bytes([raw_buffer[4], raw_buffer[5]]);
+            let nl_flags = u16::from_le_bytes([raw_buffer[6], raw_buffer[7]]);
+            let nl_seq = u32::from_le_bytes([raw_buffer[8], raw_buffer[9], raw_buffer[10], raw_buffer[11]]);
+            let nl_pid = u32::from_le_bytes([raw_buffer[12], raw_buffer[13], raw_buffer[14], raw_buffer[15]]);
+            debug!("  nl_len={}, nl_type={}, nl_flags=0x{:04x}, nl_seq={}, nl_pid={}", 
+                   nl_len, nl_type, nl_flags, nl_seq, nl_pid);
+            
+            debug!("Generic Netlink Header (4 bytes): {:02x?}", &raw_buffer[16..20]);
+            let genl_cmd = raw_buffer[16];
+            let genl_version = raw_buffer[17];
+            let genl_reserved = u16::from_le_bytes([raw_buffer[18], raw_buffer[19]]);
+            debug!("  genl_cmd={}, genl_version={}, genl_reserved=0x{:04x}", 
+                   genl_cmd, genl_version, genl_reserved);
+        }
+        
+        // Extract payload after both headers
+        let payload_start = TOTAL_HEADER_SIZE;
+        let payload_end = nl_len;
+        
+        if payload_start >= payload_end {
+            // No payload data, return empty payload
+            debug!("No payload data");
+            Ok(Arc::new(Vec::new()))
+        } else {
+            // Return payload data without headers
+            let payload = raw_buffer[payload_start..payload_end].to_vec();
+            // Debug: Print payload in binary format only when debug logging is enabled
+            // Only show first 16 bytes to avoid overwhelming logs
+            const PREVIEW_SIZE: usize = 16;
+            if payload.len() <= PREVIEW_SIZE {
+                debug!("Payload ({} bytes): {:02x?}", payload.len(), payload);
+            } else {
+                debug!("Payload ({} bytes): {:02x?}...", payload.len(), &payload[..PREVIEW_SIZE]);
+            }
+            Ok(Arc::new(payload))
+        }
     }
 
     /// Main event loop for the NetlinkActor.
@@ -262,9 +347,25 @@ impl NetlinkActor {
                             }
                         },
                         Err(e) => {
-                            warn!("Failed to receive message: {:?}", e);
-                            actor.socket = None;
-                            actor.reconnect();
+                            // Handle ENOBUFS (No buffer space available) specifically
+                            if let Some(os_error) = e.raw_os_error() {
+                                match os_error {
+                                    ENOBUFS => {
+                                        warn!("Netlink receive buffer full (ENOBUFS). Consider increasing buffer size or processing messages faster. Error: {:?}", e);
+                                        // Don't disconnect on ENOBUFS, just continue
+                                        continue;
+                                    },
+                                    _ => {
+                                        warn!("Failed to receive message: {:?}", e);
+                                        actor.socket = None;
+                                        actor.reconnect();
+                                    }
+                                }
+                            } else {
+                                warn!("Failed to receive message: {:?}", e);
+                                actor.socket = None;
+                                actor.reconnect();
+                            }
                         },
                     }
                 },
@@ -385,14 +486,49 @@ mod test {
     use tokio::{spawn, sync::mpsc::channel};
 
     // Test constants for simulating different message scenarios
-    const PARTIALLY_VALID_MESSAGES: [&str; 4] = [
-        "PARTIALLY_VALID1",
-        "PARTIALLY_VALID2", 
-        "", // Empty string simulates reconnection scenario
-        "PARTIALLY_VALID3",
+    const PARTIALLY_VALID_MESSAGES: [&[u8]; 4] = [
+        &create_mock_netlink_message(b"PARTIALLY_VALID1"),
+        &create_mock_netlink_message(b"PARTIALLY_VALID2"), 
+        &[], // Empty slice simulates reconnection scenario
+        &create_mock_netlink_message(b"PARTIALLY_VALID3"),
     ];
 
-    const VALID_MESSAGES: [&str; 2] = ["VALID1", "VALID2"];
+    const VALID_MESSAGES: [&[u8]; 2] = [
+        &create_mock_netlink_message(b"VALID1"), 
+        &create_mock_netlink_message(b"VALID2")
+    ];
+
+    /// Creates a mock netlink message with proper headers for testing.
+    /// 
+    /// Format: [netlink_header(16 bytes)] + [genetlink_header(4 bytes)] + [payload]
+    const fn create_mock_netlink_message(payload: &[u8]) -> [u8; 100] {
+        let mut msg = [0u8; 100];
+        let total_len = 20 + payload.len(); // 16 (nlmsg) + 4 (genl) + payload
+        
+        // Netlink header (16 bytes)
+        msg[0] = (total_len & 0xFF) as u8;        // length (little-endian)
+        msg[1] = ((total_len >> 8) & 0xFF) as u8;
+        msg[2] = ((total_len >> 16) & 0xFF) as u8;
+        msg[3] = ((total_len >> 24) & 0xFF) as u8;
+        msg[4] = 0x10; msg[5] = 0x00;             // type (mock type)
+        msg[6] = 0x00; msg[7] = 0x00;             // flags
+        msg[8] = 0x01; msg[9] = 0x00; msg[10] = 0x00; msg[11] = 0x00; // seq
+        msg[12] = 0x00; msg[13] = 0x00; msg[14] = 0x00; msg[15] = 0x00; // pid
+        
+        // Generic netlink header (4 bytes)
+        msg[16] = 0x01; // cmd
+        msg[17] = 0x00; // version
+        msg[18] = 0x00; msg[19] = 0x00; // reserved
+        
+        // Copy payload
+        let mut i = 0;
+        while i < payload.len() && i < 80 { // Leave room for headers
+            msg[20 + i] = payload[i];
+            i += 1;
+        }
+        
+        msg
+    }
 
     // Use atomic counter instead of unsafe static mut for thread safety
     static SOCKET_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -403,7 +539,7 @@ mod test {
     pub struct MockSocket {
         pub valid: bool,
         budget: usize,
-        messages: Vec<String>,
+        messages: Vec<Vec<u8>>,
     }
 
     impl MockSocket {
@@ -420,7 +556,7 @@ mod test {
                     budget: PARTIALLY_VALID_MESSAGES.len(),
                     messages: PARTIALLY_VALID_MESSAGES
                         .iter()
-                        .map(|&s| s.to_string()) // Pattern destructuring: &&str -> &str
+                        .map(|&msg| msg.to_vec())
                         .collect(),
                 }
             } else {
@@ -429,7 +565,7 @@ mod test {
                     budget: VALID_MESSAGES.len(),
                     messages: VALID_MESSAGES
                         .iter()
-                        .map(|&s| s.to_string()) // Pattern destructuring: &&str -> &str
+                        .map(|&msg| msg.to_vec())
                         .collect(),
                 }
             }
@@ -450,11 +586,12 @@ mod test {
             if self.budget == 0 {
                 return Ok((0, Groups::empty()));
             }
-            let msg = self.messages[self.messages.len() - self.budget].clone();
+            let msg = &self.messages[self.messages.len() - self.budget];
             self.budget -= 1;
             if !msg.is_empty() {
-                buf[..msg.len()].clone_from_slice(msg.as_bytes());
-                Ok((msg.len(), Groups::empty()))
+                let copy_len = std::cmp::min(msg.len(), buf.len());
+                buf[..copy_len].copy_from_slice(&msg[..copy_len]);
+                Ok((copy_len, Groups::empty()))
             } else {
                 Err(io::Error::new(io::ErrorKind::ConnectionAborted, "Simulated connection failure"))
             }
@@ -466,7 +603,7 @@ mod test {
     /// This test verifies that:
     /// - The actor correctly handles a mix of valid and invalid messages
     /// - Reconnection occurs when an empty message is encountered  
-    /// - All expected messages are eventually received
+    /// - All expected payload data (without headers) are eventually received
     #[tokio::test]
     async fn test_netlink() {
         // Reset socket count for this test
@@ -488,17 +625,13 @@ mod test {
             received_messages.push(message);
         }
 
-        // Build expected messages: valid messages from first socket, then from second socket
-        let mut expected_messages = Vec::new();
-        for &msg in &PARTIALLY_VALID_MESSAGES {
-            if msg.is_empty() {
-                break; // Stop at empty message that triggers reconnect
-            }
-            expected_messages.push(msg.to_string());
-        }
-        for &msg in &VALID_MESSAGES {
-            expected_messages.push(msg.to_string());
-        }
+        // Build expected messages: only the payload data, headers should be stripped
+        let expected_messages = vec![
+            "PARTIALLY_VALID1".to_string(),
+            "PARTIALLY_VALID2".to_string(),
+            "VALID1".to_string(),
+            "VALID2".to_string(),
+        ];
 
         assert_eq!(received_messages, expected_messages);
         assert!(SOCKET_COUNT.load(Ordering::SeqCst) > 1, "Socket should have reconnected");
@@ -530,5 +663,47 @@ mod test {
         let (family, group) = get_genl_family_group_from_path("tests/data/constants.yml");
         assert_eq!(family, "sonic_stel");
         assert_eq!(group, "ipfix");
+    }
+
+    /// Tests payload extraction from mock netlink messages.
+    #[test]
+    fn test_payload_extraction() {
+        // Test with valid message containing payload
+        let mock_msg = create_mock_netlink_message(b"TEST_PAYLOAD");
+        let buffer = Arc::new(mock_msg.to_vec());
+        
+        let result = NetlinkActor::extract_payload(buffer);
+        assert!(result.is_ok());
+        
+        let payload = result.unwrap();
+        let payload_str = String::from_utf8(payload.to_vec()).unwrap();
+        assert_eq!(payload_str, "TEST_PAYLOAD");
+    }
+
+    /// Tests payload extraction with minimum size message.
+    #[test]
+    fn test_payload_extraction_empty_payload() {
+        // Create message with headers but no payload
+        let mock_msg = create_mock_netlink_message(b"");
+        let buffer = Arc::new(mock_msg[..20].to_vec()); // Only headers
+        
+        let result = NetlinkActor::extract_payload(buffer);
+        assert!(result.is_ok());
+        
+        let payload = result.unwrap();
+        assert!(payload.is_empty());
+    }
+
+    /// Tests payload extraction with invalid message (too small).
+    #[test]
+    fn test_payload_extraction_invalid_message() {
+        // Buffer too small to contain headers
+        let buffer = Arc::new(vec![0u8; 10]);
+        
+        let result = NetlinkActor::extract_payload(buffer);
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

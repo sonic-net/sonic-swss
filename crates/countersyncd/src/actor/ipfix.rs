@@ -8,7 +8,6 @@ use std::{
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
 use log::{debug, warn};
-use once_cell::sync::Lazy;
 use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},
@@ -17,7 +16,7 @@ use tokio::{
 use ipfixrw::{
     information_elements::Formatter,
     parse_ipfix_message,
-    parser::{DataRecord, DataRecordKey, DataRecordValue, FieldSpecifier, Message},
+    parser::{DataRecord, DataRecordKey, DataRecordValue, Message},
     template_store::TemplateStore,
 };
 
@@ -513,6 +512,9 @@ impl IpfixActor {
         let mut cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
         let mut messages: Vec<SAIStatsMessage> = Vec::new();
+
+        debug!("Processing IPFIX records of length: {}", records.len());
+
         while read_size < records.len() {
             let len = get_ipfix_message_length(&records[read_size..]);
             let len = match len {
@@ -529,13 +531,19 @@ impl IpfixActor {
                     break;
                 }
             };
+
             let data = &records[read_size..read_size + len as usize];
+            // Debug log the parsed records if debug logging is enabled
+            if log::log_enabled!(log::Level::Debug) {
+                let formatted_records = Self::format_records_for_debug(data);
+                debug!("Received IPFIX data records: {}", formatted_records);
+            }
             let data_message =
                 parse_ipfix_message(&data, cache.templates.clone(), cache.formatter.clone());
             let data_message = match data_message {
                 Ok(message) => message,
                 Err(e) => {
-                    warn!("Failed to parse IPFIX data message at offset {}: {}", read_size, e);
+                    warn!("Failed to parse IPFIX data message at offset {} : {}", read_size, e);
                     read_size += len as usize;
                     continue;
                 }
@@ -546,13 +554,6 @@ impl IpfixActor {
                 }
             });
             let datarecords: Vec<&DataRecord> = data_message.iter_data_records().collect();
-            
-            // Debug log the parsed records if debug logging is enabled
-            if log::log_enabled!(log::Level::Debug) {
-                let formatted_records = Self::format_records_for_debug(data);
-                debug!("Received IPFIX data records: {}", formatted_records);
-            }
-            
             let mut observation_time: Option<u64>;
             for record in datarecords {
                 observation_time = get_observation_time(record);
@@ -581,11 +582,42 @@ impl IpfixActor {
                 let mut final_stats: Vec<SAIStat> = Vec::new();
                 let mut template_key: Option<String> = None;
                 
+                // Debug: Log all fields in the record to understand what we're getting
+                debug!("Processing record with {} fields:", record.values.len());
                 for (key, val) in record.values.iter() {
-                    if key == &*OBSERVATION_TIME_KEY {
-                        // skip the observation time data
+                    match key {
+                        DataRecordKey::Unrecognized(field_spec) => {
+                            debug!("  Field ID: {}, Enterprise: {:?}, Length: {}, Value: {:?}", 
+                                   field_spec.information_element_identifier,
+                                   field_spec.enterprise_number,
+                                   field_spec.field_length,
+                                   val);
+                        },
+                        _ => {
+                            debug!("  Key: {:?}, Value: {:?}", key, val);
+                        }
+                    }
+                }
+                
+                for (key, val) in record.values.iter() {
+                    // Check if this is the observation time field or system time field
+                    let is_time_field = match key {
+                        DataRecordKey::Unrecognized(field_spec) => {
+                            let field_id = field_spec.information_element_identifier;
+                            let is_standard_field = field_spec.enterprise_number.is_none();
+                            
+                            (field_id == OBSERVATION_TIME_FIELD_ID || field_id == SYSTEM_TIME_FIELD_ID) && is_standard_field
+                        },
+                        _ => false,
+                    };
+                    
+                    if is_time_field {
+                        if let DataRecordKey::Unrecognized(field_spec) = key {
+                            debug!("Skipping time field (ID: {})", field_spec.information_element_identifier);
+                        }
                         continue;
                     }
+                    
                     match key {
                         DataRecordKey::Unrecognized(field_spec) => {
                             // Try to find the template key for this record to get object_names
@@ -615,6 +647,7 @@ impl IpfixActor {
                             
                             // Create SAIStat directly
                             let stat = SAIStat::from_ipfix(field_spec, val, object_names);
+                            debug!("Created SAIStat: {:?}", stat);
                             final_stats.push(stat);
                         }
                         _ => continue,
@@ -630,6 +663,7 @@ impl IpfixActor {
                 debug!("Record parsed {:?}", saistats);
             }
             read_size += len as usize;
+            debug!("Consuming IPFIX message of length: {}, rest length: {}", len, records.len() - read_size);
         }
         messages
     }
@@ -683,15 +717,8 @@ impl Drop for IpfixActor {
 
 // IPFIX observation time field constants according to IANA registry
 const OBSERVATION_TIME_FIELD_ID: u16 = 325;
-const OBSERVATION_TIME_FIELD_LENGTH: u16 = 8;
-
-/// Lazy-initialized key for observation time field used in IPFIX data records
-static OBSERVATION_TIME_KEY: Lazy<DataRecordKey> =
-    Lazy::new(|| DataRecordKey::Unrecognized(FieldSpecifier::new(
-        None, 
-        OBSERVATION_TIME_FIELD_ID, 
-        OBSERVATION_TIME_FIELD_LENGTH
-    )));
+// IPFIX system time field (field 322) is also time-related but different from observation time
+const SYSTEM_TIME_FIELD_ID: u16 = 322;
 
 /// Extracts observation time from an IPFIX data record.
 /// 
@@ -703,11 +730,42 @@ static OBSERVATION_TIME_KEY: Lazy<DataRecordKey> =
 /// 
 /// Some(timestamp) if observation time field is present, None otherwise
 fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
-    let val = data_record.values.get(&*OBSERVATION_TIME_KEY);
-    match val {
-        Some(DataRecordValue::Bytes(val)) => Some(NetworkEndian::read_u64(val)),
-        _ => None,
+    // Look for observation time field by ID rather than using the static key
+    for (key, val) in &data_record.values {
+        if let DataRecordKey::Unrecognized(field_spec) = key {
+            if field_spec.information_element_identifier == OBSERVATION_TIME_FIELD_ID &&
+               field_spec.enterprise_number.is_none() {
+                debug!("Found observation time field with value: {:?}", val);
+                match val {
+                    DataRecordValue::Bytes(val) => {
+                        if val.len() == 8 {
+                            let time_val = NetworkEndian::read_u64(val);
+                            debug!("Extracted observation time: {}", time_val);
+                            return Some(time_val);
+                        } else {
+                            debug!("Observation time field has insufficient bytes: {} (expected 8), using current system time", val.len());
+                            // Use current system time in nanoseconds (64 bits)
+                            let current_time = SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .expect("System time should be after Unix epoch")
+                                .as_nanos() as u64;
+                            debug!("Using current system time as observation time: {}", current_time);
+                            return Some(current_time);
+                        }
+                    },
+                    DataRecordValue::U64(val) => {
+                        debug!("Extracted observation time (u64): {}", val);
+                        return Some(*val);
+                    },
+                    _ => {
+                        debug!("Observation time field has unexpected value type: {:?}", val);
+                    }
+                }
+            }
+        }
     }
+    debug!("No observation time field found in record");
+    None
 }
 
 /// Parse IPFIX message length according to IPFIX RFC specification
@@ -723,7 +781,7 @@ fn get_ipfix_message_length(data: &[u8]) -> Result<u16, &'static str> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use tokio::{spawn, sync::mpsc::channel};
+    use tokio::{sync::mpsc::channel};
     use log::LevelFilter::Debug;
     use std::io::Write;
     use std::sync::{Arc, Mutex, Once, OnceLock};
@@ -793,7 +851,13 @@ mod test {
         let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
         actor.add_recipient(saistats_sender);
 
-        let actor_handle = spawn(IpfixActor::run(actor));
+        let actor_handle = tokio::task::spawn_blocking(move || {
+            // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor test");
+            rt.block_on(async move {
+                IpfixActor::run(actor).await;
+            });
+        });
 
         let template_bytes: [u8; 88] = [
             0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
