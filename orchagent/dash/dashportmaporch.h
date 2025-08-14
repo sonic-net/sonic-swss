@@ -43,6 +43,7 @@ class DashPortMapOrch : public ZmqOrch
 {
 public:
     DashPortMapOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
+    sai_object_id_t getPortMapOid(const std::string& port_map_name);
 
 private:
     void doTask(ConsumerBase &consumer);
