@@ -2,6 +2,7 @@
 #include "ipprefix.h"
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include "fpmsyncd/nhgmgr.h"
 
 using namespace swss;
 
@@ -113,4 +114,9 @@ namespace ut_fpmsyncd
     {
         free(msg);
     }
+
+    /* Create ipv4 singleton NextHopGroupFull */
+    struct swss::NextHopGroupFull createSingleIPv4NextHopNHGFull(
+        const char *gateway, const char *src_addr);
+
 }
