@@ -5,6 +5,7 @@
 #include "mock_table.h"
 #define private public
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/nhgmgr.h"
 #undef private
 
 #include <arpa/inet.h>
