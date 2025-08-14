@@ -80,8 +80,12 @@ namespace dashvnetorch_test
             .Times(1).WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         AddVnetMap();
 
+        AddPortMap();
+        AddVnetMapPL();
+
         EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries)
             .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+
         RemoveVnetMap();
         EXPECT_CALL(*mock_sai_dash_pa_validation_api, remove_pa_validation_entries)
             .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));

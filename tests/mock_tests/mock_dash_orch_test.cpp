@@ -1,4 +1,5 @@
 #include "mock_dash_orch_test.h"
+#include "dash_api/outbound_port_map.pb.h"
 
 namespace mock_orch_test
 {
@@ -104,9 +105,30 @@ namespace mock_orch_test
         SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip1, vnet_map, true, expect_empty);
     }
 
+    void MockDashOrchTest::AddVnetMapPL(bool expect_empty)
+    {
+        dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_PRIVATELINK);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+
+        vnet_map.mutable_overlay_sip_prefix()->mutable_ip()->set_ipv6(reinterpret_cast<const char*>(swss::IpAddress("fd40:108:0:d204:0:200::0").getV6Addr()));
+        vnet_map.mutable_overlay_sip_prefix()->mutable_mask()->set_ipv6(reinterpret_cast<const char*>(swss::IpAddress("ffff:ffff:ffff:ffff:ffff:ffff::").getV6Addr()));
+        vnet_map.mutable_overlay_dip_prefix()->mutable_ip()->set_ipv6(reinterpret_cast<const char*>(swss::IpAddress("2603:10e1:100:2::3401:203").getV6Addr()));
+        vnet_map.mutable_overlay_dip_prefix()->mutable_mask()->set_ipv6(reinterpret_cast<const char*>(swss::IpAddress("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff").getV6Addr()));
+
+        vnet_map.set_port_map(portmap1);
+        SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip2, vnet_map, true, expect_empty);
+    }
+
     void MockDashOrchTest::RemoveVnetMap()
     {
         SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip1, dash::vnet_mapping::VnetMapping(), false);
+    }
+
+    void MockDashOrchTest::AddPortMap()
+    {
+        dash::outbound_port_map::OutboundPortMap portmap = dash::outbound_port_map::OutboundPortMap();
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, portmap1, portmap);
     }
 
     dash::eni::Eni MockDashOrchTest::BuildEniEntry()
