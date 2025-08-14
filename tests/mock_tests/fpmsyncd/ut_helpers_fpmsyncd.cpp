@@ -3,6 +3,7 @@
 #include "ipprefix.h"
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <random>
 
 #define IPV6_MAX_BYTE      16
 #define IPV6_MAX_BITLEN    128
@@ -547,5 +548,35 @@ namespace ut_fpmsyncd
         }
 
         return nl_obj;
+    }
+
+    struct swss::NextHopGroupFull createSingleIPv4NextHopNHGFull(const char *gateway, const char *src_addr)
+    {
+        std::mt19937 generator;
+        std::uniform_int_distribution<int> distribution(1, 100);
+        int id_in = distribution(generator);
+        std::uint32_t key_in = distribution(generator);
+        swss::nexthop_types_t type_in = NEXTHOP_TYPE_IPV4_IFINDEX;
+        swss::vrf_id_t vrf_id_in = distribution(generator);
+        swss::ifindex_t ifindex_t_in = distribution(generator);
+        std::string ifname_in = "Ethernet" + int(ifindex_t_in);
+        swss::lsp_types_t label_type_in = ZEBRA_LSP_NONE;
+        swss::blackhole_type bh_type_in = BLACKHOLE_UNSPEC;
+        swss::g_addr gateway_in;
+        inet_pton(AF_INET, gateway, &gateway_in.ipv4);
+        swss::g_addr src_in;
+        inet_pton(AF_INET, src_addr, &src_in.ipv4);
+        swss::g_addr rmap_src_in;
+        std::uint8_t weight_in = 1;
+        std::uint8_t flags_in = 0;
+        bool has_srv6 = false;
+        bool has_seg6_segs = false;
+        struct swss::nexthop_srv6 *nh_srv6_in = NULL;
+        struct swss::seg6_seg_stack *nh_seg6_segs_in = NULL;
+        std::vector<struct in6_addr> nh_segs_in;
+        struct swss::NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in,
+                                                             label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
+                                                             flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
+        return nhg;
     }
 }
