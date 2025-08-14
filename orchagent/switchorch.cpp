@@ -27,6 +27,18 @@ extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
 
+// defines ------------------------------------------------------------------------------------------------------------
+
+#define SWITCH_STAT_COUNTER_POLLING_INTERVAL_MS 60000
+
+// constants ----------------------------------------------------------------------------------------------------------
+
+static const vector<sai_switch_stat_t> switch_stat_ids =
+{
+    SAI_SWITCH_STAT_DROPPED_TRIM_PACKETS,
+    SAI_SWITCH_STAT_TX_TRIM_PACKETS
+};
+
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
     {"fdb_unicast_miss_packet_action",      SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION},
@@ -95,6 +107,22 @@ const std::set<sai_switch_asic_sdk_health_category_t> switch_asic_sdk_health_eve
 
 const std::set<std::string> switch_non_sai_attribute_set = {"ordered_ecmp"};
 
+// functions ----------------------------------------------------------------------------------------------------------
+
+static std::unordered_set<std::string> serializeSwitchCounterStats(const std::vector<sai_switch_stat_t> statIdList)
+{
+    std::unordered_set<std::string> stats;
+
+    for (const auto &cit : statIdList)
+    {
+        stats.emplace(sai_serialize_switch_stat(cit));
+    }
+
+    return stats;
+}
+
+// Switch OA ----------------------------------------------------------------------------------------------------------
+
 void SwitchOrch::set_switch_pfc_dlr_init_capability()
 {
     vector<FieldValueTuple> fvVector;
@@ -124,7 +152,8 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
         m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
         m_stateDbForNotification(new DBConnector("STATE_DB", 0)),
-        m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME))
+        m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME)),
+        m_counterManager(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, SWITCH_STAT_COUNTER_POLLING_INTERVAL_MS, false)
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
@@ -140,6 +169,36 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+}
+
+void SwitchOrch::generateSwitchCounterNameMap() const
+{
+    SWSS_LOG_ENTER();
+
+    DBConnector db("COUNTERS_DB", 0);
+    Table table(&db, COUNTERS_SWITCH_NAME_MAP);
+
+    FieldValueTuple tuple("ASIC", sai_serialize_object_id(gSwitchId));
+    std::vector<FieldValueTuple> fvList = { tuple };
+
+    table.set("", fvList);
+
+    SWSS_LOG_NOTICE("Wrote switch name mapping to Counters DB");
+}
+
+void SwitchOrch::generateSwitchCounterIdList()
+{
+    if (m_isSwitchCounterIdListGenerated)
+    {
+        return;
+    }
+
+    auto switchStats = serializeSwitchCounterStats(switch_stat_ids);
+    m_counterManager.setCounterIdList(gSwitchId, CounterType::SWITCH, switchStats);
+
+    generateSwitchCounterNameMap();
+
+    m_isSwitchCounterIdListGenerated = true;
 }
 
 void SwitchOrch::initAsicSdkHealthEventNotification()
