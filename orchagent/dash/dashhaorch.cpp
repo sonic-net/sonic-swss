@@ -7,8 +7,9 @@
 #include "crmorch.h"
 #include "saihelper.h"
 #include "table.h"
-#include "taskworker.h" 
+#include "taskworker.h"
 #include "pbutils.h"
+#include "converter.h"
 
 #include "chrono"
 
@@ -225,7 +226,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     ha_set_attr_list[2].id = SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT;
     ha_set_attr_list[2].value.u16 = static_cast<sai_uint16_t>(entry.cp_data_channel_port());
-    
+
     ha_set_attr_list[3].id = SAI_HA_SET_ATTR_DP_CHANNEL_DST_PORT;
     ha_set_attr_list[3].value.u16 = static_cast<sai_uint16_t>(entry.dp_channel_dst_port());
 
@@ -309,9 +310,22 @@ void DashHaOrch::doTaskHaSetTable(ConsumerBase &consumer)
         {
             dash::ha_set::HaSet entry;
 
-            if (!parsePbMessage(kfvFieldsValues(tuple), entry))
+            /*
+            * For HA internal tables, kfv format was used instead of serialized pb objects in the end.
+            * I decided to keep protobuf conversion still for:
+            *      - ensuring the data integrity.
+            *      - in case we need to switch to protobuf in the future.
+            */
+            // if (!parsePbMessage(kfvFieldsValues(tuple), entry))
+            // {
+            //     SWSS_LOG_WARN("Requires protobuf at HaSet :%s", key.c_str());
+            //     it = consumer.m_toSync.erase(it);
+            //     continue;
+            // }
+
+            if (!convertKfvToHaSetPb(kfvFieldsValues(tuple), entry))
             {
-                SWSS_LOG_WARN("Requires protobuf at HaSet :%s", key.c_str());
+                SWSS_LOG_WARN("Failed to convert KeyOpFieldsValuesTuple to HaSet entry for %s, invalid values probably.", key.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -388,30 +402,72 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
         return success;
     }
 
-    auto ha_set_it = m_ha_set_entries.find(key);
-    if (ha_set_it == m_ha_set_entries.end())
+    if (m_ha_set_entries.empty())
     {
         SWSS_LOG_ERROR("HA Set entry does not exist for %s", key.c_str());
         return false;
     }
+
+    auto ha_set_it = m_ha_set_entries.find(key);
+    if (ha_set_it == m_ha_set_entries.end())
+    {
+        // If it's ENI level HA, ha_set id won't map to ha_scope id.
+        // So we will use the first HA Set entry.
+        ha_set_it = m_ha_set_entries.begin();
+    }
     sai_object_id_t ha_set_oid = ha_set_it->second.ha_set_id;
 
-    const uint32_t attr_count = 2;
-    sai_attribute_t ha_scope_attrs[attr_count]={};
+    vector<sai_attribute_t> ha_scope_attrs;
     sai_status_t status;
-    sai_object_id_t sai_ha_scope_oid = 0UL;
+    sai_object_id_t sai_ha_scope_oid = SAI_NULL_OBJECT_ID;
 
-    ha_scope_attrs[0].id = SAI_HA_SCOPE_ATTR_HA_SET_ID;
-    ha_scope_attrs[0].value.oid = ha_set_oid;
+    sai_attribute_t ha_set_attr = {};
+    ha_set_attr.id = SAI_HA_SCOPE_ATTR_HA_SET_ID;
+    ha_set_attr.value.oid = ha_set_oid;
+    ha_scope_attrs.push_back(ha_set_attr);
 
     // TODO: add ha_role to attribute value enum
-    ha_scope_attrs[1].id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
-    ha_scope_attrs[1].value.u16 = to_sai(entry.ha_role());
+    sai_attribute_t ha_role_attr = {};
+    ha_role_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
+    ha_role_attr.value.u16 = to_sai(entry.ha_role());
+    ha_scope_attrs.push_back(ha_role_attr);
+
+    if (ha_set_it->second.metadata.has_vip_v4() && ha_set_it->second.metadata.vip_v4().has_ipv4())
+    {
+        sai_ip_address_t sai_vip_v4 = {};
+        if (to_sai(ha_set_it->second.metadata.vip_v4(), sai_vip_v4))
+        {
+            sai_attribute_t vip_v4_attr = {};  // Create new attribute for V4
+            vip_v4_attr.id = SAI_HA_SCOPE_ATTR_VIP_V4;
+            vip_v4_attr.value.ipaddr = sai_vip_v4;
+            ha_scope_attrs.push_back(vip_v4_attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to convert VIP V4 for HA Scope %s", key.c_str());
+        }
+    }
+
+    if (ha_set_it->second.metadata.has_vip_v6() && !ha_set_it->second.metadata.vip_v6().ipv6().empty())
+    {
+        sai_ip_address_t sai_vip_v6 = {};
+        if (to_sai(ha_set_it->second.metadata.vip_v6(), sai_vip_v6))
+        {
+            sai_attribute_t vip_v6_attr = {};  // Create new attribute for V6
+            vip_v6_attr.id = SAI_HA_SCOPE_ATTR_VIP_V6;
+            vip_v6_attr.value.ipaddr = sai_vip_v6;
+            ha_scope_attrs.push_back(vip_v6_attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to convert VIP V6 for HA Scope %s", key.c_str());
+        }
+    }
 
     status = sai_dash_ha_api->create_ha_scope(&sai_ha_scope_oid,
                                          gSwitchId,
-                                         attr_count,
-                                         ha_scope_attrs);
+                                         static_cast<uint32_t>(ha_scope_attrs.size()),
+                                         ha_scope_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -426,7 +482,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
 
     // set HA Scope ID to ENI
-    if (ha_set_it->second.metadata.scope() == dash::types::HaScope::SCOPE_ENI)
+    if (ha_set_it->second.metadata.scope() == dash::types::HaScope::HA_SCOPE_ENI)
     {
         auto eni_entry = m_dash_orch->getEni(key);
         if (eni_entry == nullptr)
@@ -437,7 +493,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
 
         return setEniHaScopeId(eni_entry->eni_id, sai_ha_scope_oid);
 
-    } else if (ha_set_it->second.metadata.scope() == dash::types::HaScope::SCOPE_DPU)
+    } else if (ha_set_it->second.metadata.scope() == dash::types::HaScope::HA_SCOPE_DPU)
     {
         auto eni_table = m_dash_orch->getEniTable();
         auto it = eni_table->begin();
@@ -617,9 +673,23 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         {
             dash::ha_scope::HaScope entry;
 
-            if (!parsePbMessage(kfvFieldsValues(tuple), entry))
+
+            /*
+            * For HA internal tables, kfv format was used instead of serialized pb objects in the end.
+            * I decided to keep protobuf conversion still for:
+            *      - ensuring the data integrity.
+            *      - in case we need to switch to protobuf in the future.
+            */
+            // if (!parsePbMessage(kfvFieldsValues(tuple), entry))
+            // {
+            //     SWSS_LOG_WARN("Requires protobuf at HaScope :%s", key.c_str());
+            //     it = consumer.m_toSync.erase(it);
+            //     continue;
+            // }
+
+            if (!convertKfvToHaScopePb(kfvFieldsValues(tuple), entry))
             {
-                SWSS_LOG_WARN("Requires protobuf at HaScope :%s", key.c_str());
+                SWSS_LOG_WARN("Failed to convert KeyOpFieldsValuesTuple to HaScope entry for %s, invalid values probably.", key.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -788,4 +858,155 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
             sai_deserialize_free_ha_scope_event_ntf(count, ha_scope_event);
         }
     }
+}
+
+bool DashHaOrch::convertKfvToHaSetPb(const std::vector<FieldValueTuple> &kfv, dash::ha_set::HaSet &entry)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &fv : kfv)
+    {
+        const std::string &field = fvField(fv);
+        const std::string &value = fvValue(fv);
+
+        if (field == "version")
+        {
+            entry.set_version(value);
+        }
+        else if (field == "vip_v4")
+        {
+            dash::types::IpAddress temp_ip;
+            if (!to_pb(value, temp_ip) || !temp_ip.has_ipv4())
+            {
+                SWSS_LOG_ERROR("Invalid IPv4 address %s", value.c_str());
+                return false;
+            }
+            entry.mutable_vip_v4()->CopyFrom(temp_ip);
+        }
+        else if (field == "vip_v6")
+        {
+            dash::types::IpAddress temp_ip;
+            if (!to_pb(value, temp_ip) || !temp_ip.has_ipv6())
+            {
+                SWSS_LOG_ERROR("Invalid IPv6 address %s", value.c_str());
+                return false;
+            }
+            entry.mutable_vip_v6()->CopyFrom(temp_ip);
+        }
+        else if (field == "owner")
+        {
+            dash::types::HaOwner owner;
+            if (!to_pb(value, owner))
+            {
+                return false;
+            }
+            entry.set_owner(owner);
+        }
+        else if (field == "scope")
+        {
+            dash::types::HaScope ha_scope;
+            if (!to_pb(value, ha_scope))
+            {
+                return false;
+            }
+            entry.set_scope(ha_scope);
+        }
+        else if (field == "local_npu_ip")
+        {
+            if (!to_pb(value, *entry.mutable_local_npu_ip()))
+            {
+                SWSS_LOG_ERROR("Invalid IP address %s", value.c_str());
+                return false;
+            }
+        }
+        else if (field == "local_ip")
+        {
+            if (!to_pb(value, *entry.mutable_local_ip()))
+            {
+                SWSS_LOG_ERROR("Invalid IP address %s", value.c_str());
+                return false;
+            }
+        }
+        else if (field == "peer_ip")
+        {
+            if (!to_pb(value, *entry.mutable_peer_ip()))
+            {
+                SWSS_LOG_ERROR("Invalid IP address %s", value.c_str());
+                return false;
+            }
+        }
+        else if (field == "cp_data_channel_port")
+        {
+            entry.set_cp_data_channel_port(to_uint<uint32_t>(value));
+        }
+        else if (field == "dp_channel_dst_port")
+        {
+            entry.set_dp_channel_dst_port(to_uint<uint32_t>(value));
+        }
+        else if (field == "dp_channel_src_port_min")
+        {
+            entry.set_dp_channel_src_port_min(to_uint<uint32_t>(value));
+        }
+        else if (field == "dp_channel_src_port_max")
+        {
+            entry.set_dp_channel_src_port_max(to_uint<uint32_t>(value));
+        }
+        else if (field == "dp_channel_probe_interval_ms")
+        {
+            entry.set_dp_channel_probe_interval_ms(to_uint<uint32_t>(value));
+        }
+        else if (field == "dp_channel_probe_fail_threshold")
+        {
+            entry.set_dp_channel_probe_fail_threshold(to_uint<uint32_t>(value));
+        }
+        else
+        {
+            SWSS_LOG_WARN("Unknown field %s in HA Set entry", field.c_str());
+            return false;
+        }
+    }
+    return true;
+}
+
+bool DashHaOrch::convertKfvToHaScopePb(const std::vector<FieldValueTuple> &kfv, dash::ha_scope::HaScope &entry)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &fv : kfv)
+    {
+        const std::string &field = fvField(fv);
+        const std::string &value = fvValue(fv);
+
+        if (field == "version")
+        {
+            entry.set_version(value);
+        }
+        else if (field == "disabled")
+        {
+            entry.set_disabled(value == "true" || value == "1");
+        }
+        else if (field == "ha_role")
+        {
+            dash::types::HaRole ha_role;
+            if (!to_pb(value, ha_role))
+            {
+                return false;
+            }
+            entry.set_ha_role(ha_role);
+        }
+        else if (field == "flow_reconcile_requested")
+        {
+            entry.set_flow_reconcile_requested(value == "true" || value == "1");
+        }
+        else if (field == "activate_role_requested")
+        {
+            entry.set_activate_role_requested(value == "true" || value == "1");
+        }
+        else
+        {
+            SWSS_LOG_WARN("Unknown field %s in HA Scope entry", field.c_str());
+            return false;
+        }
+    }
+    return true;
 }
