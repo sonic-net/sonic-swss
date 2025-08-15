@@ -543,7 +543,6 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
-            // m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
             m_counterNameMapUpdater->setCounterNameMap(object_name, sai_object);
         }
 
@@ -585,7 +584,6 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
         m_counterNameMapUpdater->delCounterNameMap(object_name);
-        // m_countersDb->hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
 
         vector<FieldValueTuple> fvs;
         m_publisher.publish(APP_BUFFER_POOL_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);

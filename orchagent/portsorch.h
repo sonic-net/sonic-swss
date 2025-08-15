@@ -267,13 +267,11 @@ private:
     unique_ptr<Table> m_sendToIngressPortTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<CounterNameMapUpdater> m_queueCounterNameMapUpdater;
-    // unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_voqTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<Table> m_queueTypeTable;
     unique_ptr<CounterNameMapUpdater> m_pgCounterNameMapUpdater;
-    // unique_ptr<Table> m_pgTable;
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;

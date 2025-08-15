@@ -36,6 +36,21 @@ void CounterNameMapUpdater::setCounterNameMap(const std::string &counter_name, s
     m_counters_table.hset("", counter_name, sai_serialize_object_id(oid));
 }
 
+void CounterNameMapUpdater::setCounterNameMap(const std::vector<FieldValueTuple> &counter_name_maps)
+{
+    SWSS_LOG_ENTER();
+
+    if (gHFTOrch)
+    {
+        for (const auto& map : counter_name_maps)
+        {
+            const std::string& counter_name = fvField(map);
+            sai_object_id_t oid = fvValue(map).empty() ? SAI_NULL_OBJECT_ID : sai_deserialize_object_id(fvValue(map));
+            setCounterNameMap(counter_name, oid);
+        }
+    }
+}
+
 void CounterNameMapUpdater::delCounterNameMap(const std::string &counter_name)
 {
     SWSS_LOG_ENTER();
