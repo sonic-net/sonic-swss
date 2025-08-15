@@ -83,6 +83,8 @@ namespace shlorch_test
 
     sai_object_id_t oid_values[2];
     int alloc_index;
+    bool simulate_sai_failure = false;
+    bool simulate_bridge_failure = false;
 
     void checkIsolationGroup(uint32_t attr_count, const sai_attribute_t *attr_list) {
         ASSERT_TRUE(attr_count == 1);
@@ -97,6 +99,9 @@ namespace shlorch_test
     _In_ const sai_attribute_t *attr_list)
     {
         checkIsolationGroup(attr_count, attr_list);
+        if (simulate_sai_failure) {
+            return SAI_STATUS_FAILURE;
+        }
         *grp_id = (sai_object_id_t)oid_values[alloc_index++];
         return SAI_STATUS_SUCCESS;
     }
@@ -104,6 +109,9 @@ namespace shlorch_test
     sai_status_t _ut_stub_sai_remove_isolation_group(
     _In_ sai_object_id_t grp_id)
     {
+        if (simulate_sai_failure) {
+            return SAI_STATUS_FAILURE;
+        }
         return SAI_STATUS_SUCCESS;
     }
 
@@ -113,6 +121,9 @@ namespace shlorch_test
     _In_ uint32_t attr_count,
     _In_ const sai_attribute_t *attr_list)
     {
+        if (simulate_sai_failure) {
+            return SAI_STATUS_FAILURE;
+        }
         *grp_member_id = (sai_object_id_t)(0x2);
         return SAI_STATUS_SUCCESS;
     }
@@ -120,6 +131,9 @@ namespace shlorch_test
     sai_status_t _ut_stub_sai_remove_isolation_group_member(
     _In_ sai_object_id_t grp_member_id)
     {
+        if (simulate_sai_failure) {
+            return SAI_STATUS_FAILURE;
+        }
         return SAI_STATUS_SUCCESS;
     }
 
@@ -133,6 +147,9 @@ namespace shlorch_test
         _In_ const sai_attribute_t *attr)
     {
         checkBridgePortAttribute(attr->id);
+        if (simulate_bridge_failure) {
+            return SAI_STATUS_FAILURE;
+        }
         return SAI_STATUS_SUCCESS;
     }
 
@@ -278,6 +295,10 @@ namespace shlorch_test
 
         void SetUp() override
         {
+            // Reset failure simulation flags
+            simulate_sai_failure = false;
+            simulate_bridge_failure = false;
+
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
                 { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
@@ -698,5 +719,408 @@ namespace shlorch_test
         // Check VtepList cache and Isolation group count is zero
         ASSERT_EQ((gShlOrch->getVtepsListCount()), 0);
         ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlUnknownAttributeTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // Test unknown attribute handling
+        shlTable.set("Vlan10:Ethernet4", {
+            {"unknown_attr", "some_value"},
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Should still create isolation group despite unknown attribute
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+        ASSERT_NE(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+
+        // Clean up - delete the created entry
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> cleanup_entries;
+        cleanup_entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(cleanup_entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Verify cleanup
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlPortNotReadyTest)
+    {
+        // Clean up any existing isolation groups first
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+
+        // COMPLETELY clear the sync queue to avoid interference from previous tests
+        consumer->m_toSync.clear();
+
+        // Also clear any existing entries in the actual table
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        shlTable.del("Vlan10:Ethernet4");  // Clean up potential leftover
+        shlTable.del("Vlan10:Ethernet5");  // Clean up potential leftover
+
+        // Process any existing deletions first
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Ensure we start with clean state
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+
+        // Test with a truly non-existent port - use a completely different name pattern
+        std::string nonExistentPort = "Ethernet999";
+
+        // Verify the port doesn't exist
+        Port testPort;
+        ASSERT_FALSE(gPortsOrch->getPort(nonExistentPort, testPort));
+
+        // Now try to create isolation group with this non-existent port
+        shlTable.set("Vlan10:" + nonExistentPort, {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Should not create isolation group due to port not being ready
+        // Entry should remain in sync queue for retry
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+
+        // The entry should remain in sync queue since port doesn't exist
+        ASSERT_GT(consumer->m_toSync.size(), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlObserverUpdateTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // Set up isolation group first
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+
+        // Test ShlOrch::update() - observer pattern
+        // This tests the update method that handles bridge port changes
+        SubjectType type = SUBJECT_TYPE_BRIDGE_PORT_CHANGE;
+        PortUpdate portUpdate;
+        Port port;
+        gPortsOrch->getPort("Ethernet4", port);
+        portUpdate.port = port;
+        portUpdate.add = false; // Port removal
+
+        // Call the update method
+        gShlOrch->update(type, &portUpdate);
+
+        // Validate that the update was processed successfully
+        // The isolation group should still exist since port removal doesn't automatically delete it
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+        auto isolationGroup = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+        ASSERT_NE(isolationGroup, nullptr);
+        // The update should have been processed without errors (no crash/exception)
+
+        // Test with non-bridge port change type (should be ignored)
+        gShlOrch->update(SUBJECT_TYPE_NEXTHOP_CHANGE, nullptr);
+
+        // Clean up - delete the created entry
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> cleanup_entries;
+        cleanup_entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(cleanup_entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Verify cleanup
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlIsolationGroupGettersTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // Set up isolation group
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        auto isolationGroup = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+        ASSERT_NE(isolationGroup, nullptr);
+
+        // Test getter methods
+        ASSERT_EQ(isolationGroup->getIsolationGroupOid(), isolation_group_ids[VTEP_REMOTE_IP_2]);
+
+        // Test bind ports getter
+        auto bindPorts = isolationGroup->getBindPorts();
+        ASSERT_EQ(bindPorts.size(), 1);
+
+        // Test member ports getter
+        auto memberPorts = isolationGroup->getMemberPorts();
+        ASSERT_EQ(memberPorts.size(), 1);
+
+        // Test isolation group member OID getter
+        sai_object_id_t memberOid = isolationGroup->getIsolationGroupMemberOid("Ethernet4");
+        ASSERT_NE(memberOid, SAI_NULL_OBJECT_ID);
+
+        // Test ShlOrch getIsolationGroupsList
+        auto groupsList = gShlOrch->getIsolationGroupsList();
+        ASSERT_EQ(groupsList.size(), 1);
+        ASSERT_NE(groupsList.find(VTEP_REMOTE_IP_2), groupsList.end());
+
+        // Clean up - delete the created entry
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> cleanup_entries;
+        cleanup_entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(cleanup_entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Verify cleanup
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlErrorHandlingTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // Test delete operation on non-existent interface
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Now try to delete non-existent entry
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        entries.push_back({"Vlan10:EthernetNonExist", "DEL", { {} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Should handle gracefully without crashing
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1); // Original group should remain
+
+        // Clean up - delete the created entry
+        std::deque<KeyOpFieldsValuesTuple> cleanup_entries;
+        cleanup_entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(cleanup_entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Verify cleanup
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlPendingMemberHandlingTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // Test isolation group with port that has no bridge port ID initially
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "3.3.3.3"}  // Use VTEP that has pending bind port
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_3];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        auto isolationGroup = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_3);
+        ASSERT_NE(isolationGroup, nullptr);
+
+        // Should have pending bind port since tunnel for 3.3.3.3 is not set up initially
+        ASSERT_EQ(isolationGroup->getNumOfPendingBindports(), 1);
+
+        // Test delMember with do_fwd_ref parameter
+        Port port;
+        gPortsOrch->getPort("Ethernet4", port);
+
+        // Test delMember with forward reference (moves to pending)
+        isolationGroup->delMember(port, true);
+        ASSERT_EQ(isolationGroup->getNumOfPendingMembers(), 1);
+
+        // Test unbind with forward reference
+        isolationGroup->unbind(VTEP_REMOTE_IP_3, true);
+
+        // Clean up - delete the created entry
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> cleanup_entries;
+        cleanup_entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(cleanup_entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Verify cleanup
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlSaiFailureTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // Test SAI isolation group creation failure
+        simulate_sai_failure = true;
+
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Should not create isolation group due to SAI failure
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+
+        simulate_sai_failure = false; // Reset for other tests
+    }
+
+    TEST_F(ShlOrchTest, ShlBridgePortFailureTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // First create isolation group successfully
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+
+        // Now simulate bridge port attribute failure
+        simulate_bridge_failure = true;
+
+        auto isolationGroup = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+        ASSERT_NE(isolationGroup, nullptr);
+
+        Port port;
+        gPortsOrch->getPort("Ethernet4", port);
+
+        // Record bind port count before the failing bind attempt
+        auto bindPortCountBeforeFailure = isolationGroup->getNumOfBindPorts();
+
+        // This should fail due to bridge API failure but doesn't return error status
+        // The error will be logged internally
+        isolationGroup->bind(port);
+
+        // Verify that the bind operation failed - bind port count should not increase
+        ASSERT_EQ(isolationGroup->getNumOfBindPorts(), bindPortCountBeforeFailure);
+
+        simulate_bridge_failure = false; // Reset for other tests
+
+        // Now test that bind works successfully after resetting the failure flag
+        // Use a different port to avoid duplicate binding
+        Port port2;
+        gPortsOrch->getPort("Ethernet5", port2);
+
+        // First bring up Ethernet5 bridge port
+        ApplyVlanConfigs();
+
+        // Now bind the second port successfully
+        isolationGroup->bind(port2);
+
+        // Verify that the bind port count increased by 1 from the original count
+        ASSERT_EQ(isolationGroup->getNumOfBindPorts(), bindPortCountBeforeFailure + 1);        // Clean up - delete the created entry
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> cleanup_entries;
+        cleanup_entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(cleanup_entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        // Verify cleanup
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    TEST_F(ShlOrchTest, ShlMemberFailureTest)
+    {
+        // Clean up any existing isolation groups first
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+
+        // COMPLETELY clear the sync queue to avoid interference from previous tests
+        consumer->m_toSync.clear();
+
+        // Ensure we start with clean state
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+
+        // Create isolation group first successfully
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        auto isolationGroup = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+        ASSERT_NE(isolationGroup, nullptr);
+
+        // Now simulate member operation failure for NEW operations
+        simulate_sai_failure = true;
+
+        Port port;
+        gPortsOrch->getPort("Ethernet4", port);
+
+        // Test addMember failure - try to add the same member again (should fail due to SAI error)
+        auto result = isolationGroup->addMember(port);
+        // Since the member already exists, it should just log debug message and return success
+        // Validate that adding an existing member returns success (duplicate member handling)
+        ASSERT_EQ(result, SHL_ISO_GRP_STATUS_SUCCESS);
+        // Verify that the member count hasn't changed (no duplicate addition)
+        ASSERT_EQ(isolationGroup->getNumOfMembers(), 1);
+
+        // But if we simulate SAI failure and try to add a different port member, it should fail
+        // Let's try with a different approach - test delMember failure first
+        result = isolationGroup->delMember(port);
+        ASSERT_EQ(result, SHL_ISO_GRP_STATUS_FAIL);
+
+        // Reset SAI failure and try addMember with a port that has NULL bridge port ID
+        simulate_sai_failure = false;
+
+        // Create a port with NULL bridge port ID to test pending member scenario
+        Port nullPort;
+        nullPort.m_alias = "EthernetNull";
+        nullPort.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+
+        // This should add to pending members
+        result = isolationGroup->addMember(nullPort);
+        ASSERT_EQ(result, SHL_ISO_GRP_STATUS_SUCCESS);
+        ASSERT_EQ(isolationGroup->getNumOfPendingMembers(), 1);
+
+        // Now simulate failure and try to delete from pending members
+        simulate_sai_failure = true;
+        result = isolationGroup->delMember(nullPort);
+        ASSERT_EQ(result, SHL_ISO_GRP_STATUS_SUCCESS); // Should succeed since it's just removing from pending
+
+        simulate_sai_failure = false; // Reset for other tests
     }
 }
