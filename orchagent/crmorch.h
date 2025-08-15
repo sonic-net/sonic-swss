@@ -76,6 +76,7 @@ public:
     CrmOrch(swss::DBConnector *db, std::string tableName);
     void incCrmResUsedCounter(CrmResourceType resource);
     void decCrmResUsedCounter(CrmResourceType resource);
+    bool getCrmResUsedCounter(CrmResourceType resource, uint32_t &count);
     // Increment "used" counter for the ACL table/group CRM resources
     void incCrmAclUsedCounter(CrmResourceType resource, sai_acl_stage_t stage, sai_acl_bind_point_type_t point);
     // Decrement "used" counter for the ACL table/group CRM resources
