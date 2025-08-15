@@ -42,6 +42,8 @@ event_handle_t g_events_handle;
 #define DEFAULT_MAX_BULK_SIZE 1000
 extern int gBatchSize;
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
+bool gSairedisRecord = false;
+bool gSwssRecord = false;
 bool gSyncMode = false;
 bool gIsNatSupported = false;
 bool gTraditionalFlexCounter = false;
