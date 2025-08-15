@@ -322,6 +322,32 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_DOT3_STATS_SYMBOL_ERRORS
 };
 
+const vector<sai_port_stat_t> port_stat_fec_ids =
+{
+    SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES,
+    SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES,
+    SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S0,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S1,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S2,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S3,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S4,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S5,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S6,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S7,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S8,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S9,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S10,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S11,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S12,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S13,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15,
+    SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
+};
+
+vector<sai_port_stat_t> port_stat_non_fec_ids;
+
 const vector<sai_port_stat_t> gbport_stat_ids =
 {
     SAI_PORT_STAT_IF_IN_OCTETS,
@@ -1027,6 +1053,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize the stats capability in STATE_DB */
     initCounterCapabilities(gSwitchId);
+
+    prepareNonFecPortStats();
 
     auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
     Orch::addExecutor(executor);
@@ -4010,9 +4038,12 @@ void PortsOrch::registerPort(Port &p)
     If they are enabled, install the counters immediately */
     if (flex_counters_orch->getPortCountersState())
     {
-        auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
+        auto port_counter_stats = generateCounterStats(
+                 (p.m_fec_cfg && (p.m_fec_mode == SAI_PORT_FEC_MODE_NONE))? port_stat_non_fec_ids: port_stat_ids,
+                  sai_serialize_port_stat);
         port_stat_manager.setCounterIdList(p.m_port_id,
                 CounterType::PORT, port_counter_stats);
+                     
         auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
         if (p.m_system_side_id)
             gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
@@ -5081,9 +5112,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             it++;
                             continue;
                         }
-
+                        auto old_fec_mode = p.m_fec_mode;
                         p.m_fec_mode = pCfg.fec.value;
                         p.m_override_fec = pCfg.fec.override_fec;
+                        if (old_fec_mode != p.m_fec_mode)
+                        {
+                            updatePortCounterMap(p);
+                        }
                         m_portList[p.m_alias] = p;
 
                         SWSS_LOG_NOTICE(
@@ -8757,6 +8792,23 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
     CounterCheckOrch::getInstance().removePort(port);
 }
 
+void PortsOrch::prepareNonFecPortStats()
+{
+
+    // Generate The Port Stat Ids without Fec stats
+    // We can initialize const port_stat_non_fec_ids with all the stats excluding FEC stats instead of dynamically generating it,
+    // however this will force us to add the non FEC STATS to port_stats_non_fec_ids whenever someone adds the new stats to port_stat_ids.
+
+    for (auto port_stat : port_stat_ids)
+    {
+        auto it = std::find(port_stat_fec_ids.begin(), port_stat_fec_ids.end(), port_stat);
+        if (it == port_stat_fec_ids.end())
+        {
+            port_stat_non_fec_ids.push_back(port_stat);
+        }
+    }
+}
+
 void PortsOrch::generatePortCounterMap()
 {
     if (m_isPortCounterMapGenerated)
@@ -8765,6 +8817,7 @@ void PortsOrch::generatePortCounterMap()
     }
 
     auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
+    auto port_counter_non_fec_stats = generateCounterStats(port_stat_non_fec_ids, sai_serialize_port_stat);
     auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
     for (const auto& it: m_portList)
     {
@@ -8773,8 +8826,14 @@ void PortsOrch::generatePortCounterMap()
         {
             continue;
         }
-        port_stat_manager.setCounterIdList(it.second.m_port_id,
-                CounterType::PORT, port_counter_stats);
+        if(it.second.m_fec_cfg && it.second.m_fec_mode == SAI_PORT_FEC_MODE_NONE)
+        {
+            port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_non_fec_stats);
+        }
+        else
+        {
+            port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_stats);
+        }
         if (it.second.m_system_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id,
                     CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
@@ -8784,6 +8843,32 @@ void PortsOrch::generatePortCounterMap()
     }
 
     m_isPortCounterMapGenerated = true;
+}
+
+void PortsOrch::updatePortCounterMap(Port &port)
+{
+    if (!m_isPortCounterMapGenerated)
+    {
+        return;
+    }
+    if (port.m_type != Port::Type::PHY)
+    {
+        return;
+    }
+    // clear the old counters
+    port_stat_manager.clearCounterIdList(port.m_port_id);
+
+    if (port.m_fec_mode == SAI_PORT_FEC_MODE_NONE)
+    {
+        auto port_counter_non_fec_stats = generateCounterStats(port_stat_non_fec_ids, sai_serialize_port_stat);
+        port_stat_manager.setCounterIdList(port.m_port_id, CounterType::PORT, port_counter_non_fec_stats);
+    }
+    else
+    {
+        auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
+        port_stat_manager.setCounterIdList(port.m_port_id, CounterType::PORT, port_counter_stats);
+    }
+    SWSS_LOG_DEBUG("Updated Counters for %s Fec_mode:%d", port.m_alias.c_str(), port.m_fec_mode);
 }
 
 void PortsOrch::generatePortBufferDropCounterMap()
