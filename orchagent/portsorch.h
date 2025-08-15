@@ -230,6 +230,8 @@ public:
     void addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector);
 
     void generatePortCounterMap();
+    void prepareNonFecPortStats();
+    void updatePortCounterMap(Port &port);
     void generatePortBufferDropCounterMap();
 
     void generatePortPhyAttrCounterMap();
