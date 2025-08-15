@@ -44,7 +44,7 @@ public:
     ~CounterNameMapUpdater() = default;
 
     void setCounterNameMap(const std::string &counter_name, sai_object_id_t oid);
-    void setCounterNameMap(const std::vector<FieldValueTuple> &counter_name_maps);
+    void setCounterNameMap(const std::vector<swss::FieldValueTuple> &counter_name_maps);
     void delCounterNameMap(const std::string &counter_name);
 
 private:

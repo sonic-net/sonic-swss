@@ -36,7 +36,7 @@ void CounterNameMapUpdater::setCounterNameMap(const std::string &counter_name, s
     m_counters_table.hset("", counter_name, sai_serialize_object_id(oid));
 }
 
-void CounterNameMapUpdater::setCounterNameMap(const std::vector<FieldValueTuple> &counter_name_maps)
+void CounterNameMapUpdater::setCounterNameMap(const std::vector<swss::FieldValueTuple> &counter_name_maps)
 {
     SWSS_LOG_ENTER();
 
@@ -45,7 +45,11 @@ void CounterNameMapUpdater::setCounterNameMap(const std::vector<FieldValueTuple>
         for (const auto& map : counter_name_maps)
         {
             const std::string& counter_name = fvField(map);
-            sai_object_id_t oid = fvValue(map).empty() ? SAI_NULL_OBJECT_ID : sai_deserialize_object_id(fvValue(map));
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            if (!fvValue(map).empty())
+            {
+                sai_deserialize_object_id(fvValue(map), oid);
+            }
             setCounterNameMap(counter_name, oid);
         }
     }
