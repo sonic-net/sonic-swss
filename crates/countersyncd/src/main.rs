@@ -10,7 +10,8 @@ use tokio::{spawn, sync::mpsc::channel};
 
 // Internal actor implementations
 use actor::{
-    netlink::{NetlinkActor, get_genl_family_group}, 
+    data_netlink::{DataNetlinkActor, get_genl_family_group}, 
+    control_netlink::ControlNetlinkActor,
     ipfix::IpfixActor,
     stats_reporter::{StatsReporterActor, StatsReporterConfig, ConsoleWriter},
     swss::SwssActor,
@@ -82,8 +83,9 @@ fn init_logging(log_level: &str, log_format: &str) {
 /// This application processes high-frequency telemetry data from SONiC switches,
 /// converting netlink messages and SWSS state database updates through IPFIX format to SAI statistics.
 /// 
-/// The application consists of four main actors:
-/// - NetlinkActor: Receives raw netlink messages from the kernel
+/// The application consists of five main actors:
+/// - DataNetlinkActor: Receives raw netlink messages from the kernel and handles data socket
+/// - ControlNetlinkActor: Monitors netlink family registration/unregistration and triggers reconnections
 /// - SwssActor: Monitors SONiC orchestrator messages via state database for IPFIX templates
 /// - IpfixActor: Processes IPFIX templates and data records to extract SAI stats  
 /// - StatsReporterActor: Reports processed statistics to the console
@@ -132,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create communication channels between actors
-    let (_command_sender, command_receiver) = channel(1);
+    let (command_sender, command_receiver) = channel(10); // Increased buffer for commands
     let (socket_sender, socket_receiver) = channel(1);
     let (ipfix_template_sender, ipfix_template_receiver) = channel(1);
     let (saistats_sender, saistats_receiver) = channel(100); // Increased buffer for stats
@@ -142,8 +144,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Using netlink family: '{}', group: '{}'", family, group);
 
     // Initialize and configure actors
-    let mut netlink = NetlinkActor::new(family.as_str(), group.as_str(), command_receiver);
-    netlink.add_recipient(socket_sender);
+    let mut data_netlink = DataNetlinkActor::new(family.as_str(), group.as_str(), command_receiver);
+    data_netlink.add_recipient(socket_sender);
+    
+    let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
     
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, socket_receiver);
     ipfix.add_recipient(saistats_sender);
@@ -178,10 +182,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting actor tasks...");
     
     // Spawn actor tasks
-    let netlink_handle = spawn(async move {
-        info!("Netlink actor started");
-        NetlinkActor::run(netlink).await;
-        info!("Netlink actor terminated");
+    let data_netlink_handle = spawn(async move {
+        info!("Data netlink actor started");
+        DataNetlinkActor::run(data_netlink).await;
+        info!("Data netlink actor terminated");
+    });
+
+    let control_netlink_handle = spawn(async move {
+        info!("Control netlink actor started");
+        ControlNetlinkActor::run(control_netlink).await;
+        info!("Control netlink actor terminated");
     });
     
     // Use spawn_blocking to ensure IPFIX actor runs on a dedicated thread
@@ -215,7 +225,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Wait for all actors to complete and handle any errors
-    let netlink_result = netlink_handle.await;
+    let data_netlink_result = data_netlink_handle.await;
+    let control_netlink_result = control_netlink_handle.await;
     let ipfix_result = ipfix_handle.await.map_err(|e| {
         error!("IPFIX blocking task join error: {:?}", e);
         e
@@ -229,43 +240,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle results based on whether stats reporter was enabled
     if let Some(reporter_result) = reporter_result {
-        match (netlink_result, ipfix_result, swss_result, reporter_result) {
-            (Ok(()), Ok(()), Ok(()), Ok(())) => {
+        match (data_netlink_result, control_netlink_result, ipfix_result, swss_result, reporter_result) {
+            (Ok(()), Ok(()), Ok(()), Ok(()), Ok(())) => {
                 info!("All actors completed successfully");
                 Ok(())
             }
-            (Err(e), _, _, _) => {
-                error!("Netlink actor failed: {:?}", e);
+            (Err(e), _, _, _, _) => {
+                error!("Data netlink actor failed: {:?}", e);
                 Err(e.into())
             }
-            (_, Err(e), _, _) => {
+            (_, Err(e), _, _, _) => {
+                error!("Control netlink actor failed: {:?}", e);
+                Err(e.into())
+            }
+            (_, _, Err(e), _, _) => {
                 error!("IPFIX actor failed: {:?}", e);
                 Err(e.into())
             }
-            (_, _, Err(e), _) => {
+            (_, _, _, Err(e), _) => {
                 error!("SWSS actor failed: {:?}", e);
                 Err(e.into())
             }
-            (_, _, _, Err(e)) => {
+            (_, _, _, _, Err(e)) => {
                 error!("Stats reporter actor failed: {:?}", e);
                 Err(e.into())
             }
         }
     } else {
-        match (netlink_result, ipfix_result, swss_result) {
-            (Ok(()), Ok(()), Ok(())) => {
+        match (data_netlink_result, control_netlink_result, ipfix_result, swss_result) {
+            (Ok(()), Ok(()), Ok(()), Ok(())) => {
                 info!("All actors completed successfully (stats reporting disabled)");
                 Ok(())
             }
-            (Err(e), _, _) => {
-                error!("Netlink actor failed: {:?}", e);
+            (Err(e), _, _, _) => {
+                error!("Data netlink actor failed: {:?}", e);
                 Err(e.into())
             }
-            (_, Err(e), _) => {
+            (_, Err(e), _, _) => {
+                error!("Control netlink actor failed: {:?}", e);
+                Err(e.into())
+            }
+            (_, _, Err(e), _) => {
                 error!("IPFIX actor failed: {:?}", e);
                 Err(e.into())
             }
-            (_, _, Err(e)) => {
+            (_, _, _, Err(e)) => {
                 error!("SWSS actor failed: {:?}", e);
                 Err(e.into())
             }
