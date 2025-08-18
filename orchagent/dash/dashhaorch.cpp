@@ -441,6 +441,11 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     ha_role_attr.value.u16 = to_sai(entry.ha_role());
     ha_scope_attrs.push_back(ha_role_attr);
 
+    sai_attribute_t disabled_attr = {};
+    disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    disabled_attr.value.booldata = entry.disabled();
+    ha_scope_attrs.push_back(disabled_attr);
+
     if (entry.has_vip_v4() && entry.vip_v4().has_ipv4())
     {
         sai_ip_address_t sai_vip_v4 = {};
@@ -666,6 +671,8 @@ bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    m_ha_scope_entries[key].metadata.set_disabled(disabled);
     SWSS_LOG_NOTICE("Set HA Scope admin state for %s to %d", key.c_str(), disabled);
 
     return true;
