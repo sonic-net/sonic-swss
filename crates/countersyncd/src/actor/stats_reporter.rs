@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
+use chrono::DateTime;
 
 use log::{debug, info};
 use tokio::{
@@ -9,6 +10,7 @@ use tokio::{
 };
 
 use super::super::message::saistats::SAIStatsMessage;
+use crate::sai::{SaiObjectType, SaiPortStat, SaiQueueStat, SaiBufferPoolStat, SaiIngressPriorityGroupStat};
 
 /// Unique key for identifying a specific counter based on the triplet
 /// (object_name, type_id, stat_id)
@@ -169,6 +171,100 @@ impl<W: OutputWriter> StatsReporterActor<W> {
         StatsReporterActor::new(stats_receiver, StatsReporterConfig::default(), ConsoleWriter)
     }
 
+    /// Helper function to convert type_id to string representation
+    fn type_id_to_string(&self, type_id: u32) -> String {
+        match SaiObjectType::try_from(type_id) {
+            Ok(sai_type) => format!("{:?}", sai_type),
+            Err(_) => format!("UNKNOWN({})", type_id),
+        }
+    }
+
+    /// Helper function to remove SAI prefixes from stat names
+    fn remove_sai_prefix(&self, stat_name: &str) -> String {
+        // Remove common SAI stat prefixes using regex pattern
+        // Pattern: SAI_<TYPE>_STAT_<ACTUAL_NAME>
+        if stat_name.starts_with("SAI_") && stat_name.contains("_STAT_") {
+            // Find the position of "_STAT_" and return everything after it
+            if let Some(stat_pos) = stat_name.find("_STAT_") {
+                let start_pos = stat_pos + "_STAT_".len();
+                stat_name[start_pos..].to_string()
+            } else {
+                stat_name.to_string()
+            }
+        } else {
+            // If no SAI pattern found, return as-is
+            stat_name.to_string()
+        }
+    }
+
+    /// Helper function to convert stat_id to string representation
+    fn stat_id_to_string(&self, type_id: u32, stat_id: u32) -> String {
+        // Convert type_id to SaiObjectType first
+        match SaiObjectType::try_from(type_id) {
+            Ok(object_type) => {
+                match object_type {
+                    SaiObjectType::Port => {
+                        // Convert stat_id to SaiPortStat and get its C name
+                        if let Some(port_stat) = SaiPortStat::from_u32(stat_id) {
+                            self.remove_sai_prefix(port_stat.to_c_name())
+                        } else {
+                            format!("UNKNOWN_PORT_STAT_{}", stat_id)
+                        }
+                    }
+                    SaiObjectType::Queue => {
+                        // Convert stat_id to SaiQueueStat and get its C name
+                        if let Some(queue_stat) = SaiQueueStat::from_u32(stat_id) {
+                            self.remove_sai_prefix(queue_stat.to_c_name())
+                        } else {
+                            format!("UNKNOWN_QUEUE_STAT_{}", stat_id)
+                        }
+                    }
+                    SaiObjectType::BufferPool => {
+                        // Convert stat_id to SaiBufferPoolStat and get its C name
+                        if let Some(buffer_stat) = SaiBufferPoolStat::from_u32(stat_id) {
+                            self.remove_sai_prefix(buffer_stat.to_c_name())
+                        } else {
+                            format!("UNKNOWN_BUFFER_POOL_STAT_{}", stat_id)
+                        }
+                    }
+                    SaiObjectType::IngressPriorityGroup => {
+                        // Convert stat_id to SaiIngressPriorityGroupStat and get its C name
+                        if let Some(ipg_stat) = SaiIngressPriorityGroupStat::from_u32(stat_id) {
+                            self.remove_sai_prefix(ipg_stat.to_c_name())
+                        } else {
+                            format!("UNKNOWN_IPG_STAT_{}", stat_id)
+                        }
+                    }
+                    _ => {
+                        format!("UNSUPPORTED_TYPE_{}_STAT_{}", type_id, stat_id)
+                    }
+                }
+            }
+            Err(_) => {
+                format!("INVALID_TYPE_{}_STAT_{}", type_id, stat_id)
+            }
+        }
+    }
+
+    /// Helper function to format timestamp with nanosecond precision
+    fn format_timestamp(&self, timestamp_ns: u64) -> String {
+        // Convert nanoseconds to seconds and nanoseconds
+        let secs = (timestamp_ns / 1_000_000_000) as i64;
+        let nanos = (timestamp_ns % 1_000_000_000) as u32;
+        
+        // Create DateTime from the timestamp using the new API
+        match DateTime::from_timestamp(secs, nanos) {
+            Some(utc_dt) => {
+                // Format as "YYYY-MM-DD HH:MM:SS.nnnnnnnnn UTC"
+                utc_dt.format("%Y-%m-%d %H:%M:%S.%f UTC").to_string()
+            }
+            None => {
+                // Fallback to original format if conversion fails
+                format!("{}.{:09}", secs, nanos)
+            }
+        }
+    }
+
     /// Updates the internal state with new statistics data.
     /// 
     /// For each statistic in the message, updates:
@@ -219,7 +315,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
         self.reports_generated += 1;
 
         if self.latest_counters.is_empty() {
-            self.writer.write_line(&format!("📊 [Report #{}] No statistics data available yet", self.reports_generated));
+            self.writer.write_line(&format!("[Report #{}] No statistics data available yet", self.reports_generated));
             self.writer.write_line(&format!("   Total Messages Received: {}", self.total_messages_received));
         } else {
             self.print_counters_report();
@@ -236,48 +332,65 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     /// Shows all current counters with their triplet keys and the number of
     /// messages received for each counter in the current reporting period.
     fn print_counters_report(&mut self) {
-        self.writer.write_line(&format!("📊 [Report #{}] SAI Counters Report", self.reports_generated));
+        self.writer.write_line(&format!("[Report #{}] SAI Counters Report", self.reports_generated));
         self.writer.write_line(&format!("   Total Unique Counters: {}", self.latest_counters.len()));
         self.writer.write_line(&format!("   Total Messages Received: {}", self.total_messages_received));
 
         if self.config.detailed && !self.latest_counters.is_empty() {
-            self.writer.write_line("   📈 Detailed Counters:");
+            // Group by SAI object type for better organization
+            use std::collections::BTreeMap;
+            let mut grouped_counters: BTreeMap<u32, Vec<(&CounterKey, &CounterInfo)>> = BTreeMap::new();
             
-            // Sort counters by key for consistent output
-            let mut sorted_counters: Vec<_> = self.latest_counters.iter().collect();
-            sorted_counters.sort_by(|a, b| {
-                a.0.object_name.cmp(&b.0.object_name)
-                    .then_with(|| a.0.type_id.cmp(&b.0.type_id))
-                    .then_with(|| a.0.stat_id.cmp(&b.0.stat_id))
-            });
-
-            let counters_to_show = if let Some(max) = self.config.max_stats_per_report {
-                &sorted_counters[..std::cmp::min(max, sorted_counters.len())]
-            } else {
-                &sorted_counters
-            };
-
-            for (index, (key, counter_info)) in counters_to_show.iter().enumerate() {
-                let messages_in_period = self.messages_per_counter.get(key).unwrap_or(&0);
-                let messages_per_second = *messages_in_period as f64 / self.config.interval.as_secs_f64();
-                self.writer.write_line(&format!(
-                    "      [{:3}] Object: {:15}, Type: {:10}, Stat: {:10}, Counter: {:15}, Msg/s: {:6.1}, LastTime: {}",
-                    index + 1,
-                    key.object_name,
-                    key.type_id,
-                    key.stat_id,
-                    counter_info.counter,
-                    messages_per_second,
-                    counter_info.last_observation_time
-                ));
+            for (key, counter_info) in &self.latest_counters {
+                grouped_counters.entry(key.type_id).or_insert_with(Vec::new).push((key, counter_info));
             }
 
-            if let Some(max) = self.config.max_stats_per_report {
-                if self.latest_counters.len() > max {
+            self.writer.write_line("   Detailed Counters:");
+            
+            let mut total_shown = 0;
+            for (type_id, mut counters) in grouped_counters {
+                // Sort counters within each type by object name and stat id
+                counters.sort_by(|a, b| {
+                    a.0.object_name.cmp(&b.0.object_name)
+                        .then_with(|| a.0.stat_id.cmp(&b.0.stat_id))
+                });
+
+                let type_name = self.type_id_to_string(type_id);
+                self.writer.write_line(&format!("      Type: {} ({})", type_name, type_id));
+
+                let counters_to_show = if let Some(max) = self.config.max_stats_per_report {
+                    let remaining = max.saturating_sub(total_shown);
+                    &counters[..std::cmp::min(remaining, counters.len())]
+                } else {
+                    &counters
+                };
+
+                for (index, (key, counter_info)) in counters_to_show.iter().enumerate() {
+                    let messages_in_period = self.messages_per_counter.get(key).unwrap_or(&0);
+                    let messages_per_second = *messages_in_period as f64 / self.config.interval.as_secs_f64();
+                    let stat_name = self.stat_id_to_string(key.type_id, key.stat_id);
+                    let formatted_time = self.format_timestamp(counter_info.last_observation_time);
+                    
                     self.writer.write_line(&format!(
-                        "      ... and {} more counters (use max_stats_per_report: None to show all)",
-                        self.latest_counters.len() - max
+                        "         [{:3}] Object: {:15}, Stat: {:25}, Counter: {:15}, Msg/s: {:6.1}, LastTime: {}",
+                        index + 1,
+                        key.object_name,
+                        stat_name,
+                        counter_info.counter,
+                        messages_per_second,
+                        formatted_time
                     ));
+                }
+
+                total_shown += counters_to_show.len();
+                if let Some(max) = self.config.max_stats_per_report {
+                    if total_shown >= max && self.latest_counters.len() > max {
+                        self.writer.write_line(&format!(
+                            "         ... and {} more counters (use max_stats_per_report: None to show all)",
+                            self.latest_counters.len() - max
+                        ));
+                        break;
+                    }
                 }
             }
         } else if !self.config.detailed && !self.latest_counters.is_empty() {
@@ -288,7 +401,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
             let total_messages_in_period: u64 = self.messages_per_counter.values().sum();
             let messages_per_second = total_messages_in_period as f64 / self.config.interval.as_secs_f64();
             
-            self.writer.write_line("   📊 Summary:");
+            self.writer.write_line("   Summary:");
             self.writer.write_line(&format!("      Total Counter Value: {}", total_counter_value));
             self.writer.write_line(&format!("      Unique Types: {}", unique_types));
             self.writer.write_line(&format!("      Unique Objects: {}", unique_objects));
@@ -492,7 +605,7 @@ mod tests {
 
         // Verify individual counter entries with new format
         let has_counter_entry = output.iter().any(|line| 
-            line.contains("Object:") && line.contains("Type:") && line.contains("Msg/s:")
+            line.contains("Object:") && line.contains("Stat:") && line.contains("Msg/s:")
         );
         assert!(has_counter_entry, "Should show individual counter entries with message counts");
 
@@ -557,7 +670,7 @@ mod tests {
         assert!(!output.is_empty(), "Should have captured some output");
 
         // Verify summary mode elements
-        let has_summary_header = output.iter().any(|line| line.contains("📊 Summary:"));
+        let has_summary_header = output.iter().any(|line| line.contains("Summary:"));
         assert!(has_summary_header, "Should contain summary header");
 
         // Verify total counter calculation (0 + 1000 + 2000 = 3000)
@@ -705,15 +818,15 @@ mod tests {
         let mut counter_entries = Vec::new();
         
         for line in &output {
-            if line.contains("📈 Detailed Counters:") {
+            if line.contains("Detailed Counters:") {
                 in_detailed_section = true;
                 continue;
             }
             
             if in_detailed_section {
-                if line.contains("] Object:") && line.contains("Type:") {
+                if line.contains("] Object:") && line.contains("Stat:") {
                     counter_entries.push(line);
-                } else if line.contains("📊") || line.trim().is_empty() {
+                } else if line.contains("[Report") || line.trim().is_empty() {
                     // End of this detailed section
                     break;
                 }
@@ -732,5 +845,105 @@ mod tests {
         assert!(has_total_count, "Should show correct total unique counters count");
 
         println!("✅ Max stats limit test passed - captured {} output lines", output.len());
+    }
+
+    #[tokio::test]
+    async fn test_stats_reporter_sai_stat_names() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct SharedTestWriter {
+            lines: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl SharedTestWriter {
+            fn new() -> Self {
+                Self {
+                    lines: Arc::new(Mutex::new(Vec::new())),
+                }
+            }
+
+            fn get_lines(&self) -> Vec<String> {
+                self.lines.lock().unwrap().clone()
+            }
+        }
+
+        impl OutputWriter for SharedTestWriter {
+            fn write_line(&mut self, line: &str) {
+                self.lines.lock().unwrap().push(line.to_string());
+            }
+        }
+
+        let (sender, receiver) = channel(10);
+        let shared_writer = SharedTestWriter::new();
+        let writer_clone = shared_writer.clone();
+        
+        let config = StatsReporterConfig {
+            interval: Duration::from_millis(100),
+            detailed: true,
+            max_stats_per_report: None,
+        };
+        
+        let actor = StatsReporterActor::new(receiver, config, shared_writer);
+        let handle = spawn(StatsReporterActor::run(actor));
+
+        // Create stats with known SAI types and stat IDs
+        let stats = vec![
+            SAIStat {
+                object_name: "Ethernet0".to_string(),
+                type_id: 1, // Port
+                stat_id: 0, // IfInOctets
+                counter: 832,
+            },
+            SAIStat {
+                object_name: "Ethernet16".to_string(),
+                type_id: 1, // Port 
+                stat_id: 1, // IfInUcastPkts
+                counter: 1664,
+            },
+        ];
+
+        let test_stats = SAIStats {
+            observation_time: 12345,
+            stats,
+        };
+
+        sender.send(Arc::new(test_stats)).await.unwrap();
+
+        // Wait for processing and one report
+        sleep(Duration::from_millis(150)).await;
+
+        // Close and finish
+        drop(sender);
+        handle.await.expect("Actor should complete successfully");
+
+        // Verify captured output
+        let output = writer_clone.get_lines();
+
+        // Find the line that should contain IF_IN_OCTETS (without SAI_PORT_STAT_ prefix)
+        let has_if_in_octets = output.iter().any(|line| 
+            line.contains("IF_IN_OCTETS")
+        );
+        assert!(has_if_in_octets, "Should show IF_IN_OCTETS without SAI_PORT_STAT_ prefix");
+
+        // Find the line that should contain IF_IN_UCAST_PKTS (without SAI_PORT_STAT_ prefix)
+        let has_if_in_ucast_pkts = output.iter().any(|line|
+            line.contains("IF_IN_UCAST_PKTS")
+        );
+        assert!(has_if_in_ucast_pkts, "Should show IF_IN_UCAST_PKTS without SAI_PORT_STAT_ prefix");
+
+        // Should NOT have full SAI prefixes
+        let has_sai_prefix = output.iter().any(|line|
+            line.contains("SAI_PORT_STAT_IF_IN_OCTETS") || line.contains("SAI_PORT_STAT_IF_IN_UCAST_PKTS")
+        );
+        assert!(!has_sai_prefix, "Should NOT show full SAI_PORT_STAT_ prefixes");
+
+        // Should NOT have generic STAT_ prefixes
+        let has_generic_stat = output.iter().any(|line|
+            line.contains("STAT_0") || line.contains("STAT_1")
+        );
+        assert!(!has_generic_stat, "Should NOT show generic STAT_ names");
+
+        println!("✅ SAI stat names test passed - captured {} output lines", output.len());
     }
 }
