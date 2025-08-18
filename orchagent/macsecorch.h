@@ -40,6 +40,8 @@ public:
 
 private:
     void doTask(Consumer &consumer);
+    void doTask(NotificationConsumer &consumer);
+    void handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry);
 
 public:
     using TaskArgs = std::vector<FieldValueTuple>;
@@ -56,6 +58,13 @@ private:
     task_process_status taskDeleteEgressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
     task_process_status taskUpdateIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
     task_process_status taskDeleteIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
+
+    Table m_state_post_state;
+    shared_ptr<DBConnector> m_notificationsDb;
+    NotificationConsumer* m_postCompletionNotificationConsumer;
+    bool m_enable_post;
+    void setMacsecPostState(const std::string & postState);
+    std::string getMacsecPostState();
 
     PortsOrch * m_port_orch;
 
@@ -117,6 +126,8 @@ private:
         map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
         bool                                            m_sci_in_ingress_macsec_acl;
         sai_uint8_t                                     m_max_sa_per_sc;
+        bool                                            m_egress_post_passed;
+        bool                                            m_ingress_post_passed;
     };
     map<sai_object_id_t, MACsecObject>              m_macsec_objs;
     map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;

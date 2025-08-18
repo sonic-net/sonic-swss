@@ -30,6 +30,7 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+#include "macsecpost.h"
 
 using namespace std;
 using namespace swss;
@@ -643,6 +644,34 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
+    // Enable FIPS POST if needed.
+    // TODO: MACSec POST needs to be eanbled in switch creation. So it's expected to
+    // to provide a config for orchagent to check if POST needs to be enabled or not.
+    bool macsec_post_enabled = false;
+
+    string macsec_post_state;
+    if (gMySwitchType != "fabric" && macsec_post_enabled)
+    {
+        macsec_post_state = "switch-level-post-in-progress";
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_ENABLE_POST;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_switch_macsec_post_status_notify;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_switch_macsec_post_status_notify;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        macsec_post_state = "disabled";
+    }
+    setMacsecPostState(&state_db, macsec_post_state);
+
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
     attr.value.u64 = gSwitchId;
@@ -755,6 +784,34 @@ int main(int argc, char **argv)
 
         gVirtualRouterId = attr.value.oid;
         SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
+
+        /* Query MACSec POST capability and set POST state in state DB accordingly */
+        if (macsec_post_enabled)
+        {
+            sai_attr_capability_t post_capability;
+            if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                               SAI_SWITCH_ATTR_MACSEC_ENABLE_POST,
+                                               &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is supported in switch init, and it was already enabled in switch init.
+                SWSS_LOG_NOTICE("MACSec POST enabled in switch init");
+            }
+            else if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MACSEC,
+                                                    SAI_MACSEC_ATTR_ENABLE_POST,
+                                                    &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is only supported in MACSec init. Set POST state to notify MACSecOrch
+                // to perform POST.
+                setMacsecPostState(&state_db, "macsec-level-post-in-progress");
+                SWSS_LOG_NOTICE("MACSec POST will be enabled in MACSec init");
+            }
+            else
+            {
+                SWSS_LOG_ERROR("MACSec POST is not supported by SAI");
+            }
+        }
 
         /* Get the NAT supported info */
         attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
