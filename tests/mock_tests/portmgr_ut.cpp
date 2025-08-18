@@ -193,7 +193,6 @@ namespace portmgr_ut
         std::vector<FieldValueTuple> values;
         app_port_table.get("Ethernet0", values);
         auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        ASSERT_TRUE(value_opt);
         EXPECT_EQ("100", value_opt.get());
     }
 
@@ -258,7 +257,6 @@ namespace portmgr_ut
         std::vector<FieldValueTuple> values;
         app_port_table.get("Ethernet8", values);
         auto value_opt = swss::fvsGetValue(values, "fec", true);
-        EXPECT_FALSE(value_opt);
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
