@@ -86,7 +86,6 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("up", value_opt.get());
 
-        // Test empty DHCP rate limit configuration (covers SWSS_LOG_DEBUG)
         mockCallArgs.clear();
         cfg_port_table.set("Ethernet0", {
             {"dhcp_rate_limit", ""}  // Empty string should skip TC configuration
