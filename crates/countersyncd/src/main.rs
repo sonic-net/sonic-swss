@@ -1,6 +1,7 @@
 // Application modules
 mod message;
 mod actor;
+mod sai;
 
 // External dependencies
 use clap::Parser;
@@ -9,9 +10,10 @@ use std::time::Duration;
 use tokio::{spawn, sync::mpsc::channel};
 
 // Internal actor implementations
-use actor::{
-    data_netlink::{DataNetlinkActor, get_genl_family_group}, 
+use crate::actor::{
     control_netlink::ControlNetlinkActor,
+    counter_db::{CounterDBActor, CounterDBConfig},
+    data_netlink::{DataNetlinkActor, get_genl_family_group},
     ipfix::IpfixActor,
     stats_reporter::{StatsReporterActor, StatsReporterConfig, ConsoleWriter},
     swss::SwssActor,
@@ -83,12 +85,13 @@ fn init_logging(log_level: &str, log_format: &str) {
 /// This application processes high-frequency telemetry data from SONiC switches,
 /// converting netlink messages and SWSS state database updates through IPFIX format to SAI statistics.
 /// 
-/// The application consists of five main actors:
+/// The application consists of six main actors:
 /// - DataNetlinkActor: Receives raw netlink messages from the kernel and handles data socket
 /// - ControlNetlinkActor: Monitors netlink family registration/unregistration and triggers reconnections
 /// - SwssActor: Monitors SONiC orchestrator messages via state database for IPFIX templates
 /// - IpfixActor: Processes IPFIX templates and data records to extract SAI stats  
 /// - StatsReporterActor: Reports processed statistics to the console
+/// - CounterDBActor: Writes processed statistics to the Counter Database in Redis
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -108,6 +111,14 @@ struct Args {
     #[arg(short = 'm', long, default_value = "20")]
     max_stats_per_report: u32,
 
+    /// Enable counter database writing
+    #[arg(short = 'c', long, default_value = "false")]
+    enable_counter_db: bool,
+
+    /// Counter database write frequency in seconds
+    #[arg(short = 'f', long, default_value = "3")]
+    counter_db_frequency: u64,
+
     /// Log level (trace, debug, info, warn, error)
     #[arg(short = 'l', long, default_value = "info", help = "Set the logging level")]
     log_level: String,
@@ -123,6 +134,10 @@ struct Args {
     /// Channel capacity for stats_reporter communication  
     #[arg(long, default_value = "1024", help = "Set the channel capacity for stats_reporter actor")]
     stats_reporter_capacity: usize,
+
+    /// Channel capacity for counter_db communication  
+    #[arg(long, default_value = "1024", help = "Set the channel capacity for counter_db actor")]
+    counter_db_capacity: usize,
 }
 
 #[tokio::main]
@@ -140,14 +155,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Detailed stats: {}", args.detailed_stats);
         info!("Max stats per report: {}", args.max_stats_per_report);
     }
-    info!("Channel capacities - ipfix_records: {}, stats_reporter: {}", 
-          args.data_netlink_capacity, args.stats_reporter_capacity);
+    info!("Counter DB writing enabled: {}", args.enable_counter_db);
+    if args.enable_counter_db {
+        info!("Counter DB write frequency: {} seconds", args.counter_db_frequency);
+    }
+    info!("Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}", 
+          args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity);
 
     // Create communication channels between actors with configurable capacities
     let (command_sender, command_receiver) = channel(10); // Keep small buffer for commands
     let (ipfix_record_sender, ipfix_record_receiver) = channel(args.data_netlink_capacity);
     let (ipfix_template_sender, ipfix_template_receiver) = channel(10); // Fixed capacity for templates
-    let (saistats_sender, saistats_receiver) = channel(args.stats_reporter_capacity);
+    let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
+    let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
 
     // Get netlink family and group configuration from SONiC constants
     let (family, group) = get_genl_family_group();
@@ -160,7 +180,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
     
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
-    ipfix.add_recipient(saistats_sender);
 
     // Initialize SwssActor to monitor SONiC orchestrator messages
     let swss = match SwssActor::new(ipfix_template_sender) {
@@ -183,10 +202,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        Some(StatsReporterActor::new(saistats_receiver, reporter_config, ConsoleWriter))
+        // Add stats reporter to ipfix recipients only when enabled
+        ipfix.add_recipient(stats_report_sender.clone());
+        Some(StatsReporterActor::new(stats_report_receiver, reporter_config, ConsoleWriter))
     } else {
         // Drop the receiver if stats reporting is disabled
-        drop(saistats_receiver);
+        drop(stats_report_receiver);
+        None
+    };
+
+    // Configure counter database writer with settings from command line arguments
+    let counter_db = if args.enable_counter_db {
+        let counter_db_config = CounterDBConfig {
+            interval: Duration::from_secs(args.counter_db_frequency),
+        };
+
+        // Add counter DB to ipfix recipients only when enabled
+        ipfix.add_recipient(counter_db_sender.clone());
+        match CounterDBActor::new(counter_db_receiver, counter_db_config) {
+            Ok(actor) => Some(actor),
+            Err(e) => {
+                error!("Failed to initialize CounterDBActor: {}", e);
+                return Err(e.into());
+            }
+        }
+    } else {
+        // Drop the receiver if counter DB writing is disabled
+        drop(counter_db_receiver);
         None
     };
 
@@ -235,6 +277,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Only spawn counter DB writer if enabled
+    let counter_db_handle = if let Some(counter_db) = counter_db {
+        Some(spawn(async move {
+            info!("Counter DB actor started");
+            CounterDBActor::run(counter_db).await;
+            info!("Counter DB actor terminated");
+        }))
+    } else {
+        info!("Counter DB writing disabled - not starting counter DB actor");
+        None
+    };
+
     // Wait for all actors to complete and handle any errors
     let data_netlink_result = data_netlink_handle.await;
     let control_netlink_result = control_netlink_handle.await;
@@ -248,27 +302,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let counter_db_result = if let Some(handle) = counter_db_handle {
+        Some(handle.await)
+    } else {
+        None
+    };
 
     // Handle results based on what actors were enabled
-    let all_successful = if reporter_result.is_some() {
-        // Stats reporter enabled
-        matches!(
-            (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result, reporter_result.as_ref().unwrap()),
-            (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
-        )
-    } else {
-        // Stats reporter disabled
-        matches!(
-            (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result),
-            (Ok(()), Ok(()), Ok(()), Ok(()))
-        )
+    let all_successful = match (reporter_result.is_some(), counter_db_result.is_some()) {
+        (true, true) => {
+            // Both stats reporter and counter DB enabled
+            matches!(
+                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result, 
+                 reporter_result.as_ref().unwrap(), counter_db_result.as_ref().unwrap()),
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
+        (true, false) => {
+            // Only stats reporter enabled
+            matches!(
+                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result, 
+                 reporter_result.as_ref().unwrap()),
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
+        (false, true) => {
+            // Only counter DB enabled
+            matches!(
+                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result, 
+                 counter_db_result.as_ref().unwrap()),
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
+        (false, false) => {
+            // Neither enabled
+            matches!(
+                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result),
+                (Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
     };
 
     if all_successful {
-        let status_msg = if reporter_result.is_some() {
-            "All actors completed successfully"
-        } else {
-            "All actors completed successfully (stats reporting disabled)"
+        let status_msg = match (reporter_result.is_some(), counter_db_result.is_some()) {
+            (true, true) => "All actors completed successfully",
+            (true, false) => "All actors completed successfully (counter DB disabled)",
+            (false, true) => "All actors completed successfully (stats reporting disabled)",
+            (false, false) => "All actors completed successfully (stats reporting and counter DB disabled)",
         };
         info!("{}", status_msg);
         Ok(())
@@ -288,6 +368,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e.into())
         } else if let Some(Err(e)) = reporter_result {
             error!("Stats reporter actor failed: {:?}", e);
+            Err(e.into())
+        } else if let Some(Err(e)) = counter_db_result {
+            error!("Counter DB actor failed: {:?}", e);
             Err(e.into())
         } else {
             error!("Unknown actor failure");
