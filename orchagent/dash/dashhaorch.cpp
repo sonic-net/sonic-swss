@@ -390,6 +390,12 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             repeated_message = false;
         }
 
+        if (ha_scope_it->second.metadata.disabled() != entry.disabled())
+        {
+            success = success && setHaScopeDisabled(key, entry.disabled());
+            repeated_message = false;
+        }
+
         if (repeated_message)
         {
             SWSS_LOG_WARN("HA Scope entry already exists for %s", key.c_str());
@@ -599,6 +605,33 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
         }
     }
     SWSS_LOG_NOTICE("Set HA Scope activate role request for %s", key.c_str());
+
+    return true;
+}
+
+bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    sai_attribute_t ha_scope_attr;
+    ha_scope_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    ha_scope_attr.value.booldata = disabled;
+
+    sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
+                                                                &ha_scope_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope admin state to %d in SAI for %s", disabled, key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Set HA Scope admin state for %s to %d", key.c_str(), disabled);
 
     return true;
 }
