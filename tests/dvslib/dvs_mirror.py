@@ -30,7 +30,6 @@ class DVSMirror(object):
             "dscp": dscp,
             "ttl": ttl,
             "queue": queue,
-            "direction": direction
         }
 
         if policer:
@@ -38,6 +37,9 @@ class DVSMirror(object):
 
         if src_ports:
             mirror_entry["src_port"] = src_ports
+
+        if direction:
+            mirror_entry["direction"] = direction
 
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 
@@ -96,4 +98,3 @@ class DVSMirror(object):
             self.verify_session_policer(dvs, entry["SAI_MIRROR_SESSION_ATTR_POLICER"], cir)
         if src_ports:
             self.verify_port_mirror_config(dvs, src_ports, direction, session_oid=session_oid)
-
