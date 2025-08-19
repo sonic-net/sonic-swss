@@ -162,6 +162,140 @@ namespace portmgr_ut
         ASSERT_FALSE(value_opt);
     }
 
+    TEST_F(PortMgrTest, SetDHCPMitigationRateSuccess)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
+
+        mockCallArgs.clear();
+        ASSERT_TRUE(m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100"));
+        ASSERT_EQ(1, mockCallArgs.size());
+        // Verify the TC command was constructed correctly
+        ASSERT_NE(string::npos, mockCallArgs[0].find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress"));
+        ASSERT_NE(string::npos, mockCallArgs[0].find("match ip dport 67 0xffff police rate 72000bps burst 72000b"));
+    }
+
+    TEST_F(PortMgrTest, SetDHCPMitigationRateZero)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
+
+        mockCallArgs.clear();
+        ASSERT_TRUE(m_portMgr->setPortDHCPMitigationRate("Ethernet0", "0"));
+        ASSERT_EQ(1, mockCallArgs.size());
+        ASSERT_NE(string::npos, mockCallArgs[0].find("tc qdisc del dev \"Ethernet0\" handle ffff: ingress"));
+    }
+
+    TEST_F(PortMgrTest, SetDHCPMitigationRateEmpty)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
+
+        mockCallArgs.clear();
+        ASSERT_TRUE(m_portMgr->setPortDHCPMitigationRate("Ethernet0", ""));
+        ASSERT_TRUE(mockCallArgs.empty()); // Should do nothing for empty string
+    }
+
+    TEST_F(PortMgrTest, SetDHCPMitigationRatePortNotReady)
+    {
+        mockCallArgs.clear();
+        ASSERT_FALSE(m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100"));
+        // Should log warning but not execute command
+        ASSERT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(PortMgrTest, SetDHCPMitigationRateInvalidNumber)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
+
+        mockCallArgs.clear();
+        ASSERT_FALSE(m_portMgr->setPortDHCPMitigationRate("Ethernet0", "invalid"));
+        // Should log error about invalid number
+        ASSERT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(PortMgrTest, DoTaskWithDHCPRateLimit)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+        // First make port ready
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
+
+        // Configure port with DHCP rate limit
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "200"},
+            {"admin_status", "up"}
+        });
+
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+
+        // Verify all expected commands were executed
+        ASSERT_EQ(3, mockCallArgs.size());
+        ASSERT_NE(string::npos, mockCallArgs[0].find("mtu \"9100\"")); // Default MTU
+        ASSERT_NE(string::npos, mockCallArgs[1].find("link set dev \"Ethernet0\" up"));
+        ASSERT_NE(string::npos, mockCallArgs[2].find("tc qdisc add dev \"Ethernet0\""));
+    }
+
+    TEST_F(PortMgrTest, DoTaskWithDHCPRateLimitPortNotReady)
+    {
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+        // Port not ready yet
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "200"},
+            {"admin_status", "up"}
+        });
+
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+
+        // Should write to APP DB but not execute commands
+        ASSERT_TRUE(mockCallArgs.empty());
+        
+        // Verify config was written to APP DB
+        std::vector<FieldValueTuple> values;
+        app_port_table.get("Ethernet0", values);
+        auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("200", value_opt.get());
+    }
+
+    TEST_F(PortMgrTest, SetPortMtuFailurePortNotReady)
+    {
+        mockCallArgs.clear();
+        ASSERT_FALSE(m_portMgr->setPortMtu("Ethernet0", "9100"));
+        // Should log warning but not throw
+        ASSERT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(PortMgrTest, SetPortAdminStatusFailurePortNotReady)
+    {
+        mockCallArgs.clear();
+        ASSERT_FALSE(m_portMgr->setPortAdminStatus("Ethernet0", true));
+        // Should log warning but not throw
+        ASSERT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(PortMgrTest, SetPortAdminStatusFailure)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
+
+        // Simulate command failure by making mock return error
+        mockCallArgs.clear();
+        ::testing_db::setExecResult(1, "Simulated failure");
+        
+        EXPECT_THROW(m_portMgr->setPortAdminStatus("Ethernet0", true), runtime_error);
+        ASSERT_EQ(1, mockCallArgs.size());
+    }
+
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
