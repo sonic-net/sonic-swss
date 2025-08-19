@@ -197,10 +197,10 @@ namespace portmgr_ut
     m_portMgr->doTask();
 
     // Assert
-    ASSERT_EQ(size_t(1), mockCallArgs.size());
+    ASSERT_EQ(size_t(3), mockCallArgs.size());
     std::string expected_prefix = "/sbin/tc qdisc add dev \"Ethernet4\" handle ffff: ingress";
-    ASSERT_TRUE(mockCallArgs[0].find(expected_prefix) == 0);
-    ASSERT_TRUE(mockCallArgs[0].find("police rate 59000bps") != std::string::npos); // 100*590 (PACKET_SIZE)
+    ASSERT_TRUE(mockCallArgs[2].find(expected_prefix) == 0);
+    ASSERT_TRUE(mockCallArgs[2].find("police rate 59000bps") != std::string::npos); // 100*590 (PACKET_SIZE)
     }
 
     TEST_F(PortMgrTest, DhcpRateLimitDisabled)
@@ -220,8 +220,8 @@ namespace portmgr_ut
     m_portMgr->doTask();
 
     // Assert
-    ASSERT_EQ(size_t(1), mockCallArgs.size());
-    ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet8\" handle ffff: ingress", mockCallArgs[0]);
+    ASSERT_EQ(size_t(3), mockCallArgs.size());
+    ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet8\" handle ffff: ingress", mockCallArgs[2]);
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
