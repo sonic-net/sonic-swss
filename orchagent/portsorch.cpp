@@ -4392,7 +4392,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_an_cfg = true;
                         m_portList[p.m_alias] = p;
                         m_portStateTable.hdel(p.m_alias, "rmt_adv_speeds");
-                        updatePortStatePoll(p, PORT_STATE_POLL_AN, pCfg.autoneg.value);
+                        updatePortStatePoll(p, PORT_STATE_POLL_AN, pCfg.autoneg.value); //
 
                         SWSS_LOG_NOTICE(
                             "Set port %s autoneg to %s",
