@@ -1617,8 +1617,37 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     else
     {
         // FIXME - Handle ECMP routes
-        SWSS_LOG_WARN("VNET ECMP NHs not implemented for '%s'", ipPrefix.to_string().c_str());
-        return true;
+        // SWSS_LOG_WARN("VNET ECMP NHs not implemented for '%s'", ipPrefix.to_string().c_str());
+        // return true;
+
+        // Attempt with RouteOrch
+        // string nhg_str = "";
+        // for (IpAddress ip : nh.ips.getIpAddresses())
+        // {
+        //     nhg_str += ip.to_string() + ",";
+        // }
+        // NextHopGroupKey nhg = NextHopGroupKey(nhg_str);
+        // string key = "";
+        // RouteBulkContext ctx = RouteBulkContext(key, (op == SET_COMMAND));
+        // gRouteOrch->addRoute()
+
+        string nhg_str = "";
+        for (IpAddress ip : nh.ips.getIpAddresses())
+        {
+            nhg_str += ip.to_string() + ",";
+        }
+        NextHopGroupKey active_nhg = NextHopGroupKey(nhg_str);
+
+        if (!hasNextHopGroup(vnet, active_nhg))
+        {
+            if (!createNextHopGroup(vnet, active_nhg, vrf_obj, "custom"))
+            {
+                SWSS_LOG_ERROR("Failed to create next hop group %s", active_nhg.to_string().c_str());
+                return false;
+            }
+        }
+
+        nh_id = syncd_nexthop_groups_[vnet][active_nhg].next_hop_group_id;
     }
 
     for (auto vr_id : vr_set)
