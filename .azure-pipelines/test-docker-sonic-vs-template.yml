@@ -79,6 +79,21 @@ jobs:
     inputs:
       source: specific
       project: build
+      pipeline: Azure.sonic-buildimage.common_libs
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      path: $(Build.ArtifactStagingDirectory)/download
+      artifact: common-lib
+      patterns: |
+        target/debs/bookworm/libyang-*_1.0*.deb
+        target/debs/bookworm/libyang_1.0*.deb
+        target/debs/bookworm/libyang-cpp_*.deb
+        target/debs/bookworm/python3-yang_*.deb
+    displayName: "Download libyang from common lib"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
       pipeline: sonic-net.sonic-buildimage-ubuntu22.04
       artifact: sonic-buildimage.amd64.ubuntu22_04
       runVersion: 'latestFromBranch'
@@ -112,9 +127,15 @@ jobs:
           libboost1.74-dev \
           libboost-dev \
           libhiredis0.14 \
-          libyang-dev \
+          libpcre3-dev \
 
       sudo .azure-pipelines/build_and_install_module.sh
+
+      # Install libyang packages from downloaded artifacts
+      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/libyang-*_1.0*.deb \
+                   $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/libyang_1.0*.deb \
+                   $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/libyang-cpp_*.deb \
+                   $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/python3-yang_*.deb
 
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
