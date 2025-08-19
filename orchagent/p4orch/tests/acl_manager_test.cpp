@@ -868,8 +868,8 @@ class AclManagerTest : public ::testing::Test
         copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
         // add trap group and genetlink for each CPU queue
         swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
-        for (uint64_t queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
-        {
+        for (uint64_t queue_num = P4_CPU_QUEUE_MIN_NUM;
+             queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++) {
             std::vector<swss::FieldValueTuple> attrs;
             attrs.push_back({"queue", std::to_string(queue_num)});
             attrs.push_back({"genetlink_name", "genl_packet"});
@@ -879,15 +879,15 @@ class AclManagerTest : public ::testing::Test
         sai_object_id_t trap_group_oid = gTrapGroupStartOid;
         sai_object_id_t hostif_oid = gHostifStartOid;
         EXPECT_CALL(mock_sai_hostif_, create_hostif_trap_group(_, _, _, _))
-            .Times(P4_CPU_QUEUE_MAX_NUM)
+            .Times(P4_CPU_QUEUE_MAX_NUM - P4_CPU_QUEUE_MIN_NUM + 1)
             .WillRepeatedly(
                 DoAll(Invoke([&trap_group_oid](sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count,
                                                const sai_attribute_t *attr_list) { *oid = ++trap_group_oid; }),
                       Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_hostif_, create_hostif(_, _, _, _))
-            .Times(P4_CPU_QUEUE_MAX_NUM)
+            .Times(P4_CPU_QUEUE_MAX_NUM - P4_CPU_QUEUE_MIN_NUM + 1)
             .WillRepeatedly(
-                DoAll(Invoke([&hostif_oid](sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count,
+                 DoAll(Invoke([&hostif_oid](sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count,
                                            const sai_attribute_t *attr_list) { *oid = ++hostif_oid; }),
                       Return(SAI_STATUS_SUCCESS)));
 
@@ -1260,15 +1260,15 @@ TEST_F(AclManagerTest, CreatePuntTableFailsWhenUserTrapsSaiCallFails)
 TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNotFound)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    const auto skip_cpu_queue = 1;
+    const auto skip_cpu_queue = P4_CPU_QUEUE_MIN_NUM;
     // init copp orch
     EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
     // Clean up APP_COPP_TABLE_NAME table entries
-    for (int queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
-    {
+    for (int queue_num = P4_CPU_QUEUE_MIN_NUM; queue_num <= P4_CPU_QUEUE_MAX_NUM;
+         queue_num++) {
         app_copp_table.del(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
     }
     cleanupAclManagerTest();
@@ -1282,7 +1282,7 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
               ProcessAddTableRequest(app_db_entry).message());
     EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
 
-    // Create the trap group for CPU queue 1 without host interface(genl
+    // Create the trap group for CPU queue 7 without host interface(genl
     // attributes)
     std::vector<swss::FieldValueTuple> attrs;
     attrs.push_back({"queue", std::to_string(skip_cpu_queue)});
@@ -1290,7 +1290,9 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
     app_copp_table.set(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(skip_cpu_queue), attrs);
     copp_orch_->addExistingData(&app_copp_table);
     EXPECT_CALL(mock_sai_hostif_, create_hostif_trap_group(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(gTrapGroupStartOid + skip_cpu_queue), Return(SAI_STATUS_SUCCESS)));
+        .WillOnce(DoAll(SetArgPointee<0>(gTrapGroupStartOid + skip_cpu_queue -
+                                         P4_CPU_QUEUE_MIN_NUM),
+                        Return(SAI_STATUS_SUCCESS)));
     static_cast<Orch *>(copp_orch_)->doTask();
     // Fail to create ACL table because the host interface is absent
     EXPECT_EQ("Hostif object id was not found given trap group - " + std::string(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) +
@@ -2845,7 +2847,7 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
     auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(nullptr, acl_rule);
     // Check action field value
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
 
@@ -3180,7 +3182,7 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
 
     // Set user defined trap for QOS_QUEUE
-    int queue_num = 2;
+    int queue_num = 8;
     app_db_entry.action = "qos_queue";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
     // Install rule
@@ -3193,7 +3195,7 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(nullptr, acl_rule);
     // Check action field value
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
     // Remove rule
     EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -3807,8 +3809,8 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_EQ(1, acl_rule->action_fvs.size());
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_FLOOD].aclaction.enable);
 
-    // QOS_QUEUE action to set user defined trap for CPU queue number 3
-    int queue_num = 3;
+    // QOS_QUEUE action to set user defined trap for CPU queue number 9
+    int queue_num = 9;
     app_db_entry.action = "qos_queue";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
 
@@ -3821,11 +3823,11 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     // Check action field value
     EXPECT_EQ(1, acl_rule->action_fvs.size());
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.enable);
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 
-    // QOS_QUEUE action to set user defined trap CPU queue number 4
-    queue_num = 4;
+    // QOS_QUEUE action to set user defined trap CPU queue number 10
+    queue_num = 10;
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
 
     EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
@@ -3836,7 +3838,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     // Check action field value
     EXPECT_EQ(1, acl_rule->action_fvs.size());
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.enable);
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
 
@@ -4176,7 +4178,8 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
     app_db_entry.action_param_fvs.erase("target");
     // Invalid cpu queue number
     app_db_entry.action = "qos_queue";
-    app_db_entry.action_param_fvs["cpu_queue"] = "10";
+    app_db_entry.action_param_fvs["cpu_queue"] =
+        std::to_string(P4_CPU_QUEUE_MAX_NUM + 1);
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs["cpu_queue"] = "invalid";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
