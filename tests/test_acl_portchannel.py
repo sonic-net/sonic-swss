@@ -47,7 +47,7 @@ class TestPortChannelAcl(object):
         tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
         fvs = swsscommon.FieldValuePairs([("POLICY_DESC", "LAG_ACL_TEST"),
                                           ("TYPE", "L3"),
-                                          ("PORTS", ports)])
+                                          ("PORTS@", ports)])
         tbl.set(table_name, fvs)
         time.sleep(1)
 
