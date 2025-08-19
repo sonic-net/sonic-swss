@@ -581,6 +581,59 @@ class TestMuxTunnelBase():
             " " + self.SERV1_IPV4 + "\""
         )
 
+    def create_and_test_route_learned_before_neighbor(self, appdb, asicdb, dvs, dvs_route, mac):
+        rtprefix = "2.3.4.0/24"
+        neigh = "192.168.0.100"
+        mux_port = "Ethernet0"
+
+        try:
+            # Test adding route then neighbor in standby
+            self.set_mux_state(appdb, mux_port, "standby")
+
+            self.add_route(dvs, route, ["192.168.0.100"])
+            asicdb.wait_for_entry(ASIC_ROUTE_TABLE, rtprefix)
+
+            self.add_neighbor(dvs, neigh, mac)
+            sleep(1)
+
+            # Confirm route is pointing to tunnel nh
+            self.check_route_nexthop(dvs_route, asicdb, rtprefix, tunnel_nh_id, True)
+
+            # Toggle the mux a few times
+            self.set_mux_state(appdb, mux_port, "active")
+            self.check_route_nexthop(dvs_route, asicdb, rtprefix, neigh)
+
+            self.set_mux_state(appdb, mux_port, "standby")
+            self.check_route_nexthop(dvs_route, asicdb, rtprefix, tunnel_nh_id, True)
+
+        finally:
+            self.del_route(dvs, route)
+            self.del_neighbor(dvs, neigh_info.ipv4)
+
+        try:
+            # Test adding route then neighbor in active
+            self.set_mux_state(appdb, mux_port, "active")
+
+            self.add_route(dvs, route, ["192.168.0.100"])
+            asicdb.wait_for_entry(ASIC_ROUTE_TABLE, rtprefix)
+
+            self.add_neighbor(dvs, neigh, mac)
+            sleep(1)
+
+            # Confirm route is pointing to tunnel nh
+            self.check_route_nexthop(dvs_route, asicdb, rtprefix, neigh)
+
+            # Toggle the mux a few times
+            self.set_mux_state(appdb, mux_port, "standby")
+            self.check_route_nexthop(dvs_route, asicdb, rtprefix, tunnel_nh_id, True)
+
+            self.set_mux_state(appdb, mux_port, "active")
+            self.check_route_nexthop(dvs_route, asicdb, rtprefix, neigh)
+
+        finally:
+            self.del_route(dvs, route)
+            self.del_neighbor(dvs, neigh_info.ipv4)
+
     def multi_nexthop_check(self, asicdb, dvs_route, route, nexthops, mux_states, non_mux_nexthop=None, expect_active=None):
         """
         Checks if multi-mux route points to an active nexthop or tunnel.
@@ -1624,8 +1677,10 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
+        mac = intf_fdb_map["Ethernet0"]
 
         self.create_and_test_route(appdb, asicdb, dvs, dvs_route)
+        self.create_and_test_route_learned_before_neighbor(appdb, asicdb, dvs, dvs_route, mac)
 
     def test_NH(self, dvs, dvs_route, intf_fdb_map, setup, setup_mux_cable,
                 setup_peer_switch, setup_tunnel, testlog):
