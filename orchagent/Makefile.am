@@ -12,6 +12,8 @@ SUBDIRS = p4orch/tests
 
 CFLAGS_SAI = -I /usr/include/sai
 
+CFLAGS_COMMON = -std=c++17 -Wno-deprecated -Wall -fPIC -Wno-write-strings -I/usr/include/swss -I/usr/include/libnl3 -Werror -Wno-reorder -Wcast-align -Wcast-qual -Wconversion -Wdisabled-optimization -Wextra -Wfloat-equal -Wformat=2 -Wformat-nonliteral -Wformat-security -Wformat-y2k -Wimport -Winit-self -Winvalid-pch -Wlong-long -Wmissing-field-initializers -Wmissing-format-attribute -Wno-aggregate-return -Wno-padded -Wno-switch-enum -Wno-unused-parameter -Wpacked -Wpointer-arith -Wredundant-decls -Wstack-protector -Wstrict-aliasing=3 -Wswitch -Wswitch-default -Wunreachable-code -Wunused -Wvariadic-macros -Wno-switch-default -Wno-long-long -Wno-redundant-decls
+
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
@@ -157,7 +159,7 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
+orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc -lQuickTrace
 
 routeresync_SOURCES = routeresync.cpp \
              $(top_srcdir)/lib/orch_zmq_config.cpp
