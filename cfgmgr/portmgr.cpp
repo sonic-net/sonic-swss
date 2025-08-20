@@ -86,7 +86,7 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 
 bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate_limit)
 {
-    // for empty string  do nothing
+    // for empty string do nothing
     if (dhcp_rate_limit.empty())
     {
         SWSS_LOG_DEBUG("DHCP rate limit not configured for port %s, skipping TC configuration", alias.c_str());
@@ -97,47 +97,36 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     string res, cmd_str;
     int ret;
 
-    try {
-        if (dhcp_rate_limit != "0")
-        {
-            int byte_rate = stoi(dhcp_rate_limit) * PACKET_SIZE;
-            cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
-                << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << to_string(byte_rate) << "bps burst " << to_string(byte_rate) << "b conform-exceed drop";
-        }
-        else
-        {
-            // Delete filter when dhcp-rate limit is set to zero
-            cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
-        }
-
-        cmd_str = cmd.str();
-        ret = swss::exec(cmd_str, res);
-
-        if (!ret)
-        {
-            return true;
-        }
-        else if (!isPortStateOk(alias))
-        {
-            SWSS_LOG_WARN("Setting DHCP rate limit to alias:%s failed (port not ready) with cmd:%s, rc:%d, error:%s", 
-                         alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-            return false;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Setting DHCP rate limit to alias:%s failed with cmd:%s, rc:%d, error:%s", 
-                          alias.c_str(), cmd_str.c_str(), ret, res.c_str());
-            return false;
-        }
-    }
-    catch (const std::exception& e)
+    if (dhcp_rate_limit != "0")
     {
-        SWSS_LOG_ERROR("Exception in DHCP rate limit configuration for %s: %s", alias.c_str(), e.what());
+        // Assuming dhcp_rate_limit is already validated and contains valid integer
+        int byte_rate = atoi(dhcp_rate_limit.c_str()) * PACKET_SIZE;
+        cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
+            << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << byte_rate << "bps burst " << byte_rate << "b conform-exceed drop";
+    }
+    else
+    {
+        // Delete filter when dhcp-rate limit is set to zero
+        cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
+    }
+
+    cmd_str = cmd.str();
+    ret = swss::exec(cmd_str, res);
+
+    if (!ret)
+    {
+        return true;
+    }
+    else if (!isPortStateOk(alias))
+    {
+        SWSS_LOG_WARN("Setting DHCP rate limit to alias:%s failed (port not ready) with cmd:%s, rc:%d, error:%s", 
+                     alias.c_str(), cmd_str.c_str(), ret, res.c_str());
         return false;
     }
-    catch (...)
+    else
     {
-        SWSS_LOG_ERROR("Unknown exception in DHCP rate limit configuration for %s", alias.c_str());
+        SWSS_LOG_ERROR("Setting DHCP rate limit to alias:%s failed with cmd:%s, rc:%d, error:%s", 
+                      alias.c_str(), cmd_str.c_str(), ret, res.c_str());
         return false;
     }
 }
