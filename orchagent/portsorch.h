@@ -259,7 +259,6 @@ public:
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
 
 private:
-    unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
