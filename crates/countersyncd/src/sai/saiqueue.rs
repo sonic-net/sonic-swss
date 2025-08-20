@@ -338,11 +338,26 @@ mod tests {
 
     #[test]
     fn test_from_u32() {
-        assert_eq!(SaiQueueStat::from_u32(0x00000000), Some(SaiQueueStat::Packets));
-        assert_eq!(SaiQueueStat::from_u32(0x00000001), Some(SaiQueueStat::Bytes));
-        assert_eq!(SaiQueueStat::from_u32(0x00000002), Some(SaiQueueStat::DroppedPackets));
-        assert_eq!(SaiQueueStat::from_u32(0x0000002e), Some(SaiQueueStat::TxTrimPackets));
-        assert_eq!(SaiQueueStat::from_u32(0x10000000), Some(SaiQueueStat::CustomRangeBase));
+        assert_eq!(
+            SaiQueueStat::from_u32(0x00000000),
+            Some(SaiQueueStat::Packets)
+        );
+        assert_eq!(
+            SaiQueueStat::from_u32(0x00000001),
+            Some(SaiQueueStat::Bytes)
+        );
+        assert_eq!(
+            SaiQueueStat::from_u32(0x00000002),
+            Some(SaiQueueStat::DroppedPackets)
+        );
+        assert_eq!(
+            SaiQueueStat::from_u32(0x0000002e),
+            Some(SaiQueueStat::TxTrimPackets)
+        );
+        assert_eq!(
+            SaiQueueStat::from_u32(0x10000000),
+            Some(SaiQueueStat::CustomRangeBase)
+        );
         assert_eq!(SaiQueueStat::from_u32(0xFFFFFFFF), None);
     }
 
@@ -360,10 +375,10 @@ mod tests {
         let stat = SaiQueueStat::CurrOccupancyBytes;
         let c_name = stat.to_c_name();
         assert_eq!(c_name, "SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES");
-        
+
         let parsed: SaiQueueStat = c_name.parse().unwrap();
         assert_eq!(parsed, stat);
-        
+
         assert_eq!(format!("{}", stat), c_name);
     }
 
@@ -373,11 +388,11 @@ mod tests {
         assert_eq!(SaiQueueStat::GreenPackets.to_u32(), 0x00000004);
         assert_eq!(SaiQueueStat::GreenBytes.to_u32(), 0x00000005);
         assert_eq!(SaiQueueStat::GreenDroppedPackets.to_u32(), 0x00000006);
-        
+
         // Test yellow color stats
         assert_eq!(SaiQueueStat::YellowPackets.to_u32(), 0x00000008);
         assert_eq!(SaiQueueStat::YellowDroppedBytes.to_u32(), 0x0000000b);
-        
+
         // Test red color stats
         assert_eq!(SaiQueueStat::RedPackets.to_u32(), 0x0000000c);
         assert_eq!(SaiQueueStat::RedDroppedBytes.to_u32(), 0x0000000f);
@@ -390,7 +405,7 @@ mod tests {
         assert_eq!(SaiQueueStat::YellowWredDroppedBytes.to_u32(), 0x00000013);
         assert_eq!(SaiQueueStat::RedWredDroppedPackets.to_u32(), 0x00000014);
         assert_eq!(SaiQueueStat::WredDroppedBytes.to_u32(), 0x00000017);
-        
+
         // Test WRED ECN mark stats
         assert_eq!(SaiQueueStat::GreenWredEcnMarkedPackets.to_u32(), 0x0000001c);
         assert_eq!(SaiQueueStat::WredEcnMarkedBytes.to_u32(), 0x00000023);
@@ -403,13 +418,13 @@ mod tests {
         assert_eq!(SaiQueueStat::WatermarkBytes.to_u32(), 0x00000019);
         assert_eq!(SaiQueueStat::SharedCurrOccupancyBytes.to_u32(), 0x0000001a);
         assert_eq!(SaiQueueStat::SharedWatermarkBytes.to_u32(), 0x0000001b);
-        
+
         // Test cell-based occupancy stats
         assert_eq!(SaiQueueStat::CurrOccupancyCells.to_u32(), 0x00000029);
         assert_eq!(SaiQueueStat::WatermarkCells.to_u32(), 0x0000002a);
         assert_eq!(SaiQueueStat::SharedCurrOccupancyCells.to_u32(), 0x0000002b);
         assert_eq!(SaiQueueStat::SharedWatermarkCells.to_u32(), 0x0000002c);
-        
+
         // Test occupancy level stats
         assert_eq!(SaiQueueStat::CurrOccupancyLevel.to_u32(), 0x00000024);
         assert_eq!(SaiQueueStat::WatermarkLevel.to_u32(), 0x00000025);

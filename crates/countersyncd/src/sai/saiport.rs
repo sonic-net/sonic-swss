@@ -8,7 +8,7 @@ use std::str::FromStr;
 pub enum SaiPortStat {
     // SAI port stat range start / SAI port stat if in octets (same value in C)
     IfInOctets = 0,
-    
+
     // Following the exact C enum order
     IfInUcastPkts = 1,
     IfInNonUcastPkts = 2,
@@ -80,7 +80,7 @@ pub enum SaiPortStat {
     WredDroppedPackets = 68,
     WredDroppedBytes = 69,
     EcnMarkedPackets = 70,
-    
+
     // Packet size based packets count (continuing exact C enum order)
     EtherInPkts64Octets = 71,
     EtherInPkts65To127Octets = 72,
@@ -102,7 +102,7 @@ pub enum SaiPortStat {
     EtherOutPkts2048To4095Octets = 88,
     EtherOutPkts4096To9216Octets = 89,
     EtherOutPkts9217To16383Octets = 90,
-    
+
     // Port occupancy statistics
     InCurrOccupancyBytes = 91,
     InWatermarkBytes = 92,
@@ -114,11 +114,11 @@ pub enum SaiPortStat {
     OutSharedWatermarkBytes = 98,
     InDroppedPkts = 99,
     OutDroppedPkts = 100,
-    
+
     // Pause frame statistics
     PauseRxPkts = 101,
     PauseTxPkts = 102,
-    
+
     // PFC Packet Counters for RX and TX per PFC priority
     Pfc0RxPkts = 103,
     Pfc0TxPkts = 104,
@@ -136,7 +136,7 @@ pub enum SaiPortStat {
     Pfc6TxPkts = 116,
     Pfc7RxPkts = 117,
     Pfc7TxPkts = 118,
-    
+
     // PFC pause duration for RX and TX per PFC priority
     Pfc0RxPauseDuration = 119,
     Pfc0TxPauseDuration = 120,
@@ -154,7 +154,7 @@ pub enum SaiPortStat {
     Pfc6TxPauseDuration = 132,
     Pfc7RxPauseDuration = 133,
     Pfc7TxPauseDuration = 134,
-    
+
     // PFC pause duration in micro seconds
     Pfc0RxPauseDurationUs = 135,
     Pfc0TxPauseDurationUs = 136,
@@ -172,7 +172,7 @@ pub enum SaiPortStat {
     Pfc6TxPauseDurationUs = 148,
     Pfc7RxPauseDurationUs = 149,
     Pfc7TxPauseDurationUs = 150,
-    
+
     // PFC ON to OFF pause transitions counter per PFC priority
     Pfc0On2OffRxPkts = 151,
     Pfc1On2OffRxPkts = 152,
@@ -182,7 +182,7 @@ pub enum SaiPortStat {
     Pfc5On2OffRxPkts = 156,
     Pfc6On2OffRxPkts = 157,
     Pfc7On2OffRxPkts = 158,
-    
+
     // DOT3 statistics
     Dot3StatsAlignmentErrors = 159,
     Dot3StatsFcsErrors = 160,
@@ -198,23 +198,23 @@ pub enum SaiPortStat {
     Dot3StatsInternalMacReceiveErrors = 170,
     Dot3StatsSymbolErrors = 171,
     Dot3ControlInUnknownOpcodes = 172,
-    
+
     // EEE statistics
     EeeTxEventCount = 173,
     EeeRxEventCount = 174,
     EeeTxDuration = 175,
     EeeRxDuration = 176,
-    
+
     // PRBS and FEC statistics
     PrbsErrorCount = 177,
     IfInFecCorrectableFrames = 178,
     IfInFecNotCorrectableFrames = 179,
     IfInFecSymbolErrors = 180,
-    
+
     // Fabric data units
     IfInFabricDataUnits = 181,
     IfOutFabricDataUnits = 182,
-    
+
     // FEC codeword symbol error counters
     IfInFecCodewordErrorsS0 = 183,
     IfInFecCodewordErrorsS1 = 184,
@@ -234,12 +234,12 @@ pub enum SaiPortStat {
     IfInFecCodewordErrorsS15 = 198,
     IfInFecCodewordErrorsS16 = 199,
     IfInFecCorrectedBits = 200,
-    
+
     // Trimmed packet statistics
     TrimPackets = 201,
     DroppedTrimPackets = 202,
     TxTrimPackets = 203,
-    
+
     // Drop reason ranges (0x00001000 base)
     InConfiguredDropReasons0DroppedPkts = 0x00001000,
     InConfiguredDropReasons1DroppedPkts = 0x00001001,
@@ -257,7 +257,7 @@ pub enum SaiPortStat {
     InConfiguredDropReasons13DroppedPkts = 0x0000100d,
     InConfiguredDropReasons14DroppedPkts = 0x0000100e,
     InConfiguredDropReasons15DroppedPkts = 0x0000100f,
-    
+
     // Out drop reason ranges (0x00002000 base)
     OutConfiguredDropReasons0DroppedPkts = 0x00002000,
     OutConfiguredDropReasons1DroppedPkts = 0x00002001,
@@ -267,11 +267,11 @@ pub enum SaiPortStat {
     OutConfiguredDropReasons5DroppedPkts = 0x00002005,
     OutConfiguredDropReasons6DroppedPkts = 0x00002006,
     OutConfiguredDropReasons7DroppedPkts = 0x00002007,
-    
+
     // HW protection switchover events
     IfInHwProtectionSwitchoverEvents = 0x00002008,
     IfInHwProtectionSwitchoverDropPkts = 0x00002009,
-    
+
     // Additional packet size statistics
     EtherInPkts1519To2500Octets = 0x0000200a,
     EtherInPkts2501To9000Octets = 0x0000200b,
@@ -279,7 +279,7 @@ pub enum SaiPortStat {
     EtherOutPkts1519To2500Octets = 0x0000200d,
     EtherOutPkts2501To9000Octets = 0x0000200e,
     EtherOutPkts9001To16383Octets = 0x0000200f,
-    
+
     // Port stat range end
     End = 0x00002010,
 }
@@ -492,7 +492,7 @@ impl SaiPortStat {
             201 => Some(Self::TrimPackets),
             202 => Some(Self::DroppedTrimPackets),
             203 => Some(Self::TxTrimPackets),
-            
+
             // Drop reason ranges
             0x00001000 => Some(Self::InConfiguredDropReasons0DroppedPkts),
             0x00001001 => Some(Self::InConfiguredDropReasons1DroppedPkts),
@@ -510,7 +510,7 @@ impl SaiPortStat {
             0x0000100d => Some(Self::InConfiguredDropReasons13DroppedPkts),
             0x0000100e => Some(Self::InConfiguredDropReasons14DroppedPkts),
             0x0000100f => Some(Self::InConfiguredDropReasons15DroppedPkts),
-            
+
             0x00002000 => Some(Self::OutConfiguredDropReasons0DroppedPkts),
             0x00002001 => Some(Self::OutConfiguredDropReasons1DroppedPkts),
             0x00002002 => Some(Self::OutConfiguredDropReasons2DroppedPkts),
@@ -519,7 +519,7 @@ impl SaiPortStat {
             0x00002005 => Some(Self::OutConfiguredDropReasons5DroppedPkts),
             0x00002006 => Some(Self::OutConfiguredDropReasons6DroppedPkts),
             0x00002007 => Some(Self::OutConfiguredDropReasons7DroppedPkts),
-            
+
             0x00002008 => Some(Self::IfInHwProtectionSwitchoverEvents),
             0x00002009 => Some(Self::IfInHwProtectionSwitchoverDropPkts),
             0x0000200a => Some(Self::EtherInPkts1519To2500Octets),
@@ -566,14 +566,30 @@ impl SaiPortStat {
             Self::EtherStatsFragments => "SAI_PORT_STAT_ETHER_STATS_FRAGMENTS",
             Self::EtherStatsPkts64Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_64_OCTETS",
             Self::EtherStatsPkts65To127Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_65_TO_127_OCTETS",
-            Self::EtherStatsPkts128To255Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_128_TO_255_OCTETS",
-            Self::EtherStatsPkts256To511Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_256_TO_511_OCTETS",
-            Self::EtherStatsPkts512To1023Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_512_TO_1023_OCTETS",
-            Self::EtherStatsPkts1024To1518Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_1024_TO_1518_OCTETS",
-            Self::EtherStatsPkts1519To2047Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_1519_TO_2047_OCTETS",
-            Self::EtherStatsPkts2048To4095Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_2048_TO_4095_OCTETS",
-            Self::EtherStatsPkts4096To9216Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_4096_TO_9216_OCTETS",
-            Self::EtherStatsPkts9217To16383Octets => "SAI_PORT_STAT_ETHER_STATS_PKTS_9217_TO_16383_OCTETS",
+            Self::EtherStatsPkts128To255Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_128_TO_255_OCTETS"
+            }
+            Self::EtherStatsPkts256To511Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_256_TO_511_OCTETS"
+            }
+            Self::EtherStatsPkts512To1023Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_512_TO_1023_OCTETS"
+            }
+            Self::EtherStatsPkts1024To1518Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_1024_TO_1518_OCTETS"
+            }
+            Self::EtherStatsPkts1519To2047Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_1519_TO_2047_OCTETS"
+            }
+            Self::EtherStatsPkts2048To4095Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_2048_TO_4095_OCTETS"
+            }
+            Self::EtherStatsPkts4096To9216Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_4096_TO_9216_OCTETS"
+            }
+            Self::EtherStatsPkts9217To16383Octets => {
+                "SAI_PORT_STAT_ETHER_STATS_PKTS_9217_TO_16383_OCTETS"
+            }
             Self::EtherStatsOversizePkts => "SAI_PORT_STAT_ETHER_STATS_OVERSIZE_PKTS",
             Self::EtherRxOversizePkts => "SAI_PORT_STAT_ETHER_RX_OVERSIZE_PKTS",
             Self::EtherTxOversizePkts => "SAI_PORT_STAT_ETHER_TX_OVERSIZE_PKTS",
@@ -622,17 +638,29 @@ impl SaiPortStat {
             Self::EtherInPkts1519To2047Octets => "SAI_PORT_STAT_ETHER_IN_PKTS_1519_TO_2047_OCTETS",
             Self::EtherInPkts2048To4095Octets => "SAI_PORT_STAT_ETHER_IN_PKTS_2048_TO_4095_OCTETS",
             Self::EtherInPkts4096To9216Octets => "SAI_PORT_STAT_ETHER_IN_PKTS_4096_TO_9216_OCTETS",
-            Self::EtherInPkts9217To16383Octets => "SAI_PORT_STAT_ETHER_IN_PKTS_9217_TO_16383_OCTETS",
+            Self::EtherInPkts9217To16383Octets => {
+                "SAI_PORT_STAT_ETHER_IN_PKTS_9217_TO_16383_OCTETS"
+            }
             Self::EtherOutPkts64Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_64_OCTETS",
             Self::EtherOutPkts65To127Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_65_TO_127_OCTETS",
             Self::EtherOutPkts128To255Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_128_TO_255_OCTETS",
             Self::EtherOutPkts256To511Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_256_TO_511_OCTETS",
             Self::EtherOutPkts512To1023Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_512_TO_1023_OCTETS",
-            Self::EtherOutPkts1024To1518Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_1024_TO_1518_OCTETS",
-            Self::EtherOutPkts1519To2047Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2047_OCTETS",
-            Self::EtherOutPkts2048To4095Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_2048_TO_4095_OCTETS",
-            Self::EtherOutPkts4096To9216Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_4096_TO_9216_OCTETS",
-            Self::EtherOutPkts9217To16383Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_9217_TO_16383_OCTETS",
+            Self::EtherOutPkts1024To1518Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_1024_TO_1518_OCTETS"
+            }
+            Self::EtherOutPkts1519To2047Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2047_OCTETS"
+            }
+            Self::EtherOutPkts2048To4095Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_2048_TO_4095_OCTETS"
+            }
+            Self::EtherOutPkts4096To9216Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_4096_TO_9216_OCTETS"
+            }
+            Self::EtherOutPkts9217To16383Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_9217_TO_16383_OCTETS"
+            }
             Self::InCurrOccupancyBytes => "SAI_PORT_STAT_IN_CURR_OCCUPANCY_BYTES",
             Self::InWatermarkBytes => "SAI_PORT_STAT_IN_WATERMARK_BYTES",
             Self::InSharedCurrOccupancyBytes => "SAI_PORT_STAT_IN_SHARED_CURR_OCCUPANCY_BYTES",
@@ -703,16 +731,26 @@ impl SaiPortStat {
             Self::Pfc7On2OffRxPkts => "SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS",
             Self::Dot3StatsAlignmentErrors => "SAI_PORT_STAT_DOT3_STATS_ALIGNMENT_ERRORS",
             Self::Dot3StatsFcsErrors => "SAI_PORT_STAT_DOT3_STATS_FCS_ERRORS",
-            Self::Dot3StatsSingleCollisionFrames => "SAI_PORT_STAT_DOT3_STATS_SINGLE_COLLISION_FRAMES",
-            Self::Dot3StatsMultipleCollisionFrames => "SAI_PORT_STAT_DOT3_STATS_MULTIPLE_COLLISION_FRAMES",
+            Self::Dot3StatsSingleCollisionFrames => {
+                "SAI_PORT_STAT_DOT3_STATS_SINGLE_COLLISION_FRAMES"
+            }
+            Self::Dot3StatsMultipleCollisionFrames => {
+                "SAI_PORT_STAT_DOT3_STATS_MULTIPLE_COLLISION_FRAMES"
+            }
             Self::Dot3StatsSqeTestErrors => "SAI_PORT_STAT_DOT3_STATS_SQE_TEST_ERRORS",
-            Self::Dot3StatsDeferredTransmissions => "SAI_PORT_STAT_DOT3_STATS_DEFERRED_TRANSMISSIONS",
+            Self::Dot3StatsDeferredTransmissions => {
+                "SAI_PORT_STAT_DOT3_STATS_DEFERRED_TRANSMISSIONS"
+            }
             Self::Dot3StatsLateCollisions => "SAI_PORT_STAT_DOT3_STATS_LATE_COLLISIONS",
             Self::Dot3StatsExcessiveCollisions => "SAI_PORT_STAT_DOT3_STATS_EXCESSIVE_COLLISIONS",
-            Self::Dot3StatsInternalMacTransmitErrors => "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_TRANSMIT_ERRORS",
+            Self::Dot3StatsInternalMacTransmitErrors => {
+                "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_TRANSMIT_ERRORS"
+            }
             Self::Dot3StatsCarrierSenseErrors => "SAI_PORT_STAT_DOT3_STATS_CARRIER_SENSE_ERRORS",
             Self::Dot3StatsFrameTooLongs => "SAI_PORT_STAT_DOT3_STATS_FRAME_TOO_LONGS",
-            Self::Dot3StatsInternalMacReceiveErrors => "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_RECEIVE_ERRORS",
+            Self::Dot3StatsInternalMacReceiveErrors => {
+                "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_RECEIVE_ERRORS"
+            }
             Self::Dot3StatsSymbolErrors => "SAI_PORT_STAT_DOT3_STATS_SYMBOL_ERRORS",
             Self::Dot3ControlInUnknownOpcodes => "SAI_PORT_STAT_DOT3_CONTROL_IN_UNKNOWN_OPCODES",
             Self::EeeTxEventCount => "SAI_PORT_STAT_EEE_TX_EVENT_COUNT",
@@ -746,38 +784,98 @@ impl SaiPortStat {
             Self::TrimPackets => "SAI_PORT_STAT_TRIM_PACKETS",
             Self::DroppedTrimPackets => "SAI_PORT_STAT_DROPPED_TRIM_PACKETS",
             Self::TxTrimPackets => "SAI_PORT_STAT_TX_TRIM_PACKETS",
-            Self::InConfiguredDropReasons0DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS",
-            Self::InConfiguredDropReasons1DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS",
-            Self::InConfiguredDropReasons2DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS",
-            Self::InConfiguredDropReasons3DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS",
-            Self::InConfiguredDropReasons4DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS",
-            Self::InConfiguredDropReasons5DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS",
-            Self::InConfiguredDropReasons6DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS",
-            Self::InConfiguredDropReasons7DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS",
-            Self::InConfiguredDropReasons8DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_8_DROPPED_PKTS",
-            Self::InConfiguredDropReasons9DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_9_DROPPED_PKTS",
-            Self::InConfiguredDropReasons10DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_10_DROPPED_PKTS",
-            Self::InConfiguredDropReasons11DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_11_DROPPED_PKTS",
-            Self::InConfiguredDropReasons12DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_12_DROPPED_PKTS",
-            Self::InConfiguredDropReasons13DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_13_DROPPED_PKTS",
-            Self::InConfiguredDropReasons14DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_14_DROPPED_PKTS",
-            Self::InConfiguredDropReasons15DroppedPkts => "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_15_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons0DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons1DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons2DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons3DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons4DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons5DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons6DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS",
-            Self::OutConfiguredDropReasons7DroppedPkts => "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS",
-            Self::IfInHwProtectionSwitchoverEvents => "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_EVENTS",
-            Self::IfInHwProtectionSwitchoverDropPkts => "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_DROP_PKTS",
+            Self::InConfiguredDropReasons0DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons1DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons2DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons3DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons4DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons5DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons6DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons7DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons8DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_8_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons9DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_9_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons10DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_10_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons11DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_11_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons12DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_12_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons13DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_13_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons14DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_14_DROPPED_PKTS"
+            }
+            Self::InConfiguredDropReasons15DroppedPkts => {
+                "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_15_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons0DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons1DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons2DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons3DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons4DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons5DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons6DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS"
+            }
+            Self::OutConfiguredDropReasons7DroppedPkts => {
+                "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS"
+            }
+            Self::IfInHwProtectionSwitchoverEvents => {
+                "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_EVENTS"
+            }
+            Self::IfInHwProtectionSwitchoverDropPkts => {
+                "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_DROP_PKTS"
+            }
             Self::EtherInPkts1519To2500Octets => "SAI_PORT_STAT_ETHER_IN_PKTS_1519_TO_2500_OCTETS",
             Self::EtherInPkts2501To9000Octets => "SAI_PORT_STAT_ETHER_IN_PKTS_2501_TO_9000_OCTETS",
-            Self::EtherInPkts9001To16383Octets => "SAI_PORT_STAT_ETHER_IN_PKTS_9001_TO_16383_OCTETS",
-            Self::EtherOutPkts1519To2500Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2500_OCTETS",
-            Self::EtherOutPkts2501To9000Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_2501_TO_9000_OCTETS",
-            Self::EtherOutPkts9001To16383Octets => "SAI_PORT_STAT_ETHER_OUT_PKTS_9001_TO_16383_OCTETS",
+            Self::EtherInPkts9001To16383Octets => {
+                "SAI_PORT_STAT_ETHER_IN_PKTS_9001_TO_16383_OCTETS"
+            }
+            Self::EtherOutPkts1519To2500Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2500_OCTETS"
+            }
+            Self::EtherOutPkts2501To9000Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_2501_TO_9000_OCTETS"
+            }
+            Self::EtherOutPkts9001To16383Octets => {
+                "SAI_PORT_STAT_ETHER_OUT_PKTS_9001_TO_16383_OCTETS"
+            }
             Self::End => "SAI_PORT_STAT_END",
         }
     }
@@ -817,15 +915,33 @@ impl FromStr for SaiPortStat {
             "SAI_PORT_STAT_ETHER_STATS_UNDERSIZE_PKTS" => Ok(Self::EtherStatsUndersizePkts),
             "SAI_PORT_STAT_ETHER_STATS_FRAGMENTS" => Ok(Self::EtherStatsFragments),
             "SAI_PORT_STAT_ETHER_STATS_PKTS_64_OCTETS" => Ok(Self::EtherStatsPkts64Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_65_TO_127_OCTETS" => Ok(Self::EtherStatsPkts65To127Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_128_TO_255_OCTETS" => Ok(Self::EtherStatsPkts128To255Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_256_TO_511_OCTETS" => Ok(Self::EtherStatsPkts256To511Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_512_TO_1023_OCTETS" => Ok(Self::EtherStatsPkts512To1023Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_1024_TO_1518_OCTETS" => Ok(Self::EtherStatsPkts1024To1518Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_1519_TO_2047_OCTETS" => Ok(Self::EtherStatsPkts1519To2047Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_2048_TO_4095_OCTETS" => Ok(Self::EtherStatsPkts2048To4095Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_4096_TO_9216_OCTETS" => Ok(Self::EtherStatsPkts4096To9216Octets),
-            "SAI_PORT_STAT_ETHER_STATS_PKTS_9217_TO_16383_OCTETS" => Ok(Self::EtherStatsPkts9217To16383Octets),
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_65_TO_127_OCTETS" => {
+                Ok(Self::EtherStatsPkts65To127Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_128_TO_255_OCTETS" => {
+                Ok(Self::EtherStatsPkts128To255Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_256_TO_511_OCTETS" => {
+                Ok(Self::EtherStatsPkts256To511Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_512_TO_1023_OCTETS" => {
+                Ok(Self::EtherStatsPkts512To1023Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_1024_TO_1518_OCTETS" => {
+                Ok(Self::EtherStatsPkts1024To1518Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_1519_TO_2047_OCTETS" => {
+                Ok(Self::EtherStatsPkts1519To2047Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_2048_TO_4095_OCTETS" => {
+                Ok(Self::EtherStatsPkts2048To4095Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_4096_TO_9216_OCTETS" => {
+                Ok(Self::EtherStatsPkts4096To9216Octets)
+            }
+            "SAI_PORT_STAT_ETHER_STATS_PKTS_9217_TO_16383_OCTETS" => {
+                Ok(Self::EtherStatsPkts9217To16383Octets)
+            }
             "SAI_PORT_STAT_ETHER_STATS_OVERSIZE_PKTS" => Ok(Self::EtherStatsOversizePkts),
             "SAI_PORT_STAT_ETHER_RX_OVERSIZE_PKTS" => Ok(Self::EtherRxOversizePkts),
             "SAI_PORT_STAT_ETHER_TX_OVERSIZE_PKTS" => Ok(Self::EtherTxOversizePkts),
@@ -869,29 +985,59 @@ impl FromStr for SaiPortStat {
             "SAI_PORT_STAT_ETHER_IN_PKTS_65_TO_127_OCTETS" => Ok(Self::EtherInPkts65To127Octets),
             "SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS" => Ok(Self::EtherInPkts128To255Octets),
             "SAI_PORT_STAT_ETHER_IN_PKTS_256_TO_511_OCTETS" => Ok(Self::EtherInPkts256To511Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_512_TO_1023_OCTETS" => Ok(Self::EtherInPkts512To1023Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_1024_TO_1518_OCTETS" => Ok(Self::EtherInPkts1024To1518Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_1519_TO_2047_OCTETS" => Ok(Self::EtherInPkts1519To2047Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_2048_TO_4095_OCTETS" => Ok(Self::EtherInPkts2048To4095Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_4096_TO_9216_OCTETS" => Ok(Self::EtherInPkts4096To9216Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_9217_TO_16383_OCTETS" => Ok(Self::EtherInPkts9217To16383Octets),
+            "SAI_PORT_STAT_ETHER_IN_PKTS_512_TO_1023_OCTETS" => {
+                Ok(Self::EtherInPkts512To1023Octets)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_1024_TO_1518_OCTETS" => {
+                Ok(Self::EtherInPkts1024To1518Octets)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_1519_TO_2047_OCTETS" => {
+                Ok(Self::EtherInPkts1519To2047Octets)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_2048_TO_4095_OCTETS" => {
+                Ok(Self::EtherInPkts2048To4095Octets)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_4096_TO_9216_OCTETS" => {
+                Ok(Self::EtherInPkts4096To9216Octets)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_9217_TO_16383_OCTETS" => {
+                Ok(Self::EtherInPkts9217To16383Octets)
+            }
             "SAI_PORT_STAT_ETHER_OUT_PKTS_64_OCTETS" => Ok(Self::EtherOutPkts64Octets),
             "SAI_PORT_STAT_ETHER_OUT_PKTS_65_TO_127_OCTETS" => Ok(Self::EtherOutPkts65To127Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_128_TO_255_OCTETS" => Ok(Self::EtherOutPkts128To255Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_256_TO_511_OCTETS" => Ok(Self::EtherOutPkts256To511Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_512_TO_1023_OCTETS" => Ok(Self::EtherOutPkts512To1023Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_1024_TO_1518_OCTETS" => Ok(Self::EtherOutPkts1024To1518Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2047_OCTETS" => Ok(Self::EtherOutPkts1519To2047Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_2048_TO_4095_OCTETS" => Ok(Self::EtherOutPkts2048To4095Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_4096_TO_9216_OCTETS" => Ok(Self::EtherOutPkts4096To9216Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_9217_TO_16383_OCTETS" => Ok(Self::EtherOutPkts9217To16383Octets),
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_128_TO_255_OCTETS" => {
+                Ok(Self::EtherOutPkts128To255Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_256_TO_511_OCTETS" => {
+                Ok(Self::EtherOutPkts256To511Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_512_TO_1023_OCTETS" => {
+                Ok(Self::EtherOutPkts512To1023Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_1024_TO_1518_OCTETS" => {
+                Ok(Self::EtherOutPkts1024To1518Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2047_OCTETS" => {
+                Ok(Self::EtherOutPkts1519To2047Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_2048_TO_4095_OCTETS" => {
+                Ok(Self::EtherOutPkts2048To4095Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_4096_TO_9216_OCTETS" => {
+                Ok(Self::EtherOutPkts4096To9216Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_9217_TO_16383_OCTETS" => {
+                Ok(Self::EtherOutPkts9217To16383Octets)
+            }
             "SAI_PORT_STAT_IN_CURR_OCCUPANCY_BYTES" => Ok(Self::InCurrOccupancyBytes),
             "SAI_PORT_STAT_IN_WATERMARK_BYTES" => Ok(Self::InWatermarkBytes),
             "SAI_PORT_STAT_IN_SHARED_CURR_OCCUPANCY_BYTES" => Ok(Self::InSharedCurrOccupancyBytes),
             "SAI_PORT_STAT_IN_SHARED_WATERMARK_BYTES" => Ok(Self::InSharedWatermarkBytes),
             "SAI_PORT_STAT_OUT_CURR_OCCUPANCY_BYTES" => Ok(Self::OutCurrOccupancyBytes),
             "SAI_PORT_STAT_OUT_WATERMARK_BYTES" => Ok(Self::OutWatermarkBytes),
-            "SAI_PORT_STAT_OUT_SHARED_CURR_OCCUPANCY_BYTES" => Ok(Self::OutSharedCurrOccupancyBytes),
+            "SAI_PORT_STAT_OUT_SHARED_CURR_OCCUPANCY_BYTES" => {
+                Ok(Self::OutSharedCurrOccupancyBytes)
+            }
             "SAI_PORT_STAT_OUT_SHARED_WATERMARK_BYTES" => Ok(Self::OutSharedWatermarkBytes),
             "SAI_PORT_STAT_IN_DROPPED_PKTS" => Ok(Self::InDroppedPkts),
             "SAI_PORT_STAT_OUT_DROPPED_PKTS" => Ok(Self::OutDroppedPkts),
@@ -955,25 +1101,43 @@ impl FromStr for SaiPortStat {
             "SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS" => Ok(Self::Pfc7On2OffRxPkts),
             "SAI_PORT_STAT_DOT3_STATS_ALIGNMENT_ERRORS" => Ok(Self::Dot3StatsAlignmentErrors),
             "SAI_PORT_STAT_DOT3_STATS_FCS_ERRORS" => Ok(Self::Dot3StatsFcsErrors),
-            "SAI_PORT_STAT_DOT3_STATS_SINGLE_COLLISION_FRAMES" => Ok(Self::Dot3StatsSingleCollisionFrames),
-            "SAI_PORT_STAT_DOT3_STATS_MULTIPLE_COLLISION_FRAMES" => Ok(Self::Dot3StatsMultipleCollisionFrames),
+            "SAI_PORT_STAT_DOT3_STATS_SINGLE_COLLISION_FRAMES" => {
+                Ok(Self::Dot3StatsSingleCollisionFrames)
+            }
+            "SAI_PORT_STAT_DOT3_STATS_MULTIPLE_COLLISION_FRAMES" => {
+                Ok(Self::Dot3StatsMultipleCollisionFrames)
+            }
             "SAI_PORT_STAT_DOT3_STATS_SQE_TEST_ERRORS" => Ok(Self::Dot3StatsSqeTestErrors),
-            "SAI_PORT_STAT_DOT3_STATS_DEFERRED_TRANSMISSIONS" => Ok(Self::Dot3StatsDeferredTransmissions),
+            "SAI_PORT_STAT_DOT3_STATS_DEFERRED_TRANSMISSIONS" => {
+                Ok(Self::Dot3StatsDeferredTransmissions)
+            }
             "SAI_PORT_STAT_DOT3_STATS_LATE_COLLISIONS" => Ok(Self::Dot3StatsLateCollisions),
-            "SAI_PORT_STAT_DOT3_STATS_EXCESSIVE_COLLISIONS" => Ok(Self::Dot3StatsExcessiveCollisions),
-            "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_TRANSMIT_ERRORS" => Ok(Self::Dot3StatsInternalMacTransmitErrors),
-            "SAI_PORT_STAT_DOT3_STATS_CARRIER_SENSE_ERRORS" => Ok(Self::Dot3StatsCarrierSenseErrors),
+            "SAI_PORT_STAT_DOT3_STATS_EXCESSIVE_COLLISIONS" => {
+                Ok(Self::Dot3StatsExcessiveCollisions)
+            }
+            "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_TRANSMIT_ERRORS" => {
+                Ok(Self::Dot3StatsInternalMacTransmitErrors)
+            }
+            "SAI_PORT_STAT_DOT3_STATS_CARRIER_SENSE_ERRORS" => {
+                Ok(Self::Dot3StatsCarrierSenseErrors)
+            }
             "SAI_PORT_STAT_DOT3_STATS_FRAME_TOO_LONGS" => Ok(Self::Dot3StatsFrameTooLongs),
-            "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_RECEIVE_ERRORS" => Ok(Self::Dot3StatsInternalMacReceiveErrors),
+            "SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_RECEIVE_ERRORS" => {
+                Ok(Self::Dot3StatsInternalMacReceiveErrors)
+            }
             "SAI_PORT_STAT_DOT3_STATS_SYMBOL_ERRORS" => Ok(Self::Dot3StatsSymbolErrors),
-            "SAI_PORT_STAT_DOT3_CONTROL_IN_UNKNOWN_OPCODES" => Ok(Self::Dot3ControlInUnknownOpcodes),
+            "SAI_PORT_STAT_DOT3_CONTROL_IN_UNKNOWN_OPCODES" => {
+                Ok(Self::Dot3ControlInUnknownOpcodes)
+            }
             "SAI_PORT_STAT_EEE_TX_EVENT_COUNT" => Ok(Self::EeeTxEventCount),
             "SAI_PORT_STAT_EEE_RX_EVENT_COUNT" => Ok(Self::EeeRxEventCount),
             "SAI_PORT_STAT_EEE_TX_DURATION" => Ok(Self::EeeTxDuration),
             "SAI_PORT_STAT_EEE_RX_DURATION" => Ok(Self::EeeRxDuration),
             "SAI_PORT_STAT_PRBS_ERROR_COUNT" => Ok(Self::PrbsErrorCount),
             "SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES" => Ok(Self::IfInFecCorrectableFrames),
-            "SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES" => Ok(Self::IfInFecNotCorrectableFrames),
+            "SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES" => {
+                Ok(Self::IfInFecNotCorrectableFrames)
+            }
             "SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS" => Ok(Self::IfInFecSymbolErrors),
             "SAI_PORT_STAT_IF_IN_FABRIC_DATA_UNITS" => Ok(Self::IfInFabricDataUnits),
             "SAI_PORT_STAT_IF_OUT_FABRIC_DATA_UNITS" => Ok(Self::IfOutFabricDataUnits),
@@ -998,38 +1162,102 @@ impl FromStr for SaiPortStat {
             "SAI_PORT_STAT_TRIM_PACKETS" => Ok(Self::TrimPackets),
             "SAI_PORT_STAT_DROPPED_TRIM_PACKETS" => Ok(Self::DroppedTrimPackets),
             "SAI_PORT_STAT_TX_TRIM_PACKETS" => Ok(Self::TxTrimPackets),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons0DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons1DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons2DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons3DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons4DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons5DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons6DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons7DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_8_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons8DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_9_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons9DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_10_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons10DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_11_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons11DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_12_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons12DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_13_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons13DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_14_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons14DroppedPkts),
-            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_15_DROPPED_PKTS" => Ok(Self::InConfiguredDropReasons15DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons0DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons1DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons2DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons3DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons4DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons5DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons6DroppedPkts),
-            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS" => Ok(Self::OutConfiguredDropReasons7DroppedPkts),
-            "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_EVENTS" => Ok(Self::IfInHwProtectionSwitchoverEvents),
-            "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_DROP_PKTS" => Ok(Self::IfInHwProtectionSwitchoverDropPkts),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_1519_TO_2500_OCTETS" => Ok(Self::EtherInPkts1519To2500Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_2501_TO_9000_OCTETS" => Ok(Self::EtherInPkts2501To9000Octets),
-            "SAI_PORT_STAT_ETHER_IN_PKTS_9001_TO_16383_OCTETS" => Ok(Self::EtherInPkts9001To16383Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2500_OCTETS" => Ok(Self::EtherOutPkts1519To2500Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_2501_TO_9000_OCTETS" => Ok(Self::EtherOutPkts2501To9000Octets),
-            "SAI_PORT_STAT_ETHER_OUT_PKTS_9001_TO_16383_OCTETS" => Ok(Self::EtherOutPkts9001To16383Octets),
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons0DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons1DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons2DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons3DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons4DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons5DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons6DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons7DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_8_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons8DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_9_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons9DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_10_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons10DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_11_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons11DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_12_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons12DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_13_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons13DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_14_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons14DroppedPkts)
+            }
+            "SAI_PORT_STAT_IN_CONFIGURED_DROP_REASONS_15_DROPPED_PKTS" => {
+                Ok(Self::InConfiguredDropReasons15DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_0_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons0DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons1DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_2_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons2DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_3_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons3DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_4_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons4DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_5_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons5DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_6_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons6DroppedPkts)
+            }
+            "SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_7_DROPPED_PKTS" => {
+                Ok(Self::OutConfiguredDropReasons7DroppedPkts)
+            }
+            "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_EVENTS" => {
+                Ok(Self::IfInHwProtectionSwitchoverEvents)
+            }
+            "SAI_PORT_STAT_IF_IN_HW_PROTECTION_SWITCHOVER_DROP_PKTS" => {
+                Ok(Self::IfInHwProtectionSwitchoverDropPkts)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_1519_TO_2500_OCTETS" => {
+                Ok(Self::EtherInPkts1519To2500Octets)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_2501_TO_9000_OCTETS" => {
+                Ok(Self::EtherInPkts2501To9000Octets)
+            }
+            "SAI_PORT_STAT_ETHER_IN_PKTS_9001_TO_16383_OCTETS" => {
+                Ok(Self::EtherInPkts9001To16383Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2500_OCTETS" => {
+                Ok(Self::EtherOutPkts1519To2500Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_2501_TO_9000_OCTETS" => {
+                Ok(Self::EtherOutPkts2501To9000Octets)
+            }
+            "SAI_PORT_STAT_ETHER_OUT_PKTS_9001_TO_16383_OCTETS" => {
+                Ok(Self::EtherOutPkts9001To16383Octets)
+            }
             "SAI_PORT_STAT_END" => Ok(Self::End),
             _ => Err(format!("Unknown SAI port stat: {}", s)),
         }
@@ -1053,7 +1281,10 @@ mod tests {
         assert_eq!(SaiPortStat::from_u32(0), Some(SaiPortStat::IfInOctets));
         assert_eq!(SaiPortStat::from_u32(1), Some(SaiPortStat::IfInUcastPkts));
         assert_eq!(SaiPortStat::from_u32(103), Some(SaiPortStat::Pfc0RxPkts));
-        assert_eq!(SaiPortStat::from_u32(0x00001000), Some(SaiPortStat::InConfiguredDropReasons0DroppedPkts));
+        assert_eq!(
+            SaiPortStat::from_u32(0x00001000),
+            Some(SaiPortStat::InConfiguredDropReasons0DroppedPkts)
+        );
         assert_eq!(SaiPortStat::from_u32(0x00002010), Some(SaiPortStat::End));
         assert_eq!(SaiPortStat::from_u32(999999), None);
     }
@@ -1062,13 +1293,24 @@ mod tests {
     fn test_string_conversion() {
         let stat = SaiPortStat::IfInOctets;
         assert_eq!(stat.to_string(), "SAI_PORT_STAT_IF_IN_OCTETS");
-        assert_eq!("SAI_PORT_STAT_IF_IN_OCTETS".parse::<SaiPortStat>().unwrap(), stat);
-        
+        assert_eq!(
+            "SAI_PORT_STAT_IF_IN_OCTETS".parse::<SaiPortStat>().unwrap(),
+            stat
+        );
+
         let pfc_stat = SaiPortStat::Pfc0RxPkts;
         assert_eq!(pfc_stat.to_string(), "SAI_PORT_STAT_PFC_0_RX_PKTS");
-        assert_eq!("SAI_PORT_STAT_PFC_0_RX_PKTS".parse::<SaiPortStat>().unwrap(), pfc_stat);
-        
+        assert_eq!(
+            "SAI_PORT_STAT_PFC_0_RX_PKTS"
+                .parse::<SaiPortStat>()
+                .unwrap(),
+            pfc_stat
+        );
+
         // Test that both START and IF_IN_OCTETS parse to the same enum value
-        assert_eq!("SAI_PORT_STAT_START".parse::<SaiPortStat>().unwrap(), SaiPortStat::IfInOctets);
+        assert_eq!(
+            "SAI_PORT_STAT_START".parse::<SaiPortStat>().unwrap(),
+            SaiPortStat::IfInOctets
+        );
     }
 }

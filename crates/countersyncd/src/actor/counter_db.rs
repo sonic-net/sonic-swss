@@ -2,15 +2,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use log::{debug, error, info, warn};
-use tokio::{
-    select,
-    sync::mpsc::Receiver,
-    time::interval,
-};
-use swss_common::{DbConnector, CxxString};
+use swss_common::{CxxString, DbConnector};
+use tokio::{select, sync::mpsc::Receiver, time::interval};
 
 use crate::message::saistats::SAIStatsMessage;
-use crate::sai::{SaiObjectType, SaiPortStat, SaiQueueStat, SaiBufferPoolStat, SaiIngressPriorityGroupStat};
+use crate::sai::{
+    SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
+};
 
 /// Unix socket path for Redis connection
 #[allow(dead_code)] // Used in new() method but Rust may not detect it in all build configurations
@@ -90,9 +88,7 @@ pub struct CounterDBConfig {
 impl CounterDBConfig {
     /// Create a new config
     pub fn new(interval: Duration) -> Self {
-        Self {
-            interval,
-        }
+        Self { interval }
     }
 }
 
@@ -188,7 +184,7 @@ impl CounterDBActor {
                         }
                     }
                 }
-                
+
                 // Handle periodic write timer
                 _ = write_timer.tick() => {
                     self.write_updated_counters().await;
@@ -215,11 +211,7 @@ impl CounterDBActor {
         );
 
         for stat in &msg.stats {
-            let key = CounterKey::new(
-                stat.object_name.clone(),
-                stat.type_id,
-                stat.stat_id,
-            );
+            let key = CounterKey::new(stat.object_name.clone(), stat.type_id, stat.stat_id);
 
             match self.counter_cache.get_mut(&key) {
                 Some(counter_value) => {
@@ -228,7 +220,8 @@ impl CounterDBActor {
                 }
                 None => {
                     // Insert new counter
-                    self.counter_cache.insert(key, CounterValue::new(stat.counter));
+                    self.counter_cache
+                        .insert(key, CounterValue::new(stat.counter));
                 }
             }
         }
@@ -255,7 +248,10 @@ impl CounterDBActor {
             return;
         }
 
-        info!("Writing {} changed counters to CounterDB", keys_to_update.len());
+        info!(
+            "Writing {} changed counters to CounterDB",
+            keys_to_update.len()
+        );
 
         let mut successful_writes = 0;
         let mut failed_writes = 0;
@@ -307,7 +303,9 @@ impl CounterDBActor {
         let name_map_table = self.get_counter_name_map_table(&object_type)?;
 
         // Get the OID for this object name from the name map (with caching)
-        let oid = self.get_oid_from_name_map(&name_map_table, &key.object_name).await?;
+        let oid = self
+            .get_oid_from_name_map(&name_map_table, &key.object_name)
+            .await?;
 
         // Get the stat name from stat_id
         let stat_name = self.get_stat_name(key.stat_id, &object_type)?;
@@ -317,7 +315,7 @@ impl CounterDBActor {
         // Use DBConnector::hset to set individual fields without affecting other existing fields
         let counters_key = format!("COUNTERS:{}", oid);
         let counter_value = CxxString::from(value.counter.to_string());
-        
+
         // Use hset to set only this specific stat field, preserving other fields
         self.counters_db
             .hset(&counters_key, &stat_name, &counter_value)
@@ -364,13 +362,15 @@ impl CounterDBActor {
     ) -> Result<String, String> {
         // Convert object_name format for lookup
         let lookup_name = self.convert_object_name_for_lookup(object_name);
-        
+
         // Create cache key that includes table_name to avoid conflicts between different object types
         let cache_key = format!("{}:{}", table_name, lookup_name);
-        
-        debug!("Looking up OID for object '{}' in table '{}' (lookup_name: '{}')", 
-               object_name, table_name, lookup_name);
-        
+
+        debug!(
+            "Looking up OID for object '{}' in table '{}' (lookup_name: '{}')",
+            object_name, table_name, lookup_name
+        );
+
         // Check cache first
         if let Some(oid) = self.oid_cache.get(&cache_key) {
             debug!("Found OID in cache for {}: {}", cache_key, oid);
@@ -381,20 +381,24 @@ impl CounterDBActor {
         // Key: "COUNTERS_PORT_NAME_MAP", Hash fields: "Ethernet0", "Ethernet16", etc.
         // Hash values: "oid:0x1000000000013", "oid:0x100000000001b", etc.
         // Use DBConnector::hget to perform: HGET COUNTERS_PORT_NAME_MAP Ethernet0
-        
+
         debug!("Performing HGET: {} {}", table_name, lookup_name);
-        let oid_result = self.counters_db
+        let oid_result = self
+            .counters_db
             .hget(table_name, &lookup_name)
             .map_err(|e| format!("Failed to hget {}:{}: {}", table_name, lookup_name, e))?;
 
-        debug!("HGET result for {}:{}: {:?}", table_name, lookup_name, oid_result);
+        debug!(
+            "HGET result for {}:{}: {:?}",
+            table_name, lookup_name, oid_result
+        );
 
         match oid_result {
             Some(oid_value) => {
                 // Convert CxxString to Rust String
                 let oid = oid_value.to_string_lossy().to_string();
                 debug!("Found OID for {}: {}", lookup_name, oid);
-                
+
                 // Cache the result for future lookups
                 self.oid_cache.insert(cache_key.clone(), oid.clone());
                 debug!("Cached OID for {}: {}", cache_key, oid);
@@ -440,10 +444,16 @@ impl CounterDBActor {
                 if let Some(ipg_stat) = SaiIngressPriorityGroupStat::from_u32(stat_id) {
                     Ok(ipg_stat.to_c_name().to_string())
                 } else {
-                    Err(format!("Unknown ingress priority group stat ID: {}", stat_id))
+                    Err(format!(
+                        "Unknown ingress priority group stat ID: {}",
+                        stat_id
+                    ))
                 }
             }
-            _ => Err(format!("Unsupported object type for stat name: {:?}", object_type)),
+            _ => Err(format!(
+                "Unsupported object type for stat name: {:?}",
+                object_type
+            )),
         }
     }
 }
@@ -451,10 +461,10 @@ impl CounterDBActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
-    use std::sync::Arc;
-    use crate::message::saistats::{SAIStats, SAIStat};
+    use crate::message::saistats::{SAIStat, SAIStats};
     use crate::sai::saitypes::SaiObjectType;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     #[test]
     fn test_counter_key_creation() {
@@ -500,7 +510,7 @@ mod tests {
         // Create a test actor instance to test the real method
         let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
         let config = CounterDBConfig::default();
-        
+
         // Test with a real actor instance
         match CounterDBActor::new(rx, config) {
             Ok(actor) => {
@@ -523,8 +533,7 @@ mod tests {
                 );
             }
             Err(_) => {
-                // Fallback for environments without Redis
-                println!("Redis not available, skipping real instance test");
+                // Fallback for environments without Redis - test passes
             }
         }
     }
@@ -534,7 +543,7 @@ mod tests {
         // Create a test actor instance to test the real method
         let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
         let config = CounterDBConfig::default();
-        
+
         match CounterDBActor::new(rx, config) {
             Ok(actor) => {
                 // Test Port stats
@@ -546,7 +555,7 @@ mod tests {
                     actor.get_stat_name(1, &SaiObjectType::Port),
                     Ok("SAI_PORT_STAT_IF_IN_UCAST_PKTS".to_string())
                 );
-                
+
                 // Test Queue stats
                 assert_eq!(
                     actor.get_stat_name(0, &SaiObjectType::Queue),
@@ -556,7 +565,7 @@ mod tests {
                     actor.get_stat_name(1, &SaiObjectType::Queue),
                     Ok("SAI_QUEUE_STAT_BYTES".to_string())
                 );
-                
+
                 // Test BufferPool stats
                 assert_eq!(
                     actor.get_stat_name(0, &SaiObjectType::BufferPool),
@@ -566,7 +575,7 @@ mod tests {
                     actor.get_stat_name(1, &SaiObjectType::BufferPool),
                     Ok("SAI_BUFFER_POOL_STAT_WATERMARK_BYTES".to_string())
                 );
-                
+
                 // Test IngressPriorityGroup stats
                 assert_eq!(
                     actor.get_stat_name(0, &SaiObjectType::IngressPriorityGroup),
@@ -576,13 +585,17 @@ mod tests {
                     actor.get_stat_name(1, &SaiObjectType::IngressPriorityGroup),
                     Ok("SAI_INGRESS_PRIORITY_GROUP_STAT_BYTES".to_string())
                 );
-                
+
                 // Test invalid stat ID
-                assert!(actor.get_stat_name(0xFFFFFFFF, &SaiObjectType::Port).is_err());
-                assert!(actor.get_stat_name(0xFFFFFFFF, &SaiObjectType::Queue).is_err());
+                assert!(actor
+                    .get_stat_name(0xFFFFFFFF, &SaiObjectType::Port)
+                    .is_err());
+                assert!(actor
+                    .get_stat_name(0xFFFFFFFF, &SaiObjectType::Queue)
+                    .is_err());
             }
             Err(_) => {
-                println!("Redis not available, skipping real instance test");
+                // Fallback for environments without Redis - test passes
             }
         }
     }
@@ -592,7 +605,7 @@ mod tests {
         // Create a test actor instance to test the real method
         let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
         let config = CounterDBConfig::default();
-        
+
         match CounterDBActor::new(rx, config) {
             Ok(actor) => {
                 // Test the real conversion logic
@@ -610,7 +623,7 @@ mod tests {
                 );
             }
             Err(_) => {
-                println!("Redis not available, skipping real instance test");
+                // Fallback for environments without Redis - test passes
             }
         }
     }
@@ -620,19 +633,17 @@ mod tests {
         // This test uses real Redis connection
         let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(10);
         let config = CounterDBConfig::default();
-        
+
         // Try to create a real CounterDBActor
         match CounterDBActor::new(rx, config) {
             Ok(mut actor) => {
                 // Create a test SAI stats message
-                let stats = vec![
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(),
-                        type_id: SaiObjectType::Port.to_u32(),
-                        stat_id: 0, // IF_IN_OCTETS
-                        counter: 1000,
-                    },
-                ];
+                let stats = vec![SAIStat {
+                    object_name: "Ethernet0".to_string(),
+                    type_id: SaiObjectType::Port.to_u32(),
+                    stat_id: 0, // IF_IN_OCTETS
+                    counter: 1000,
+                }];
 
                 let sai_stats = SAIStats::new(12345, stats);
                 let msg = Arc::new(sai_stats);
@@ -652,8 +663,6 @@ mod tests {
                 actor.handle_stats_message(msg.clone()).await;
                 assert_eq!(actor.total_messages_received, 2);
                 let cached_value = actor.counter_cache.get(&key).unwrap();
-                println!("After sending same message again: updated={}, last_written_value={:?}, counter={}", 
-                    cached_value.updated, cached_value.last_written_value, cached_value.counter);
                 // The value hasn't been written yet, so it should still be considered changed for the first write
                 // But this specific counter didn't change from the previous value, so updated should still be true from first time
                 assert!(cached_value.updated); // Still true from first time
@@ -668,20 +677,16 @@ mod tests {
                 actor.handle_stats_message(msg.clone()).await;
                 assert_eq!(actor.total_messages_received, 3);
                 let cached_value = actor.counter_cache.get(&key).unwrap();
-                println!("After writing and sending same message: updated={}, last_written_value={:?}, counter={}", 
-                    cached_value.updated, cached_value.last_written_value, cached_value.counter);
                 assert!(!cached_value.updated); // Should be false after mark_written
                 assert!(!cached_value.has_changed()); // No change needed
 
                 // Send a different value
-                let stats2 = vec![
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(),
-                        type_id: SaiObjectType::Port.to_u32(),
-                        stat_id: 0,
-                        counter: 2000, // Changed value
-                    },
-                ];
+                let stats2 = vec![SAIStat {
+                    object_name: "Ethernet0".to_string(),
+                    type_id: SaiObjectType::Port.to_u32(),
+                    stat_id: 0,
+                    counter: 2000, // Changed value
+                }];
                 let sai_stats2 = SAIStats::new(12346, stats2);
                 let msg2 = Arc::new(sai_stats2);
 
@@ -690,12 +695,10 @@ mod tests {
                 let cached_value = actor.counter_cache.get(&key).unwrap();
                 assert!(cached_value.has_changed()); // Value changed
                 assert_eq!(cached_value.counter, 2000);
-
-                println!("Real CounterDBActor integration test passed!");
             }
             Err(e) => {
-                println!("Redis not available for testing, skipping integration test: {}", e);
                 // This is acceptable in CI environments where Redis might not be running
+                let _ = e; // Suppress unused variable warning
             }
         }
     }
@@ -706,36 +709,35 @@ mod tests {
         // This preserves existing fields in the Redis hash
         let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
         let config = CounterDBConfig::default();
-        
+
         match CounterDBActor::new(rx, config) {
             Ok(mut actor) => {
                 // Mock an OID in the cache to avoid Redis lookup
                 let cache_key = "COUNTERS_PORT_NAME_MAP:Ethernet0";
                 let test_oid = "oid:0x1000000000013";
-                actor.oid_cache.insert(cache_key.to_string(), test_oid.to_string());
-                
+                actor
+                    .oid_cache
+                    .insert(cache_key.to_string(), test_oid.to_string());
+
                 // Create a test counter
                 let key = CounterKey::new("Ethernet0".to_string(), SaiObjectType::Port.to_u32(), 0);
                 let value = CounterValue::new(1000);
-                
+
                 // Test the write operation
                 // This should use DBConnector::hset instead of Table::set
                 // hset will only update the specific field without affecting other fields
                 match actor.write_counter_to_db(&key, &value).await {
                     Ok(()) => {
-                        println!("Successfully wrote counter using hset (preserves other fields)");
+                        // Successfully wrote counter using hset (preserves other fields)
                     }
-                    Err(e) => {
+                    Err(_) => {
                         // This is expected if Redis is not available or if name map lookup fails
-                        println!("Write failed (expected in test environment): {}", e);
                         // The test passes as long as hset is being used instead of set
                     }
                 }
-                
-                println!("hset usage test completed");
             }
-            Err(e) => {
-                println!("Redis not available for hset testing: {}", e);
+            Err(_) => {
+                // Redis not available for hset testing - test passes
             }
         }
     }
@@ -745,36 +747,35 @@ mod tests {
         // Test the actual write_counter_to_db method with mocked Redis connection
         let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
         let config = CounterDBConfig::default();
-        
+
         match CounterDBActor::new(rx, config) {
             Ok(mut actor) => {
                 // Mock an OID in the cache to avoid Redis lookup
                 let cache_key = "COUNTERS_PORT_NAME_MAP:Ethernet0";
                 let test_oid = "oid:0x1000000000013";
-                actor.oid_cache.insert(cache_key.to_string(), test_oid.to_string());
-                
+                actor
+                    .oid_cache
+                    .insert(cache_key.to_string(), test_oid.to_string());
+
                 // Create a test counter
                 let key = CounterKey::new("Ethernet0".to_string(), SaiObjectType::Port.to_u32(), 0);
                 let value = CounterValue::new(1000);
-                
+
                 // Test the write operation
                 // This will use the empty table name and should create key "COUNTERS:oid:0x1000000000013"
                 // instead of "COUNTERS:COUNTERS:oid:0x1000000000013"
                 match actor.write_counter_to_db(&key, &value).await {
                     Ok(()) => {
-                        println!("Successfully wrote counter with correct key format");
+                        // Successfully wrote counter with correct key format
                     }
-                    Err(e) => {
+                    Err(_) => {
                         // This is expected if Redis is not available or if name map lookup fails
-                        println!("Write failed (expected in test environment): {}", e);
                         // The test passes as long as the key format logic is correct
                     }
                 }
-                
-                println!("Redis key format test completed");
             }
-            Err(e) => {
-                println!("Redis not available for key format testing: {}", e);
+            Err(_) => {
+                // Redis not available for key format testing - test passes
             }
         }
     }

@@ -554,8 +554,14 @@ mod tests {
     fn test_string_conversion() {
         assert_eq!(SaiObjectType::Null.to_c_name(), "SAI_OBJECT_TYPE_NULL");
         assert_eq!(SaiObjectType::Port.to_c_name(), "SAI_OBJECT_TYPE_PORT");
-        assert_eq!("SAI_OBJECT_TYPE_NULL".parse::<SaiObjectType>(), Ok(SaiObjectType::Null));
-        assert_eq!("SAI_OBJECT_TYPE_PORT".parse::<SaiObjectType>(), Ok(SaiObjectType::Port));
+        assert_eq!(
+            "SAI_OBJECT_TYPE_NULL".parse::<SaiObjectType>(),
+            Ok(SaiObjectType::Null)
+        );
+        assert_eq!(
+            "SAI_OBJECT_TYPE_PORT".parse::<SaiObjectType>(),
+            Ok(SaiObjectType::Port)
+        );
         assert!("INVALID".parse::<SaiObjectType>().is_err());
     }
 

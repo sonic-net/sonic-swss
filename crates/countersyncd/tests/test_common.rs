@@ -55,5 +55,11 @@ pub fn assert_logs(expected: Vec<&str>) {
             break;
         }
     }
-    assert_eq!(match_count, expected.len(), "\nexpected logs \n{}\n, got logs \n{}\n", expected.join("\n"), logs_string);
+    assert_eq!(
+        match_count,
+        expected.len(),
+        "\nexpected logs \n{}\n, got logs \n{}\n",
+        expected.join("\n"),
+        logs_string
+    );
 }

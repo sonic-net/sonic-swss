@@ -141,15 +141,21 @@ impl SaiBufferPoolStat {
             Self::WredDroppedBytes => "SAI_BUFFER_POOL_STAT_WRED_DROPPED_BYTES",
             Self::GreenWredEcnMarkedPackets => "SAI_BUFFER_POOL_STAT_GREEN_WRED_ECN_MARKED_PACKETS",
             Self::GreenWredEcnMarkedBytes => "SAI_BUFFER_POOL_STAT_GREEN_WRED_ECN_MARKED_BYTES",
-            Self::YellowWredEcnMarkedPackets => "SAI_BUFFER_POOL_STAT_YELLOW_WRED_ECN_MARKED_PACKETS",
+            Self::YellowWredEcnMarkedPackets => {
+                "SAI_BUFFER_POOL_STAT_YELLOW_WRED_ECN_MARKED_PACKETS"
+            }
             Self::YellowWredEcnMarkedBytes => "SAI_BUFFER_POOL_STAT_YELLOW_WRED_ECN_MARKED_BYTES",
             Self::RedWredEcnMarkedPackets => "SAI_BUFFER_POOL_STAT_RED_WRED_ECN_MARKED_PACKETS",
             Self::RedWredEcnMarkedBytes => "SAI_BUFFER_POOL_STAT_RED_WRED_ECN_MARKED_BYTES",
             Self::WredEcnMarkedPackets => "SAI_BUFFER_POOL_STAT_WRED_ECN_MARKED_PACKETS",
             Self::WredEcnMarkedBytes => "SAI_BUFFER_POOL_STAT_WRED_ECN_MARKED_BYTES",
-            Self::XoffRoomCurrOccupancyBytes => "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES",
+            Self::XoffRoomCurrOccupancyBytes => {
+                "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES"
+            }
             Self::XoffRoomWatermarkBytes => "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES",
-            Self::XoffRoomCurrOccupancyCells => "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS",
+            Self::XoffRoomCurrOccupancyCells => {
+                "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS"
+            }
             Self::XoffRoomWatermarkCells => "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_CELLS",
             Self::CurrOccupancyCells => "SAI_BUFFER_POOL_STAT_CURR_OCCUPANCY_CELLS",
             Self::WatermarkCells => "SAI_BUFFER_POOL_STAT_WATERMARK_CELLS",
@@ -168,23 +174,35 @@ impl FromStr for SaiBufferPoolStat {
             "SAI_BUFFER_POOL_STAT_DROPPED_PACKETS" => Ok(Self::DroppedPackets),
             "SAI_BUFFER_POOL_STAT_GREEN_WRED_DROPPED_PACKETS" => Ok(Self::GreenWredDroppedPackets),
             "SAI_BUFFER_POOL_STAT_GREEN_WRED_DROPPED_BYTES" => Ok(Self::GreenWredDroppedBytes),
-            "SAI_BUFFER_POOL_STAT_YELLOW_WRED_DROPPED_PACKETS" => Ok(Self::YellowWredDroppedPackets),
+            "SAI_BUFFER_POOL_STAT_YELLOW_WRED_DROPPED_PACKETS" => {
+                Ok(Self::YellowWredDroppedPackets)
+            }
             "SAI_BUFFER_POOL_STAT_YELLOW_WRED_DROPPED_BYTES" => Ok(Self::YellowWredDroppedBytes),
             "SAI_BUFFER_POOL_STAT_RED_WRED_DROPPED_PACKETS" => Ok(Self::RedWredDroppedPackets),
             "SAI_BUFFER_POOL_STAT_RED_WRED_DROPPED_BYTES" => Ok(Self::RedWredDroppedBytes),
             "SAI_BUFFER_POOL_STAT_WRED_DROPPED_PACKETS" => Ok(Self::WredDroppedPackets),
             "SAI_BUFFER_POOL_STAT_WRED_DROPPED_BYTES" => Ok(Self::WredDroppedBytes),
-            "SAI_BUFFER_POOL_STAT_GREEN_WRED_ECN_MARKED_PACKETS" => Ok(Self::GreenWredEcnMarkedPackets),
+            "SAI_BUFFER_POOL_STAT_GREEN_WRED_ECN_MARKED_PACKETS" => {
+                Ok(Self::GreenWredEcnMarkedPackets)
+            }
             "SAI_BUFFER_POOL_STAT_GREEN_WRED_ECN_MARKED_BYTES" => Ok(Self::GreenWredEcnMarkedBytes),
-            "SAI_BUFFER_POOL_STAT_YELLOW_WRED_ECN_MARKED_PACKETS" => Ok(Self::YellowWredEcnMarkedPackets),
-            "SAI_BUFFER_POOL_STAT_YELLOW_WRED_ECN_MARKED_BYTES" => Ok(Self::YellowWredEcnMarkedBytes),
+            "SAI_BUFFER_POOL_STAT_YELLOW_WRED_ECN_MARKED_PACKETS" => {
+                Ok(Self::YellowWredEcnMarkedPackets)
+            }
+            "SAI_BUFFER_POOL_STAT_YELLOW_WRED_ECN_MARKED_BYTES" => {
+                Ok(Self::YellowWredEcnMarkedBytes)
+            }
             "SAI_BUFFER_POOL_STAT_RED_WRED_ECN_MARKED_PACKETS" => Ok(Self::RedWredEcnMarkedPackets),
             "SAI_BUFFER_POOL_STAT_RED_WRED_ECN_MARKED_BYTES" => Ok(Self::RedWredEcnMarkedBytes),
             "SAI_BUFFER_POOL_STAT_WRED_ECN_MARKED_PACKETS" => Ok(Self::WredEcnMarkedPackets),
             "SAI_BUFFER_POOL_STAT_WRED_ECN_MARKED_BYTES" => Ok(Self::WredEcnMarkedBytes),
-            "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES" => Ok(Self::XoffRoomCurrOccupancyBytes),
+            "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES" => {
+                Ok(Self::XoffRoomCurrOccupancyBytes)
+            }
             "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES" => Ok(Self::XoffRoomWatermarkBytes),
-            "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS" => Ok(Self::XoffRoomCurrOccupancyCells),
+            "SAI_BUFFER_POOL_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS" => {
+                Ok(Self::XoffRoomCurrOccupancyCells)
+            }
             "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_CELLS" => Ok(Self::XoffRoomWatermarkCells),
             "SAI_BUFFER_POOL_STAT_CURR_OCCUPANCY_CELLS" => Ok(Self::CurrOccupancyCells),
             "SAI_BUFFER_POOL_STAT_WATERMARK_CELLS" => Ok(Self::WatermarkCells),
@@ -206,10 +224,22 @@ mod tests {
 
     #[test]
     fn test_from_u32() {
-        assert_eq!(SaiBufferPoolStat::from_u32(0x00000000), Some(SaiBufferPoolStat::CurrOccupancyBytes));
-        assert_eq!(SaiBufferPoolStat::from_u32(0x00000001), Some(SaiBufferPoolStat::WatermarkBytes));
-        assert_eq!(SaiBufferPoolStat::from_u32(0x00000018), Some(SaiBufferPoolStat::WatermarkCells));
-        assert_eq!(SaiBufferPoolStat::from_u32(0x10000000), Some(SaiBufferPoolStat::CustomRangeBase));
+        assert_eq!(
+            SaiBufferPoolStat::from_u32(0x00000000),
+            Some(SaiBufferPoolStat::CurrOccupancyBytes)
+        );
+        assert_eq!(
+            SaiBufferPoolStat::from_u32(0x00000001),
+            Some(SaiBufferPoolStat::WatermarkBytes)
+        );
+        assert_eq!(
+            SaiBufferPoolStat::from_u32(0x00000018),
+            Some(SaiBufferPoolStat::WatermarkCells)
+        );
+        assert_eq!(
+            SaiBufferPoolStat::from_u32(0x10000000),
+            Some(SaiBufferPoolStat::CustomRangeBase)
+        );
         assert_eq!(SaiBufferPoolStat::from_u32(0xFFFFFFFF), None);
     }
 
@@ -226,29 +256,47 @@ mod tests {
         let stat = SaiBufferPoolStat::CurrOccupancyBytes;
         let c_name = stat.to_c_name();
         assert_eq!(c_name, "SAI_BUFFER_POOL_STAT_CURR_OCCUPANCY_BYTES");
-        
+
         let parsed: SaiBufferPoolStat = c_name.parse().unwrap();
         assert_eq!(parsed, stat);
-        
+
         assert_eq!(format!("{}", stat), c_name);
     }
 
     #[test]
     fn test_wred_stats() {
         // Test WRED drop stats
-        assert_eq!(SaiBufferPoolStat::GreenWredDroppedPackets.to_u32(), 0x00000003);
-        assert_eq!(SaiBufferPoolStat::YellowWredDroppedBytes.to_u32(), 0x00000006);
-        assert_eq!(SaiBufferPoolStat::RedWredDroppedPackets.to_u32(), 0x00000007);
-        
+        assert_eq!(
+            SaiBufferPoolStat::GreenWredDroppedPackets.to_u32(),
+            0x00000003
+        );
+        assert_eq!(
+            SaiBufferPoolStat::YellowWredDroppedBytes.to_u32(),
+            0x00000006
+        );
+        assert_eq!(
+            SaiBufferPoolStat::RedWredDroppedPackets.to_u32(),
+            0x00000007
+        );
+
         // Test WRED ECN mark stats
-        assert_eq!(SaiBufferPoolStat::GreenWredEcnMarkedPackets.to_u32(), 0x0000000b);
+        assert_eq!(
+            SaiBufferPoolStat::GreenWredEcnMarkedPackets.to_u32(),
+            0x0000000b
+        );
         assert_eq!(SaiBufferPoolStat::WredEcnMarkedBytes.to_u32(), 0x00000012);
     }
 
     #[test]
     fn test_xoff_room_stats() {
-        assert_eq!(SaiBufferPoolStat::XoffRoomCurrOccupancyBytes.to_u32(), 0x00000013);
-        assert_eq!(SaiBufferPoolStat::XoffRoomWatermarkCells.to_u32(), 0x00000016);
+        assert_eq!(
+            SaiBufferPoolStat::XoffRoomCurrOccupancyBytes.to_u32(),
+            0x00000013
+        );
+        assert_eq!(
+            SaiBufferPoolStat::XoffRoomWatermarkCells.to_u32(),
+            0x00000016
+        );
     }
 }
 
@@ -331,7 +379,7 @@ impl SaiIngressPriorityGroupStat {
     }
 
     /// Convert enum variant to u32 value
-    #[allow(dead_code)] // May be used by external code or future features  
+    #[allow(dead_code)] // May be used by external code or future features
     pub fn to_u32(self) -> u32 {
         self as u32
     }
@@ -343,17 +391,29 @@ impl SaiIngressPriorityGroupStat {
             Self::Bytes => "SAI_INGRESS_PRIORITY_GROUP_STAT_BYTES",
             Self::CurrOccupancyBytes => "SAI_INGRESS_PRIORITY_GROUP_STAT_CURR_OCCUPANCY_BYTES",
             Self::WatermarkBytes => "SAI_INGRESS_PRIORITY_GROUP_STAT_WATERMARK_BYTES",
-            Self::SharedCurrOccupancyBytes => "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_BYTES",
+            Self::SharedCurrOccupancyBytes => {
+                "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_BYTES"
+            }
             Self::SharedWatermarkBytes => "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
-            Self::XoffRoomCurrOccupancyBytes => "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES",
-            Self::XoffRoomWatermarkBytes => "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
+            Self::XoffRoomCurrOccupancyBytes => {
+                "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES"
+            }
+            Self::XoffRoomWatermarkBytes => {
+                "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES"
+            }
             Self::DroppedPackets => "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS",
             Self::CurrOccupancyCells => "SAI_INGRESS_PRIORITY_GROUP_STAT_CURR_OCCUPANCY_CELLS",
             Self::WatermarkCells => "SAI_INGRESS_PRIORITY_GROUP_STAT_WATERMARK_CELLS",
-            Self::SharedCurrOccupancyCells => "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_CELLS",
+            Self::SharedCurrOccupancyCells => {
+                "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_CELLS"
+            }
             Self::SharedWatermarkCells => "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_CELLS",
-            Self::XoffRoomCurrOccupancyCells => "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS",
-            Self::XoffRoomWatermarkCells => "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_CELLS",
+            Self::XoffRoomCurrOccupancyCells => {
+                "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS"
+            }
+            Self::XoffRoomWatermarkCells => {
+                "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_CELLS"
+            }
             Self::CustomRangeBase => "SAI_INGRESS_PRIORITY_GROUP_STAT_CUSTOM_RANGE_BASE",
         }
     }
@@ -368,17 +428,33 @@ impl FromStr for SaiIngressPriorityGroupStat {
             "SAI_INGRESS_PRIORITY_GROUP_STAT_BYTES" => Ok(Self::Bytes),
             "SAI_INGRESS_PRIORITY_GROUP_STAT_CURR_OCCUPANCY_BYTES" => Ok(Self::CurrOccupancyBytes),
             "SAI_INGRESS_PRIORITY_GROUP_STAT_WATERMARK_BYTES" => Ok(Self::WatermarkBytes),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_BYTES" => Ok(Self::SharedCurrOccupancyBytes),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES" => Ok(Self::SharedWatermarkBytes),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES" => Ok(Self::XoffRoomCurrOccupancyBytes),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES" => Ok(Self::XoffRoomWatermarkBytes),
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_BYTES" => {
+                Ok(Self::SharedCurrOccupancyBytes)
+            }
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES" => {
+                Ok(Self::SharedWatermarkBytes)
+            }
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES" => {
+                Ok(Self::XoffRoomCurrOccupancyBytes)
+            }
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES" => {
+                Ok(Self::XoffRoomWatermarkBytes)
+            }
             "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS" => Ok(Self::DroppedPackets),
             "SAI_INGRESS_PRIORITY_GROUP_STAT_CURR_OCCUPANCY_CELLS" => Ok(Self::CurrOccupancyCells),
             "SAI_INGRESS_PRIORITY_GROUP_STAT_WATERMARK_CELLS" => Ok(Self::WatermarkCells),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_CELLS" => Ok(Self::SharedCurrOccupancyCells),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_CELLS" => Ok(Self::SharedWatermarkCells),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS" => Ok(Self::XoffRoomCurrOccupancyCells),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_CELLS" => Ok(Self::XoffRoomWatermarkCells),
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_CURR_OCCUPANCY_CELLS" => {
+                Ok(Self::SharedCurrOccupancyCells)
+            }
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_CELLS" => {
+                Ok(Self::SharedWatermarkCells)
+            }
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_CELLS" => {
+                Ok(Self::XoffRoomCurrOccupancyCells)
+            }
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_CELLS" => {
+                Ok(Self::XoffRoomWatermarkCells)
+            }
             "SAI_INGRESS_PRIORITY_GROUP_STAT_CUSTOM_RANGE_BASE" => Ok(Self::CustomRangeBase),
             _ => Err(()),
         }
@@ -397,11 +473,26 @@ mod ingress_priority_group_tests {
 
     #[test]
     fn test_ipg_from_u32() {
-        assert_eq!(SaiIngressPriorityGroupStat::from_u32(0x00000000), Some(SaiIngressPriorityGroupStat::Packets));
-        assert_eq!(SaiIngressPriorityGroupStat::from_u32(0x00000001), Some(SaiIngressPriorityGroupStat::Bytes));
-        assert_eq!(SaiIngressPriorityGroupStat::from_u32(0x00000008), Some(SaiIngressPriorityGroupStat::DroppedPackets));
-        assert_eq!(SaiIngressPriorityGroupStat::from_u32(0x0000000e), Some(SaiIngressPriorityGroupStat::XoffRoomWatermarkCells));
-        assert_eq!(SaiIngressPriorityGroupStat::from_u32(0x10000000), Some(SaiIngressPriorityGroupStat::CustomRangeBase));
+        assert_eq!(
+            SaiIngressPriorityGroupStat::from_u32(0x00000000),
+            Some(SaiIngressPriorityGroupStat::Packets)
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::from_u32(0x00000001),
+            Some(SaiIngressPriorityGroupStat::Bytes)
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::from_u32(0x00000008),
+            Some(SaiIngressPriorityGroupStat::DroppedPackets)
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::from_u32(0x0000000e),
+            Some(SaiIngressPriorityGroupStat::XoffRoomWatermarkCells)
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::from_u32(0x10000000),
+            Some(SaiIngressPriorityGroupStat::CustomRangeBase)
+        );
         assert_eq!(SaiIngressPriorityGroupStat::from_u32(0xFFFFFFFF), None);
     }
 
@@ -409,46 +500,94 @@ mod ingress_priority_group_tests {
     fn test_ipg_to_u32() {
         assert_eq!(SaiIngressPriorityGroupStat::Packets.to_u32(), 0x00000000);
         assert_eq!(SaiIngressPriorityGroupStat::Bytes.to_u32(), 0x00000001);
-        assert_eq!(SaiIngressPriorityGroupStat::DroppedPackets.to_u32(), 0x00000008);
-        assert_eq!(SaiIngressPriorityGroupStat::XoffRoomWatermarkCells.to_u32(), 0x0000000e);
-        assert_eq!(SaiIngressPriorityGroupStat::CustomRangeBase.to_u32(), 0x10000000);
+        assert_eq!(
+            SaiIngressPriorityGroupStat::DroppedPackets.to_u32(),
+            0x00000008
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::XoffRoomWatermarkCells.to_u32(),
+            0x0000000e
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::CustomRangeBase.to_u32(),
+            0x10000000
+        );
     }
 
     #[test]
     fn test_ipg_string_conversion() {
         let stat = SaiIngressPriorityGroupStat::CurrOccupancyBytes;
         let c_name = stat.to_c_name();
-        assert_eq!(c_name, "SAI_INGRESS_PRIORITY_GROUP_STAT_CURR_OCCUPANCY_BYTES");
-        
+        assert_eq!(
+            c_name,
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_CURR_OCCUPANCY_BYTES"
+        );
+
         let parsed: SaiIngressPriorityGroupStat = c_name.parse().unwrap();
         assert_eq!(parsed, stat);
-        
+
         assert_eq!(format!("{}", stat), c_name);
     }
 
     #[test]
     fn test_ipg_occupancy_stats() {
         // Test byte-based occupancy stats
-        assert_eq!(SaiIngressPriorityGroupStat::CurrOccupancyBytes.to_u32(), 0x00000002);
-        assert_eq!(SaiIngressPriorityGroupStat::WatermarkBytes.to_u32(), 0x00000003);
-        assert_eq!(SaiIngressPriorityGroupStat::SharedCurrOccupancyBytes.to_u32(), 0x00000004);
-        assert_eq!(SaiIngressPriorityGroupStat::SharedWatermarkBytes.to_u32(), 0x00000005);
-        
+        assert_eq!(
+            SaiIngressPriorityGroupStat::CurrOccupancyBytes.to_u32(),
+            0x00000002
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::WatermarkBytes.to_u32(),
+            0x00000003
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::SharedCurrOccupancyBytes.to_u32(),
+            0x00000004
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::SharedWatermarkBytes.to_u32(),
+            0x00000005
+        );
+
         // Test cell-based occupancy stats
-        assert_eq!(SaiIngressPriorityGroupStat::CurrOccupancyCells.to_u32(), 0x00000009);
-        assert_eq!(SaiIngressPriorityGroupStat::WatermarkCells.to_u32(), 0x0000000a);
-        assert_eq!(SaiIngressPriorityGroupStat::SharedCurrOccupancyCells.to_u32(), 0x0000000b);
-        assert_eq!(SaiIngressPriorityGroupStat::SharedWatermarkCells.to_u32(), 0x0000000c);
+        assert_eq!(
+            SaiIngressPriorityGroupStat::CurrOccupancyCells.to_u32(),
+            0x00000009
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::WatermarkCells.to_u32(),
+            0x0000000a
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::SharedCurrOccupancyCells.to_u32(),
+            0x0000000b
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::SharedWatermarkCells.to_u32(),
+            0x0000000c
+        );
     }
 
     #[test]
     fn test_ipg_xoff_room_stats() {
         // Test XOFF room byte stats
-        assert_eq!(SaiIngressPriorityGroupStat::XoffRoomCurrOccupancyBytes.to_u32(), 0x00000006);
-        assert_eq!(SaiIngressPriorityGroupStat::XoffRoomWatermarkBytes.to_u32(), 0x00000007);
-        
+        assert_eq!(
+            SaiIngressPriorityGroupStat::XoffRoomCurrOccupancyBytes.to_u32(),
+            0x00000006
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::XoffRoomWatermarkBytes.to_u32(),
+            0x00000007
+        );
+
         // Test XOFF room cell stats
-        assert_eq!(SaiIngressPriorityGroupStat::XoffRoomCurrOccupancyCells.to_u32(), 0x0000000d);
-        assert_eq!(SaiIngressPriorityGroupStat::XoffRoomWatermarkCells.to_u32(), 0x0000000e);
+        assert_eq!(
+            SaiIngressPriorityGroupStat::XoffRoomCurrOccupancyCells.to_u32(),
+            0x0000000d
+        );
+        assert_eq!(
+            SaiIngressPriorityGroupStat::XoffRoomWatermarkCells.to_u32(),
+            0x0000000e
+        );
     }
 }

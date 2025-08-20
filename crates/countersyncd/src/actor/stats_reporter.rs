@@ -1,6 +1,6 @@
+use chrono::DateTime;
 use std::collections::HashMap;
 use std::time::Duration;
-use chrono::DateTime;
 
 use log::{debug, info};
 use tokio::{
@@ -10,7 +10,9 @@ use tokio::{
 };
 
 use super::super::message::saistats::SAIStatsMessage;
-use crate::sai::{SaiObjectType, SaiPortStat, SaiQueueStat, SaiBufferPoolStat, SaiIngressPriorityGroupStat};
+use crate::sai::{
+    SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
+};
 
 /// Unique key for identifying a specific counter based on the triplet
 /// (object_name, type_id, stat_id)
@@ -99,7 +101,7 @@ impl Default for StatsReporterConfig {
 }
 
 /// Actor responsible for consuming SAI statistics messages and reporting them to the terminal.
-/// 
+///
 /// The StatsReporterActor handles:
 /// - Receiving SAI statistics messages from IPFIX processor
 /// - Maintaining the latest statistics state per counter key (object_name, type_id, stat_id)
@@ -127,21 +129,25 @@ pub struct StatsReporterActor<W: OutputWriter> {
 
 impl<W: OutputWriter> StatsReporterActor<W> {
     /// Creates a new StatsReporterActor instance.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `stats_receiver` - Channel for receiving SAI statistics messages
     /// * `config` - Configuration for reporting behavior
     /// * `writer` - Output writer for dependency injection
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new StatsReporterActor instance
-    pub fn new(stats_receiver: Receiver<SAIStatsMessage>, config: StatsReporterConfig, writer: W) -> Self {
+    pub fn new(
+        stats_receiver: Receiver<SAIStatsMessage>,
+        config: StatsReporterConfig,
+        writer: W,
+    ) -> Self {
         let report_timer = interval(config.interval);
-        
+
         info!(
-            "StatsReporter initialized with interval: {:?}, detailed: {}", 
+            "StatsReporter initialized with interval: {:?}, detailed: {}",
             config.interval, config.detailed
         );
 
@@ -158,17 +164,23 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     }
 
     /// Creates a new StatsReporterActor with default configuration and console writer.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `stats_receiver` - Channel for receiving SAI statistics messages
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new StatsReporterActor instance with default settings
     #[allow(dead_code)]
-    pub fn new_with_defaults(stats_receiver: Receiver<SAIStatsMessage>) -> StatsReporterActor<ConsoleWriter> {
-        StatsReporterActor::new(stats_receiver, StatsReporterConfig::default(), ConsoleWriter)
+    pub fn new_with_defaults(
+        stats_receiver: Receiver<SAIStatsMessage>,
+    ) -> StatsReporterActor<ConsoleWriter> {
+        StatsReporterActor::new(
+            stats_receiver,
+            StatsReporterConfig::default(),
+            ConsoleWriter,
+        )
     }
 
     /// Helper function to convert type_id to string representation
@@ -251,7 +263,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
         // Convert nanoseconds to seconds and nanoseconds
         let secs = (timestamp_ns / 1_000_000_000) as i64;
         let nanos = (timestamp_ns % 1_000_000_000) as u32;
-        
+
         // Create DateTime from the timestamp using the new API
         match DateTime::from_timestamp(secs, nanos) {
             Some(utc_dt) => {
@@ -266,33 +278,32 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     }
 
     /// Updates the internal state with new statistics data.
-    /// 
+    ///
     /// For each statistic in the message, updates:
     /// - The latest counter value for the (object_name, type_id, stat_id) key
     /// - The message count for that key in the current reporting period
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `stats_msg` - New SAI statistics message to process
     fn update_stats(&mut self, stats_msg: SAIStatsMessage) {
         self.total_messages_received += 1;
-        
+
         // Extract SAIStats from Arc
         let stats = match std::sync::Arc::try_unwrap(stats_msg) {
             Ok(stats) => stats,
             Err(arc_stats) => (*arc_stats).clone(),
         };
-        
-        debug!("Received SAI stats with {} entries, observation_time: {}", 
-               stats.stats.len(), stats.observation_time);
+
+        debug!(
+            "Received SAI stats with {} entries, observation_time: {}",
+            stats.stats.len(),
+            stats.observation_time
+        );
 
         // Process each statistic in the message
         for stat in stats.stats {
-            let key = CounterKey::new(
-                stat.object_name,
-                stat.type_id,
-                stat.stat_id,
-            );
+            let key = CounterKey::new(stat.object_name, stat.type_id, stat.stat_id);
 
             // Update latest counter value
             let counter_info = CounterInfo {
@@ -307,7 +318,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     }
 
     /// Generates and prints a statistics report to the terminal.
-    /// 
+    ///
     /// Reports all current counter values and their triplets, as well as
     /// message counts for the current reporting period. After reporting,
     /// clears the per-period message counters.
@@ -315,48 +326,69 @@ impl<W: OutputWriter> StatsReporterActor<W> {
         self.reports_generated += 1;
 
         if self.latest_counters.is_empty() {
-            self.writer.write_line(&format!("[Report #{}] No statistics data available yet", self.reports_generated));
-            self.writer.write_line(&format!("   Total Messages Received: {}", self.total_messages_received));
+            self.writer.write_line(&format!(
+                "[Report #{}] No statistics data available yet",
+                self.reports_generated
+            ));
+            self.writer.write_line(&format!(
+                "   Total Messages Received: {}",
+                self.total_messages_received
+            ));
         } else {
             self.print_counters_report();
         }
-        
+
         // Clear per-period message counters for next reporting period
         self.messages_per_counter.clear();
-        
+
         self.writer.write_line(""); // Add blank line for readability
     }
 
     /// Prints formatted counters report to terminal.
-    /// 
+    ///
     /// Shows all current counters with their triplet keys and the number of
     /// messages received for each counter in the current reporting period.
     fn print_counters_report(&mut self) {
-        self.writer.write_line(&format!("[Report #{}] SAI Counters Report", self.reports_generated));
-        self.writer.write_line(&format!("   Total Unique Counters: {}", self.latest_counters.len()));
-        self.writer.write_line(&format!("   Total Messages Received: {}", self.total_messages_received));
+        self.writer.write_line(&format!(
+            "[Report #{}] SAI Counters Report",
+            self.reports_generated
+        ));
+        self.writer.write_line(&format!(
+            "   Total Unique Counters: {}",
+            self.latest_counters.len()
+        ));
+        self.writer.write_line(&format!(
+            "   Total Messages Received: {}",
+            self.total_messages_received
+        ));
 
         if self.config.detailed && !self.latest_counters.is_empty() {
             // Group by SAI object type for better organization
             use std::collections::BTreeMap;
-            let mut grouped_counters: BTreeMap<u32, Vec<(&CounterKey, &CounterInfo)>> = BTreeMap::new();
-            
+            let mut grouped_counters: BTreeMap<u32, Vec<(&CounterKey, &CounterInfo)>> =
+                BTreeMap::new();
+
             for (key, counter_info) in &self.latest_counters {
-                grouped_counters.entry(key.type_id).or_insert_with(Vec::new).push((key, counter_info));
+                grouped_counters
+                    .entry(key.type_id)
+                    .or_insert_with(Vec::new)
+                    .push((key, counter_info));
             }
 
             self.writer.write_line("   Detailed Counters:");
-            
+
             let mut total_shown = 0;
             for (type_id, mut counters) in grouped_counters {
                 // Sort counters within each type by object name and stat id
                 counters.sort_by(|a, b| {
-                    a.0.object_name.cmp(&b.0.object_name)
+                    a.0.object_name
+                        .cmp(&b.0.object_name)
                         .then_with(|| a.0.stat_id.cmp(&b.0.stat_id))
                 });
 
                 let type_name = self.type_id_to_string(type_id);
-                self.writer.write_line(&format!("      Type: {} ({})", type_name, type_id));
+                self.writer
+                    .write_line(&format!("      Type: {} ({})", type_name, type_id));
 
                 let counters_to_show = if let Some(max) = self.config.max_stats_per_report {
                     let remaining = max.saturating_sub(total_shown);
@@ -367,10 +399,11 @@ impl<W: OutputWriter> StatsReporterActor<W> {
 
                 for (index, (key, counter_info)) in counters_to_show.iter().enumerate() {
                     let messages_in_period = self.messages_per_counter.get(key).unwrap_or(&0);
-                    let messages_per_second = *messages_in_period as f64 / self.config.interval.as_secs_f64();
+                    let messages_per_second =
+                        *messages_in_period as f64 / self.config.interval.as_secs_f64();
                     let stat_name = self.stat_id_to_string(key.type_id, key.stat_id);
                     let formatted_time = self.format_timestamp(counter_info.last_observation_time);
-                    
+
                     self.writer.write_line(&format!(
                         "         [{:3}] Object: {:15}, Stat: {:25}, Counter: {:15}, Msg/s: {:6.1}, LastTime: {}",
                         index + 1,
@@ -395,27 +428,47 @@ impl<W: OutputWriter> StatsReporterActor<W> {
             }
         } else if !self.config.detailed && !self.latest_counters.is_empty() {
             // Summary mode - show aggregate information
-            let total_counter_value: u64 = self.latest_counters.values().map(|info| info.counter).sum();
-            let unique_types = self.latest_counters.keys().map(|k| k.type_id).collect::<std::collections::HashSet<_>>().len();
-            let unique_objects = self.latest_counters.keys().map(|k| &k.object_name).collect::<std::collections::HashSet<_>>().len();
+            let total_counter_value: u64 =
+                self.latest_counters.values().map(|info| info.counter).sum();
+            let unique_types = self
+                .latest_counters
+                .keys()
+                .map(|k| k.type_id)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            let unique_objects = self
+                .latest_counters
+                .keys()
+                .map(|k| &k.object_name)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
             let total_messages_in_period: u64 = self.messages_per_counter.values().sum();
-            let messages_per_second = total_messages_in_period as f64 / self.config.interval.as_secs_f64();
-            
+            let messages_per_second =
+                total_messages_in_period as f64 / self.config.interval.as_secs_f64();
+
             self.writer.write_line("   Summary:");
-            self.writer.write_line(&format!("      Total Counter Value: {}", total_counter_value));
-            self.writer.write_line(&format!("      Unique Types: {}", unique_types));
-            self.writer.write_line(&format!("      Unique Objects: {}", unique_objects));
-            self.writer.write_line(&format!("      Messages per Second: {:.1}", messages_per_second));
+            self.writer.write_line(&format!(
+                "      Total Counter Value: {}",
+                total_counter_value
+            ));
+            self.writer
+                .write_line(&format!("      Unique Types: {}", unique_types));
+            self.writer
+                .write_line(&format!("      Unique Objects: {}", unique_objects));
+            self.writer.write_line(&format!(
+                "      Messages per Second: {:.1}",
+                messages_per_second
+            ));
         }
     }
 
     /// Main event loop for the StatsReporterActor.
-    /// 
+    ///
     /// Continuously processes incoming statistics messages and generates periodic reports.
     /// The loop will exit when the statistics channel is closed.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `actor` - The StatsReporterActor instance to run
     pub async fn run(mut actor: StatsReporterActor<W>) {
         info!("StatsReporter actor started");
@@ -434,7 +487,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
                         }
                     }
                 }
-                
+
                 // Handle periodic reporting
                 _ = actor.report_timer.tick() => {
                     actor.generate_report();
@@ -445,14 +498,19 @@ impl<W: OutputWriter> StatsReporterActor<W> {
         // Generate final report before shutdown
         info!("Generating final report before shutdown...");
         actor.generate_report();
-        info!("StatsReporter actor terminated. Total reports generated: {}", actor.reports_generated);
+        info!(
+            "StatsReporter actor terminated. Total reports generated: {}",
+            actor.reports_generated
+        );
     }
 }
 
 impl<W: OutputWriter> Drop for StatsReporterActor<W> {
     fn drop(&mut self) {
-        info!("StatsReporter dropped after {} reports and {} messages", 
-              self.reports_generated, self.total_messages_received);
+        info!(
+            "StatsReporter dropped after {} reports and {} messages",
+            self.reports_generated, self.total_messages_received
+        );
     }
 }
 
@@ -461,7 +519,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::{spawn, sync::mpsc::channel, time::sleep};
-    
+
     use crate::message::saistats::{SAIStat, SAIStats};
 
     /// Helper function to create test SAI statistics
@@ -485,13 +543,13 @@ mod tests {
     async fn test_stats_reporter_basic_functionality() {
         let (sender, receiver) = channel(10);
         let test_writer = TestWriter::new();
-        
+
         let config = StatsReporterConfig {
             interval: Duration::from_millis(200),
             detailed: true,
             max_stats_per_report: Some(3),
         };
-        
+
         // Create actor with test writer
         let actor = StatsReporterActor::new(receiver, config, test_writer);
         let handle = spawn(StatsReporterActor::run(actor));
@@ -515,7 +573,7 @@ mod tests {
 
         // Close the channel to terminate the actor
         drop(sender);
-        
+
         // Wait for actor to finish
         let _finished_actor = handle.await.expect("Actor should complete successfully");
     }
@@ -551,13 +609,13 @@ mod tests {
         let (sender, receiver) = channel(10);
         let shared_writer = SharedTestWriter::new();
         let writer_clone = shared_writer.clone();
-        
+
         let config = StatsReporterConfig {
             interval: Duration::from_millis(200),
             detailed: true,
             max_stats_per_report: Some(3),
         };
-        
+
         // Create actor with shared writer
         let actor = StatsReporterActor::new(receiver, config, shared_writer);
         let handle = spawn(StatsReporterActor::run(actor));
@@ -581,35 +639,45 @@ mod tests {
 
         // Close the channel to terminate the actor
         drop(sender);
-        
+
         // Wait for actor to finish
         handle.await.expect("Actor should complete successfully");
-        
+
         // Now we can check the output
         let output = writer_clone.get_lines();
 
         // Verify we have some output
         assert!(!output.is_empty(), "Should have captured some output");
-        
+
         // Verify report header is present (now "SAI Counters Report")
-        let has_report_header = output.iter().any(|line| line.contains("SAI Counters Report"));
+        let has_report_header = output
+            .iter()
+            .any(|line| line.contains("SAI Counters Report"));
         assert!(has_report_header, "Should contain counters report header");
 
         // Verify counter count for all unique counters (first 5 + 2 overlapping = 5 unique)
-        let has_counter_count = output.iter().any(|line| line.contains("Total Unique Counters: 5"));
-        assert!(has_counter_count, "Should show correct unique counters count");
+        let has_counter_count = output
+            .iter()
+            .any(|line| line.contains("Total Unique Counters: 5"));
+        assert!(
+            has_counter_count,
+            "Should show correct unique counters count"
+        );
 
         // Verify detailed output
-        let has_detailed = output.iter().any(|line| line.contains("Detailed Counters:"));
+        let has_detailed = output
+            .iter()
+            .any(|line| line.contains("Detailed Counters:"));
         assert!(has_detailed, "Should show detailed counters");
 
         // Verify individual counter entries with new format
-        let has_counter_entry = output.iter().any(|line| 
+        let has_counter_entry = output.iter().any(|line| {
             line.contains("Object:") && line.contains("Stat:") && line.contains("Msg/s:")
+        });
+        assert!(
+            has_counter_entry,
+            "Should show individual counter entries with message counts"
         );
-        assert!(has_counter_entry, "Should show individual counter entries with message counts");
-
-        println!("✅ Basic functionality test passed - captured {} output lines", output.len());
     }
 
     #[tokio::test]
@@ -642,13 +710,13 @@ mod tests {
         let (sender, receiver) = channel(10);
         let shared_writer = SharedTestWriter::new();
         let writer_clone = shared_writer.clone();
-        
+
         let config = StatsReporterConfig {
             interval: Duration::from_millis(100),
             detailed: false, // Summary mode
             max_stats_per_report: None,
         };
-        
+
         let actor = StatsReporterActor::new(receiver, config, shared_writer);
         let handle = spawn(StatsReporterActor::run(actor));
 
@@ -674,7 +742,9 @@ mod tests {
         assert!(has_summary_header, "Should contain summary header");
 
         // Verify total counter calculation (0 + 1000 + 2000 = 3000)
-        let has_total_counter = output.iter().any(|line| line.contains("Total Counter Value: 3000"));
+        let has_total_counter = output
+            .iter()
+            .any(|line| line.contains("Total Counter Value: 3000"));
         assert!(has_total_counter, "Should show correct total counter value");
 
         // Verify unique counts
@@ -682,17 +752,28 @@ mod tests {
         assert!(has_unique_types, "Should show correct unique types count");
 
         let has_unique_labels = output.iter().any(|line| line.contains("Unique Objects: 3"));
-        assert!(has_unique_labels, "Should show correct unique objects count");
+        assert!(
+            has_unique_labels,
+            "Should show correct unique objects count"
+        );
 
         // Should NOT have detailed counters
-        let has_detailed = output.iter().any(|line| line.contains("Detailed Counters:"));
-        assert!(!has_detailed, "Should NOT show detailed counters in summary mode");
+        let has_detailed = output
+            .iter()
+            .any(|line| line.contains("Detailed Counters:"));
+        assert!(
+            !has_detailed,
+            "Should NOT show detailed counters in summary mode"
+        );
 
         // Should show messages per second
-        let has_messages_per_second = output.iter().any(|line| line.contains("Messages per Second:"));
-        assert!(has_messages_per_second, "Should show messages per second in summary mode");
-
-        println!("✅ Summary mode test passed - captured {} output lines", output.len());
+        let has_messages_per_second = output
+            .iter()
+            .any(|line| line.contains("Messages per Second:"));
+        assert!(
+            has_messages_per_second,
+            "Should show messages per second in summary mode"
+        );
     }
 
     #[tokio::test]
@@ -725,13 +806,13 @@ mod tests {
         let (sender, receiver) = channel(10);
         let shared_writer = SharedTestWriter::new();
         let writer_clone = shared_writer.clone();
-        
+
         let config = StatsReporterConfig {
             interval: Duration::from_millis(50),
             detailed: true,
             max_stats_per_report: None,
         };
-        
+
         let actor = StatsReporterActor::new(receiver, config, shared_writer);
         let handle = spawn(StatsReporterActor::run(actor));
 
@@ -749,14 +830,16 @@ mod tests {
         assert!(!output.is_empty(), "Should have captured some output");
 
         // Verify "no data" message
-        let has_no_data_msg = output.iter().any(|line| line.contains("No statistics data available yet"));
+        let has_no_data_msg = output
+            .iter()
+            .any(|line| line.contains("No statistics data available yet"));
         assert!(has_no_data_msg, "Should show 'no data available' message");
 
         // Verify message count is 0
-        let has_zero_messages = output.iter().any(|line| line.contains("Total Messages Received: 0"));
+        let has_zero_messages = output
+            .iter()
+            .any(|line| line.contains("Total Messages Received: 0"));
         assert!(has_zero_messages, "Should show 0 total messages received");
-
-        println!("✅ No data test passed - captured {} output lines", output.len());
     }
 
     #[tokio::test]
@@ -789,13 +872,13 @@ mod tests {
         let (sender, receiver) = channel(10);
         let shared_writer = SharedTestWriter::new();
         let writer_clone = shared_writer.clone();
-        
+
         let config = StatsReporterConfig {
             interval: Duration::from_millis(500), // Longer interval to avoid multiple reports
             detailed: true,
             max_stats_per_report: Some(2), // Limit to 2 stats
         };
-        
+
         let actor = StatsReporterActor::new(receiver, config, shared_writer);
         let handle = spawn(StatsReporterActor::run(actor));
 
@@ -816,13 +899,13 @@ mod tests {
         // Find the first detailed counters section
         let mut in_detailed_section = false;
         let mut counter_entries = Vec::new();
-        
+
         for line in &output {
             if line.contains("Detailed Counters:") {
                 in_detailed_section = true;
                 continue;
             }
-            
+
             if in_detailed_section {
                 if line.contains("] Object:") && line.contains("Stat:") {
                     counter_entries.push(line);
@@ -832,19 +915,28 @@ mod tests {
                 }
             }
         }
-        
+
         // Should show exactly 2 counter entries in the first report
-        assert_eq!(counter_entries.len(), 2, "Should show exactly 2 counter entries due to limit");
+        assert_eq!(
+            counter_entries.len(),
+            2,
+            "Should show exactly 2 counter entries due to limit"
+        );
 
         // Verify "more counters" message
-        let has_more_msg = output.iter().any(|line| line.contains("and 3 more counters"));
+        let has_more_msg = output
+            .iter()
+            .any(|line| line.contains("and 3 more counters"));
         assert!(has_more_msg, "Should show 'more counters' message");
 
         // Verify total count is still correct
-        let has_total_count = output.iter().any(|line| line.contains("Total Unique Counters: 5"));
-        assert!(has_total_count, "Should show correct total unique counters count");
-
-        println!("✅ Max stats limit test passed - captured {} output lines", output.len());
+        let has_total_count = output
+            .iter()
+            .any(|line| line.contains("Total Unique Counters: 5"));
+        assert!(
+            has_total_count,
+            "Should show correct total unique counters count"
+        );
     }
 
     #[tokio::test]
@@ -877,13 +969,13 @@ mod tests {
         let (sender, receiver) = channel(10);
         let shared_writer = SharedTestWriter::new();
         let writer_clone = shared_writer.clone();
-        
+
         let config = StatsReporterConfig {
             interval: Duration::from_millis(100),
             detailed: true,
             max_stats_per_report: None,
         };
-        
+
         let actor = StatsReporterActor::new(receiver, config, shared_writer);
         let handle = spawn(StatsReporterActor::run(actor));
 
@@ -897,7 +989,7 @@ mod tests {
             },
             SAIStat {
                 object_name: "Ethernet16".to_string(),
-                type_id: 1, // Port 
+                type_id: 1, // Port
                 stat_id: 1, // IfInUcastPkts
                 counter: 1664,
             },
@@ -921,29 +1013,33 @@ mod tests {
         let output = writer_clone.get_lines();
 
         // Find the line that should contain IF_IN_OCTETS (without SAI_PORT_STAT_ prefix)
-        let has_if_in_octets = output.iter().any(|line| 
-            line.contains("IF_IN_OCTETS")
+        let has_if_in_octets = output.iter().any(|line| line.contains("IF_IN_OCTETS"));
+        assert!(
+            has_if_in_octets,
+            "Should show IF_IN_OCTETS without SAI_PORT_STAT_ prefix"
         );
-        assert!(has_if_in_octets, "Should show IF_IN_OCTETS without SAI_PORT_STAT_ prefix");
 
         // Find the line that should contain IF_IN_UCAST_PKTS (without SAI_PORT_STAT_ prefix)
-        let has_if_in_ucast_pkts = output.iter().any(|line|
-            line.contains("IF_IN_UCAST_PKTS")
+        let has_if_in_ucast_pkts = output.iter().any(|line| line.contains("IF_IN_UCAST_PKTS"));
+        assert!(
+            has_if_in_ucast_pkts,
+            "Should show IF_IN_UCAST_PKTS without SAI_PORT_STAT_ prefix"
         );
-        assert!(has_if_in_ucast_pkts, "Should show IF_IN_UCAST_PKTS without SAI_PORT_STAT_ prefix");
 
         // Should NOT have full SAI prefixes
-        let has_sai_prefix = output.iter().any(|line|
-            line.contains("SAI_PORT_STAT_IF_IN_OCTETS") || line.contains("SAI_PORT_STAT_IF_IN_UCAST_PKTS")
+        let has_sai_prefix = output.iter().any(|line| {
+            line.contains("SAI_PORT_STAT_IF_IN_OCTETS")
+                || line.contains("SAI_PORT_STAT_IF_IN_UCAST_PKTS")
+        });
+        assert!(
+            !has_sai_prefix,
+            "Should NOT show full SAI_PORT_STAT_ prefixes"
         );
-        assert!(!has_sai_prefix, "Should NOT show full SAI_PORT_STAT_ prefixes");
 
         // Should NOT have generic STAT_ prefixes
-        let has_generic_stat = output.iter().any(|line|
-            line.contains("STAT_0") || line.contains("STAT_1")
-        );
+        let has_generic_stat = output
+            .iter()
+            .any(|line| line.contains("STAT_0") || line.contains("STAT_1"));
         assert!(!has_generic_stat, "Should NOT show generic STAT_ names");
-
-        println!("✅ SAI stat names test passed - captured {} output lines", output.len());
     }
 }

@@ -1,12 +1,15 @@
 #[cfg(test)]
 mod end_to_end_tests {
+    use serial_test::serial;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::{spawn, sync::mpsc::{channel, Sender}};
-    use serial_test::serial;
-    
+    use tokio::{
+        spawn,
+        sync::mpsc::{channel, Sender},
+    };
+
     use countersyncd::actor::{
-        ipfix::IpfixActor, 
+        ipfix::IpfixActor,
         stats_reporter::{StatsReporterActor, StatsReporterConfig},
     };
 
@@ -50,7 +53,7 @@ mod end_to_end_tests {
         vec![
             0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1 - Version 10, Length 44
             0x00, 0x00, 0x00, 0x00, // line 1 - Export time
-            0x00, 0x00, 0x00, 0x01, // line 2 - Sequence number  
+            0x00, 0x00, 0x00, 0x01, // line 2 - Sequence number
             0x00, 0x00, 0x00, 0x00, // line 3 - Observation domain ID
             0x00, 0x02, 0x00, 0x1C, // line 4 - Set Header: Set ID=2, Length=28
             0x01, 0x00, 0x00, 0x03, // line 5 - Template ID 256, 3 fields
@@ -68,7 +71,7 @@ mod end_to_end_tests {
             0x00, 0x0A, 0x00, 0x2C, // line 0 - Version 10, Length 44
             0x00, 0x00, 0x00, 0x00, // line 1 - Export time
             0x00, 0x00, 0x00, 0x02, // line 2 - Sequence number
-            0x00, 0x00, 0x00, 0x00, // line 3 - Observation domain ID  
+            0x00, 0x00, 0x00, 0x00, // line 3 - Observation domain ID
             0x01, 0x00, 0x00, 0x1C, // line 4 - Data Set Header: Set ID=256, Length=28
             // Data Record (26 bytes total)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8, // Field 1 (8 bytes) = 1000
@@ -115,7 +118,7 @@ mod end_to_end_tests {
         let test_writer_clone = test_writer.clone();
 
         // Initialize actors
-        let mut ipfix = IpfixActor::new(ipfix_template_receiver, socket_receiver);  
+        let mut ipfix = IpfixActor::new(ipfix_template_receiver, socket_receiver);
         ipfix.add_recipient(saistats_sender);
 
         let reporter_config = StatsReporterConfig {
@@ -123,12 +126,14 @@ mod end_to_end_tests {
             detailed: true,
             max_stats_per_report: Some(10),
         };
-        let stats_reporter = StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
+        let stats_reporter =
+            StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
 
-        // Spawn actor tasks  
+        // Spawn actor tasks
         let _ipfix_handle = tokio::task::spawn_blocking(move || {
             // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
+            let rt =
+                tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
             rt.block_on(async move {
                 IpfixActor::run(ipfix).await;
             });
@@ -149,7 +154,9 @@ mod end_to_end_tests {
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
         );
 
-        ipfix_template_sender.send(template_message).await
+        ipfix_template_sender
+            .send(template_message)
+            .await
             .expect("Failed to send template message");
 
         println!("Sent IPFIX template to IpfixActor");
@@ -164,14 +171,15 @@ mod end_to_end_tests {
         ];
 
         // Start simulated netlink data sender
-        let _netlink_handle = create_test_netlink_with_data(socket_sender, ipfix_data_packets).await;
+        let _netlink_handle =
+            create_test_netlink_with_data(socket_sender, ipfix_data_packets).await;
 
         // Give time for data processing and stats reporting
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Step 3: Check that stats were generated and reported
         let messages = test_writer.get_messages();
-        
+
         // Validate the test results
         println!("Captured {} messages from stats reporter", messages.len());
         for (i, msg) in messages.iter().enumerate() {
@@ -180,7 +188,7 @@ mod end_to_end_tests {
 
         // Step 4: Test session deletion
         let delete_message = countersyncd::message::ipfix::IPFixTemplatesMessage::delete(
-            "test_session|PORT".to_string()
+            "test_session|PORT".to_string(),
         );
         // Note: This might fail if actors have already shut down, which is expected in tests
         let _ = ipfix_template_sender.send(delete_message).await;
@@ -194,9 +202,12 @@ mod end_to_end_tests {
 
         // For a complete test, we should see:
         // 1. Template processing messages
-        // 2. Data processing messages  
+        // 2. Data processing messages
         // 3. SAI stats generation
-        assert!(final_messages.len() > 0, "Should have received some stats messages");
+        assert!(
+            final_messages.len() > 0,
+            "Should have received some stats messages"
+        );
 
         println!("End-to-end test completed successfully");
     }
@@ -206,7 +217,7 @@ mod end_to_end_tests {
     async fn test_direct_ipfix_data_injection() {
         // This test focuses on the IPFIX -> SAI stats portion of the pipeline
         let (ipfix_template_sender, ipfix_template_receiver) = channel(10);
-        let (socket_sender, socket_receiver) = channel(10); 
+        let (socket_sender, socket_receiver) = channel(10);
         let (saistats_sender, saistats_receiver) = channel(100);
 
         let test_writer = TestWriter::new();
@@ -219,15 +230,17 @@ mod end_to_end_tests {
         // Setup stats reporter
         let reporter_config = StatsReporterConfig {
             interval: Duration::from_millis(50),
-            detailed: true, 
+            detailed: true,
             max_stats_per_report: Some(5),
         };
-        let stats_reporter = StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
+        let stats_reporter =
+            StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
 
         // Spawn actors
         let _ipfix_handle = tokio::task::spawn_blocking(move || {
             // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
+            let rt =
+                tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
             rt.block_on(async move {
                 IpfixActor::run(ipfix).await;
             });
@@ -248,7 +261,9 @@ mod end_to_end_tests {
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
         );
 
-        ipfix_template_sender.send(template_message).await
+        ipfix_template_sender
+            .send(template_message)
+            .await
             .expect("Failed to send template message");
 
         // Give time for template processing
@@ -270,7 +285,10 @@ mod end_to_end_tests {
         }
 
         // We should have received some stats output
-        assert!(messages.len() > 0, "Should have received stats messages from direct injection");
+        assert!(
+            messages.len() > 0,
+            "Should have received stats messages from direct injection"
+        );
 
         println!("Direct injection test completed successfully");
     }

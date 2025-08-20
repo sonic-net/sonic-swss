@@ -1,6 +1,6 @@
 // Application modules
-mod message;
 mod actor;
+mod message;
 mod sai;
 
 // External dependencies
@@ -13,9 +13,9 @@ use tokio::{spawn, sync::mpsc::channel};
 use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
-    data_netlink::{DataNetlinkActor, get_genl_family_group},
+    data_netlink::{get_genl_family_group, DataNetlinkActor},
     ipfix::IpfixActor,
-    stats_reporter::{StatsReporterActor, StatsReporterConfig, ConsoleWriter},
+    stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
     swss::SwssActor,
 };
 
@@ -44,9 +44,7 @@ fn init_logging(log_level: &str, log_format: &str) {
 
     match log_format.to_lowercase().as_str() {
         "simple" => {
-            builder.format(|buf, record| {
-                writeln!(buf, "[{}] {}", record.level(), record.args())
-            });
+            builder.format(|buf, record| writeln!(buf, "[{}] {}", record.level(), record.args()));
         }
         "full" => {
             builder.format(|buf, record| {
@@ -81,10 +79,10 @@ fn init_logging(log_level: &str, log_format: &str) {
 }
 
 /// SONiC High Frequency Telemetry Counter Sync Daemon
-/// 
+///
 /// This application processes high-frequency telemetry data from SONiC switches,
 /// converting netlink messages and SWSS state database updates through IPFIX format to SAI statistics.
-/// 
+///
 /// The application consists of six main actors:
 /// - DataNetlinkActor: Receives raw netlink messages from the kernel and handles data socket
 /// - ControlNetlinkActor: Monitors netlink family registration/unregistration and triggers reconnections
@@ -120,23 +118,44 @@ struct Args {
     counter_db_frequency: u64,
 
     /// Log level (trace, debug, info, warn, error)
-    #[arg(short = 'l', long, default_value = "info", help = "Set the logging level")]
+    #[arg(
+        short = 'l',
+        long,
+        default_value = "info",
+        help = "Set the logging level"
+    )]
     log_level: String,
 
     /// Log format (simple, full)
-    #[arg(long, default_value = "full", help = "Set the log output format: 'simple' for level and message only, 'full' for timestamp, file, line, level, and message")]
+    #[arg(
+        long,
+        default_value = "full",
+        help = "Set the log output format: 'simple' for level and message only, 'full' for timestamp, file, line, level, and message"
+    )]
     log_format: String,
 
     /// Channel capacity for data_netlink to ipfix communication (IPFIX records)
-    #[arg(long, default_value = "1024", help = "Set the channel capacity for IPFIX records from data_netlink to ipfix actor")]
+    #[arg(
+        long,
+        default_value = "1024",
+        help = "Set the channel capacity for IPFIX records from data_netlink to ipfix actor"
+    )]
     data_netlink_capacity: usize,
 
     /// Channel capacity for stats_reporter communication  
-    #[arg(long, default_value = "1024", help = "Set the channel capacity for stats_reporter actor")]
+    #[arg(
+        long,
+        default_value = "1024",
+        help = "Set the channel capacity for stats_reporter actor"
+    )]
     stats_reporter_capacity: usize,
 
     /// Channel capacity for counter_db communication  
-    #[arg(long, default_value = "1024", help = "Set the channel capacity for counter_db actor")]
+    #[arg(
+        long,
+        default_value = "1024",
+        help = "Set the channel capacity for counter_db actor"
+    )]
     counter_db_capacity: usize,
 }
 
@@ -144,10 +163,10 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
-    
+
     // Initialize logging based on command line arguments
     init_logging(&args.log_level, &args.log_format);
-    
+
     info!("Starting SONiC High Frequency Telemetry Counter Sync Daemon");
     info!("Stats reporting enabled: {}", args.enable_stats);
     if args.enable_stats {
@@ -157,10 +176,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     info!("Counter DB writing enabled: {}", args.enable_counter_db);
     if args.enable_counter_db {
-        info!("Counter DB write frequency: {} seconds", args.counter_db_frequency);
+        info!(
+            "Counter DB write frequency: {} seconds",
+            args.counter_db_frequency
+        );
     }
-    info!("Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}", 
-          args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity);
+    info!(
+        "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}",
+        args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity
+    );
 
     // Create communication channels between actors with configurable capacities
     let (command_sender, command_receiver) = channel(10); // Keep small buffer for commands
@@ -176,9 +200,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize and configure actors
     let mut data_netlink = DataNetlinkActor::new(family.as_str(), group.as_str(), command_receiver);
     data_netlink.add_recipient(ipfix_record_sender);
-    
+
     let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
-    
+
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
 
     // Initialize SwssActor to monitor SONiC orchestrator messages
@@ -195,16 +219,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let reporter_config = StatsReporterConfig {
             interval: Duration::from_secs(args.stats_interval),
             detailed: args.detailed_stats,
-            max_stats_per_report: if args.max_stats_per_report == 0 { 
-                None 
-            } else { 
-                Some(args.max_stats_per_report as usize) 
+            max_stats_per_report: if args.max_stats_per_report == 0 {
+                None
+            } else {
+                Some(args.max_stats_per_report as usize)
             },
         };
 
         // Add stats reporter to ipfix recipients only when enabled
         ipfix.add_recipient(stats_report_sender.clone());
-        Some(StatsReporterActor::new(stats_report_receiver, reporter_config, ConsoleWriter))
+        Some(StatsReporterActor::new(
+            stats_report_receiver,
+            reporter_config,
+            ConsoleWriter,
+        ))
     } else {
         // Drop the receiver if stats reporting is disabled
         drop(stats_report_receiver);
@@ -233,7 +261,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     info!("Starting actor tasks...");
-    
+
     // Spawn actor tasks
     let data_netlink_handle = spawn(async move {
         info!("Data netlink actor started");
@@ -246,7 +274,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ControlNetlinkActor::run(control_netlink).await;
         info!("Control netlink actor terminated");
     });
-    
+
     // Use spawn_blocking to ensure IPFIX actor runs on a dedicated thread
     // This is important for thread-local variables
     let ipfix_handle = tokio::task::spawn_blocking(move || {
@@ -313,31 +341,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (true, true) => {
             // Both stats reporter and counter DB enabled
             matches!(
-                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result, 
-                 reporter_result.as_ref().unwrap(), counter_db_result.as_ref().unwrap()),
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result,
+                    reporter_result.as_ref().unwrap(),
+                    counter_db_result.as_ref().unwrap()
+                ),
                 (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
             )
         }
         (true, false) => {
             // Only stats reporter enabled
             matches!(
-                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result, 
-                 reporter_result.as_ref().unwrap()),
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result,
+                    reporter_result.as_ref().unwrap()
+                ),
                 (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
             )
         }
         (false, true) => {
             // Only counter DB enabled
             matches!(
-                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result, 
-                 counter_db_result.as_ref().unwrap()),
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result,
+                    counter_db_result.as_ref().unwrap()
+                ),
                 (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
             )
         }
         (false, false) => {
             // Neither enabled
             matches!(
-                (&data_netlink_result, &control_netlink_result, &ipfix_result, &swss_result),
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result
+                ),
                 (Ok(()), Ok(()), Ok(()), Ok(()))
             )
         }
@@ -348,7 +397,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             (true, true) => "All actors completed successfully",
             (true, false) => "All actors completed successfully (counter DB disabled)",
             (false, true) => "All actors completed successfully (stats reporting disabled)",
-            (false, false) => "All actors completed successfully (stats reporting and counter DB disabled)",
+            (false, false) => {
+                "All actors completed successfully (stats reporting and counter DB disabled)"
+            }
         };
         info!("{}", status_msg);
         Ok(())

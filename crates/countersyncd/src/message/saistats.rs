@@ -1,5 +1,5 @@
 //! SAI (Switch Abstraction Interface) Statistics Message Types
-//! 
+//!
 //! This module defines the data structures for representing SAI statistics
 //! extracted from IPFIX data records. SAI statistics contain information
 //! about switch hardware counters and performance metrics.
@@ -10,7 +10,7 @@ use byteorder::{ByteOrder, NetworkEndian};
 use ipfixrw::parser::{DataRecordValue, FieldSpecifier};
 
 /// Represents a single SAI statistic entry containing counter information.
-/// 
+///
 /// SAI statistics are extracted from IPFIX data records and contain
 /// information about switch hardware counters and their current values.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -26,7 +26,7 @@ pub struct SAIStat {
 }
 
 /// Base value for extended SAI identifiers.
-/// 
+///
 /// When the extension bit is set in the enterprise number,
 /// this value is added to the base type_id or stat_id to create
 /// an extended identifier space.
@@ -34,15 +34,15 @@ const EXTENSIONS_RANGE_BASE: u32 = 0x2000_0000;
 
 impl SAIStat {
     /// Creates a SAIStat directly from IPFIX field specifier and data record value.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `field_spec` - IPFIX field specifier containing identifiers
     /// * `value` - IPFIX data record value containing counter data
     /// * `object_names` - Vector of object names (1-based indexing)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new SAIStat instance with decoded identifiers and resolved object name
     pub fn from_ipfix(
         field_spec: &FieldSpecifier,
@@ -108,7 +108,7 @@ impl SAIStat {
 }
 
 /// Collection of SAI statistics with an associated observation timestamp.
-/// 
+///
 /// This structure represents a snapshot of multiple SAI statistics
 /// collected at a specific point in time, as indicated by the observation_time.
 #[derive(Debug, Clone)]
@@ -121,14 +121,14 @@ pub struct SAIStats {
 
 impl SAIStats {
     /// Creates a new SAIStats instance.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `observation_time` - Timestamp when statistics were collected
     /// * `stats` - Vector of SAI statistics
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new SAIStats instance
     pub fn new(observation_time: u64, stats: Vec<SAIStat>) -> Self {
         Self {
@@ -158,23 +158,23 @@ impl SAIStats {
 
 impl PartialEq for SAIStats {
     /// Compares two SAIStats instances for equality.
-    /// 
+    ///
     /// Two SAIStats are considered equal if they have the same observation_time
     /// and contain the same set of statistics (order independent).
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `other` - The other SAIStats instance to compare with
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// true if the instances are equal, false otherwise
     fn eq(&self, other: &Self) -> bool {
         // Quick checks first
         if self.observation_time != other.observation_time {
             return false;
         }
-        
+
         if self.stats.len() != other.stats.len() {
             return false;
         }
@@ -193,7 +193,7 @@ impl PartialEq for SAIStats {
 }
 
 /// Type alias for Arc-wrapped SAIStats to enable efficient sharing between actors.
-/// 
+///
 /// This type is used for passing SAI statistics messages between different
 /// parts of the system without expensive cloning operations.
 pub type SAIStatsMessage = Arc<SAIStats>;
@@ -202,25 +202,25 @@ pub type SAIStatsMessage = Arc<SAIStats>;
 #[allow(dead_code)]
 pub trait SAIStatsMessageExt {
     /// Creates a new SAIStatsMessage from SAIStats.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `stats` - The SAIStats instance to wrap in an Arc
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new SAIStatsMessage (Arc<SAIStats>)
     fn into_message(self) -> SAIStatsMessage;
 
     /// Creates a new SAIStatsMessage with the given observation time and statistics.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `observation_time` - Timestamp when statistics were collected
     /// * `stats` - Vector of SAI statistics
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new SAIStatsMessage (Arc<SAIStats>)
     fn from_parts(observation_time: u64, stats: Vec<SAIStat>) -> SAIStatsMessage;
 }
@@ -257,9 +257,9 @@ mod tests {
         let field_spec = create_field_spec(2, Some(0x12340000)); // label 2, type_id 0x1234, stat_id 0
         let value = create_byte_value(12345);
         let object_names = vec!["Ethernet0".to_string(), "Ethernet1".to_string()];
-        
+
         let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
-        
+
         assert_eq!(stat.object_name, "Ethernet1"); // label 2 -> index 1 (1-based)
         assert_eq!(stat.type_id, 0x1234);
         assert_eq!(stat.stat_id, 0);
@@ -273,9 +273,9 @@ mod tests {
         let field_spec = create_field_spec(1, Some(enterprise_number)); // label 1
         let value = create_byte_value(99999);
         let object_names = vec!["Ethernet0".to_string()];
-        
+
         let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
-        
+
         assert_eq!(stat.object_name, "Ethernet0"); // label 1 -> index 0 (1-based)
         assert_eq!(stat.type_id, 0x1234 + EXTENSIONS_RANGE_BASE);
         assert_eq!(stat.stat_id, 0x0567 + EXTENSIONS_RANGE_BASE);
@@ -288,9 +288,9 @@ mod tests {
         let short_bytes = vec![0x12, 0x34]; // Only 2 bytes instead of 8
         let value = DataRecordValue::Bytes(short_bytes);
         let object_names = vec!["Ethernet0".to_string()];
-        
+
         let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
-        
+
         assert_eq!(stat.object_name, "Ethernet0");
         assert_eq!(stat.counter, 0x1234); // Should be padded correctly
     }
@@ -300,9 +300,9 @@ mod tests {
         let field_spec = create_field_spec(1, Some(0x00050006));
         let value = DataRecordValue::String("test".to_string());
         let object_names = vec!["Ethernet0".to_string()];
-        
+
         let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
-        
+
         assert_eq!(stat.object_name, "Ethernet0");
         assert_eq!(stat.counter, 0); // Should default to 0 for non-byte values
     }
@@ -312,9 +312,9 @@ mod tests {
         let field_spec = create_field_spec(5, Some(0x00010002)); // label 5, out of range
         let value = create_byte_value(1000);
         let object_names = vec!["Ethernet0".to_string(), "Ethernet1".to_string()]; // Only 2 objects
-        
+
         let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
-        
+
         assert_eq!(stat.object_name, "unknown_5"); // Fallback for invalid label
         assert_eq!(stat.type_id, 1);
         assert_eq!(stat.stat_id, 2);
@@ -326,9 +326,9 @@ mod tests {
         let field_spec = create_field_spec(0, Some(0x00010002)); // label 0, invalid
         let value = create_byte_value(1000);
         let object_names = vec!["Ethernet0".to_string()];
-        
+
         let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
-        
+
         assert_eq!(stat.object_name, "unknown_0"); // Fallback for zero label
         assert_eq!(stat.type_id, 1);
         assert_eq!(stat.stat_id, 2);
@@ -338,12 +338,22 @@ mod tests {
     #[test]
     fn test_sai_stats_creation() {
         let stats = vec![
-            SAIStat { object_name: "Ethernet0".to_string(), type_id: 100, stat_id: 200, counter: 1000 },
-            SAIStat { object_name: "Ethernet1".to_string(), type_id: 101, stat_id: 201, counter: 2000 },
+            SAIStat {
+                object_name: "Ethernet0".to_string(),
+                type_id: 100,
+                stat_id: 200,
+                counter: 1000,
+            },
+            SAIStat {
+                object_name: "Ethernet1".to_string(),
+                type_id: 101,
+                stat_id: 201,
+                counter: 2000,
+            },
         ];
-        
+
         let sai_stats = SAIStats::new(12345, stats.clone());
-        
+
         assert_eq!(sai_stats.observation_time, 12345);
         assert_eq!(sai_stats.len(), 2);
         assert!(!sai_stats.is_empty());
@@ -353,32 +363,55 @@ mod tests {
     #[test]
     fn test_sai_stats_equality() {
         let stats1 = vec![
-            SAIStat { object_name: "Ethernet0".to_string(), type_id: 100, stat_id: 200, counter: 1000 },
-            SAIStat { object_name: "Ethernet1".to_string(), type_id: 101, stat_id: 201, counter: 2000 },
+            SAIStat {
+                object_name: "Ethernet0".to_string(),
+                type_id: 100,
+                stat_id: 200,
+                counter: 1000,
+            },
+            SAIStat {
+                object_name: "Ethernet1".to_string(),
+                type_id: 101,
+                stat_id: 201,
+                counter: 2000,
+            },
         ];
-        
+
         let stats2 = vec![
-            SAIStat { object_name: "Ethernet1".to_string(), type_id: 101, stat_id: 201, counter: 2000 },
-            SAIStat { object_name: "Ethernet0".to_string(), type_id: 100, stat_id: 200, counter: 1000 },
+            SAIStat {
+                object_name: "Ethernet1".to_string(),
+                type_id: 101,
+                stat_id: 201,
+                counter: 2000,
+            },
+            SAIStat {
+                object_name: "Ethernet0".to_string(),
+                type_id: 100,
+                stat_id: 200,
+                counter: 1000,
+            },
         ];
-        
+
         let sai_stats1 = SAIStats::new(12345, stats1);
         let sai_stats2 = SAIStats::new(12345, stats2.clone());
         let sai_stats3 = SAIStats::new(12346, stats2);
-        
+
         assert_eq!(sai_stats1, sai_stats2); // Same content, different order
         assert_ne!(sai_stats1, sai_stats3); // Different observation time
     }
 
     #[test]
     fn test_sai_stats_message_creation() {
-        let stats = vec![
-            SAIStat { object_name: "Ethernet0".to_string(), type_id: 100, stat_id: 200, counter: 1000 }
-        ];
-        
+        let stats = vec![SAIStat {
+            object_name: "Ethernet0".to_string(),
+            type_id: 100,
+            stat_id: 200,
+            counter: 1000,
+        }];
+
         let message1 = SAIStats::new(12345, stats.clone()).into_message();
         let message2 = SAIStats::from_parts(12345, stats);
-        
+
         assert_eq!(message1.observation_time, message2.observation_time);
         assert_eq!(message1.stats, message2.stats);
     }
@@ -390,9 +423,9 @@ mod tests {
         let field_spec = create_field_spec(1, Some(enterprise_number));
         let value = create_byte_value(555);
         let object_names = vec!["Ethernet0".to_string()];
-        
+
         let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
-        
+
         // Should use saturating_add to prevent overflow
         assert_eq!(stat.type_id, 0x7FFF + EXTENSIONS_RANGE_BASE);
         assert_eq!(stat.stat_id, 0x7FFF + EXTENSIONS_RANGE_BASE);
