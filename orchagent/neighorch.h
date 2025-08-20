@@ -82,6 +82,8 @@ public:
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    const NeighborTable& getNeighborTable() const { return m_syncdNeighbors; }
+
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
     bool isHwConfigured(const NeighborEntry&);
@@ -97,6 +99,10 @@ public:
 
     bool addInbandNeighbor(string alias, IpAddress ip_address);
     bool delInbandNeighbor(string alias, IpAddress ip_address);
+
+    bool convertToMuxNeighbor(const NeighborEntry &neighborEntry, sai_object_id_t tunnel_nexthop_id = SAI_NULL_OBJECT_ID);
+    bool isPrefixNeighbor(const NeighborEntry &neighborEntry) const;
+    bool isPrefixNeighborNh(const NextHopKey &nextHopKey) const;
 
     void resolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
