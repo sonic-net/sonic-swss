@@ -187,7 +187,7 @@ public:
      * @param task a task tuple
      * @param cst the constraint for the task
      */
-    void addToRetry(const Task &task, const Constraint &cst);
+    bool addToRetry(const Task &task, const Constraint &cst);
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
@@ -323,7 +323,7 @@ public:
     ConsumerBase* getConsumerBase(const std::string &executorName);
 
     // Add a task and its constraint to the retry cache 
-    void addToRetry(const std::string &executorName, const Task &task, const Constraint &cst);
+    bool addToRetry(const std::string &executorName, const Task &task, const Constraint &cst);
 
     /** Delete tasks whose constraints are resolved in this executor's retry cache , then add them back to its m_toSync.
      * @param executorName name of the executor (actually a ConsumerBase instance)

@@ -167,15 +167,26 @@ ConsumerBase* Orch::getConsumerBase(const std::string &executorName)
     return dynamic_cast<ConsumerBase*>(m_consumerMap[executorName].get());
 }
 
-void ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
-    Recorder::Instance().retry.record(dumpTuple(task).append(CACHE));
-    if (getOrch())
-        getOrch()->getRetryCache(getName())->cache_failed_task(task, cst);
+bool ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
+    auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
+    if (retryCache)
+    {
+        Recorder::Instance().retry.record(dumpTuple(task).append(CACHE));
+        retryCache->cache_failed_task(task, cst);
+        return true;
+    }
+    return false;
 }
 
-void Orch::addToRetry(const std::string &executorName, const Task &task, const Constraint &cst) {
-    Recorder::Instance().retry.record(getConsumerBase(executorName)->dumpTuple(task).append(CACHE));
-    getRetryCache(executorName)->cache_failed_task(task, cst); 
+bool Orch::addToRetry(const std::string &executorName, const Task &task, const Constraint &cst) {
+    auto retryCache = getRetryCache(executorName);
+    if (retryCache)
+    {
+        Recorder::Instance().retry.record(getConsumerBase(executorName)->dumpTuple(task).append(CACHE));
+        retryCache->cache_failed_task(task, cst);
+        return true;
+    }
+    return false;
 }
 
 size_t Orch::retryToSync(const std::string &executorName, size_t threshold)
@@ -189,9 +200,9 @@ size_t Orch::retryToSync(const std::string &executorName, size_t threshold)
 
     size_t count = 0;
 
-    for (auto it = constraints.begin(); it != constraints.end() && count < threshold;)
+    while (!constraints.empty() && count < threshold)
     {
-        auto cst = *it++;
+        auto cst = *constraints.begin();
 
         auto tasks = retryCache->resolve(cst, threshold - count);
 
@@ -205,7 +216,15 @@ size_t Orch::retryToSync(const std::string &executorName, size_t threshold)
 
 void Orch::notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst)
 {
-    retryOrch->getRetryCache(executorName)->add_resolution(cst);
+    auto retryCache = retryOrch->getRetryCache(executorName);
+    if (!retryCache)
+    {
+        SWSS_LOG_ERROR("RetryCache not initialized for %s", executorName.c_str());
+    }
+    else
+    {
+        retryCache->add_resolution(cst);
+    }
 }
 
 size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry) {
@@ -227,20 +246,67 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
 
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
 
-    if (retryCache)
+    if (retryCache && !onRetry)
     {
-        auto it = retryCache->getRetryMap().find(key);
-        if (it != retryCache->getRetryMap().end()) // key exists
+        size_t count = retryCache->getRetryMap().count(key);
+
+        switch (count)
         {
+        case 0:
+            // No task with the same key found in the retrycache
+            break;
+
+        case 1:
+        {
+            // Single task found
+            auto it = retryCache->getRetryMap().find(key);
             if (it->second.second == entry) // skip duplicate task
+            {
+                SWSS_LOG_DEBUG("Skip, already in retry cache: %s", dumpTuple(entry).c_str());
                 return;
-            
-            auto cache = retryCache->erase_stale_cache(key);
+            }
 
-            Recorder::Instance().retry.record(dumpTuple(*cache).append(DECACHE));
-
-            if (op == SET_COMMAND)
-                m_toSync.emplace(key, std::move(*cache));
+            if (op == DEL_COMMAND)
+            {
+                if (kfvOp(it->second.second) == SET_COMMAND)
+                {
+                    auto old_task = retryCache->erase_set_task(key);
+                    Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                }
+            }
+            else if (op == SET_COMMAND)
+            {
+                if (kfvOp(it->second.second) == SET_COMMAND)
+                {
+                    // move the old SET back to m_toSync for later merge
+                    auto old_task = retryCache->erase_set_task(key);
+                    m_toSync.emplace(key, *old_task);
+                    Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                }
+            }
+            break;
+        }
+        case 2:
+        {
+            // 2 tasks found, must be a DEL + a SET
+            if (op == DEL_COMMAND)
+            {
+                // remove the SET task from the cache, reuse the DEL task
+                auto old_task = retryCache->erase_set_task(key);
+                Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                return;
+            }
+            else if (op == SET_COMMAND)
+            {
+                // Keep the DEL task, move the old SET back to m_toSync for later merge
+                auto old_task = retryCache->erase_set_task(key);
+                Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                m_toSync.emplace(key, *old_task);
+            }
+            break;
+        }
+        default:
+            SWSS_LOG_ERROR("Maximum two values per key, found: %zu", count);
         }
     }
 

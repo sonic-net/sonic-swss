@@ -8,6 +8,8 @@
 #include <fstream>
 #include <sstream> 
 #include "recorder.h"
+#include <map>
+#include "rediscommand.h"
 
 using namespace swss;
 
@@ -50,7 +52,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T, U>& p) {
 
 typedef swss::KeyOpFieldsValuesTuple Task;
 typedef std::pair<Constraint, Task> FailedTask;
-typedef std::unordered_map<std::string, FailedTask> RetryMap;
+typedef std::multimap<std::string, FailedTask> RetryMap;
 
 namespace std {
     template<>
@@ -66,14 +68,11 @@ using RetryKeysMap = std::unordered_map<Constraint, std::unordered_set<std::stri
 
 class RetryCache
 {
-private:
-
+public:
     std::string m_executorName; // name of the corresponding executor
     std::unordered_set<Constraint> m_resolvedConstraints; // store the resolved constraints notified
     RetryKeysMap m_retryKeys; // group failed tasks by constraints
     RetryMap m_toRetry; // cache the data about the failed tasks for a ConsumerBase instance
-
-public:
 
     RetryCache(std::string executorName) : m_executorName (executorName) {}
 
@@ -112,6 +111,8 @@ public:
      */
     void cache_failed_task(const Task &task, const Constraint &cst) {
         const auto& key = kfvKey(task);
+        if (key.empty())
+            return;
         m_retryKeys[cst].insert(key);
         m_toRetry.emplace(
             std::piecewise_construct,
@@ -120,21 +121,35 @@ public:
         );
     }
 
-    /** For a new task, if it has a stale version in RetryCache, we need to clear the cache
+    /** Delete a SET task from the retry cache by its key.
      * @param key key of swss::KeyOpFieldsValuesTuple task
      * @return the task that has failed before and stored in retry cache
      */
-    std::shared_ptr<Task> erase_stale_cache(const std::string &key) {
+    std::shared_ptr<Task> erase_set_task(const std::string &key)
+    {
+        // m_toRetry is multimap, hence there are at most 2 tasks mapped from key.
+        auto range = m_toRetry.equal_range(key);
+        auto it = range.first;
+        for (; it != range.second; it++)
+        {
+            if (kfvOp(it->second.second) == SET_COMMAND)
+            {
+                break;
+            }
+        }
 
-        auto it = m_toRetry.find(key);
-        if (it == m_toRetry.end())
+        if (it == range.second)
+        {
             return std::make_shared<Task>();
+        }
 
+        // parse the corresponding task and its constraint
         Constraint cst = it->second.first;
         auto task = std::make_shared<Task>(std::move(it->second.second));
 
+        // Erase the task from m_toRetry, and unbind cst with it.
+        m_toRetry.erase(it);
         m_retryKeys[cst].erase(key);
-        m_toRetry.erase(key);
 
         if (m_retryKeys[cst].empty()) {
             m_retryKeys.erase(cst);
@@ -160,6 +175,13 @@ public:
         for (auto it = keys.begin(); it != keys.end() && count < threshold; it = keys.erase(it), count++)
         {
             auto failed_task_it = m_toRetry.find(*it);
+            if (failed_task_it != m_toRetry.end())
+            {
+                tasks->push_back(std::move(failed_task_it->second.second));
+                m_toRetry.erase(failed_task_it);
+            }
+            // check twice, since a key can have <= 2 values
+            failed_task_it = m_toRetry.find(*it);
             if (failed_task_it != m_toRetry.end())
             {
                 tasks->push_back(std::move(failed_task_it->second.second));
