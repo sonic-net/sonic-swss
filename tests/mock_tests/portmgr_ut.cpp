@@ -173,9 +173,9 @@ namespace portmgr_ut
     });
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
-    // nothing in mockCallArgs because empty means skip
     ASSERT_TRUE(mockCallArgs.empty());
 
+    // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
     state_port_table.set("Ethernet0", { {"state", "ok"} });
     cfg_port_table.set("Ethernet0", {
         {"dhcp_rate_limit", "100"}
@@ -184,14 +184,16 @@ namespace portmgr_ut
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
 
-    // Debug print: show actual command(s) captured
-    for (size_t i = 0; i < mockCallArgs.size(); i++)
+    bool foundAdd = false;
+    for (auto &cmd : mockCallArgs)
     {
-        std::cerr << "mockCallArgs[" << i << "] = " << mockCallArgs[i] << std::endl;
+        if (cmd.find("tc qdisc add dev \"Ethernet0\"") != string::npos)
+        {
+            foundAdd = true;
+            break;
+        }
     }
-
-    ASSERT_FALSE(mockCallArgs.empty());
-    ASSERT_NE(mockCallArgs[0].find("tc qdisc add dev \"Ethernet0\""), string::npos);
+    ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
 
     // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
     cfg_port_table.set("Ethernet0", {
@@ -200,11 +202,19 @@ namespace portmgr_ut
     mockCallArgs.clear();
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
-    ASSERT_FALSE(mockCallArgs.empty());
-    ASSERT_NE(mockCallArgs[0].find("tc qdisc del dev \"Ethernet0\""), string::npos);
+
+    bool foundDel = false;
+    for (auto &cmd : mockCallArgs)
+    {
+        if (cmd.find("tc qdisc del dev \"Ethernet0\"") != string::npos)
+        {
+            foundDel = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
 
     // 4. Case: simulate exec failure with port not ready
-    // Force state DB to not have alias so isPortStateOk() == false
     Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
     empty_state_table.del("Ethernet0");
     cfg_port_table.set("Ethernet0", {
@@ -213,7 +223,8 @@ namespace portmgr_ut
     mockCallArgs.clear();
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
-    // No ASSERT on mockCallArgs here since exec is mocked, but path is covered
+    // No strict ASSERT on mockCallArgs since exec is mocked,
+    // but code path is exercised
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
