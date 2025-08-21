@@ -162,6 +162,54 @@ namespace portmgr_ut
         ASSERT_FALSE(value_opt);
     }
 
+    TEST_F(PortMgrTest, ConfigureDhcpRateLimit)
+    {
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    // 1. Case: dhcp_rate_limit empty (should just return true without command)
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", ""}
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    // nothing in mockCallArgs because empty means skip
+    ASSERT_TRUE(mockCallArgs.empty());
+
+    // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
+    state_port_table.set("Ethernet0", { {"state", "ok"} });
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "100"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    ASSERT_FALSE(mockCallArgs.empty());
+    ASSERT_NE(mockCallArgs[0].find("tc qdisc add dev \"Ethernet0\""), string::npos);
+
+    // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "0"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    ASSERT_FALSE(mockCallArgs.empty());
+    ASSERT_NE(mockCallArgs[0].find("tc qdisc del dev \"Ethernet0\""), string::npos);
+
+    // 4. Case: simulate exec failure with port not ready
+    // Force state DB to not have alias so isPortStateOk() == false
+    Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    empty_state_table.del("Ethernet0");
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "50"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    // No ASSERT on mockCallArgs here since exec is mocked, but path is covered
+    }
+
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
