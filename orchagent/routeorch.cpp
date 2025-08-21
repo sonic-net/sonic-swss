@@ -1337,6 +1337,7 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else
     {
         m_syncdNextHopGroups[nexthops].ref_count ++;
+        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
     }
 }
 
@@ -1358,6 +1359,7 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else
     {
         m_syncdNextHopGroups[nexthops].ref_count --;
+        SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
     }
 }
 
@@ -1454,8 +1456,11 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
+    set<NextHopKey> valid_next_hops_for_refcount;  // Track valid next hops for reference counting
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
     std::map<sai_object_id_t, set<NextHopKey>> nhopgroup_shared_set;
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
@@ -1464,6 +1469,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         sai_object_id_t next_hop_id;
         if (m_neighOrch->hasNextHop(it))
         {
+            // this can be tunnel nh id when mux neighbor is disabled
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         /* See if there is an IP neighbor NH for MPLS NH*/
@@ -1480,6 +1486,13 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
                     it.to_string().c_str(), nexthops.to_string().c_str());
             return false;
         }
+
+        // Skip tunnel_nh for reference counting
+        if (next_hop_id != mux_tunnel_nh_id)
+        {
+            valid_next_hops_for_refcount.insert(it);
+        }
+
         // skip next hop group member create for neighbor from down port
         if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
         {
@@ -1609,9 +1622,11 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         }
     }
 
-    /* Increment the ref_count for the next hops used by the next hop group. */
-    for (auto it : next_hop_set)
+    /* Increment the ref_count for the valid next hops used by the next hop group. */
+    for (auto it : valid_next_hops_for_refcount)
+    {
         m_neighOrch->increaseNextHopRefCount(it);
+    }
 
     /*
      * Initialize the next hop group structure with ref_count as 0. This
@@ -1700,11 +1715,25 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
 
     m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
 
+    // Filter valid next hops for reference counting (consistent with addNextHopGroup)
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     for (auto it : next_hop_set)
     {
-        m_neighOrch->decreaseNextHopRefCount(it);
+        // Skip mux tunnel next hops (consistent with addNextHopGroup)
+        auto nh_id = m_neighOrch->getNextHopId(it);
+        if (nh_id != mux_tunnel_nh_id)
+        {
+            m_neighOrch->decreaseNextHopRefCount(it);
+        }
+    }
+
+    // Process all next hops for overlay/SRv6/MPLS cleanup
+    for (auto it : next_hop_set)
+    {
+
         if (overlay_nh && !srv6_nh && !m_neighOrch->getNextHopRefCount(it))
         {
             if(!m_neighOrch->removeTunnelNextHop(it))
@@ -2617,7 +2646,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             addNextHopRoute(nexthop, r_key);
         }
     }
-    else if (mux_orch->isMuxNexthops(nextHops))
+    else if (nextHops.getSize() > 1 && mux_orch->isMuxNexthops(nextHops) && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
     {
         RouteKey routekey = { vrf_id, ipPrefix };
         auto nexthop_list = nextHops.getNextHops();
@@ -2652,7 +2681,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     // update routes to reflect mux state
     if (mux_orch->isMuxNexthops(nextHops))
     {
-        mux_orch->updateRoute(ipPrefix, true);
+        mux_orch->updateRoute(ipPrefix);
     }
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
@@ -2863,11 +2892,10 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                 {
                     if (!nh->ip_address.isZero())
                     {
-                        SWSS_LOG_NOTICE("removeNextHopRoute");
                         removeNextHopRoute(*nh, routekey);
                     }
                 }
-                mux_orch->updateRoute(ipPrefix, false);
+                mux_orch->updateRoute(ipPrefix);
             }
         }
         else if (ol_nextHops.is_overlay_nexthop())

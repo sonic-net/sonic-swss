@@ -83,6 +83,8 @@ local function calculate_lane_and_serdes_speed(count, speed)
         serdes = 53.125e+9
     elseif lane_speed == 100000 then
         serdes = 106.25e+9
+    elseif lane_speed == 200000 then
+        serdes = 212.5e+9
     else
        logit("Invalid serdes speed")
     end
@@ -231,6 +233,12 @@ local function compute_rate(port)
         return
     end
     -- Set BER values
+    local fec_pre_ber_max = redis.call('HGET', rates_table_name .. ':' .. port, 'FEC_PRE_BER_MAX')
+    fec_pre_ber_max =  tonumber(fec_pre_ber_max) or 0
+
+    if fec_corr_bits_ber_new > fec_pre_ber_max then
+        redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_PRE_BER_MAX', fec_corr_bits_ber_new)
+    end
     redis.call('HSET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_CORRECTED_BITS_last', fec_corr_bits)
     redis.call('HSET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_NOT_CORRECTABLE_FARMES_last', fec_uncorr_frames)
     redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_PRE_BER', fec_corr_bits_ber_new)
