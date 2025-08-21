@@ -77,6 +77,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
+                retrycache_ut.cpp \
                 mock_saihelper.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
