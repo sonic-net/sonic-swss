@@ -712,8 +712,8 @@ impl IpfixActor {
                             let field_id = field_spec.information_element_identifier;
                             let is_standard_field = field_spec.enterprise_number.is_none();
 
-                            (field_id == OBSERVATION_TIME_FIELD_ID
-                                || field_id == SYSTEM_TIME_FIELD_ID)
+                            (field_id == OBSERVATION_TIME_NANOSECONDS
+                                || field_id == OBSERVATION_TIME_SECONDS)
                                 && is_standard_field
                         }
                         _ => false,
@@ -832,12 +832,38 @@ impl Drop for IpfixActor {
     }
 }
 
-// IPFIX observation time field constants according to IANA registry
-const OBSERVATION_TIME_FIELD_ID: u16 = 325;
-// IPFIX system time field (field 322) is also time-related but different from observation time
-const SYSTEM_TIME_FIELD_ID: u16 = 322;
+/// IPFIX Information Element ID for observationTimeNanoseconds (Field ID 325).
+/// 
+/// This field represents the absolute timestamp of the observation of the packet
+/// within a nanosecond resolution. The timestamp is based on the local time zone 
+/// of the Exporter and is represented as nanoseconds since the UNIX epoch.
+/// 
+/// According to IANA IPFIX Information Elements Registry:
+/// - ElementId: 325
+/// - Data Type: dateTimeNanoseconds
+/// - Semantics: default
+/// - Status: current
+const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
+
+/// IPFIX Information Element ID for observationTimeSeconds (Field ID 322).
+/// 
+/// This field represents the absolute timestamp of the observation of the packet
+/// within a second resolution. The timestamp is based on the local time zone
+/// of the Exporter and is represented as seconds since the UNIX epoch.
+/// 
+/// According to IANA IPFIX Information Elements Registry:
+/// - ElementId: 322
+/// - Data Type: dateTimeSeconds  
+/// - Semantics: default
+/// - Status: current
+const OBSERVATION_TIME_SECONDS: u16 = 322;
 
 /// Extracts observation time from an IPFIX data record.
+/// 
+/// Converts timestamp to 64-bit nanoseconds following this priority:
+/// 1. If 64-bit nanoseconds field exists, use it directly
+/// 2. If 32-bit seconds and 32-bit nanoseconds fields exist, combine them
+/// 3. Otherwise, use current UTC time as 64-bit nanoseconds timestamp
 ///
 /// # Arguments
 ///
@@ -845,51 +871,88 @@ const SYSTEM_TIME_FIELD_ID: u16 = 322;
 ///
 /// # Returns
 ///
-/// Some(timestamp) if observation time field is present, None otherwise
+/// Some(timestamp_in_nanoseconds) if observation time field is present, None otherwise
 fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
-    // Look for observation time field by ID rather than using the static key
+    let mut seconds_value: Option<u32> = None;
+    let mut nanoseconds_value: Option<u32> = None;
+    let mut full_nanoseconds_value: Option<u64> = None;
+
+    // First pass: collect all time-related fields
     for (key, val) in &data_record.values {
         if let DataRecordKey::Unrecognized(field_spec) = key {
-            if field_spec.information_element_identifier == OBSERVATION_TIME_FIELD_ID
-                && field_spec.enterprise_number.is_none()
-            {
-                debug!("Found observation time field with value: {:?}", val);
-                match val {
-                    DataRecordValue::Bytes(val) => {
-                        if val.len() == 8 {
-                            let time_val = NetworkEndian::read_u64(val);
-                            debug!("Extracted observation time: {}", time_val);
-                            return Some(time_val);
-                        } else {
-                            debug!("Observation time field has insufficient bytes: {} (expected 8), using current system time", val.len());
-                            // Use current system time in nanoseconds (64 bits)
-                            let current_time = SystemTime::now()
-                                .duration_since(SystemTime::UNIX_EPOCH)
-                                .expect("System time should be after Unix epoch")
-                                .as_nanos() as u64;
-                            debug!(
-                                "Using current system time as observation time: {}",
-                                current_time
-                            );
-                            return Some(current_time);
+            if field_spec.enterprise_number.is_none() {
+                match field_spec.information_element_identifier {
+                    OBSERVATION_TIME_NANOSECONDS => {
+                        debug!("Found observation time nanoseconds field with value: {:?}", val);
+                        match val {
+                            DataRecordValue::Bytes(bytes) => {
+                                if bytes.len() == 8 {
+                                    full_nanoseconds_value = Some(NetworkEndian::read_u64(bytes));
+                                    debug!("Extracted 64-bit nanoseconds: {}", full_nanoseconds_value.unwrap());
+                                } else if bytes.len() == 4 {
+                                    nanoseconds_value = Some(NetworkEndian::read_u32(bytes));
+                                    debug!("Extracted 32-bit nanoseconds: {}", nanoseconds_value.unwrap());
+                                }
+                            }
+                            DataRecordValue::U64(val) => {
+                                full_nanoseconds_value = Some(*val);
+                                debug!("Extracted 64-bit nanoseconds (u64): {}", val);
+                            }
+                            DataRecordValue::U32(val) => {
+                                nanoseconds_value = Some(*val);
+                                debug!("Extracted 32-bit nanoseconds (u32): {}", val);
+                            }
+                            _ => {
+                                debug!("Observation time nanoseconds field has unexpected value type: {:?}", val);
+                            }
                         }
                     }
-                    DataRecordValue::U64(val) => {
-                        debug!("Extracted observation time (u64): {}", val);
-                        return Some(*val);
+                    OBSERVATION_TIME_SECONDS => {
+                        debug!("Found observation time seconds field with value: {:?}", val);
+                        match val {
+                            DataRecordValue::Bytes(bytes) => {
+                                if bytes.len() == 4 {
+                                    seconds_value = Some(NetworkEndian::read_u32(bytes));
+                                    debug!("Extracted 32-bit seconds: {}", seconds_value.unwrap());
+                                }
+                            }
+                            DataRecordValue::U32(val) => {
+                                seconds_value = Some(*val);
+                                debug!("Extracted 32-bit seconds (u32): {}", val);
+                            }
+                            _ => {
+                                debug!("Observation time seconds field has unexpected value type: {:?}", val);
+                            }
+                        }
                     }
-                    _ => {
-                        debug!(
-                            "Observation time field has unexpected value type: {:?}",
-                            val
-                        );
-                    }
+                    _ => {} // Ignore other fields
                 }
             }
         }
     }
-    debug!("No observation time field found in record");
-    None
+
+    // Priority 1: Use 64-bit nanoseconds directly if available
+    if let Some(nano_time) = full_nanoseconds_value {
+        debug!("Using 64-bit nanoseconds timestamp: {}", nano_time);
+        return Some(nano_time);
+    }
+
+    // Priority 2: Combine 32-bit seconds and 32-bit nanoseconds
+    if let (Some(seconds), Some(nanoseconds)) = (seconds_value, nanoseconds_value) {
+        let combined_timestamp = (seconds as u64) * 1_000_000_000 + (nanoseconds as u64);
+        debug!("Combined timestamp from seconds({}) and nanoseconds({}): {}", 
+               seconds, nanoseconds, combined_timestamp);
+        return Some(combined_timestamp);
+    }
+
+    // Priority 3: Use current UTC time
+    debug!("No complete observation time fields found, using current UTC time");
+    let current_time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("System time should be after Unix epoch")
+        .as_nanos() as u64;
+    debug!("Using current UTC time as observation time: {}", current_time);
+    Some(current_time)
 }
 
 /// Parse IPFIX message length according to IPFIX RFC specification

@@ -35,7 +35,7 @@ type SocketType = test::MockSocket;
 const SONIC_CONSTANTS: &str = "/usr/share/sonic/countersyncd/constants.yml";
 
 /// Size of the buffer used for receiving netlink messages
-const BUFFER_SIZE: usize = 0xFFFF;
+const BUFFER_SIZE: usize = 0x1FFFF;
 /// Linux error code for "No buffer space available" (ENOBUFS)
 /// Note: std::io::ErrorKind doesn't have a specific variant for ENOBUFS,
 /// so we use the raw OS error code for this specific netlink error condition.
@@ -59,6 +59,172 @@ const WOULDBLOCK_LOG_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
 /// Socket readiness check timeout in milliseconds
 const SOCKET_READINESS_TIMEOUT_MS: u64 = 10;
 
+/// Maximum size for buffering incomplete messages (1MB)
+const MAX_INCOMPLETE_MESSAGE_SIZE: usize = 1024 * 1024;
+
+/// Netlink message parser for handling multiple messages in one buffer
+#[derive(Debug)]
+struct NetlinkMessageParser {
+    /// Buffer for incomplete messages that span multiple recv operations
+    incomplete_buffer: Vec<u8>,
+}
+
+impl NetlinkMessageParser {
+    fn new() -> Self {
+        Self {
+            incomplete_buffer: Vec::new(),
+        }
+    }
+
+    /// Parse buffer that may contain multiple complete and/or incomplete netlink messages
+    /// Returns a vector of complete message payloads, where each payload represents 
+    /// one complete netlink message (which contains one complete IPFIX message)
+    fn parse_buffer(&mut self, new_data: &[u8]) -> Result<Vec<SocketBufferMessage>, io::Error> {
+        // Combine any incomplete data from previous recv with new data
+        if !self.incomplete_buffer.is_empty() {
+            self.incomplete_buffer.extend_from_slice(new_data);
+            debug!("Combined incomplete buffer ({} bytes) with new data ({} bytes)", 
+                   self.incomplete_buffer.len() - new_data.len(), new_data.len());
+        } else {
+            self.incomplete_buffer.extend_from_slice(new_data);
+        }
+
+        let mut complete_messages = Vec::new();
+        let mut offset = 0;
+
+        // Parse all complete messages in the buffer
+        while offset < self.incomplete_buffer.len() {
+            // Check if we have enough data for a netlink header
+            if offset + 16 > self.incomplete_buffer.len() {
+                debug!("Not enough data for netlink header at offset {}, keeping {} bytes for next recv", 
+                       offset, self.incomplete_buffer.len() - offset);
+                break;
+            }
+
+            // Extract message length from netlink header
+            let nl_len = u32::from_le_bytes([
+                self.incomplete_buffer[offset],
+                self.incomplete_buffer[offset + 1], 
+                self.incomplete_buffer[offset + 2],
+                self.incomplete_buffer[offset + 3],
+            ]) as usize;
+
+            // Validate message length
+            if nl_len < 16 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid netlink message length: {} (too small)", nl_len),
+                ));
+            }
+
+            if nl_len > MAX_INCOMPLETE_MESSAGE_SIZE {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid netlink message length: {} (too large)", nl_len),
+                ));
+            }
+
+            // Check if we have the complete message
+            if offset + nl_len > self.incomplete_buffer.len() {
+                debug!("Incomplete message at offset {}: need {} bytes, have {} bytes", 
+                       offset, nl_len, self.incomplete_buffer.len() - offset);
+                break;
+            }
+
+            // Extract complete message
+            let message_data = self.incomplete_buffer[offset..offset + nl_len].to_vec();
+            debug!("Found complete message: offset={}, length={}", offset, nl_len);
+
+            // Extract payload from this message
+            match Self::extract_payload_from_slice(&message_data) {
+                Ok(payload) => {
+                    debug!("Successfully extracted payload with {} bytes", payload.len());
+                    complete_messages.push(payload);
+                }
+                Err(e) => {
+                    warn!("Failed to extract payload from message at offset {}: {}", offset, e);
+                    // Continue with next message instead of failing completely
+                }
+            }
+
+            offset += nl_len;
+        }
+
+        // Keep remaining incomplete data for next recv
+        if offset < self.incomplete_buffer.len() {
+            let remaining = self.incomplete_buffer[offset..].to_vec();
+            debug!("Keeping {} bytes for next recv operation", remaining.len());
+            self.incomplete_buffer = remaining;
+        } else {
+            // All data was consumed
+            self.incomplete_buffer.clear();
+        }
+
+        Ok(complete_messages)
+    }
+
+    /// Extract payload from a single complete netlink message
+    fn extract_payload_from_slice(message_data: &[u8]) -> Result<SocketBufferMessage, io::Error> {
+        const NLMSG_HDRLEN: usize = 16; // sizeof(struct nlmsghdr)
+        const GENL_HDRLEN: usize = 4; // sizeof(struct genlmsghdr)
+        const TOTAL_HEADER_SIZE: usize = NLMSG_HDRLEN + GENL_HDRLEN;
+
+        if message_data.len() < TOTAL_HEADER_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Message too small: {} bytes, expected at least {}", 
+                        message_data.len(), TOTAL_HEADER_SIZE),
+            ));
+        }
+
+        // Extract netlink message length from header
+        let nl_len = u32::from_le_bytes([
+            message_data[0], message_data[1], message_data[2], message_data[3]
+        ]) as usize;
+
+        if nl_len != message_data.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Message length mismatch: header says {}, actual {}", 
+                        nl_len, message_data.len()),
+            ));
+        }
+
+        // Debug: Print headers only when debug logging is enabled
+        if log::log_enabled!(log::Level::Debug) {
+            debug!("Netlink Header (16 bytes): {:02x?}", &message_data[0..16]);
+            let nl_type = u16::from_le_bytes([message_data[4], message_data[5]]);
+            let nl_flags = u16::from_le_bytes([message_data[6], message_data[7]]);
+            let nl_seq = u32::from_le_bytes([message_data[8], message_data[9], message_data[10], message_data[11]]);
+            let nl_pid = u32::from_le_bytes([message_data[12], message_data[13], message_data[14], message_data[15]]);
+            debug!("  nl_len={}, nl_type={}, nl_flags=0x{:04x}, nl_seq={}, nl_pid={}", 
+                   nl_len, nl_type, nl_flags, nl_seq, nl_pid);
+
+            if message_data.len() >= TOTAL_HEADER_SIZE {
+                debug!("Generic Netlink Header (4 bytes): {:02x?}", &message_data[16..20]);
+                let genl_cmd = message_data[16];
+                let genl_version = message_data[17];
+                let genl_reserved = u16::from_le_bytes([message_data[18], message_data[19]]);
+                debug!("  genl_cmd={}, genl_version={}, genl_reserved=0x{:04x}", 
+                       genl_cmd, genl_version, genl_reserved);
+            }
+        }
+
+        // Extract payload after both headers
+        let payload_start = TOTAL_HEADER_SIZE;
+        let payload_end = nl_len;
+
+        if payload_start >= payload_end {
+            // No payload data, return empty payload
+            Ok(Arc::new(Vec::new()))
+        } else {
+            // Return payload data without headers
+            let payload = message_data[payload_start..payload_end].to_vec();
+            Ok(Arc::new(payload))
+        }
+    }
+}
+
 /// Actor responsible for managing the data netlink socket and message distribution.
 ///
 /// The DataNetlinkActor handles:
@@ -81,6 +247,8 @@ pub struct DataNetlinkActor {
     buffer_recipients: LinkedList<Sender<SocketBufferMessage>>,
     /// Channel for receiving control commands
     command_recipient: Receiver<NetlinkCommand>,
+    /// Message parser for handling multiple and fragmented netlink messages
+    message_parser: NetlinkMessageParser,
 }
 
 impl DataNetlinkActor {
@@ -105,6 +273,7 @@ impl DataNetlinkActor {
             last_data_time: None,
             buffer_recipients: LinkedList::new(),
             command_recipient,
+            message_parser: NetlinkMessageParser::new(),
         };
 
         // Use instance method for initial connection
@@ -466,29 +635,31 @@ impl DataNetlinkActor {
         self.connect();
     }
 
-    /// Attempts to receive a message from the netlink socket.
+    /// Attempts to receive messages from the netlink socket.
     ///
     /// Returns immediately with WouldBlock if no data is available, allowing
     /// the event loop to handle other operations concurrently.
-    async fn try_recv(socket: Option<&mut SocketType>) -> Result<SocketBufferMessage, io::Error> {
+    /// 
+    /// This function handles multiple scenarios:
+    /// 1. Single complete message in one recv
+    /// 2. Multiple complete messages in one recv  
+    /// 3. Incomplete message that needs to be combined with future recv data
+    async fn try_recv(
+        socket: Option<&mut SocketType>, 
+        message_parser: &mut NetlinkMessageParser
+    ) -> Result<Vec<SocketBufferMessage>, io::Error> {
         let socket = socket
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No socket available"))?;
 
-        let mut buffer = Arc::new(vec![0; BUFFER_SIZE]);
-        let buffer_slice = Arc::get_mut(&mut buffer).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "Failed to get mutable reference to buffer",
-            )
-        })?;
+        let mut buffer = vec![0; BUFFER_SIZE];
 
         // Try to receive with MSG_DONTWAIT to make it non-blocking
         debug!("Attempting to receive netlink message...");
-        let result = socket.recv(buffer_slice, Msg::DONTWAIT);
+        let result = socket.recv(&mut buffer, Msg::DONTWAIT);
 
         match result {
             Ok((size, _groups)) => {
-                debug!("Received netlink message, size: {} bytes", size);
+                debug!("Received netlink data, size: {} bytes", size);
 
                 if size == 0 {
                     return Err(io::Error::new(
@@ -497,17 +668,14 @@ impl DataNetlinkActor {
                     ));
                 }
 
-                Arc::get_mut(&mut buffer)
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            "Failed to get mutable reference to buffer",
-                        )
-                    })?
-                    .resize(size, 0);
+                // Resize buffer to actual received size
+                buffer.resize(size, 0);
 
-                // Parse netlink message and extract payload
-                Self::extract_payload(buffer)
+                // Parse buffer which may contain multiple messages and/or incomplete messages
+                let messages = message_parser.parse_buffer(&buffer)?;
+                debug!("Parsed {} complete messages from {} bytes of data", messages.len(), size);
+                
+                Ok(messages)
             }
             Err(e) => {
                 debug!(
@@ -517,98 +685,6 @@ impl DataNetlinkActor {
                 );
                 Err(e)
             }
-        }
-    }
-
-    /// Extracts the payload from a netlink message by parsing headers.
-    ///
-    /// This function parses both the netlink header (nlmsghdr) and generic netlink
-    /// header (genlmsghdr) to extract only the actual payload data, excluding headers.
-    ///
-    /// # Arguments
-    ///
-    /// * `raw_buffer` - The raw buffer containing the complete netlink message
-    ///
-    /// # Returns
-    ///
-    /// Result containing the payload data or an IO error if parsing fails
-    fn extract_payload(raw_buffer: Arc<Vec<u8>>) -> Result<SocketBufferMessage, io::Error> {
-        // For now, let's implement a basic header parsing approach
-        // Standard netlink header is 16 bytes, generic netlink header is 4 bytes
-        const NLMSG_HDRLEN: usize = 16; // sizeof(struct nlmsghdr)
-        const GENL_HDRLEN: usize = 4; // sizeof(struct genlmsghdr)
-        const TOTAL_HEADER_SIZE: usize = NLMSG_HDRLEN + GENL_HDRLEN;
-
-        if raw_buffer.len() < TOTAL_HEADER_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Buffer too small: {} bytes, expected at least {}",
-                    raw_buffer.len(),
-                    TOTAL_HEADER_SIZE
-                ),
-            ));
-        }
-
-        // Extract netlink message length from header (first 4 bytes, little-endian)
-        let nl_len =
-            u32::from_le_bytes([raw_buffer[0], raw_buffer[1], raw_buffer[2], raw_buffer[3]])
-                as usize;
-
-        // Validate message length
-        if nl_len < TOTAL_HEADER_SIZE || nl_len > raw_buffer.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid netlink message length: {} (buffer size: {})",
-                    nl_len,
-                    raw_buffer.len()
-                ),
-            ));
-        }
-
-        // Debug: Print headers only when debug logging is enabled
-        if log::log_enabled!(log::Level::Debug) {
-            debug!("Netlink Header (16 bytes): {:02x?}", &raw_buffer[0..16]);
-            let nl_type = u16::from_le_bytes([raw_buffer[4], raw_buffer[5]]);
-            let nl_flags = u16::from_le_bytes([raw_buffer[6], raw_buffer[7]]);
-            let nl_seq =
-                u32::from_le_bytes([raw_buffer[8], raw_buffer[9], raw_buffer[10], raw_buffer[11]]);
-            let nl_pid = u32::from_le_bytes([
-                raw_buffer[12],
-                raw_buffer[13],
-                raw_buffer[14],
-                raw_buffer[15],
-            ]);
-            debug!(
-                "  nl_len={}, nl_type={}, nl_flags=0x{:04x}, nl_seq={}, nl_pid={}",
-                nl_len, nl_type, nl_flags, nl_seq, nl_pid
-            );
-
-            debug!(
-                "Generic Netlink Header (4 bytes): {:02x?}",
-                &raw_buffer[16..20]
-            );
-            let genl_cmd = raw_buffer[16];
-            let genl_version = raw_buffer[17];
-            let genl_reserved = u16::from_le_bytes([raw_buffer[18], raw_buffer[19]]);
-            debug!(
-                "  genl_cmd={}, genl_version={}, genl_reserved=0x{:04x}",
-                genl_cmd, genl_version, genl_reserved
-            );
-        }
-
-        // Extract payload after both headers
-        let payload_start = TOTAL_HEADER_SIZE;
-        let payload_end = nl_len;
-
-        if payload_start >= payload_end {
-            // No payload data, return empty payload
-            Ok(Arc::new(Vec::new()))
-        } else {
-            // Return payload data without headers
-            let payload = raw_buffer[payload_start..payload_end].to_vec();
-            Ok(Arc::new(payload))
         }
     }
 
@@ -707,20 +783,39 @@ impl DataNetlinkActor {
                 Ok(data_ready) => {
                     // Only try to receive data if we have a socket and data is ready
                     if actor.socket.is_some() && data_ready {
-                        match Self::try_recv(actor.socket.as_mut()).await {
-                            Ok(buffer) => {
+                        match Self::try_recv(actor.socket.as_mut(), &mut actor.message_parser).await {
+                            Ok(messages) => {
                                 consecutive_failures = 0; // Reset failure counter on successful receive
                                 actor.last_data_time = Some(Instant::now()); // Update data reception timestamp
-                                debug!(
-                                    "Successfully received and extracted payload with {} bytes",
-                                    buffer.len()
-                                );
-                                // Send buffer to all recipients
-                                for recipient in &actor.buffer_recipients {
-                                    if let Err(e) = recipient.send(buffer.clone()).await {
-                                        warn!("Failed to send buffer to recipient: {:?}", e);
-                                        // Consider removing failed recipients here if needed
+                                
+                                if messages.is_empty() {
+                                    debug!("Received data but no complete messages yet (partial message)");
+                                } else {
+                                    debug!("Successfully parsed {} complete netlink messages", messages.len());
+                                    
+                                    // Send each complete netlink message individually to all recipients
+                                    // This ensures each IPFIX message (contained in one netlink message) 
+                                    // is sent as a separate operation to the downstream actors
+                                    for (i, message) in messages.iter().enumerate() {
+                                        debug!("Processing netlink message {}/{}: {} bytes", 
+                                               i + 1, messages.len(), message.len());
+                                        
+                                        // Send this single netlink message to all recipients
+                                        for (j, recipient) in actor.buffer_recipients.iter().enumerate() {
+                                            debug!("Sending netlink message {}/{} to recipient {}", 
+                                                   i + 1, messages.len(), j + 1);
+                                            if let Err(e) = recipient.send(message.clone()).await {
+                                                warn!("Failed to send netlink message {}/{} to recipient {}: {:?}", 
+                                                      i + 1, messages.len(), j + 1, e);
+                                                // Consider removing failed recipients here if needed
+                                            } else {
+                                                debug!("Successfully sent netlink message {}/{} ({} bytes) to recipient {}", 
+                                                       i + 1, messages.len(), message.len(), j + 1);
+                                            }
+                                        }
                                     }
+                                    
+                                    debug!("Completed processing {} netlink messages, each sent individually", messages.len());
                                 }
                             }
                             Err(e) => {
@@ -789,18 +884,29 @@ pub mod test {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::{spawn, sync::mpsc::channel};
 
-    // Test constants for simulating different message scenarios
-    const PARTIALLY_VALID_MESSAGES: [&[u8]; 4] = [
-        &create_mock_netlink_message(b"PARTIALLY_VALID1"),
-        &create_mock_netlink_message(b"PARTIALLY_VALID2"),
-        &[], // Empty slice simulates reconnection scenario
-        &create_mock_netlink_message(b"PARTIALLY_VALID3"),
-    ];
+    // Helper function to create a properly sized message vector
+    fn create_test_message(payload: &[u8]) -> Vec<u8> {
+        let msg = create_mock_netlink_message(payload);
+        let actual_len = 20 + payload.len(); // 16 (nlmsg) + 4 (genl) + payload
+        msg[..actual_len].to_vec()
+    }
 
-    const VALID_MESSAGES: [&[u8]; 2] = [
-        &create_mock_netlink_message(b"VALID1"),
-        &create_mock_netlink_message(b"VALID2"),
-    ];
+    // Test constants for simulating different message scenarios  
+    fn get_partially_valid_messages() -> Vec<Vec<u8>> {
+        vec![
+            create_test_message(b"PARTIALLY_VALID1"),
+            create_test_message(b"PARTIALLY_VALID2"),
+            vec![], // Empty vec simulates reconnection scenario
+            create_test_message(b"PARTIALLY_VALID3"),
+        ]
+    }
+
+    fn get_valid_messages() -> Vec<Vec<u8>> {
+        vec![
+            create_test_message(b"VALID1"),
+            create_test_message(b"VALID2"),
+        ]
+    }
 
     /// Creates a mock netlink message with proper headers for testing.
     ///
@@ -872,21 +978,20 @@ pub mod test {
             let count = SOCKET_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
 
             if count == 1 {
+                let messages = get_partially_valid_messages();
                 MockSocket {
                     valid: true,
-                    budget: PARTIALLY_VALID_MESSAGES.len(),
-                    messages: PARTIALLY_VALID_MESSAGES
-                        .iter()
-                        .map(|&msg| msg.to_vec())
-                        .collect(),
+                    budget: messages.len(),
+                    messages,
                     fd: 100 + count as RawFd, // Mock file descriptor
                 }
             } else {
                 // All subsequent sockets are valid for simpler testing
+                let messages = get_valid_messages();
                 MockSocket {
                     valid: true, // Always valid for simplicity
-                    budget: VALID_MESSAGES.len(),
-                    messages: VALID_MESSAGES.iter().map(|&msg| msg.to_vec()).collect(),
+                    budget: messages.len(),
+                    messages,
                     fd: 100 + count as RawFd, // Mock file descriptor
                 }
             }
@@ -1012,12 +1117,16 @@ pub mod test {
     fn test_payload_extraction() {
         // Test with valid message containing payload
         let mock_msg = create_mock_netlink_message(b"TEST_PAYLOAD");
-        let buffer = Arc::new(mock_msg.to_vec());
-
-        let result = DataNetlinkActor::extract_payload(buffer);
+        let actual_len = 20 + b"TEST_PAYLOAD".len(); // 16 (nlmsg) + 4 (genl) + payload
+        let mut parser = NetlinkMessageParser::new();
+        
+        let result = parser.parse_buffer(&mock_msg[..actual_len]);
         assert!(result.is_ok());
 
-        let payload = result.unwrap();
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 1);
+        
+        let payload = &messages[0];
         let payload_str = String::from_utf8(payload.to_vec()).unwrap();
         assert_eq!(payload_str, "TEST_PAYLOAD");
     }
@@ -1027,26 +1136,120 @@ pub mod test {
     fn test_payload_extraction_empty_payload() {
         // Create message with headers but no payload
         let mock_msg = create_mock_netlink_message(b"");
-        let buffer = Arc::new(mock_msg[..20].to_vec()); // Only headers
+        let actual_len = 20; // Only headers: 16 (nlmsg) + 4 (genl)
+        let mut parser = NetlinkMessageParser::new();
 
-        let result = DataNetlinkActor::extract_payload(buffer);
+        let result = parser.parse_buffer(&mock_msg[..actual_len]);
         assert!(result.is_ok());
 
-        let payload = result.unwrap();
-        assert!(payload.is_empty());
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_empty());
     }
 
     /// Tests payload extraction with invalid message (too small).
     #[test]
     fn test_payload_extraction_invalid_message() {
         // Buffer too small to contain headers
-        let buffer = Arc::new(vec![0u8; 10]);
+        let buffer = vec![0u8; 10];
+        let mut parser = NetlinkMessageParser::new();
 
-        let result = DataNetlinkActor::extract_payload(buffer);
-        assert!(result.is_err());
+        let result = parser.parse_buffer(&buffer);
+        assert!(result.is_ok());
+        
+        // Should have no complete messages due to insufficient data
+        let messages = result.unwrap();
+        assert!(messages.is_empty());
+    }
 
-        let error = result.unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    /// Tests handling multiple messages in one buffer.
+    #[test]
+    fn test_multiple_messages_in_buffer() {
+        let mut combined_buffer = Vec::new();
+        
+        // Create two messages
+        let msg1 = create_mock_netlink_message(b"MESSAGE1");
+        let msg1_len = 20 + b"MESSAGE1".len();
+        let msg2 = create_mock_netlink_message(b"MESSAGE2");
+        let msg2_len = 20 + b"MESSAGE2".len();
+        
+        // Combine them in one buffer (simulate receiving multiple messages in one recv)
+        combined_buffer.extend_from_slice(&msg1[..msg1_len]);
+        combined_buffer.extend_from_slice(&msg2[..msg2_len]);
+        
+        let mut parser = NetlinkMessageParser::new();
+        let result = parser.parse_buffer(&combined_buffer);
+        assert!(result.is_ok());
+        
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 2);
+        
+        let payload1_str = String::from_utf8(messages[0].to_vec()).unwrap();
+        let payload2_str = String::from_utf8(messages[1].to_vec()).unwrap();
+        assert_eq!(payload1_str, "MESSAGE1");
+        assert_eq!(payload2_str, "MESSAGE2");
+    }
+
+    /// Tests handling fragmented messages across multiple recv operations.
+    #[test]
+    fn test_fragmented_message() {
+        let msg = create_mock_netlink_message(b"FRAGMENTED_MESSAGE");
+        let msg_len = 20 + b"FRAGMENTED_MESSAGE".len();
+        let mut parser = NetlinkMessageParser::new();
+        
+        // Simulate first recv getting only part of the message
+        let first_part = &msg[..15]; // Less than header size
+        let result1 = parser.parse_buffer(first_part);
+        assert!(result1.is_ok());
+        let messages1 = result1.unwrap();
+        assert!(messages1.is_empty()); // No complete messages yet
+        
+        // Simulate second recv getting the rest
+        let second_part = &msg[15..msg_len];
+        let result2 = parser.parse_buffer(second_part);
+        assert!(result2.is_ok());
+        let messages2 = result2.unwrap();
+        assert_eq!(messages2.len(), 1);
+        
+        let payload_str = String::from_utf8(messages2[0].to_vec()).unwrap();
+        assert_eq!(payload_str, "FRAGMENTED_MESSAGE");
+    }
+
+    /// Tests handling mixed scenario: complete message + partial message.
+    #[test]
+    fn test_mixed_complete_and_partial() {
+        let mut combined_buffer = Vec::new();
+        
+        // First complete message
+        let msg1 = create_mock_netlink_message(b"COMPLETE");
+        let msg1_len = 20 + b"COMPLETE".len();
+        combined_buffer.extend_from_slice(&msg1[..msg1_len]);
+        
+        // Partial second message
+        let msg2 = create_mock_netlink_message(b"PARTIAL_MSG");
+        let msg2_len = 20 + b"PARTIAL_MSG".len();
+        combined_buffer.extend_from_slice(&msg2[..25]); // Only part of second message
+        
+        let mut parser = NetlinkMessageParser::new();
+        let result1 = parser.parse_buffer(&combined_buffer);
+        assert!(result1.is_ok());
+        
+        let messages1 = result1.unwrap();
+        assert_eq!(messages1.len(), 1); // Only first complete message
+        
+        let payload1_str = String::from_utf8(messages1[0].to_vec()).unwrap();
+        assert_eq!(payload1_str, "COMPLETE");
+        
+        // Send remaining part of second message
+        let remaining_part = &msg2[25..msg2_len];
+        let result2 = parser.parse_buffer(remaining_part);
+        assert!(result2.is_ok());
+        
+        let messages2 = result2.unwrap();
+        assert_eq!(messages2.len(), 1); // Second message now complete
+        
+        let payload2_str = String::from_utf8(messages2[0].to_vec()).unwrap();
+        assert_eq!(payload2_str, "PARTIAL_MSG");
     }
 
     /// Tests the get_genl_family_group function with a valid constants file.
