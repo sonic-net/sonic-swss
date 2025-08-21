@@ -176,7 +176,6 @@ namespace portmgr_ut
     // nothing in mockCallArgs because empty means skip
     ASSERT_TRUE(mockCallArgs.empty());
 
-    // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
     state_port_table.set("Ethernet0", { {"state", "ok"} });
     cfg_port_table.set("Ethernet0", {
         {"dhcp_rate_limit", "100"}
@@ -184,6 +183,13 @@ namespace portmgr_ut
     mockCallArgs.clear();
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
+
+    // Debug print: show actual command(s) captured
+    for (size_t i = 0; i < mockCallArgs.size(); i++)
+    {
+        std::cerr << "mockCallArgs[" << i << "] = " << mockCallArgs[i] << std::endl;
+    }
+
     ASSERT_FALSE(mockCallArgs.empty());
     ASSERT_NE(mockCallArgs[0].find("tc qdisc add dev \"Ethernet0\""), string::npos);
 
