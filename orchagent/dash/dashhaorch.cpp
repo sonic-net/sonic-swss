@@ -443,7 +443,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
 
     sai_attribute_t disabled_attr = {};
     disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
-    disabled_attr.value.booldata = entry.disabled();
+    disabled_attr.value.booldata = !entry.disabled();
     ha_scope_attrs.push_back(disabled_attr);
 
     if (entry.has_vip_v4() && entry.vip_v4().has_ipv4())
@@ -657,7 +657,7 @@ bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
 
     sai_attribute_t ha_scope_attr;
     ha_scope_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
-    ha_scope_attr.value.booldata = disabled;
+    ha_scope_attr.value.booldata = !disabled;
 
     sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
                                                                 &ha_scope_attr);
@@ -748,7 +748,6 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         {
             dash::ha_scope::HaScope entry;
 
-            // Check if this is an update to existing entry
             auto existing_it = m_ha_scope_entries.find(key);
             if (existing_it != m_ha_scope_entries.end())
             {
