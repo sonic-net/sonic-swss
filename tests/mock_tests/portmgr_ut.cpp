@@ -283,7 +283,6 @@ namespace portmgr_ut
 
         // 5. Case: Force tc failure path (simulate exec failure)
         state_port_table.set("Ethernet0", { {"state", "ok"} });
-        mock_exec_return_code = -1;
         cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
         m_portMgr->addExistingData(&cfg_port_table);
         mockCallArgs.clear();
