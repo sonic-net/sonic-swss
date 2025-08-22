@@ -673,7 +673,7 @@ bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
     }
 
     m_ha_scope_entries[key].metadata.set_disabled(disabled);
-    SWSS_LOG_NOTICE("Set HA Scope admin state for %s to %d", key.c_str(), disabled);
+    SWSS_LOG_NOTICE("Set HA Scope admin state for %s to %d", key.c_str(), !disabled);
 
     return true;
 }
