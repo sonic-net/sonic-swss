@@ -288,7 +288,6 @@ namespace portmgr_ut
         mockCallArgs.clear();
         m_portMgr->doTask();
         ASSERT_FALSE(mockCallArgs.empty()); // attempted tc call
-        mock_exec_return_code = 0;
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
