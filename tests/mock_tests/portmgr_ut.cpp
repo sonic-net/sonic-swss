@@ -229,52 +229,57 @@ namespace portmgr_ut
     TEST_F(PortMgrTest, DhcpRateLimitErrorPaths)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // 1. Case: Empty dhcp_rate_limit -> should skip (DEBUG branch)
-        mockCallArgs.clear();
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", ""} });
-        auto consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
-        m_portMgr->doTask(*consumer);
-        EXPECT_TRUE(mockCallArgs.empty());  // nothing should be executed
+        // Create a ConsumerTable on CONFIG_DB:PORT
+        ConsumerTable cfg_consumer(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // 2. Case: Port state = ok and dhcp_rate_limit = 100 -> should configure tc (success path)
+        // Wrap into Consumer
+        Consumer consumer(&cfg_consumer, m_portMgr.get(), CFG_PORT_TABLE_NAME);
+
+        // 1. Empty dhcp_rate_limit -> should skip
+        KeyOpFieldsValuesTuple t1;
+        kfvKey(t1) = "Ethernet0";
+        kfvOp(t1)  = SET_COMMAND;
+        kfvFieldsValues(t1).push_back({"dhcp_rate_limit", ""});
+
+        std::deque<KeyOpFieldsValuesTuple> entries1 = {t1};
         mockCallArgs.clear();
-        state_port_table.set("Ethernet0", { {"state", "ok"} });
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
-        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
-        m_portMgr->doTask(*consumer);
+        m_portMgr->doTask(consumer, entries1);
+        EXPECT_TRUE(mockCallArgs.empty());
+
+        // 2. Valid state + dhcp_rate_limit = 100 -> expect tc add
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
+        KeyOpFieldsValuesTuple t2;
+        kfvKey(t2) = "Ethernet0";
+        kfvOp(t2)  = SET_COMMAND;
+        kfvFieldsValues(t2).push_back({"dhcp_rate_limit", "100"});
+
+        std::deque<KeyOpFieldsValuesTuple> entries2 = {t2};
+        mockCallArgs.clear();
+        m_portMgr->doTask(consumer, entries2);
         ASSERT_FALSE(mockCallArgs.empty());
         EXPECT_NE(mockCallArgs[0].find("tc qdisc"), std::string::npos);
 
-        // 3a. Case: Port missing in state_db -> should skip (graceful no-op)
-        mockCallArgs.clear();
+        // 3. Port missing in STATE_DB -> no action
         state_port_table.del("Ethernet0");
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
-        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
-        m_portMgr->doTask(*consumer);
+        mockCallArgs.clear();
+        m_portMgr->doTask(consumer, entries2);
         EXPECT_TRUE(mockCallArgs.empty());
 
-        // 3b. Case: Port present but not ready (state != ok) -> should trigger WARN branch
+        // 4. Port present but state != ok -> skip
+        state_port_table.set("Ethernet0", {{"state", "down"}});
         mockCallArgs.clear();
-        state_port_table.set("Ethernet0", { {"state", "down"} });  // not ok
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
-        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
-        m_portMgr->doTask(*consumer);
-        EXPECT_TRUE(mockCallArgs.empty());  // WARN path, no tc call
+        m_portMgr->doTask(consumer, entries2);
+        EXPECT_TRUE(mockCallArgs.empty());
 
-        // 4. Case: Error path simulation (force tc failure -> ERROR branch)
-        mockCallArgs.clear();
-        state_port_table.set("Ethernet0", { {"state", "ok"} });
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
-
-        // Simulate tc failure in mock_exec
+        // 5. Force tc failure path
+        state_port_table.set("Ethernet0", {{"state", "ok"}});
         mock_exec_return_code = -1;
-        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
-        m_portMgr->doTask(*consumer);
+        mockCallArgs.clear();
+        m_portMgr->doTask(consumer, entries2);
         ASSERT_FALSE(mockCallArgs.empty()); // attempted tc call
-        // restore mock_exec
         mock_exec_return_code = 0;
+
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
