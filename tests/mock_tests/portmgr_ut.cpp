@@ -223,8 +223,35 @@ namespace portmgr_ut
     mockCallArgs.clear();
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
-    // No strict ASSERT on mockCallArgs since exec is mocked,
-    // but code path is exercised
+
+    }
+
+    TEST_F(PortMgrTest, DhcpRateLimitErrorPaths)
+    {
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+
+    mockCallArgs.clear();
+    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "");
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(mockCallArgs.empty());
+    
+    mockCallArgs.clear();
+    state_port_table.set("Ethernet0", { {"state", "ok"} });
+
+    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100");
+    EXPECT_TRUE(ok);
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_NE(mockCallArgs[0].find("tc qdisc"), std::string::npos);
+
+    mockCallArgs.clear();
+    state_port_table.del("Ethernet0");
+    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100");
+    EXPECT_FALSE(ok);
+
+    mockCallArgs.clear();
+    state_port_table.set("Ethernet0", { {"state", "ok"} });
+    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100");
+    EXPECT_FALSE(ok);
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
