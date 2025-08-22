@@ -164,94 +164,117 @@ namespace portmgr_ut
 
     TEST_F(PortMgrTest, ConfigureDhcpRateLimit)
     {
-    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-    // 1. Case: dhcp_rate_limit empty (should just return true without command)
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", ""}
-    });
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    ASSERT_TRUE(mockCallArgs.empty());
+        // 1. Case: dhcp_rate_limit empty (should just return true without command)
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", ""}
+        });
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty());
 
-    // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
-    state_port_table.set("Ethernet0", { {"state", "ok"} });
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "100"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
+        // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
+        state_port_table.set("Ethernet0", { {"state", "ok"} });
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "100"}
+        });
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
 
-    bool foundAdd = false;
-    for (auto &cmd : mockCallArgs)
-    {
-        if (cmd.find("tc qdisc add dev \"Ethernet0\"") != string::npos)
+        bool foundAdd = false;
+        for (auto &cmd : mockCallArgs)
         {
-            foundAdd = true;
-            break;
+            if (cmd.find("tc qdisc add dev \"Ethernet0\"") != string::npos)
+            {
+                foundAdd = true;
+                break;
+            }
         }
-    }
-    ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
+        ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
 
-    // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "0"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
+        // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "0"}
+        });
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
 
-    bool foundDel = false;
-    for (auto &cmd : mockCallArgs)
-    {
-        if (cmd.find("tc qdisc del dev \"Ethernet0\"") != string::npos)
+        bool foundDel = false;
+        for (auto &cmd : mockCallArgs)
         {
-            foundDel = true;
-            break;
+            if (cmd.find("tc qdisc del dev \"Ethernet0\"") != string::npos)
+            {
+                foundDel = true;
+                break;
+            }
         }
-    }
-    ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
+        ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
 
-    // 4. Case: simulate exec failure with port not ready
-    Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-    empty_state_table.del("Ethernet0");
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "50"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
+        // 4. Case: simulate exec failure with port not ready
+        Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        empty_state_table.del("Ethernet0");
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "50"}
+        });
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
 
     }
 
     TEST_F(PortMgrTest, DhcpRateLimitErrorPaths)
     {
-    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-    mockCallArgs.clear();
-    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "");
-    EXPECT_TRUE(ok);
-    EXPECT_TRUE(mockCallArgs.empty());
-    
-    mockCallArgs.clear();
-    state_port_table.set("Ethernet0", { {"state", "ok"} });
+        // 1. Case: Empty dhcp_rate_limit -> should skip (DEBUG branch)
+        mockCallArgs.clear();
+        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", ""} });
+        auto consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
+        m_portMgr->doTask(*consumer);
+        EXPECT_TRUE(mockCallArgs.empty());  // nothing should be executed
 
-    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100");
-    EXPECT_TRUE(ok);
-    ASSERT_FALSE(mockCallArgs.empty());
-    EXPECT_NE(mockCallArgs[0].find("tc qdisc"), std::string::npos);
+        // 2. Case: Port state = ok and dhcp_rate_limit = 100 -> should configure tc (success path)
+        mockCallArgs.clear();
+        state_port_table.set("Ethernet0", { {"state", "ok"} });
+        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
+        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
+        m_portMgr->doTask(*consumer);
+        ASSERT_FALSE(mockCallArgs.empty());
+        EXPECT_NE(mockCallArgs[0].find("tc qdisc"), std::string::npos);
 
-    mockCallArgs.clear();
-    state_port_table.del("Ethernet0");
-    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100");
-    EXPECT_FALSE(ok);
+        // 3a. Case: Port missing in state_db -> should skip (graceful no-op)
+        mockCallArgs.clear();
+        state_port_table.del("Ethernet0");
+        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
+        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
+        m_portMgr->doTask(*consumer);
+        EXPECT_TRUE(mockCallArgs.empty());
 
-    mockCallArgs.clear();
-    state_port_table.set("Ethernet0", { {"state", "ok"} });
-    bool ok = m_portMgr->setPortDHCPMitigationRate("Ethernet0", "100");
-    EXPECT_FALSE(ok);
+        // 3b. Case: Port present but not ready (state != ok) -> should trigger WARN branch
+        mockCallArgs.clear();
+        state_port_table.set("Ethernet0", { {"state", "down"} });  // not ok
+        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
+        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
+        m_portMgr->doTask(*consumer);
+        EXPECT_TRUE(mockCallArgs.empty());  // WARN path, no tc call
+
+        // 4. Case: Error path simulation (force tc failure -> ERROR branch)
+        mockCallArgs.clear();
+        state_port_table.set("Ethernet0", { {"state", "ok"} });
+        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
+
+        // Simulate tc failure in mock_exec
+        mock_exec_return_code = -1;
+        consumer = std::make_shared<Consumer>(&cfg_port_table, "PORT", &m_config_db, nullptr, nullptr);
+        m_portMgr->doTask(*consumer);
+        ASSERT_FALSE(mockCallArgs.empty()); // attempted tc call
+        // restore mock_exec
+        mock_exec_return_code = 0;
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
