@@ -78,19 +78,8 @@ impl IpfixActor {
                         result.push_str(&format!("    Parsed Template Details:\n"));
                         result.push_str(&parsed_templates);
                     } else {
-                        // Fallback to raw bytes if parsing fails
-                        result.push_str(&format!(
-                            "    Raw template data ({} bytes): ",
-                            template_data.len()
-                        ));
-                        for (i, byte) in template_data.iter().enumerate() {
-                            if i > 0 && i % 16 == 0 {
-                                result.push('\n');
-                                result.push_str("      ");
-                            }
-                            result.push_str(&format!("{:02x} ", byte));
-                        }
-                        result.push('\n');
+                        // Fallback to sets parsing if detailed parsing fails
+                        result.push_str(&Self::format_ipfix_sets_for_debug(template_data));
                     }
 
                     read_size += len;
@@ -110,6 +99,126 @@ impl IpfixActor {
             "  Total templates processed: {}\n",
             template_count
         ));
+        result
+    }
+
+    /// Formats IPFIX sets within a message for debug logging.
+    /// Parses and displays set headers (set ID, length) and basic content information.
+    ///
+    /// # Arguments
+    ///
+    /// * `message_data` - Raw IPFIX message bytes including header
+    ///
+    /// # Returns
+    ///
+    /// Formatted string representation of the sets within the message
+    fn format_ipfix_sets_for_debug(message_data: &[u8]) -> String {
+        let mut result = String::new();
+        
+        // Skip IPFIX message header (16 bytes) to get to sets
+        if message_data.len() < 16 {
+            result.push_str("    Error: Message too short for IPFIX header\n");
+            return result;
+        }
+        
+        let mut offset = 16; // Start after IPFIX header
+        let mut set_count = 0;
+        
+        result.push_str("    Sets within message:\n");
+        
+        while offset + 4 <= message_data.len() {
+            // Each set starts with 4-byte header: set_id (2 bytes) + length (2 bytes)
+            let set_id = NetworkEndian::read_u16(&message_data[offset..offset + 2]);
+            let set_length = NetworkEndian::read_u16(&message_data[offset + 2..offset + 4]);
+            
+            set_count += 1;
+            
+            // Validate set length
+            if set_length < 4 {
+                result.push_str(&format!(
+                    "      Set {}: INVALID (set_id={}, length={} < 4)\n",
+                    set_count, set_id, set_length
+                ));
+                break;
+            }
+            
+            if offset + set_length as usize > message_data.len() {
+                result.push_str(&format!(
+                    "      Set {}: TRUNCATED (set_id={}, length={}, exceeds message boundary)\n",
+                    set_count, set_id, set_length
+                ));
+                break;
+            }
+            
+            // Determine set type based on set_id
+            let set_type = if set_id == 2 {
+                "Template Set"
+            } else if set_id == 3 {
+                "Options Template Set"
+            } else if set_id >= 256 {
+                "Data Set"
+            } else {
+                "Reserved/Unknown"
+            };
+            
+            result.push_str(&format!(
+                "      Set {} (offset: {}, set_id: {}, length: {} bytes, type: {})\n",
+                set_count, offset, set_id, set_length, set_type
+            ));
+            
+            // For data sets, show complete structure info
+            if set_id >= 256 && set_length > 4 {
+                let data_length = set_length as usize - 4; // Exclude 4-byte set header
+                let data_start = offset + 4;
+                result.push_str(&format!(
+                    "        Data payload: {} bytes",
+                    data_length
+                ));
+                
+                // Show complete data payload
+                if data_length > 0 {
+                    let data_bytes = &message_data[data_start..data_start + data_length];
+                    let hex_data = data_bytes
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    
+                    // Format with line breaks for better readability if data is long
+                    if data_length <= 32 {
+                        // Short data on single line
+                        result.push_str(&format!(" [{}]\n", hex_data));
+                    } else {
+                        // Long data with line breaks every 16 bytes
+                        result.push_str(":\n");
+                        for (i, chunk) in data_bytes.chunks(16).enumerate() {
+                            let chunk_hex = chunk
+                                .iter()
+                                .map(|b| format!("{:02x}", b))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            result.push_str(&format!(
+                                "          {:04x}: {}\n",
+                                i * 16,
+                                chunk_hex
+                            ));
+                        }
+                    }
+                } else {
+                    result.push_str("\n");
+                }
+            }
+            
+            // Move to next set
+            offset += set_length as usize;
+        }
+        
+        if set_count == 0 {
+            result.push_str("      No valid sets found\n");
+        } else {
+            result.push_str(&format!("      Total sets: {}\n", set_count));
+        }
+        
         result
     }
 
@@ -163,19 +272,8 @@ impl IpfixActor {
                         result.push_str(&format!("    Parsed Data Records:\n"));
                         result.push_str(&parsed_message);
                     } else {
-                        // Fallback to raw bytes if parsing fails
-                        result.push_str(&format!(
-                            "    Raw record data ({} bytes): ",
-                            message_data.len()
-                        ));
-                        for (i, byte) in message_data.iter().enumerate() {
-                            if i > 0 && i % 16 == 0 {
-                                result.push('\n');
-                                result.push_str("      ");
-                            }
-                            result.push_str(&format!("{:02x} ", byte));
-                        }
-                        result.push('\n');
+                        // Fallback to sets parsing if detailed parsing fails
+                        result.push_str(&Self::format_ipfix_sets_for_debug(message_data));
                     }
 
                     read_size += len;
@@ -650,6 +748,7 @@ impl IpfixActor {
                     continue;
                 }
             };
+
             data_message.sets.iter().for_each(|set| {
                 if let ipfixrw::parser::Records::Data { set_id, data: _ } = set.records {
                     self.update_applied_template(set_id);
@@ -657,6 +756,7 @@ impl IpfixActor {
             });
             let datarecords: Vec<&DataRecord> = data_message.iter_data_records().collect();
             let mut observation_time: Option<u64>;
+
             for record in datarecords {
                 observation_time = get_observation_time(record);
                 if observation_time.is_none() {
