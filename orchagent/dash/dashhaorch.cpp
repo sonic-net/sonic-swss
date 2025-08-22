@@ -748,6 +748,13 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         {
             dash::ha_scope::HaScope entry;
 
+            // Check if this is an update to existing entry
+            auto existing_it = m_ha_scope_entries.find(key);
+            if (existing_it != m_ha_scope_entries.end())
+            {
+                // Start with existing entry to preserve unmodified fields
+                entry.CopyFrom(existing_it->second.metadata);
+            }
 
             /*
             * For HA internal tables, kfv format was used instead of serialized pb objects in the end.
