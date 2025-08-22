@@ -45,7 +45,7 @@ static void sig_handler(int signo)
 bool isFipsPostStateReady(DBConnector *stateDb)
 {
     std::string state = getMacsecPostState(stateDb);
-    if (state == "pass" && state == "not-supported")
+    if (state == "pass" || state == "disabled")
     {
         SWSS_LOG_NOTICE("FIPS POST ready: state %s", state.c_str());
         return true;
