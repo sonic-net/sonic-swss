@@ -180,9 +180,9 @@ struct CachedObjects
         auto counter_ids = FlexCounterManager::serializeCounterStats(pending_counter_stats);
         auto counter_type_it = FlexCounterManager::counter_id_field_lookup.find(pending_counter_type);
 
-        // Temporary fix for SNMP PFC counter issue: disable bulk requests for PORT counters
+        // Temporary fix for SNMP PFC counter issue: disable bulk init requests for PORT counters
         // This forces each port to be processed individually, avoiding capability mismatches
-        // between SFP ports and regular ports in bulk requests
+        // for differnt ports in bulk requests
         if (pending_counter_type == CounterType::PORT)
         {
             for (const auto& oid: pending_sai_objects)
