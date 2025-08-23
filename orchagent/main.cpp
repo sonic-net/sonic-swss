@@ -809,7 +809,8 @@ int main(int argc, char **argv)
             }
             else
             {
-                SWSS_LOG_ERROR("MACSec POST is not supported by SAI");
+                setMacsecPostState(&state_db, "fail");
+                SWSS_LOG_ERROR("MACSec POST is not supported by SAI. POST failed");
             }
         }
 
