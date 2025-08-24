@@ -180,6 +180,7 @@ struct CachedObjects
         auto counter_ids = FlexCounterManager::serializeCounterStats(pending_counter_stats);
         auto counter_type_it = FlexCounterManager::counter_id_field_lookup.find(pending_counter_type);
 
+        // dummy comment
         auto counter_keys = group_name + ":";
         for (const auto& oid: pending_sai_objects)
         {
