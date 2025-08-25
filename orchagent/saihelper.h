@@ -5,6 +5,7 @@
 #include <string>
 #include "orch.h"
 #include "producertable.h"
+#include "events.h"
 
 #define IS_ATTR_ID_IN_RANGE(attrId, objectType, attrPrefix) \
     ((attrId) >= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _START && (attrId) <= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _END)
@@ -20,7 +21,7 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
 task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 bool parseHandleSaiStatusFailure(task_process_status status);
-void handleSaiFailure(bool abort_on_failure);
+void handleSaiFailure(sai_api_t api, std::string oper, sai_status_t status);
 
 void setFlexCounterGroupParameter(const std::string &group,
                                   const std::string &poll_interval,
@@ -56,3 +57,6 @@ void stopFlexCounterPolling(sai_object_id_t switch_oid,
                             const std::string &key);
 
 std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t);
+void writeResultToDB(const std::unique_ptr<swss::Table>&, const std::string& key,
+                     uint32_t res, const std::string& version="");
+void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const std::string& key);

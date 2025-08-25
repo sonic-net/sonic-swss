@@ -38,7 +38,10 @@ enum class CounterType
     TUNNEL,
     HOSTIF_TRAP,
     ROUTE,
-    ENI
+    ENI,
+    DASH_METER,
+    SRV6,
+    SWITCH,
 };
 
 extern bool gTraditionalFlexCounter;
@@ -187,8 +190,11 @@ struct CachedObjects
         counter_keys.pop_back();
 
         startFlexCounterPolling(pending_switch_id, counter_keys, counter_ids, counter_type_it->second);
-
+        
+        /* Clear the cached stats and objects after flush */
         pending_sai_objects.clear();
+        pending_counter_stats.clear();
+        pending_switch_id = SAI_NULL_OBJECT_ID;
     }
 
     void cache(sai_object_id_t object_id)
@@ -242,8 +248,12 @@ class FlexCounterCachedManager : public FlexCounterManager
             }
             else
             {
+                // Either counter_type, counter_ids or switch_id has changed in the new entry 
+                // Flush the old entries and save the new one 
+                // TODO: Improve the logic to read all the entries and group them before flushing 
+                //       to reduce number of sairedis calls
                 flush(group_name, cached_objects);
-                cached_objects.cache(object_id);
+                cached_objects.try_cache(object_id, counter_type, counter_stats, effective_switch_id);
             }
         }
 

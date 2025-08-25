@@ -444,7 +444,7 @@ void PortsOrch::initializeQueues(Port &port)
 {
 }
 
-bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id)
+bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp)
 {
     return true;
 }
@@ -707,5 +707,9 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> 
 }
 
 void PortsOrch::doTask(swss::SelectableTimer &timer)
+{
+}
+
+void PortsOrch::onWarmBootEnd()
 {
 }

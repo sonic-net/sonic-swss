@@ -7,6 +7,7 @@ extern "C" {
 #include "switchorch.h"
 
 extern SwitchOrch *gSwitchOrch;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
 #ifdef ASAN_ENABLED
 #include <sanitizer/lsan_interface.h>
@@ -18,10 +19,25 @@ void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
     // which causes concurrency access to the DB
 }
 
+/*
+ * Don't perform DB operations within this event handler, because it runs by
+ * libsairedis in a separate thread which causes concurrency issues.
+ * For platforms which use zmq between orchagent and syncd, it is an acceptable
+ * workaround to forward the notifications from the callback handler to the
+ * redis notifications channel processed by portsorch.
+ */
 void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *data)
 {
-    // don't use this event handler, because it runs by libsairedis in a separate thread
-    // which causes concurrency access to the DB
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer port_state_change(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_port_oper_status_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward port_state_change notification to be handled in portsorch doTask()
+        port_state_change.send("port_state_change", sdata, values);
+    }
 }
 
 void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notification_t *data)
@@ -34,6 +50,34 @@ void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification
 {
     // don't use this event handler, because it runs by libsairedis in a separate thread
     // which causes concurrency access to the DB
+}
+
+void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer ha_set_event(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_ha_set_event_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward ha_set_event notification to be handled in dashhaorch doTask()
+        ha_set_event.send(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT, sdata, values);
+    }
+}
+
+void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer ha_scope_event(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_ha_scope_event_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward ha_scope_event notification to be handled in dashhaorch doTask()
+        ha_scope_event.send(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT, sdata, values);
+    }
 }
 
 void on_switch_shutdown_request(sai_object_id_t switch_id)
@@ -82,4 +126,8 @@ void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                             category,
                                             data,
                                             description);
+}
+
+void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id)
+{
 }

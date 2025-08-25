@@ -16,6 +16,9 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
+#include "zmqorch.h"
+#include "zmqserver.h"
+#include <unordered_map>
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
@@ -37,6 +40,15 @@ struct NhgBase;
 
 struct NextHopGroupEntry
 {
+    NextHopGroupEntry() :
+        next_hop_group_id(SAI_NULL_OBJECT_ID),
+        ref_count(0),
+        nh_member_install_count(0),
+        eligible_for_default_route_nh_swap(false),
+        is_default_route_nh_swap(false)
+    {
+    }
+
     sai_object_id_t         next_hop_group_id;      // next hop group id
     int                     ref_count;              // reference count
     NextHopGroupMembers     nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
@@ -95,7 +107,7 @@ struct RouteKey
 };
 
 /* NextHopGroupTable: NextHopGroupKey, NextHopGroupEntry */
-typedef std::map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
+typedef std::unordered_map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, NextHopGroupKey */
 typedef std::map<IpPrefix, RouteNhg> RouteTable;
 /* RouteTables: vrf_id, RouteTable */
@@ -197,10 +209,10 @@ struct LabelRouteBulkContext
     }
 };
 
-class RouteOrch : public Orch, public Subject
+class RouteOrch : public ZmqOrch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer = nullptr);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -296,8 +308,8 @@ private:
 
     void updateDefRouteState(string ip, bool add=false);
 
-    void doTask(Consumer& consumer);
-    void doLabelTask(Consumer& consumer);
+    void doTask(ConsumerBase& consumer);
+    void doLabelTask(ConsumerBase& consumer);
 
     const NhgBase &getNhg(const std::string& nhg_index);
 

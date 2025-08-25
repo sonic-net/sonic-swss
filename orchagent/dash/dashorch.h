@@ -28,6 +28,9 @@
 #define ENI_STAT_COUNTER_FLEX_COUNTER_GROUP "ENI_STAT_COUNTER"
 #define ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
+#define DASH_RESULT_SUCCESS 0
+#define DASH_RESULT_FAILURE 1
+
 struct EniEntry
 {
     sai_object_id_t eni_id;
@@ -49,11 +52,15 @@ typedef std::map<std::string, dash::eni_route::EniRoute> EniRouteTable;
 class DashOrch : public ZmqOrch
 {
 public:
-    DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);
+    DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
     const EniEntry *getEni(const std::string &eni) const;
+    const EniTable *getEniTable() const { return &eni_entries_; };
     bool getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type);
     void handleFCStatusUpdate(bool is_enabled);
+    dash::types::IpAddress getApplianceVip();
     bool hasApplianceEntry();
+    void clearMeterFCStats();
+    void refreshMeterFCStats(bool);
 
 private:
     ApplianceTable appliance_entries_;
@@ -61,6 +68,11 @@ private:
     EniTable eni_entries_;
     QosTable qos_entries_;
     EniRouteTable eni_route_entries_;
+    std::unique_ptr<swss::Table> dash_eni_result_table_;
+    std::unique_ptr<swss::Table> dash_qos_result_table_;
+    std::unique_ptr<swss::Table> dash_appliance_result_table_;
+    std::unique_ptr<swss::Table> dash_eni_route_result_table_;
+    std::unique_ptr<swss::Table> dash_routing_type_result_table_;
     void doTask(ConsumerBase &consumer);
     void doTaskApplianceTable(ConsumerBase &consumer);
     void doTaskRoutingTypeTable(ConsumerBase &consumer);
@@ -69,14 +81,18 @@ private:
     void doTaskEniRouteTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
+    void addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool removeApplianceEntry(const std::string& appliance_id);
+    void removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry);
     bool removeRoutingTypeEntry(const dash::route_type::RoutingType &routing_type);
     bool addEniObject(const std::string& eni, EniEntry& entry);
     bool addEniAddrMapEntry(const std::string& eni, const EniEntry& entry);
+    void addEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool addEni(const std::string& eni, EniEntry &entry);
     bool removeEniObject(const std::string& eni);
     bool removeEniAddrMapEntry(const std::string& eni);
+    void removeEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool removeEni(const std::string& eni);
     bool setEniAdminState(const std::string& eni, const EniEntry& entry);
     bool addQosEntry(const std::string& qos_name, const dash::qos::Qos &entry);
@@ -96,6 +112,8 @@ private:
     swss::SelectableTimer* m_fc_update_timer = nullptr;
 
     void doTask(swss::SelectableTimer&);
+    void addEniMapEntry(sai_object_id_t oid, const std::string& name);
+    void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
     void addEniToFC(sai_object_id_t oid, const std::string& name);
     void removeEniFromFC(sai_object_id_t oid, const std::string& name);
     void refreshEniFCStats(bool);

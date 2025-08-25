@@ -83,6 +83,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_IP_PROTOCOL, SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
     { MATCH_INNER_SRC_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_MAC },
     { MATCH_INNER_DST_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_MAC },
+    { MATCH_INNER_SRC_IP,      SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP},
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
     { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
@@ -108,6 +109,12 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+};
+
+static acl_rule_attr_lookup_t aclInnerActionLookup = 
+{
+    { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC},
 };
 
 static acl_rule_attr_lookup_t aclMirrorStageLookup =
@@ -807,9 +814,14 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto dtelAction = aclDTelActionLookup.find(action);
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
+        auto innerAction = aclInnerActionLookup.find(action);
         if (l3Action != aclL3ActionLookup.end())
         {
             saiActionAttr = l3Action->second;
+        }
+        else if (innerAction != aclInnerActionLookup.end())
+        {
+            saiActionAttr = innerAction->second;
         }
         else if (mirrorAction != aclMirrorStageLookup.end())
         {
@@ -1060,7 +1072,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             matchData.data.u8 = to_uint<uint8_t>(attr_value);
             matchData.mask.u8 = 0xFF;
         }
-        else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+        else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
         {
             IpPrefix ip(attr_value);
 
@@ -1769,6 +1781,10 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRulePacket>(acl, rule, table);
         }
+        else if (aclInnerActionLookup.find(action) != aclInnerActionLookup.cend())
+        {
+            return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
+        }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
             return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
@@ -2001,6 +2017,12 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
             actionData.parameter.booldata = true;
             action_str = ACTION_DO_NOT_NAT_ACTION;
         }
+        // handle PACKET_ACTION_DISABLE_TRIM in ACTION_PACKET_ACTION
+        else if (attr_value == PACKET_ACTION_DISABLE_TRIM)
+        {
+            actionData.parameter.booldata = true;
+            action_str = ACTION_DISABLE_TRIM;
+        }
         else
         {
             return false;
@@ -2132,6 +2154,70 @@ void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
+
+AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string rule, string table, bool createCounter) :
+         AclRule(aclOrch, rule, table, createCounter)
+ {
+ }
+
+ bool AclRuleInnerSrcMacRewrite::validateAddAction(string attr_name, string _attr_value)
+ {
+    SWSS_LOG_ENTER();
+
+    sai_acl_action_data_t actionData;
+
+    auto action_str = attr_name;
+
+    if (attr_name == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
+    {
+        if (!_attr_value.empty())
+        {
+            MacAddress inner_src_mac_addr;
+            try
+            {
+                inner_src_mac_addr = MacAddress(_attr_value);
+            }
+            catch (invalid_argument &e)
+            {
+                SWSS_LOG_ERROR("Invalid Mac Address %s", _attr_value.c_str());
+                return false;
+            }
+
+            memcpy(actionData.parameter.mac, inner_src_mac_addr.getMac(), sizeof(sai_mac_t));
+            action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
+            SWSS_LOG_INFO("Converting the Mac address %s to SAI acl action parameter", _attr_value.c_str());
+        }   
+         
+        else
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+
+    actionData.enable = true;
+    return setAction(aclInnerActionLookup[action_str], actionData);
+ }
+
+ bool AclRuleInnerSrcMacRewrite::validate()
+ {
+    SWSS_LOG_ENTER();
+
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1 )
+    {
+        return false;
+    }
+
+    return true;
+ }
+
+ void AclRuleInnerSrcMacRewrite::onUpdate(SubjectType type, void *cntx)
+ {
+    //do nothing  
+ }
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
         AclRule(aclOrch, rule, table),
@@ -3954,7 +4040,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     {
         metadataActionLookup = aclMetadataDscpActionLookup;
     }
-    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup})
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclInnerActionLookup})
     {
         for (const auto& it: action_map)
         {
@@ -5476,7 +5562,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     bHasTCPFlag = true;
                 }
-                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
                 {
                     bHasIPV4 = true;
                 }

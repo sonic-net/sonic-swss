@@ -21,6 +21,8 @@
 #include "port/porthlpr.h"
 #include "port/portschema.h"
 
+#include "high_frequency_telemetry/counternameupdater.h"
+
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
 #define MAX_MACSEC_SECTAG_SIZE 32
@@ -257,7 +259,8 @@ public:
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
 
 private:
-    unique_ptr<Table> m_counterTable;
+    unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
+    // unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
@@ -369,6 +372,7 @@ private:
     bool m_cmisModuleAsicSyncSupported = false;
 
     void doTask() override;
+    void onWarmBootEnd() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doSendToIngressPortTask(Consumer &consumer);
@@ -379,6 +383,7 @@ private:
     void doTransceiverPresenceCheck(Consumer &consumer);
 
     void doTask(NotificationConsumer &consumer);
+    void handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry);
     void doTask(swss::SelectableTimer &timer);
 
     void removePortFromLanesMap(string alias);
@@ -393,7 +398,7 @@ private:
     void initializeSchedulerGroups(Port &port);
     void initializeVoqs(Port &port);
 
-    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
+    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
@@ -415,6 +420,8 @@ private:
 
     void initPortCapAutoNeg(Port &port);
     void initPortCapLinkTraining(Port &port);
+
+    void postPortInit(Port &p);
 
     bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
@@ -482,6 +489,7 @@ private:
 
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
+    task_process_status setPortUnreliableLOS(Port &port, bool enabled);
     task_process_status setPortInterfaceType(Port &port, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types);
     task_process_status setPortLinkTraining(const Port& port, bool state);
@@ -589,5 +597,6 @@ private:
 
     // Port OA helper
     PortHelper m_portHlpr;
+    bool m_isWarmRestoreStage = false;
 };
 #endif /* SWSS_PORTSORCH_H */
