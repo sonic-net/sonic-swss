@@ -290,7 +290,7 @@ namespace portmgr_ut
         ASSERT_FALSE(mockCallArgs.empty()); // attempted tc call
     }
 
-]   TEST_F(PortMgrTest, DhcpRateLimitEmptyReturnTrue)
+   TEST_F(PortMgrTest, DhcpRateLimitEmptyReturnTrue)
     {
         Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
