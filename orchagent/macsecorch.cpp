@@ -767,7 +767,7 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
     {
         sai_object_id_t switch_id;
         sai_switch_macsec_post_status_t switch_macsec_post_status;
-        sai_deserialize_switch_macsec_post_status(data, switch_id, switch_macsec_post_status);
+        sai_deserialize_switch_macsec_post_status_ntf(data, switch_id, switch_macsec_post_status);
 
         string post_state = getMacsecPostState();
         if (post_state == "switch-level-post-in-progress")
@@ -792,7 +792,7 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
     {
         sai_object_id_t macsec_id;
         sai_macsec_post_status_t macsec_post_status;
-        sai_deserialize_macsec_post_status(data, macsec_id, macsec_post_status);
+        sai_deserialize_macsec_post_status_ntf(data, macsec_id, macsec_post_status);
 
         string post_state = getMacsecPostState();
         if (post_state == "macsec-level-post-in-progress")
