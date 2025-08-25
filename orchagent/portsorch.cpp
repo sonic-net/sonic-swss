@@ -1,3 +1,7 @@
+#include <cstdlib>
+#include <cstring>
+#include <algorithm>
+
 #include "portsorch.h"
 #include "intfsorch.h"
 #include "bufferorch.h"
@@ -300,7 +304,9 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15,
     SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
-    SAI_PORT_STAT_TRIM_PACKETS
+    SAI_PORT_STAT_TRIM_PACKETS,
+    SAI_PORT_STAT_DROPPED_TRIM_PACKETS,
+    SAI_PORT_STAT_TX_TRIM_PACKETS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -337,7 +343,9 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_BYTES,
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
-    SAI_QUEUE_STAT_TRIM_PACKETS
+    SAI_QUEUE_STAT_TRIM_PACKETS,
+    SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS,
+    SAI_QUEUE_STAT_TX_TRIM_PACKETS
 };
 static const vector<sai_queue_stat_t> voq_stat_ids =
 {
@@ -583,6 +591,56 @@ bool PortsOrch::checkPathTracingCapability()
     return m_isPathTracingSupported;
 }
 
+static bool isPortStatSupported(sai_port_stat_t stat)
+{
+    static std::vector<sai_stat_capability_t> statList;
+
+    if (statList.empty())
+    {
+        sai_stat_capability_list_t capList = { .count = 0, .list = nullptr };
+
+        auto status = sai_query_stats_capability(gSwitchId, SAI_OBJECT_TYPE_PORT, &capList);
+        if ((status != SAI_STATUS_SUCCESS) && (status != SAI_STATUS_BUFFER_OVERFLOW))
+        {
+            return false;
+        }
+
+        statList.resize(capList.count);
+        capList.list = statList.data();
+
+        status = sai_query_stats_capability(gSwitchId, SAI_OBJECT_TYPE_PORT, &capList);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            return false;
+        }
+    }
+
+    return std::any_of(
+        statList.cbegin(),
+        statList.cend(),
+        [stat](const sai_stat_capability_t &cap) {
+            return static_cast<sai_port_stat_t>(cap.stat_enum) == stat;
+        }
+    );
+}
+
+static bool isMlnxPlatform()
+{
+    const auto *platform = std::getenv("platform");
+    if (platform == nullptr)
+    {
+        return false;
+    }
+
+    const auto *result = std::strstr(platform, MLNX_PLATFORM_SUBSTRING);
+    if (result == nullptr)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 // Port OA ------------------------------------------------------------------------------------------------------------
 
 /*
@@ -670,10 +728,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha;
+    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
+    string nvdaPortTrimPluginName = "nvda_port_trim_drop.lua";
 
     try
     {
@@ -685,10 +744,24 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
         portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
+
+        string nvdaPortTrimLuaScript = swss::loadLuaScript(nvdaPortTrimPluginName);
+        nvdaPortTrimSha = swss::loadRedisScript(m_counter_db.get(), nvdaPortTrimLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
+    }
+
+    std::string portStatPlugins = portRateSha;
+
+    // Nvidia custom trim stat calculation
+    if (isMlnxPlatform() && \
+        isPortStatSupported(SAI_PORT_STAT_TRIM_PACKETS) && \
+        isPortStatSupported(SAI_PORT_STAT_TX_TRIM_PACKETS) && \
+        !isPortStatSupported(SAI_PORT_STAT_DROPPED_TRIM_PACKETS))
+    {
+        portStatPlugins += "," + nvdaPortTrimSha;
     }
 
     setFlexCounterGroupParameter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
@@ -707,7 +780,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                                  PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
                                  STATS_MODE_READ,
                                  PORT_PLUGIN_FIELD,
-                                 portRateSha);
+                                 portStatPlugins);
 
     setFlexCounterGroupParameter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
