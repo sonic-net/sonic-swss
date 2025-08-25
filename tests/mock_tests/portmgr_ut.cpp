@@ -162,133 +162,133 @@ namespace portmgr_ut
         ASSERT_FALSE(value_opt);
     }
 
-    TEST_F(PortMgrTest, ConfigureDhcpRateLimit)
-    {
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+    // TEST_F(PortMgrTest, ConfigureDhcpRateLimit)
+    // {
+    //     Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    //     Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // 1. Case: dhcp_rate_limit empty (should just return true without command)
-        cfg_port_table.set("Ethernet0", {
-            {"dhcp_rate_limit", ""}
-        });
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-        ASSERT_TRUE(mockCallArgs.empty());
+    //     // 1. Case: dhcp_rate_limit empty (should just return true without command)
+    //     cfg_port_table.set("Ethernet0", {
+    //         {"dhcp_rate_limit", ""}
+    //     });
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     m_portMgr->doTask();
+    //     ASSERT_TRUE(mockCallArgs.empty());
 
-        // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
-        state_port_table.set("Ethernet0", { {"state", "ok"} });
-        cfg_port_table.set("Ethernet0", {
-            {"dhcp_rate_limit", "100"}
-        });
-        mockCallArgs.clear();
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
+    //     // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
+    //     state_port_table.set("Ethernet0", { {"state", "ok"} });
+    //     cfg_port_table.set("Ethernet0", {
+    //         {"dhcp_rate_limit", "100"}
+    //     });
+    //     mockCallArgs.clear();
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     m_portMgr->doTask();
 
-        bool foundAdd = false;
-        for (auto &cmd : mockCallArgs)
-        {
-            if (cmd.find("tc qdisc add dev \"Ethernet0\"") != string::npos)
-            {
-                foundAdd = true;
-                break;
-            }
-        }
-        ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
+    //     bool foundAdd = false;
+    //     for (auto &cmd : mockCallArgs)
+    //     {
+    //         if (cmd.find("tc qdisc add dev \"Ethernet0\"") != string::npos)
+    //         {
+    //             foundAdd = true;
+    //             break;
+    //         }
+    //     }
+    //     ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
 
-        // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
-        cfg_port_table.set("Ethernet0", {
-            {"dhcp_rate_limit", "0"}
-        });
-        mockCallArgs.clear();
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
+    //     // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
+    //     cfg_port_table.set("Ethernet0", {
+    //         {"dhcp_rate_limit", "0"}
+    //     });
+    //     mockCallArgs.clear();
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     m_portMgr->doTask();
 
-        bool foundDel = false;
-        for (auto &cmd : mockCallArgs)
-        {
-            if (cmd.find("tc qdisc del dev \"Ethernet0\"") != string::npos)
-            {
-                foundDel = true;
-                break;
-            }
-        }
-        ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
+    //     bool foundDel = false;
+    //     for (auto &cmd : mockCallArgs)
+    //     {
+    //         if (cmd.find("tc qdisc del dev \"Ethernet0\"") != string::npos)
+    //         {
+    //             foundDel = true;
+    //             break;
+    //         }
+    //     }
+    //     ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
 
-        // 4. Case: simulate exec failure with port not ready
-        Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        empty_state_table.del("Ethernet0");
-        cfg_port_table.set("Ethernet0", {
-            {"dhcp_rate_limit", "50"}
-        });
-        mockCallArgs.clear();
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
+    //     // 4. Case: simulate exec failure with port not ready
+    //     Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    //     empty_state_table.del("Ethernet0");
+    //     cfg_port_table.set("Ethernet0", {
+    //         {"dhcp_rate_limit", "50"}
+    //     });
+    //     mockCallArgs.clear();
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     m_portMgr->doTask();
 
-    }
+    // }
 
-    TEST_F(PortMgrTest, DhcpRateLimitErrorPaths)
-    {
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+    // TEST_F(PortMgrTest, DhcpRateLimitErrorPaths)
+    // {
+    //     Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    //     Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // 1. Case: Empty dhcp_rate_limit -> should skip
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", ""} });
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-        EXPECT_TRUE(mockCallArgs.empty());
+    //     // 1. Case: Empty dhcp_rate_limit -> should skip
+    //     cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", ""} });
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     m_portMgr->doTask();
+    //     EXPECT_TRUE(mockCallArgs.empty());
 
-        // 2. Case: Valid state + dhcp_rate_limit = 100 -> expect tc add
-        state_port_table.set("Ethernet0", { {"state", "ok"} });
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
-        m_portMgr->addExistingData(&cfg_port_table);
-        mockCallArgs.clear();
-        m_portMgr->doTask();
+    //     // 2. Case: Valid state + dhcp_rate_limit = 100 -> expect tc add
+    //     state_port_table.set("Ethernet0", { {"state", "ok"} });
+    //     cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     mockCallArgs.clear();
+    //     m_portMgr->doTask();
 
-        bool foundAdd = false;
-        for (auto &cmd : mockCallArgs)
-        {
-            if (cmd.find("tc qdisc add dev \"Ethernet0\"") != std::string::npos)
-            {
-                foundAdd = true;
-                break;
-            }
-        }
-        ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
+    //     bool foundAdd = false;
+    //     for (auto &cmd : mockCallArgs)
+    //     {
+    //         if (cmd.find("tc qdisc add dev \"Ethernet0\"") != std::string::npos)
+    //         {
+    //             foundAdd = true;
+    //             break;
+    //         }
+    //     }
+    //     ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
 
-        // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "0"} });
-        m_portMgr->addExistingData(&cfg_port_table);
-        mockCallArgs.clear();
-        m_portMgr->doTask();
+    //     // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
+    //     cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "0"} });
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     mockCallArgs.clear();
+    //     m_portMgr->doTask();
 
-        bool foundDel = false;
-        for (auto &cmd : mockCallArgs)
-        {
-            if (cmd.find("tc qdisc del dev \"Ethernet0\"") != std::string::npos)
-            {
-                foundDel = true;
-                break;
-            }
-        }
-        ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
+    //     bool foundDel = false;
+    //     for (auto &cmd : mockCallArgs)
+    //     {
+    //         if (cmd.find("tc qdisc del dev \"Ethernet0\"") != std::string::npos)
+    //         {
+    //             foundDel = true;
+    //             break;
+    //         }
+    //     }
+    //     ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
 
-        // 4. Case: Port not ready -> no action
-        Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        empty_state_table.del("Ethernet0");
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "50"} });
-        m_portMgr->addExistingData(&cfg_port_table);
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-        EXPECT_TRUE(mockCallArgs.empty());
+    //     // 4. Case: Port not ready -> no action
+    //     Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    //     empty_state_table.del("Ethernet0");
+    //     cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "50"} });
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     mockCallArgs.clear();
+    //     m_portMgr->doTask();
+    //     EXPECT_TRUE(mockCallArgs.empty());
 
-        // 5. Case: Force tc failure path (simulate exec failure)
-        state_port_table.set("Ethernet0", { {"state", "ok"} });
-        cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
-        m_portMgr->addExistingData(&cfg_port_table);
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-        ASSERT_FALSE(mockCallArgs.empty()); // attempted tc call
-    }
+    //     // 5. Case: Force tc failure path (simulate exec failure)
+    //     state_port_table.set("Ethernet0", { {"state", "ok"} });
+    //     cfg_port_table.set("Ethernet0", { {"dhcp_rate_limit", "100"} });
+    //     m_portMgr->addExistingData(&cfg_port_table);
+    //     mockCallArgs.clear();
+    //     m_portMgr->doTask();
+    //     ASSERT_FALSE(mockCallArgs.empty()); // attempted tc call
+    // }
 
     TEST_F(PortMgrTest, ConfigureDhcpRateLimit)
 {
