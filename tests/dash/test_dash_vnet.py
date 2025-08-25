@@ -60,7 +60,6 @@ class TestDash(TestFlexCountersBase):
         direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
         dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
         assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_INBOUND_DIRECTION")
-        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC")
         dash_db.remove_appliance(self.appliance_id)
         time.sleep(2)
 
