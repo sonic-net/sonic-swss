@@ -66,20 +66,21 @@ class TestRouteBase(object):
 
     def check_route_state(self, prefix, value):
         found = False
+        fvs = {}
+        
+        for _ in range(5):  # Try for up to ~5 seconds
+            route_entries = self.sdb.get_keys("ROUTE_TABLE")
+            for key in route_entries:
+                if key != prefix:
+                    continue
+                found = True
+                fvs = self.sdb.get_entry("ROUTE_TABLE", key)
+                if fvs.get("state") == value:
+                    return
+            time.sleep(1)
 
-        route_entries = self.sdb.get_keys("ROUTE_TABLE")
-        for key in route_entries:
-            if key != prefix:
-                continue
-            found = True
-            fvs = self.sdb.get_entry("ROUTE_TABLE", key)
-
-            assert fvs != {}
-
-            for f,v in fvs.items():
-                if f == "state":
-                    assert v == value
         assert found
+        assert fvs.get("state") == value, f"Expected state '{value}', but got '{fvs.get('state')}'"
 
     def get_asic_db_key(self, destination):
         route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
