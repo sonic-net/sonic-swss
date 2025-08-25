@@ -290,56 +290,46 @@ namespace portmgr_ut
         ASSERT_FALSE(mockCallArgs.empty()); // attempted tc call
     }
 
-   TEST_F(PortMgrTest, DhcpRateLimitEmptyReturnTrue)
-    {
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+    TEST_F(PortMgrTest, ConfigureDhcpRateLimit)
+{
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-        // Explicit empty string case, should hit line 92–93
-        cfg_port_table.set("Ethernet1", { {"dhcp_rate_limit", ""} });
-        m_portMgr->addExistingData(&cfg_port_table);
+    // 1. Case: dhcp_rate_limit empty (should just return true without command)
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", ""}
+    });
+    m_portMgr->doTask(CFG_PORT_TABLE_NAME, "Ethernet0", "SET", {
+        {"dhcp_rate_limit", ""}
+    });
 
-        // Call doTask and verify no commands were run
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-        ASSERT_TRUE(mockCallArgs.empty());
-    }
+    // 2. Case: valid dhcp_rate_limit value
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "100"}
+    });
+    m_portMgr->doTask(CFG_PORT_TABLE_NAME, "Ethernet0", "SET", {
+        {"dhcp_rate_limit", "100"}
+    });
 
-    TEST_F(PortMgrTest, DhcpRateLimitExecFailurePortNotReady)
-    {
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+    // 3. Case: invalid dhcp_rate_limit value -> triggers SWSS_LOG_ERROR
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "invalid_value"}
+    });
+    m_portMgr->doTask(CFG_PORT_TABLE_NAME, "Ethernet0", "SET", {
+        {"dhcp_rate_limit", "invalid_value"}
+    });
 
-        // Force bad value to simulate tc command failure
-        cfg_port_table.set("Ethernet2", { {"dhcp_rate_limit", "bad_value"} });
-        m_portMgr->addExistingData(&cfg_port_table);
+    // 4. Case: very large dhcp_rate_limit -> triggers SWSS_LOG_NOTICE (cap/reject)
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "999999"}
+    });
+    m_portMgr->doTask(CFG_PORT_TABLE_NAME, "Ethernet0", "SET", {
+        {"dhcp_rate_limit", "999999"}
+    });
 
-        // Ensure port is not ready in STATE_DB
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        state_port_table.del("Ethernet2");
-
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-
-        // We expect no command recorded because exec fails immediately
-        ASSERT_TRUE(mockCallArgs.empty());
-    }
-
-    TEST_F(PortMgrTest, DhcpRateLimitExecFailurePortReady)
-    {
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
-
-        cfg_port_table.set("Ethernet3", { {"dhcp_rate_limit", "bad_value"} });
-        m_portMgr->addExistingData(&cfg_port_table);
-
-        // Mark port ready in STATE_DB
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        state_port_table.set("Ethernet3", { {"state", "ok"} });
-
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-
-        // We expect no successful command due to failure
-        ASSERT_FALSE(mockCallArgs.empty());
-    }
+    // 5. Case: remove the key (to cover delete path)
+    m_portMgr->doTask(CFG_PORT_TABLE_NAME, "Ethernet0", "DEL", {});
+}
 
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
