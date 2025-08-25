@@ -794,8 +794,7 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
         sai_macsec_post_status_t macsec_post_status;
         sai_deserialize_macsec_post_status_ntf(data, macsec_id, macsec_post_status);
 
-        string post_state = getMacsecPostState();
-        if (post_state == "macsec-level-post-in-progress")
+        if (m_enable_post)
         {
             // MACSec POST was enabled in MACSec object init. Since two MACSec objects were created
             // (one for each direction), two POST status must be returend from SAI. POST is considered
