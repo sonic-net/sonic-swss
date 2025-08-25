@@ -1,5 +1,4 @@
 from dvslib.dvs_common import wait_for_result, PollingConfig
-import pytest
 
 # State DB POST state
 STATE_DB_MACSEC_POST_TABLE = "FIPS_MACSEC_POST_TABLE"
