@@ -63,13 +63,25 @@ namespace mock_orch_test
         SetDashTable(APP_DASH_VNET_TABLE_NAME, vnet1, dash::vnet::Vnet(), false, expect_empty);
     }
 
-    void MockDashOrchTest::AddRoutingType(dash::route_type::EncapType encap_type)
+    void MockDashOrchTest::AddVnetEncapRoutingType(dash::route_type::EncapType encap_type)
     {
         dash::route_type::RouteType route_type = dash::route_type::RouteType();
         dash::route_type::RouteTypeItem *rt_item = route_type.add_items();
         rt_item->set_action_type(dash::route_type::ACTION_TYPE_STATICENCAP);
         rt_item->set_encap_type(encap_type);
         SetDashTable(APP_DASH_ROUTING_TYPE_TABLE_NAME, "VNET_ENCAP", route_type);
+    }
+
+    void MockDashOrchTest::AddPLRoutingType()
+    {
+        dash::route_type::RouteType route_type = dash::route_type::RouteType();
+        dash::route_type::RouteTypeItem *rt_item = route_type.add_items();
+        rt_item->set_action_type(dash::route_type::ACTION_TYPE_4_to_6);
+        rt_item = route_type.add_items();
+        rt_item->set_action_type(dash::route_type::ACTION_TYPE_STATICENCAP);
+        rt_item->set_encap_type(dash::route_type::ENCAP_TYPE_VXLAN);
+        rt_item->set_vni(100);
+        SetDashTable(APP_DASH_ROUTING_TYPE_TABLE_NAME, "PRIVATELINK", route_type);
     }
 
     void MockDashOrchTest::AddOutboundRoutingGroup()
@@ -118,6 +130,11 @@ namespace mock_orch_test
 
         vnet_map.set_port_map(portmap1);
         SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip2, vnet_map, true, expect_empty);
+    }
+
+    void MockDashOrchTest::RemoveVnetMapPL(bool expect_empty)
+    {
+        SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip2, dash::vnet_mapping::VnetMapping(), false, expect_empty);
     }
 
     void MockDashOrchTest::RemoveVnetMap()
