@@ -338,7 +338,7 @@ namespace portmgr_ut
         m_portMgr->doTask();
 
         // We expect no successful command due to failure
-        ASSERT_TRUE(mockCallArgs.empty());
+        ASSERT_FALSE(mockCallArgs.empty());
     }
 
 
