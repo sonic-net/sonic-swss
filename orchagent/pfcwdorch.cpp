@@ -15,6 +15,7 @@
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
+#define PFC_STAT_HISTORY                "pfc_stat_history"
 #define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
 #define PFC_WD_IN_STORM                 "storm"
 
@@ -187,6 +188,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
     uint32_t restorationTime = 0;
     // According to requirements, drop action is default
     PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP; 
+    string pfcStatHistory = "disable";
     Port port;
     if (!gPortsOrch->getPort(key, port))
     {
@@ -263,6 +265,9 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                     }
                 }
             }
+            else if(field == PFC_STAT_HISTORY){
+                pfcStatHistory = value;
+            }
             else
             {
                 SWSS_LOG_ERROR(
@@ -297,8 +302,13 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
         SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
         return task_process_status::task_invalid_entry;
     }
+    if (pfcStatHistory != "enable" && pfcStatHistory != "disable")
+    {
+        SWSS_LOG_ERROR("%s is invalid value for %s", pfcStatHistory.c_str(), PFC_STAT_HISTORY);
+        return task_process_status::task_invalid_entry;
+    }
 
-    if (!startWdOnPort(port, detectionTime, restorationTime, action))
+    if (!startWdOnPort(port, detectionTime, restorationTime, action, pfcStatHistory))
     {
         SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
         return task_process_status::task_need_retry;
@@ -516,7 +526,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
 
 template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
-        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
 {
     SWSS_LOG_ENTER();
 
@@ -564,6 +574,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
                 "" :
                 to_string(restorationTime * 1000));
         countersFieldValues.emplace_back("PFC_WD_ACTION", this->serializeAction(action));
+        countersFieldValues.emplace_back("PFC_STAT_HISTORY", pfcStatHistory);
 
         this->getCountersTable()->set(queueIdStr, countersFieldValues);
 
@@ -747,11 +758,11 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdQueueEntry::PfcWdQueueEntry(
 
 template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnPort(const Port& port,
-        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
 {
     SWSS_LOG_ENTER();
 
-    return registerInWdDb(port, detectionTime, restorationTime, action);
+    return registerInWdDb(port, detectionTime, restorationTime, action, pfcStatHistory);
 }
 
 template <typename DropHandler, typename ForwardHandler>
