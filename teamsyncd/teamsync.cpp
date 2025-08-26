@@ -12,6 +12,8 @@
 #include "warm_restart.h"
 #include "teamsync.h"
 
+#include <team.h>
+#include <teamdctl.h>
 #include <unistd.h>
 
 using namespace std;
@@ -279,18 +281,50 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
                                    "Unable to register port change event");
             }
 
+            struct teamdctl *m_teamdctl = teamdctl_alloc();
+            if (!m_team)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to allocate teamdctl socket");
+            }
+
+            err = teamdctl_connect(m_teamdctl, lagName.c_str(), nullptr, "usock");
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                teamdctl_free(m_teamdctl);
+                throw system_error(make_error_code(errc::connection_refused),
+                                   "Unable to connect to teamd");
+            }
+
+            char *response;
+            err = teamdctl_config_get_raw_direct(m_teamdctl, &response);
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                teamdctl_disconnect(m_teamdctl);
+                teamdctl_free(m_teamdctl);
+                throw system_error(make_error_code(errc::io_error),
+                                   "Unable to get config from teamd (to prove that it is running and alive)");
+            }
+
+            teamdctl_disconnect(m_teamdctl);
+            teamdctl_free(m_teamdctl);
+
             break;
         }
         catch (const system_error& e)
         {
+            SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
+                          lagName.c_str(), e.code().value(), e.what(), count);
+
             if (++count == max_retries)
             {
                 throw;
-            }
-            else
-            {
-                SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
-                              lagName.c_str(), e.code().value(), e.what(), count);
             }
 
             sleep(1);
