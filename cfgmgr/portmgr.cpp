@@ -230,7 +230,6 @@ void PortMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
-            bool dhcp_configured = false;
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -244,7 +243,6 @@ void PortMgr::doTask(Consumer &consumer)
                 else if (fvField(i) == "dhcp_rate_limit")
                 {
                     dhcp_rate_limit = fvValue(i);
-                    dhcp_configured = true;
                 }
                 else
                 {
