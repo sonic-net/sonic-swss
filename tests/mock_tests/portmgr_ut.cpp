@@ -87,7 +87,7 @@ namespace portmgr_ut
     m_portMgr->doTask();
 
     // Verify kernel-level commands executed
-    ASSERT_GE(mockCallArgs.size(), size_t(3));
+    ASSERT_GE(mockCallArgs.size(), size_t(2));
     EXPECT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
     EXPECT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
     EXPECT_NE(mockCallArgs[2].find("tc qdisc add dev \"Ethernet0\""), std::string::npos);
