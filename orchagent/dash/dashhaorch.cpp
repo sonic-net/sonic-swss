@@ -410,7 +410,17 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
 
     std::map<std::string, HaSetEntry>::iterator ha_set_it;
     if (!entry.ha_set_id().empty())
+    std::map<std::string, HaSetEntry>::iterator ha_set_it;
+    if (!entry.ha_set_id().empty())
     {
+        ha_set_it = m_ha_set_entries.find(entry.ha_set_id());
+    }
+    else
+    {
+        /* ha_set_id field in ha_scope_table was added as a revision of detailed HLD, adding backward compatibility for ha_set_id mapping. */
+        ha_set_it = m_ha_set_entries.find(key);
+    }
+
         ha_set_it = m_ha_set_entries.find(entry.ha_set_id());
     }
     else
@@ -465,9 +475,12 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     {
         SWSS_LOG_NOTICE("HA Scope entry %s does not have VIP V4, using HA Set metadata", key.c_str());
 
+        SWSS_LOG_NOTICE("HA Scope entry %s does not have VIP V4, using HA Set metadata", key.c_str());
+
         sai_ip_address_t sai_vip_v4 = {};
         if (to_sai(ha_set_it->second.metadata.vip_v4(), sai_vip_v4))
         {
+            sai_attribute_t vip_v4_attr = {};
             sai_attribute_t vip_v4_attr = {};
             vip_v4_attr.id = SAI_HA_SCOPE_ATTR_VIP_V4;
             vip_v4_attr.value.ipaddr = sai_vip_v4;
@@ -479,6 +492,22 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
         }
     }
 
+    if (entry.has_vip_v6() && entry.vip_v6().has_ipv6())
+    {
+        sai_ip_address_t sai_vip_v6 = {};
+        if(to_sai(entry.vip_v6(), sai_vip_v6))
+        {
+            sai_attribute_t vip_v6_attr = {};
+            vip_v6_attr.id = SAI_HA_SCOPE_ATTR_VIP_V6;
+            vip_v6_attr.value.ipaddr = sai_vip_v6;
+            ha_scope_attrs.push_back(vip_v6_attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to convert VIP V6 for HA Scope %s", key.c_str());
+        }
+    }
+    else if (ha_set_it->second.metadata.has_vip_v6() && !ha_set_it->second.metadata.vip_v6().ipv6().empty())
     if (entry.has_vip_v6() && entry.vip_v6().has_ipv6())
     {
         sai_ip_address_t sai_vip_v6 = {};

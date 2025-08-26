@@ -174,6 +174,42 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
+        void InvalidField()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"vip_v4", "10.0.0.1"},
+                                {"vip_v6", "3:2::1:0"},
+                                {"owner", "dpu"},
+                                {"scope", "dpu"},
+                                {"local_npu_ip", "192.168.1.10"},
+                                {"local_ip", "192.168.2.1"},
+                                {"peer_ip", "192.168.2.2"},
+                                {"cp_data_channel_port", "4789"},
+                                {"dp_channel_dst_port", "4790"},
+                                {"dp_channel_src_port_min", "5000"},
+                                {"dp_channel_src_port_max", "6000"},
+                                {"dp_channel_probe_interval_ms", "1000"},
+                                {"dp_channel_probe_fail_threshold", "3"},
+                                {"invalid_field", "invalid_value"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
         void CreateEniScopeHaSet()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
@@ -599,6 +635,16 @@ namespace dashhaorch_ut
         .Times(1);
         
         InvalidField();
+
+        InvalidIpAddresses();
+    }
+
+    TEST_F(DashHaOrchTest, InvalidField)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1);
+        
+        InvalidField();
     }
 
     TEST_F(DashHaOrchTest, HaSetAlreadyExists)
@@ -646,6 +692,35 @@ namespace dashhaorch_ut
 
         EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 0);
     }
+
+    TEST_F(DashHaOrchTest, AddRemoveHaScopeLessFields)
+    {
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(1);
+
+        CreateHaScopeLessFields();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 1);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1") != m_dashHaOrch->getHaScopeEntries().end());
+
+        // HA Scope already exists
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(0);
+        CreateHaScope();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 1);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1") != m_dashHaOrch->getHaScopeEntries().end());
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(1);
+
+        RemoveHaScope();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 0);
+    }
+
 
     TEST_F(DashHaOrchTest, AddRemoveHaScopeLessFields)
     {
