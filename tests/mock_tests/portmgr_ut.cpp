@@ -104,6 +104,11 @@ namespace portmgr_ut
     ASSERT_EQ("up", value_opt.get());
 
     value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+    auto values = cfg_port_table.get("Ethernet0");
+    for (auto &it : values) {
+        std::cout << it.first << " = " << it.second << std::endl;
+    }
+
     ASSERT_TRUE(value_opt);
     ASSERT_EQ("10", value_opt.get());
 
