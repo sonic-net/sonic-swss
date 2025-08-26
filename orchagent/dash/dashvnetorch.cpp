@@ -695,14 +695,6 @@ bool DashVnetOrch::removePaValidationPost(const string &key, const VnetMapBulkCo
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        // Retry later if object has non-zero reference to it
-        if (status == SAI_STATUS_OBJECT_IN_USE)
-        {
-            SWSS_LOG_INFO("PA validation entry for Vnet %s IP %s still in use",
-                          ctxt.vnet_name.c_str(), to_string(ctxt.metadata.underlay_ip()).c_str());
-            remove_from_consumer = false;
-        }
-
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
             SWSS_LOG_INFO("PA validation entry for Vnet %s IP %s already removed",
