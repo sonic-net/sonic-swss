@@ -73,7 +73,7 @@ namespace portmgr_ut
     ASSERT_EQ("1", value_opt.get());
 
     value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-    ASSERT_FALSE(value_opt);
+    ASSERT_TRUE(value_opt);
     ASSERT_EQ(DEFAULT_DHCP_RATE_LIMIT_STR, value_opt.get());
 
     // --- Case 2: Port ready, defaults configured (mtu, admin_status, dhcp_rate_limit) ---
