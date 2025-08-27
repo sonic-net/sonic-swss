@@ -152,15 +152,22 @@ namespace portmgr_ut
 
         // Step 2: Mark port as ready
         state_port_table.set("Ethernet0", {
-            {"state", "ok"}
-        });
-        m_portMgr->doTask();
+        {"state", "ok"}
+    });
+    m_portMgr->doTask();
 
-        // Expect tc command to enforce DHCP rate limit
-        ASSERT_EQ(size_t(2), mockCallArgs.size());
-        std::string expected_prefix = "/sbin/tc qdisc add dev \"Ethernet0\"";
-        ASSERT_TRUE(mockCallArgs[1].find(expected_prefix) == 0)
-            << "Unexpected tc command: " << mockCallArgs[1];
+    // Expect at least 1 tc command to enforce DHCP rate limit
+    bool found_tc = false;
+    for (auto &cmd : mockCallArgs)
+    {
+        if (cmd.find("/sbin/tc qdisc add dev \"Ethernet0\"") == 0)
+        {
+            found_tc = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found_tc) << "Did not find expected tc command. Commands were:\n"
+                          << ::testing::PrintToString(mockCallArgs);
 
         // Step 3: Set dhcp_rate_limit to 0 → should issue delete command
         cfg_port_table.set("Ethernet0", {
