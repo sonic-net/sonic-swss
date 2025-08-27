@@ -370,7 +370,7 @@ int main(int argc, char **argv)
     string zmq_server_address = "";
     string vrf;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
-    int record_type = 11; // Only swss, retrycache and sairedis recordings enabled by default.
+    int record_type = SAIREDIS_RECORD_ENABLE | SWSS_RECORD_ENABLE | RETRY_RECORD_ENABLE; // Only swss, retrycache and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
     while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:D:")) != -1)
