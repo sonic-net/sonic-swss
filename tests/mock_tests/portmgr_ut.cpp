@@ -124,64 +124,6 @@ namespace portmgr_ut
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
     }
 
-        TEST_F(PortMgrTest, ConfigurePortDHCPRateLimit)
-    {
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
-
-        // Step 1: Configure port with dhcp_rate_limit, but port not ready yet
-        cfg_port_table.set("Ethernet0", {
-            {"speed", "100000"},
-            {"index", "1"},
-            {"dhcp_rate_limit", "100"}
-        });
-
-        mockCallArgs.clear();
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-
-        // Should not invoke any system calls yet
-        ASSERT_TRUE(mockCallArgs.empty());
-
-        // APP_DB should NOT contain dhcp_rate_limit
-        std::vector<FieldValueTuple> values;
-        app_port_table.get("Ethernet0", values);
-        auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
-        ASSERT_FALSE(value_opt);
-
-        // Step 2: Mark port as ready
-        state_port_table.set("Ethernet0", {
-        {"state", "ok"}
-    });
-    m_portMgr->doTask();
-
-    // Expect at least 1 tc command to enforce DHCP rate limit
-    bool found_tc = false;
-    for (auto &cmd : mockCallArgs)
-    {
-        if (cmd.find("/sbin/tc qdisc add dev \"Ethernet0\"") == 0)
-        {
-            found_tc = true;
-            break;
-        }
-    }
-    ASSERT_TRUE(found_tc) << "Did not find expected tc command. Commands were:\n"
-                          << ::testing::PrintToString(mockCallArgs);
-
-        // Step 3: Set dhcp_rate_limit to 0 → should issue delete command
-        cfg_port_table.set("Ethernet0", {
-            {"dhcp_rate_limit", "0"}
-        });
-        m_portMgr->addExistingData(&cfg_port_table);
-        mockCallArgs.clear();
-        m_portMgr->doTask();
-
-        ASSERT_EQ(size_t(1), mockCallArgs.size());
-        ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[0]);
-    }
-
-
     TEST_F(PortMgrTest, ConfigurePortPTDefaultTimestampTemplate)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
@@ -259,4 +201,50 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("template2", value_opt.get());
     }
+
+    TEST_F(PortMgrTest, DoTaskWithDhcpRateLimit)
+    {
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    // Add port config with dhcp_rate_limit
+    cfg_port_table.set("Ethernet4", {
+        {"dhcp_rate_limit", "50"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+
+    // Port is not ready yet -> should not trigger system command
+    m_portMgr->doTask();
+    ASSERT_TRUE(mockCallArgs.empty());
+
+    // Verify APP DB does NOT contain dhcp_rate_limit field
+    std::vector<FieldValueTuple> values;
+    app_port_table.get("Ethernet4", values);
+    auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+    ASSERT_FALSE(value_opt);  // should not exist in APP DB
+
+    // Now mark port as ready
+    state_port_table.set("Ethernet4", { {"state", "ok"} });
+    m_portMgr->doTask();
+
+    // Verify that the correct tc command is generated
+    ASSERT_EQ(size_t(1), mockCallArgs.size());
+    ASSERT_TRUE(mockCallArgs[0].find("/sbin/tc qdisc add dev \"Ethernet4\"") != std::string::npos);
+    ASSERT_TRUE(mockCallArgs[0].find("police rate") != std::string::npos);
+
+    // Now test disabling dhcp_rate_limit (set to 0)
+    cfg_port_table.set("Ethernet4", {
+        {"dhcp_rate_limit", "0"}
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    mockCallArgs.clear();
+    m_portMgr->doTask();
+
+    // Verify the delete command
+    ASSERT_EQ(size_t(1), mockCallArgs.size());
+    ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet4\" handle ffff: ingress", mockCallArgs[0]);
+    }
+
 }
