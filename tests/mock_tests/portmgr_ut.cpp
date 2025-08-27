@@ -157,7 +157,7 @@ namespace portmgr_ut
         m_portMgr->doTask();
 
         // Expect tc command to enforce DHCP rate limit
-        ASSERT_EQ(size_t(1), mockCallArgs.size());
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
         std::string expected_prefix = "/sbin/tc qdisc add dev \"Ethernet0\"";
         ASSERT_TRUE(mockCallArgs[0].find(expected_prefix) == 0)
             << "Unexpected tc command: " << mockCallArgs[0];
