@@ -1627,9 +1627,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         //     nhg_str += ip.to_string() + ",";
         // }
         // NextHopGroupKey nhg = NextHopGroupKey(nhg_str);
-        // string key = "";
+        // string key = "ROUTE_TABLE:" + ipPrefix.to_string();
         // RouteBulkContext ctx = RouteBulkContext(key, (op == SET_COMMAND));
-        // gRouteOrch->addRoute()
+        // ctx.vrf_id = vr_id;
+        // ctx.ip_prefix = ipPrefix;
+        // ctx.nhg = nhg;
+        // gRouteOrch->addRoute(ctx, nhg);
+        // gRouteOrch->addRoutePost(ctx, nhg);
+        // gRouteOrch->removeNextHopGroup(nhg);
 
         string nhg_str = "";
         for (IpAddress ip : nh.ips.getIpAddresses())
