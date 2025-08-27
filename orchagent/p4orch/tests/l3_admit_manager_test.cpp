@@ -35,13 +35,18 @@ extern MockSaiMyMac *mock_sai_my_mac;
 
 namespace
 {
+// A physical port set up in test_main.cpp
 constexpr char *kPortName1 = "Ethernet1";
 constexpr sai_object_id_t kPortOid1 = 0x112233;
 constexpr uint32_t kMtu1 = 1500;
 
+// A physical port set up in test_main.cpp
 constexpr char *kPortName2 = "Ethernet2";
 constexpr sai_object_id_t kPortOid2 = 0x1fed3;
 constexpr uint32_t kMtu2 = 4500;
+
+// A lag port set up in test_main.cpp
+constexpr char* kPortName3 = "Ethernet7";
 
 constexpr char *kL3AdmitP4AppDbKey1 = R"({"match/dst_mac":"00:02:03:04:00:00&ff:ff:ff:ff:00:00","priority":2030})";
 constexpr sai_object_id_t kL3AdmitOid1 = 0x1;
@@ -302,6 +307,23 @@ TEST_F(L3AdmitManagerTest, ProcessAddRequestShouldFailWhenDependingPortIsNotPres
     EXPECT_EQ(GetL3AdmitEntry(l3admit_key), nullptr);
 }
 
+TEST_F(L3AdmitManagerTest,
+		ProcessAddRequestShouldFailWhenDependingPortTypeIsInvalid) {
+	const P4L3AdmitAppDbEntry kAppDbEntry{
+		/*port_name=*/kPortName3,
+		/*mac_address_data=*/swss::MacAddress("00:02:03:04:00:00"),
+		/*mac_address_mask=*/swss::MacAddress("ff:ff:ff:ff:00:00"),
+		/*priority=*/2030};
+	const auto l3admit_key = KeyGenerator::generateL3AdmitKey(
+			kAppDbEntry.mac_address_data, kAppDbEntry.mac_address_mask,
+			kAppDbEntry.port_name, kAppDbEntry.priority);
+
+	EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED,
+			ProcessAddRequest(kAppDbEntry, l3admit_key));
+
+	EXPECT_EQ(GetL3AdmitEntry(l3admit_key), nullptr);
+}
+
 TEST_F(L3AdmitManagerTest, ProcessAddRequestShouldFailWhenSaiCallFails)
 {
     const auto l3admit_key =
@@ -395,6 +417,28 @@ TEST_F(L3AdmitManagerTest, GetL3AdmitEntryShouldReturnNullPointerForNonexistingL
         KeyGenerator::generateL3AdmitKey(kP4L3AdmitAppDbEntry1.mac_address_data, kP4L3AdmitAppDbEntry1.mac_address_mask,
                                          kP4L3AdmitAppDbEntry1.port_name, kP4L3AdmitAppDbEntry1.priority);
     EXPECT_EQ(GetL3AdmitEntry(l3admit_key), nullptr);
+}
+
+TEST_F(L3AdmitManagerTest,
+	DeserializeP4L3AdmitAppDbEntryShouldReturnNullPointerForInvalidPort) {
+	// Invalid port NAME.
+	char* kInvalidAppDbKey =
+		R"({"match/dst_mac":"00:02:03:04:00:00","priority":2030,"match/in_port":"Ethernet70000"})";
+	std::vector<swss::FieldValueTuple> attributes = {
+		swss::FieldValueTuple(p4orch::kAction, p4orch::kL3AdmitAction)};
+
+	EXPECT_EQ(
+    	    DeserializeP4L3AdmitAppDbEntry(kInvalidAppDbKey, attributes).status(),
+	    StatusCode::SWSS_RC_NOT_FOUND);
+
+	// Unsupported port type.
+	kInvalidAppDbKey =
+		R"({"match/dst_mac":"00:02:03:04:00:00","priority":2030,"match/in_port":"Ethernet7"})";
+	attributes = {swss::FieldValueTuple(p4orch::kAction, p4orch::kL3AdmitAction)};
+
+	EXPECT_EQ(
+	    DeserializeP4L3AdmitAppDbEntry(kInvalidAppDbKey, attributes).status(),
+	    StatusCode::SWSS_RC_UNIMPLEMENTED);
 }
 
 TEST_F(L3AdmitManagerTest, DeserializeP4L3AdmitAppDbEntryShouldReturnNullPointerForInvalidAction)
