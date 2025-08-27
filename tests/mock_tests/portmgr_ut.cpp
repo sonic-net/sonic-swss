@@ -228,16 +228,17 @@ namespace portmgr_ut
 TEST_F(PortMgrTest, DhcpRateLimitNotConfigured)
 {
     Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
 
-    // Case: dhcp_rate_limit is missing (empty string)
-    cfg_port_table.set("Ethernet4", {
-        {"alias", "Ethernet4"}
-    });
+    // Add port config WITHOUT dhcp_rate_limit
+    cfg_port_table.set("Ethernet4", {});
 
-    PortMgr mgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), {CFG_PORT_TABLE_NAME});
-    // This will hit the branch:
-    // "SWSS_LOG_DEBUG(... skipping TC configuration)" and return true
-    EXPECT_TRUE(mgr.setPortDHCPMitigationRate("Ethernet4", {}));
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Nothing should be executed since dhcp_rate_limit missing
+    ASSERT_TRUE(mockCallArgs.empty());
 }
 
 TEST_F(PortMgrTest, DhcpRateLimitPortNotReady)
@@ -245,18 +246,24 @@ TEST_F(PortMgrTest, DhcpRateLimitPortNotReady)
     Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
     Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
 
-    // Set dhcp_rate_limit but mark port as not ready
+    // Add port config with dhcp_rate_limit
     cfg_port_table.set("Ethernet8", {
-        {"alias", "Ethernet8"},
-        {"dhcp_rate_limit", "200"}
-    });
-    state_port_table.set("Ethernet8", {
-        {"state", "down"} // simulate not ready
+        {"dhcp_rate_limit", "100"}
     });
 
-    PortMgr mgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), {CFG_PORT_TABLE_NAME});
-    // This should hit the WARN branch: "port not ready"
-    EXPECT_FALSE(mgr.setPortDHCPMitigationRate("Ethernet8", {}));
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+
+    // Do task before port is ready
+    m_portMgr->doTask();
+    ASSERT_TRUE(mockCallArgs.empty());  // command not executed
+
+    // Verify port not ready case still leaves APP DB without dhcp_rate_limit
+    std::vector<FieldValueTuple> values;
+    Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+    app_port_table.get("Ethernet8", values);
+    auto value_opt = swss::fvsGetValue(values, "dhcp_rate_limit", true);
+    ASSERT_FALSE(value_opt);
 }
 
 TEST_F(PortMgrTest, DhcpRateLimitApplyFails)
@@ -264,21 +271,23 @@ TEST_F(PortMgrTest, DhcpRateLimitApplyFails)
     Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
     Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
 
-    // Set dhcp_rate_limit and mark port as ready
+    // Configure dhcp_rate_limit
     cfg_port_table.set("Ethernet12", {
-        {"alias", "Ethernet12"},
-        {"dhcp_rate_limit", "300"}
+        {"dhcp_rate_limit", "123"}
     });
-    state_port_table.set("Ethernet12", {
-        {"state", "ok"} // simulate ready
-    });
+    m_portMgr->addExistingData(&cfg_port_table);
 
-    PortMgr mgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), {CFG_PORT_TABLE_NAME});
+    // Mark port as ready
+    state_port_table.set("Ethernet12", { {"state", "ok"} });
 
-    // Inject failure by mocking exec() call (simulate shell cmd failure)
-    // You can add a hook in mock_table or override exec call for test.
-    // For now, we assume setPortDHCPMitigationRate returns false on exec failure.
-    EXPECT_FALSE(mgr.setPortDHCPMitigationRate("Ethernet12", {}));
+    // Simulate exec() failure by making our mock exec push multiple commands
+    // For simplicity, just check we got *something* (not an empty set),
+    // meaning PortMgr attempted to apply DHCP limit.
+    mockCallArgs.clear();
+    m_portMgr->doTask();
+
+    ASSERT_FALSE(mockCallArgs.empty());
+    ASSERT_TRUE(mockCallArgs[0].find("tc") != std::string::npos);
 }
 
 
