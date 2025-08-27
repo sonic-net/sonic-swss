@@ -90,8 +90,17 @@ namespace portmgr_ut
     ASSERT_GE(mockCallArgs.size(), size_t(2));
     EXPECT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
     EXPECT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
-    EXPECT_NE(mockCallArgs[2].find("tc qdisc add dev \"Ethernet0\""), std::string::npos);
-    EXPECT_NE(mockCallArgs[2].find("police rate"), std::string::npos);
+    bool found = false;
+    for (auto &cmd : mockCallArgs)
+    {
+        if (cmd.find("tc qdisc add dev \"Ethernet0\"") != std::string::npos &&
+            cmd.find("police rate") != std::string::npos)
+        {
+            found = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found) << "Expected tc qdisc add with police rate not found in mockCallArgs";
 
     // Now override admin_status in config
     cfg_port_table.set("Ethernet0", {
