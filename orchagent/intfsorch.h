@@ -76,6 +76,7 @@ public:
 
 private:
 
+    bool m_singleVoq = false;
     SelectableTimer* m_updateMapsTimer = nullptr;
     std::vector<Port> m_rifsToAdd;
 
