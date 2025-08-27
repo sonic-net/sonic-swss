@@ -209,20 +209,20 @@ namespace portmgr_ut
 
     // ✅ Option A: Case when dhcp_rate_limit is completely missing
     cfg_port_table.set("Ethernet0", {});  // no "dhcp_rate_limit" field
-    m_port_mgr->doPortTask({{"Ethernet0", {}}});
+    m_portmgr->doPortTask({{"Ethernet0", {}}});
 
     // Existing cases below remain unchanged
     // 1. Case: dhcp_rate_limit empty (should just return true without command)
     cfg_port_table.set("Ethernet0", {
         {"dhcp_rate_limit", ""}
     });
-    m_port_mgr->doPortTask({{"Ethernet0", {{"dhcp_rate_limit", ""}}}});
+    m_portmgr->doPortTask({{"Ethernet0", {{"dhcp_rate_limit", ""}}}});
 
     // 2. Case: valid dhcp_rate_limit value
     cfg_port_table.set("Ethernet0", {
         {"dhcp_rate_limit", "100"}
     });
-    m_port_mgr->doPortTask({{"Ethernet0", {{"dhcp_rate_limit", "100"}}}});
+    m_portmgr->doPortTask({{"Ethernet0", {{"dhcp_rate_limit", "100"}}}});
 }
 // Extra tests for DHCP rate limit error handling
 TEST_F(PortMgrTest, DhcpRateLimitNotConfigured)
