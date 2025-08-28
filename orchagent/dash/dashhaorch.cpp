@@ -863,7 +863,7 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 fvs.push_back({"ha_role", sai_ha_role_name.at(ha_scope_event[i].ha_role)});
-                fvs.push_back({"ha_role_start_time ", to_string(role_start_time)});
+                fvs.push_back({"ha_role_start_time", to_string(role_start_time)});
 
                 switch (event_type)
                 {
