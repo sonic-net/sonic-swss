@@ -4,6 +4,7 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "portsorch.h"
+#include "debugcounterorch.h"
 #include "routeorch.h"
 #include "flowcounterrouteorch.h"
 #include "intfsorch.h"
@@ -53,6 +54,7 @@ extern sai_object_id_t gUnderlayIfId;
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+extern DebugCounterOrch *gDebugCounterOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
