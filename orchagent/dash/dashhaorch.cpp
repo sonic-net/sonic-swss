@@ -845,7 +845,8 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 std::vector<FieldValueTuple> fvs = {
-                    {"last_updated_time", to_string(now_time)}
+                    {"last_updated_time", to_string(now_time)},
+                    {"ha_term", to_string(ha_scope_event[i].flow_version)}
                 };
 
                 auto ha_role = to_pb(ha_scope_event[i].ha_role);
