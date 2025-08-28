@@ -162,6 +162,68 @@ namespace portmgr_ut
         ASSERT_FALSE(value_opt);
     }
 
+    TEST_F(PortMgrTest, DhcpRateLimitNotConfigured)
+    {
+    // Arrange
+    // No "dhcp_rate_limit" set -> should skip TC config
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", ""}
+    });
+
+    // Act
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Assert
+    ASSERT_TRUE(mockCallArgs.empty());  // No TC command should be executed
+    }
+
+    TEST_F(PortMgrTest, DhcpRateLimitConfigured)
+    {
+    // Arrange
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    state_port_table.set("Ethernet4", {{"state", "ok"}});
+    cfg_port_table.set("Ethernet4", {
+        {"dhcp_rate_limit", "100"} // packets/sec
+    });
+
+    // Act
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Assert
+    ASSERT_EQ(size_t(3), mockCallArgs.size());
+    std::string expected_prefix = "/sbin/tc qdisc add dev \"Ethernet4\" handle ffff: ingress";
+    ASSERT_TRUE(mockCallArgs[2].find(expected_prefix) == 0);
+    //ASSERT_TRUE(mockCallArgs[2].find("police rate") != std::string::npos); // 100*590 (PACKET_SIZE)
+    }
+
+    TEST_F(PortMgrTest, DhcpRateLimitDisabled)
+    {
+    // Arrange
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+    state_port_table.set("Ethernet8", {{"state", "ok"}});
+    cfg_port_table.set("Ethernet8", {
+        {"dhcp_rate_limit", "0"} // disable
+    });
+
+    // Act
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+
+    // Assert
+    ASSERT_EQ(size_t(3), mockCallArgs.size());
+    ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet8\" handle ffff: ingress", mockCallArgs[2]);
+    }
+
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
