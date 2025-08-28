@@ -1719,6 +1719,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         {
             FieldValueTuple wt("weight", weights);
             fvVector.push_back(wt);
+            SWSS_LOG_DEBUG("msgtype: %d, DestIP: %s, weights: %s", nlmsg_type, destipprefix, weights.c_str());
         }
     }
 
