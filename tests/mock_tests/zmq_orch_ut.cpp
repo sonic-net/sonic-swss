@@ -79,6 +79,7 @@ TEST(ZmqOrchTest, CreateZmqClient)
     auto zmq_client = swss::create_zmq_client(zmq_server_address);
 
     zmq_server->registerMessageHandler("test_db", "test_table", &zmq_handler);
+    zmq_server->bind();
     
     std::vector<KeyOpFieldsValuesTuple> value;
     zmq_client->sendMsg("test_db", "test_table", value);
