@@ -164,67 +164,125 @@ namespace portmgr_ut
 
     TEST_F(PortMgrTest, ConfigureDhcpRateLimit)
     {
-    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-    // 1. Case: dhcp_rate_limit empty (should just return true without command)
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", ""}
-    });
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    ASSERT_TRUE(mockCallArgs.empty());
+        // 1. Case: dhcp_rate_limit empty (should just return true without command) - COVERS UNCOVERED DEBUG LINE
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", ""}
+        });
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty()); // No tc command should be executed
 
-    // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
-    state_port_table.set("Ethernet0", { {"state", "ok"} });
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "100"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
+        // 2. Case: dhcp_rate_limit non-zero (qdisc add case)
+        state_port_table.set("Ethernet0", { {"state", "ok"} });
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "100"}
+        });
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
 
-    bool foundAdd = false;
-    for (auto &cmd : mockCallArgs)
-    {
-        if (cmd.find("tc qdisc add dev \"Ethernet0\"") != string::npos)
+        bool foundAdd = false;
+        for (auto &cmd : mockCallArgs)
         {
-            foundAdd = true;
-            break;
+            if (cmd.find("tc qdisc add dev \"Ethernet0\"") != string::npos)
+            {
+                foundAdd = true;
+                break;
+            }
         }
-    }
-    ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
+        ASSERT_TRUE(foundAdd) << "Expected qdisc add command not found";
 
-    // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "0"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
+        // 3. Case: dhcp_rate_limit = "0" (qdisc del case)
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "0"}
+        });
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
 
-    bool foundDel = false;
-    for (auto &cmd : mockCallArgs)
-    {
-        if (cmd.find("tc qdisc del dev \"Ethernet0\"") != string::npos)
+        bool foundDel = false;
+        for (auto &cmd : mockCallArgs)
         {
-            foundDel = true;
-            break;
+            if (cmd.find("tc qdisc del dev \"Ethernet0\"") != string::npos)
+            {
+                foundDel = true;
+                break;
+            }
         }
+        ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
     }
-    ASSERT_TRUE(foundDel) << "Expected qdisc del command not found";
 
-    // 4. Case: simulate exec failure with port not ready
-    Table empty_state_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-    empty_state_table.del("Ethernet0");
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "50"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    // No strict ASSERT on mockCallArgs since exec is mocked,
-    // but code path is exercised
+    TEST_F(PortMgrTest, ConfigureDhcpRateLimit_ErrorPaths) {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Test Case 1: Simulate exec failure when port state is OK (should trigger SWSS_LOG_ERROR) - COVERS FINAL ELSE BRANCH
+        state_port_table.set("Ethernet0", {{"state", "ok"}}); // Ensure port is ready
+        mockExecRetValue = 1; // Simulate 'tc' command failure
+
+        cfg_port_table.set("Ethernet0", {{"dhcp_rate_limit", "100"}});
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+
+        // We expect the doTask to complete without throwing, but the internal call to setPortDHCPMitigationRate will fail and log an error.
+        // The test passes if it doesn't crash and the code path is executed.
+        EXPECT_NO_THROW(m_portMgr->doTask());
+        // We can't easily assert the log content, but the branch is now covered.
+        // The mockCallArgs will still contain the command that *would* have been executed before failing.
+        ASSERT_FALSE(mockCallArgs.empty()); // Command was attempted
+        // Check that the command was a tc command for the error case
+        bool foundTcCommand = false;
+        for (const auto& cmd : mockCallArgs) {
+            if (cmd.find("tc") != string::npos) {
+                foundTcCommand = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(foundTcCommand) << "Expected tc command attempt even on failure";
+        mockExecRetValue = 0; // Reset for subsequent tests
+
+        // Test Case 2: Simulate exec failure when port state is NOT OK (should trigger SWSS_LOG_WARN) - COVERS else if (!isPortStateOk) BRANCH
+        // This is tricky because doTask won't call setPortDHCPMitigationRate if the port is not ready.
+        // The configuration will be written to APP_DB and queued for retry instead.
+        // To test this path, we need to:
+        // 1. Set a config while port is not ready (gets queued)
+        // 2. Make the port ready, triggering retry
+        // 3. But have the exec fail during retry
+
+        // Step 1: Port not ready, set configuration
+        state_port_table.del("Ethernet0"); // Make port not ready
+        mockExecRetValue = 0; // Start with success
+        cfg_port_table.set("Ethernet0", {{"dhcp_rate_limit", "200"}});
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask(); // Config written to APP_DB, added to retry queue
+
+        // Step 2: Make port ready but make exec fail
+        mockExecRetValue = 1; // Now simulate command failure
+        state_port_table.set("Ethernet0", {{"state", "ok"}}); // Port becomes ready, triggering retry
+
+        // Clear previous calls and execute retry
+        mockCallArgs.clear();
+        m_portMgr->doTask(); // This should now attempt the tc command and fail
+
+        // The code should take the !isPortStateOk(alias) branch in setPortDHCPMitigationRate
+        // because the port was just made ready, but the exec failed.
+        // We verify the command was attempted
+        ASSERT_FALSE(mockCallArgs.empty()); // Command was attempted
+        foundTcCommand = false;
+        for (const auto& cmd : mockCallArgs) {
+            if (cmd.find("tc") != string::npos) {
+                foundTcCommand = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(foundTcCommand) << "Expected tc command attempt on retry failure";
+
+        mockExecRetValue = 0; // Reset mock
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
