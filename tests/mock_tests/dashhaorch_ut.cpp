@@ -246,7 +246,8 @@ namespace dashhaorch_ut
                                 {"ha_role", "dead"},
                                 {"ha_set_id", "HA_SET_1"},
                                 {"vip_v4", "10.0.0.1"},
-                                {"vip_v6", "3:2::1:0"}
+                                {"vip_v6", "3:2::1:0"},
+                                {"disabled", "true"}
                             }
                         }
                     }
@@ -312,7 +313,8 @@ namespace dashhaorch_ut
                             SET_COMMAND,
                             {
                                 {"version", "1"},
-                                {"ha_role", role}
+                                {"ha_role", role},
+                                {"disabled", "false"}
                             }
                         }
                     }
@@ -718,11 +720,13 @@ namespace dashhaorch_ut
         CreateHaScope();
 
         EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
 
         SetHaScopeHaRole();
         HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
                     SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
         EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+        EXPECT_FALSE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
 
         SetHaScopeHaRole("");
         HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
@@ -791,8 +795,7 @@ namespace dashhaorch_ut
         EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
 
         EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
-        .Times(2)       // Set ha_role and activate_role_requested
-        .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        .Times(2);       // Set ha_role and activate_role_requested
 
         SetHaScopeActivateRoleRequest();
 
@@ -813,11 +816,14 @@ namespace dashhaorch_ut
         HaScopeEvent(SAI_HA_SCOPE_EVENT_FLOW_RECONCILE_NEEDED,
             SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
 
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
+
         EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
-        .Times(1)
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+        .Times(1);
 
         SetHaScopeFlowReconcileRequest();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
 
         RemoveHaScope();
         RemoveHaSet();

@@ -390,6 +390,12 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             repeated_message = false;
         }
 
+        if (ha_scope_it->second.metadata.disabled() != entry.disabled())
+        {
+            success = success && setHaScopeDisabled(key, entry.disabled());
+            repeated_message = false;
+        }
+
         if (repeated_message)
         {
             SWSS_LOG_WARN("HA Scope entry already exists for %s", key.c_str());
@@ -434,6 +440,11 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     ha_role_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
     ha_role_attr.value.u16 = to_sai(entry.ha_role());
     ha_scope_attrs.push_back(ha_role_attr);
+
+    sai_attribute_t disabled_attr = {};
+    disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    disabled_attr.value.booldata = !entry.disabled();
+    ha_scope_attrs.push_back(disabled_attr);
 
     if (entry.has_vip_v4() && entry.vip_v4().has_ipv4())
     {
@@ -638,6 +649,35 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
     return true;
 }
 
+bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    sai_attribute_t ha_scope_attr;
+    ha_scope_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    ha_scope_attr.value.booldata = !disabled;
+
+    sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
+                                                                &ha_scope_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope admin state to %d in SAI for %s", disabled, key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    m_ha_scope_entries[key].metadata.set_disabled(disabled);
+    SWSS_LOG_NOTICE("Set HA Scope admin state for %s to %d", key.c_str(), !disabled);
+
+    return true;
+}
+
 bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id)
 {
     SWSS_LOG_ENTER();
@@ -708,6 +748,12 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         {
             dash::ha_scope::HaScope entry;
 
+            auto existing_it = m_ha_scope_entries.find(key);
+            if (existing_it != m_ha_scope_entries.end())
+            {
+                // Start with existing entry to preserve unmodified fields
+                entry.CopyFrom(existing_it->second.metadata);
+            }
 
             /*
             * For HA internal tables, kfv format was used instead of serialized pb objects in the end.
