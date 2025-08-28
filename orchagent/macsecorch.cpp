@@ -732,14 +732,14 @@ void MACsecOrch::setMacsecPostState(const std::string & postState)
     vector<FieldValueTuple> fvts;
     FieldValueTuple postStateFvt("post_state", postState);
     fvts.push_back(postStateFvt);
-    m_state_post_state.set("global", fvts);
+    m_state_post_state.set("sai", fvts);
 }
 
 std::string MACsecOrch::getMacsecPostState()
 {
     std::string postState = "";
     std::vector<FieldValueTuple> fvts;
-    if (m_state_post_state.get("global", fvts))
+    if (m_state_post_state.get("sai", fvts))
     {
         auto state = fvsGetValue(fvts, "post_state", true);
         if (state)

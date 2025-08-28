@@ -38,7 +38,7 @@ MACSEC_POST_FAIL_SYSLOG = "MACSec POST failed"
 
 class TestMacsecPost(object):
     def check_state_db_post_state(self, dvs, expected_state):
-        dvs.get_state_db().wait_for_field_match(STATE_DB_MACSEC_POST_TABLE, "global",
+        dvs.get_state_db().wait_for_field_match(STATE_DB_MACSEC_POST_TABLE, "sai",
                                                 {'post_state': expected_state})
  
     def disable_sonic_post(self, dvs):

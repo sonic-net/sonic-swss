@@ -15,7 +15,7 @@ void setMacsecPostState(DBConnector *stateDb, string postState)
     vector<FieldValueTuple> fvts;
     FieldValueTuple postStateFvt("post_state", postState);
     fvts.push_back(postStateFvt);
-    macsecPostStateTable.set("global", fvts);
+    macsecPostStateTable.set("sai", fvts);
 }
 
 string getMacsecPostState(DBConnector *stateDb)
@@ -23,7 +23,7 @@ string getMacsecPostState(DBConnector *stateDb)
     std::string postState = "";
     std::vector<FieldValueTuple> fvts;
     Table macsecPostStateTable = Table(stateDb, STATE_FIPS_MACSEC_POST_TABLE_NAME);
-    if (macsecPostStateTable.get("global", fvts))
+    if (macsecPostStateTable.get("sai", fvts))
     {
         auto state = fvsGetValue(fvts, "post_state", true);
         if (state)
