@@ -70,7 +70,8 @@ HFTelOrch::HFTelOrch(
       m_sai_hostif_user_defined_trap_obj(SAI_NULL_OBJECT_ID),
       m_sai_hostif_table_entry_obj(SAI_NULL_OBJECT_ID),
       m_sai_tam_transport_obj(SAI_NULL_OBJECT_ID),
-      m_sai_tam_collector_obj(SAI_NULL_OBJECT_ID)
+      m_sai_tam_collector_obj(SAI_NULL_OBJECT_ID),
+      m_sai_tam_obj(SAI_NULL_OBJECT_ID)
 {
     SWSS_LOG_ENTER();
 
