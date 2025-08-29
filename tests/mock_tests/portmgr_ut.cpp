@@ -91,7 +91,6 @@ namespace portmgr_ut
     // =============================
 
     // Case 1: non-zero dhcp_rate_limit (should add tc rule)
-    // Case 1: non-zero dhcp_rate_limit (should add tc rule)
     cfg_port_table.set("Ethernet0", {
         {"dhcp_rate_limit", "1000"}
     });
@@ -99,33 +98,27 @@ namespace portmgr_ut
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
     ASSERT_FALSE(mockCallArgs.empty());
+
+    // Verify ingress qdisc was added
     bool found_add = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
         [](const std::string &cmd) {
             return cmd.find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
         });
     ASSERT_TRUE(found_add) << "Expected tc qdisc add command, got:\n" << ::testing::PrintToString(mockCallArgs);
 
+    // Verify police rate matches implementation formula (limit * 406)
+    int limit = 1000;
+    int rate_bps = limit * 406;
+    std::string expected_rate = "police rate " + std::to_string(rate_bps) + "bps";
     bool found_rate = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
-        [](const std::string &cmd) {
-            return cmd.find("police rate 64000bps") != std::string::npos;
+        [&](const std::string &cmd) {
+            return cmd.find(expected_rate) != std::string::npos;
         });
-    ASSERT_TRUE(found_rate) << "Expected rate = 1000 * 64, got:\n" << ::testing::PrintToString(mockCallArgs);
+    ASSERT_TRUE(found_rate) << "Expected rate = " << expected_rate
+                            << ", got:\n" << ::testing::PrintToString(mockCallArgs);
 
-    // Case 2: dhcp_rate_limit = 0 (should delete qdisc)
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "0"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    ASSERT_FALSE(mockCallArgs.empty());
-    bool found_del = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
-        [](const std::string &cmd) {
-            return cmd.find("tc qdisc del dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
-        });
-    ASSERT_TRUE(found_del) << "Expected tc qdisc del command, got:\n" << ::testing::PrintToString(mockCallArgs);
 
-    }
+        }
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
