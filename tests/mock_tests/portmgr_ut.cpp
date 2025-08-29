@@ -92,14 +92,16 @@ namespace portmgr_ut
 
     // Case 1: non-zero dhcp_rate_limit (should add tc rule)
     cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "1000"}
+    {"dhcp_rate_limit", "1000"}
     });
     mockCallArgs.clear();
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
     ASSERT_FALSE(mockCallArgs.empty());
-    ASSERT_NE(std::string::npos, mockCallArgs[0].find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress"), "Expected tc qdisc add command");
-    ASSERT_NE(std::string::npos, mockCallArgs[0].find("police rate 64000bps"), "Expected rate = 1000 * 64");
+    ASSERT_NE(std::string::npos, mockCallArgs[0].find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress"))
+        << "Expected tc qdisc add command, got: " << mockCallArgs[0];
+    ASSERT_NE(std::string::npos, mockCallArgs[0].find("police rate 64000bps"))
+        << "Expected rate = 1000 * 64, got: " << mockCallArgs[0];
 
     // Case 2: dhcp_rate_limit = 0 (should delete qdisc)
     cfg_port_table.set("Ethernet0", {
@@ -110,8 +112,8 @@ namespace portmgr_ut
     m_portMgr->doTask();
     ASSERT_FALSE(mockCallArgs.empty());
     ASSERT_EQ("tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[0]);
-}
 
+    }
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
