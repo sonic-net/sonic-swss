@@ -2666,7 +2666,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             addNextHopRoute(nexthop, r_key);
         }
     }
-    else if (mux_orch->isMuxNexthops(nextHops))
+    else if (nextHops.getSize() > 1 && mux_orch->isMuxNexthops(nextHops) && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
     {
         RouteKey routekey = { vrf_id, ipPrefix };
         auto nexthop_list = nextHops.getNextHops();
@@ -2701,7 +2701,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     // update routes to reflect mux state
     if (mux_orch->isMuxNexthops(nextHops))
     {
-        mux_orch->updateRoute(ipPrefix, true);
+        mux_orch->updateRoute(ipPrefix);
     }
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
@@ -2912,11 +2912,10 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                 {
                     if (!nh->ip_address.isZero())
                     {
-                        SWSS_LOG_NOTICE("removeNextHopRoute");
                         removeNextHopRoute(*nh, routekey);
                     }
                 }
-                mux_orch->updateRoute(ipPrefix, false);
+                mux_orch->updateRoute(ipPrefix);
             }
         }
         else if (ol_nextHops.is_overlay_nexthop())

@@ -62,6 +62,7 @@ protected:
     bool setHaScopeHaRole(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool setHaScopeFlowReconcileRequest(const  std::string &key);
     bool setHaScopeActivateRoleRequest(const std::string &key);
+    bool setHaScopeDisabled(const std::string &key, bool disabled);
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
     bool register_ha_set_notifier();
     bool register_ha_scope_notifier();

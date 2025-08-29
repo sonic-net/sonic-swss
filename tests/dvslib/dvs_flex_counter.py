@@ -1,6 +1,63 @@
 import time
 
+from typing import Dict
+from swsscommon import swsscommon
+
+
 NUMBER_OF_RETRIES = 10
+
+
+class DVSFlexCounter(object):
+    """Manage flex counter objects on the virtual switch."""
+
+    CONFIG_FLEX_COUNTER = swsscommon.CFG_FLEX_COUNTER_TABLE_NAME
+
+    FLEX_FLEX_COUNTER = swsscommon.FLEX_COUNTER_TABLE
+    FLEX_FLEX_COUNTER_GROUP = swsscommon.FLEX_COUNTER_GROUP_TABLE
+
+    def __init__(self, cfgdb, flexdb):
+        """Create a new DVS flex counter manager."""
+        self.config_db = cfgdb
+        self.flex_db = flexdb
+
+    def update_flex_counter(
+        self,
+        group_name: str,
+        attr_dict: Dict[str, str]
+    ) -> None:
+        """Update flex counter in CONFIG DB."""
+        self.config_db.update_entry(self.CONFIG_FLEX_COUNTER, group_name, attr_dict)
+
+    def verify_flex_counter(
+        self,
+        stat_name: str,
+        qualifiers: Dict[str, str]
+    ) -> None:
+        """Verify that flex counter object has correct FLEX_COUNTER DB representation."""
+        self.flex_db.wait_for_field_match(self.FLEX_FLEX_COUNTER_GROUP, stat_name, qualifiers)
+
+    def set_interval(
+        self,
+        group_name: str,
+        interval: str
+    ) -> None:
+        """Set flex counter poll interval in CONFIG DB."""
+        attr_dict = {
+            swsscommon.POLL_INTERVAL_FIELD: interval
+        }
+        self.update_flex_counter(group_name, attr_dict)
+
+    def set_status(
+        self,
+        group_name: str,
+        status: str
+    ) -> None:
+        """Set flex counter status in CONFIG DB."""
+        attr_dict = {
+            swsscommon.FLEX_COUNTER_STATUS_FIELD: status
+        }
+        self.update_flex_counter(group_name, attr_dict)
+
 
 class TestFlexCountersBase(object):
 
