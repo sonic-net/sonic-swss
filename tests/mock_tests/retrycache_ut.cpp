@@ -272,7 +272,7 @@ namespace retrycache_test
         ASSERT_EQ(*cache->m_retryKeys[cst].begin(), "TEST_ROUTE");
 
         // Assume there is a new SET task received by the consumer
-        Task setTask2{"TEST_ROUTE", "SET", {{"NHG", "2"}}};
+        Task setTask2{"TEST_ROUTE", "SET", {{"VRF", "1"}}};
         oftenFail->addToSync(setTask2);
 
         ASSERT_EQ(cache->getRetryMap().size(), 1);
@@ -284,7 +284,7 @@ namespace retrycache_test
             if (fvField(fv) == "VRF")
                 ASSERT_EQ(fvValue(fv), "1");
             else if (fvField(fv) == "NHG")
-                ASSERT_EQ(fvValue(fv), "2");
+                ASSERT_EQ(fvValue(fv), "1");
              else
                 ASSERT_FALSE(true); // unexpected field
         }
