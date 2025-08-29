@@ -577,6 +577,16 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
 
     sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
 
+    /*
+        Remove bfd passive sessions in planned shutdown (scope == DPU)
+    */
+    if (entry.ha_role() == dash::types::HA_ROLE_DEAD
+        && !m_ha_set_entries.empty()
+        && m_ha_set_entries[0].metadata.scope == dash::types::HaScope::HA_SCOPE_DPU)
+    {
+       gBfdOrch->removeAllSoftwareBfdSession();
+    }
+
     sai_attribute_t ha_scope_attr;
     ha_scope_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
     ha_scope_attr.value.u32 = to_sai(entry.ha_role());
@@ -824,7 +834,17 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
 
         if (op == SET_COMMAND)
         {
-            gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+            if (!m_ha_set_entries.empty() && m_ha_set_entries[0].metadata.scope == dash::types::HA_SCOPE_ENI)
+            {
+                gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+            }
+
+            if (!m_ha_set_entries.empty() && m_ha_set_entries[0].metadata.scope == dash::types::HA_SCOPE_DPU
+                && !m_ha_scope_entries.empty() && m_ha_scope_entries[0].metadata.ha_role != dash::types::HA_ROLE_DEAD)
+            {
+                gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+            }
+
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)

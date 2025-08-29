@@ -715,6 +715,17 @@ void BfdOrch::removeSoftwareBfdSession(const string &key)
     SWSS_LOG_NOTICE("Software BFD session removed for %s", key.c_str());
 }
 
+void BfdOrch::removeAllSoftwareBfdSession()
+{
+    vector<string> keys;
+    m_stateSoftBfdSessionTable->getKeys(keys);
+
+    for (auto key : keys)
+    {
+        removeSoftwareBfdSession(key);
+    }
+}
+
 BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
     Orch(db, tableName)
 {

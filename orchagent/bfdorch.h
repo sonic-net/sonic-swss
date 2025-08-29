@@ -25,6 +25,7 @@ public:
         const std::vector<swss::FieldValueTuple>& data);
     void removeSoftwareBfdSession(
         const std::string& key);
+    void removeAllSoftwareBfdSession();
 
 private:
     bool create_bfd_session(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
