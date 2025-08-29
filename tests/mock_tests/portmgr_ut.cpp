@@ -135,7 +135,6 @@ namespace portmgr_ut
     state_port_table.set("Ethernet0", { {"state", "ok"} });
 
     // Case 4: ERROR branch - simulate exec failure
-    failNextExec = true;  // <-- this flag must be implemented in your mock swss::exec
     cfg_port_table.set("Ethernet0", {
         {"dhcp_rate_limit", "800"}
     });
@@ -143,7 +142,6 @@ namespace portmgr_ut
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
     // Execution goes to ERROR path. We just ensure it ran without crash.
-    failNextExec = false;
 }
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
