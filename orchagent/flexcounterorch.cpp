@@ -1,21 +1,29 @@
 #include <unordered_map>
-#include "portsorch.h"
-#include "fabricportsorch.h"
-#include "select.h"
+
+#include <select.h>
+#include <tokenize.h>
+#include <warm_restart.h>
+#include <sai_serialize.h>
+
 #include "notifier.h"
-#include "sai_serialize.h"
-#include "pfcwdorch.h"
-#include "bufferorch.h"
-#include "flexcounterorch.h"
-#include "debugcounterorch.h"
 #include "directory.h"
+
+#include "bufferorch.h"
 #include "copporch.h"
-#include <swss/tokenize.h>
-#include "routeorch.h"
 #include "macsecorch.h"
+#include "portsorch.h"
+#include "pfcwdorch.h"
+#include "routeorch.h"
+#include "srv6orch.h"
+#include "switchorch.h"
+#include "debugcounterorch.h"
+#include "fabricportsorch.h"
+
 #include "dash/dashorch.h"
-#include "flowcounterrouteorch.h"
-#include "warm_restart.h"
+#include "dash/dashmeterorch.h"
+#include "flex_counter/flowcounterrouteorch.h"
+
+#include "flexcounterorch.h"
 
 extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
@@ -28,6 +36,7 @@ extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern Srv6Orch *gSrv6Orch;
+extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
 
 #define FLEX_COUNTER_DELAY_SEC 60
@@ -45,9 +54,11 @@ extern sai_object_id_t gSwitchId;
 #define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
 #define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
 #define ENI_KEY                     "ENI"
+#define DASH_METER_KEY              "DASH_METER"
 #define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
 #define SRV6_KEY                    "SRV6"
+#define SWITCH_KEY                  "SWITCH"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -71,9 +82,11 @@ unordered_map<string, string> flexCounterGroupMap =
     {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
     {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
     {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"DASH_METER", METER_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
@@ -113,6 +126,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    DashMeterOrch* dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -215,17 +229,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_pg_watermark_enabled = true;
                             gPortsOrch->addPriorityGroupWatermarkFlexCounters(getPgConfigurations());
                         }
-			else if(key == WRED_PORT_KEY)
-			{
+                        else if(key == WRED_PORT_KEY)
+                        {
                             gPortsOrch->generateWredPortCounterMap();
                             m_wred_port_counter_enabled = true;
-			}
-			else if(key == WRED_QUEUE_KEY)
-			{
+                        }
+                        else if(key == WRED_QUEUE_KEY)
+                        {
                             gPortsOrch->generateQueueMap(getQueueConfigurations());
                             m_wred_queue_counter_enabled = true;
                             gPortsOrch->addWredQueueFlexCounters(getQueueConfigurations());
-			}
+                        }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
                     {
@@ -246,6 +260,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (dash_orch && (key == ENI_KEY))
                     {
                         dash_orch->handleFCStatusUpdate((value == "enable"));
+                    }
+                    if (dash_meter_orch && (key == DASH_METER_KEY))
+                    {
+                        dash_meter_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
@@ -276,6 +294,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (gSrv6Orch && (key == SRV6_KEY))
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
+                    }
+                    if (gSwitchOrch && (key == SWITCH_KEY) && (value == "enable"))
+                    {
+                        gSwitchOrch->generateSwitchCounterIdList();
                     }
 
                     if (gPortsOrch)

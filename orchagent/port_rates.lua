@@ -83,6 +83,8 @@ local function calculate_lane_and_serdes_speed(count, speed)
         serdes = 53.125e+9
     elseif lane_speed == 100000 then
         serdes = 106.25e+9
+    elseif lane_speed == 200000 then
+        serdes = 212.5e+9
     else
        logit("Invalid serdes speed")
     end

@@ -2721,6 +2721,7 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
+            portTable.set(it.first, {{"oper_status", "up"}});
             transceieverInfoTable.set(it.first, {});
         }
 
@@ -2788,6 +2789,62 @@ namespace portsorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
             ASSERT_TRUE(attr.value.booldata);
         }
+
+        // Verify host if configuration
+        for (const auto& iter: ports)
+        {
+            const auto& portName = iter.first;
+
+            Port port;
+            gPortsOrch->getPort(portName, port);
+
+            ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+
+            attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+            status = sai_hostif_api->get_hostif_attribute(port.m_hif_id, 1, &attr);
+
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            ASSERT_TRUE(attr.value.booldata);
+        }
+    }
+
+    TEST_F(PortsOrchTest, PortHostIfCreateFailed)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto original_api = sai_hostif_api->create_hostif;
+        auto hostIfSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->create_hostif);
+        hostIfSpy->callFake([&](sai_object_id_t*, sai_object_id_t, uint32_t, const sai_attribute_t*) -> sai_status_t {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+        );
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        sai_hostif_api->create_hostif = original_api;
+
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        ASSERT_FALSE(port.m_init);
     }
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
@@ -3370,6 +3427,126 @@ namespace portsorch_test
         }
 
         sai_port_api = orig_port_api;
+    }
+
+    /* This test verifies that an invalid configuration
+     * of pfc stat history will not enable the featuer
+     */
+    TEST_F(PortsOrchTest, PfcInvalidHistoryToggle)
+    {
+        _hook_sai_switch_api();
+        // setup the tables with data
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        // Apply configuration
+        //          ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+
+        // No more tasks
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ts.clear();
+
+        entries.clear();
+        entries.push_back({ "Ethernet0", "SET", { { "pfc_enable", "3,4" }, { "pfcwd_sw_enable", "3,4" } } });
+        auto portQosMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        portQosMapConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        entries.push_back({ "GLOBAL", "SET", {{ "POLL_INTERVAL", "200" }}});
+        entries.push_back({ "Ethernet0", "SET", {
+            { "action", "drop" },
+            { "detection_time", "200" },
+            { "restoration_time", "200" }
+        } });
+        auto PfcwdConsumer = dynamic_cast<Consumer *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->getExecutor(CFG_PFC_WD_TABLE_NAME));
+        PfcwdConsumer->addToSync(entries);
+
+        // trigger the notification
+        static_cast<Orch*>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 1);
+        entries.clear();
+
+        // create pfcwd entry with an invalid history setting
+        entries.push_back({ "Ethernet0", "SET", {
+            { "action", "drop" },
+            { "detection_time", "200" },
+            { "restoration_time", "200" },
+            { "pfc_stat_history", "up" }
+        } });
+        PfcwdConsumer->addToSync(entries);
+        static_cast<Orch*>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 1);
+        entries.clear();
+
+        // verify in counters db that history is NOT enabled
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        auto countersTable = make_shared<Table>(m_counters_db.get(), COUNTERS_TABLE);
+        auto entryMap = gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_entryMap;
+
+        sai_object_id_t queueId = port.m_queue_ids[3];
+        ASSERT_NE(entryMap.find(queueId), entryMap.end());
+
+        string queueIdStr = sai_serialize_object_id(queueId);
+        vector<FieldValueTuple> countersFieldValues;
+        countersTable->get(queueIdStr, countersFieldValues);
+        ASSERT_NE(countersFieldValues.size(), 0);
+
+        for (auto &valueTuple : countersFieldValues)
+        {
+            if (fvField(valueTuple) == "PFC_STAT_HISTORY")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "disable");
+            }
+        }
+
+        queueId = port.m_queue_ids[4];
+        ASSERT_NE(entryMap.find(queueId), entryMap.end());
+
+        queueIdStr = sai_serialize_object_id(queueId);
+        countersFieldValues.clear();
+        countersTable->get(queueIdStr, countersFieldValues);
+        ASSERT_NE(countersFieldValues.size(), 0);
+
+        for (auto &valueTuple : countersFieldValues)
+        {
+            if (fvField(valueTuple) == "PFC_STAT_HISTORY")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "disable");
+            }
+        }
+
+        // remove from monitoring
+        entries.push_back({ "Ethernet0", "DEL", { {} } });
+        PfcwdConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 0);
+
+        _unhook_sai_switch_api();
     }
 
     /*
