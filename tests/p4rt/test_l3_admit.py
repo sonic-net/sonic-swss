@@ -36,10 +36,6 @@ class TestP4RTL3Admit(object):
         )
         self._p4rt_l3_admit_obj.get_original_redis_entries(db_list)
 
-        # Fetch the original key to oid information from Redis DB.
-        key_to_oid_helper = util.KeyToOidDBHelper(dvs)
-        _, original_key_oid_info = key_to_oid_helper.get_db_info()
-
         # l3 admit entry attributes
         # P4RT_TABLE:FIXED_L3_ADMIT_TABLE:{\"match/dst_mac\":\"00:02:03:04:00:00&ff:ff:ff:ff:00:00\",\"match/in_port\":\"Ethernet8\",\"priority\":2030}
         # "action": "admit_to_l3"
@@ -57,12 +53,6 @@ class TestP4RTL3Admit(object):
         util.verify_response(
             self.response_consumer, l3_admit_key, attr_list, "SWSS_RC_SUCCESS"
         )
-
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count = 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
 
         # Query application database for l3 admit entries.
         l3_admit_entries = util.get_keys(
@@ -115,20 +105,10 @@ class TestP4RTL3Admit(object):
             "L3 Admit entry with the same key received: 'match/dst_mac=00:02:03:04:00:00&ff:ff:ff:ff:00:00:match/in_port=Ethernet8:priority=2030'"
         )
 
-        # Verify that P4RT key to OID count did not change in Redis DB.
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
-
         # Remove l3 admit entry.
         self._p4rt_l3_admit_obj.remove_app_db_entry(l3_admit_key)
         util.verify_response(self.response_consumer,
                              l3_admit_key, [], "SWSS_RC_SUCCESS")
-
-        # Verify that P4RT key to OID count decremented to orig in Redis DB.
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == False
-        assert len(fvs) == len(original_key_oid_info)
 
         # Query application database for route entries.
         l3_admit_entries = util.get_keys(
@@ -181,10 +161,6 @@ class TestP4RTL3Admit(object):
         )
         self._p4rt_l3_admit_obj.get_original_redis_entries(db_list)
 
-        # Fetch the original key to oid information from Redis DB.
-        key_to_oid_helper = util.KeyToOidDBHelper(dvs)
-        _, original_key_oid_info = key_to_oid_helper.get_db_info()
-
         # Invalid l3 admit key
         # P4RT_TABLE:FIXED_L3_ADMIT_TABLE:{\"match/dst_mac\":\"1\",\"match/in_port\":\"Ethernet8\",\"priority\":2030}
         # "action": "admit_to_l3"
@@ -203,11 +179,6 @@ class TestP4RTL3Admit(object):
             "SWSS_RC_INVALID_PARAM",
             "[OrchAgent] Failed to deserialize l3 admit key"
         )
-
-        # Verify that P4RT key to OID count not changed in Redis DB
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == False
-        assert len(fvs) == len(original_key_oid_info)
 
         # Query ASIC database for my mac entries. Count remains the same
         asic_l3_admit_entries = util.get_keys(

@@ -12,19 +12,7 @@ extern "C"
 #include "sai.h"
 }
 
-namespace
-{
-
-std::string convertToDBField(_In_ const sai_object_type_t object_type, _In_ const std::string &key)
-{
-    return sai_serialize_object_type(object_type) + ":" + key;
-}
-
-} // namespace
-
-P4OidMapper::P4OidMapper() : m_db("APPL_STATE_DB", 0), m_table(&m_db, "P4RT_KEY_TO_OID")
-{
-}
+P4OidMapper::P4OidMapper() : m_db("APPL_STATE_DB", 0) {}
 
 bool P4OidMapper::setOID(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ sai_object_id_t oid,
                          _In_ uint32_t ref_count)
@@ -38,7 +26,6 @@ bool P4OidMapper::setOID(_In_ sai_object_type_t object_type, _In_ const std::str
     }
 
     m_oidTables[object_type][key] = {oid, ref_count};
-    m_table.hset("", convertToDBField(object_type, key), sai_serialize_object_id(oid));
     return true;
 }
 
@@ -107,7 +94,6 @@ bool P4OidMapper::eraseOID(_In_ sai_object_type_t object_type, _In_ const std::s
     }
 
     m_oidTables[object_type].erase(key);
-    m_table.hdel("", convertToDBField(object_type, key));
     return true;
 }
 
@@ -116,7 +102,6 @@ void P4OidMapper::eraseAllOIDs(_In_ sai_object_type_t object_type)
     SWSS_LOG_ENTER();
 
     m_oidTables[object_type].clear();
-    m_table.del("");
 }
 
 size_t P4OidMapper::getNumEntries(_In_ sai_object_type_t object_type) const
@@ -198,20 +183,6 @@ std::string P4OidMapper::verifyOIDMapping(_In_ sai_object_type_t object_type, _I
         std::stringstream msg;
         msg << "OID mismatched in mapper for key " << key << ": " << sai_serialize_object_id(oid) << " vs "
             << sai_serialize_object_id(mapper_oid);
-        return msg.str();
-    }
-    std::string db_oid;
-    if (!m_table.hget("", convertToDBField(object_type, key), db_oid))
-    {
-        std::stringstream msg;
-        msg << "OID not found in mapper DB for key " << key;
-        return msg.str();
-    }
-    if (db_oid != sai_serialize_object_id(oid))
-    {
-        std::stringstream msg;
-        msg << "OID mismatched in mapper DB for key " << key << ": " << db_oid << " vs "
-            << sai_serialize_object_id(oid);
         return msg.str();
     }
 

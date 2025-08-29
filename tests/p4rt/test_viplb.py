@@ -73,10 +73,6 @@ class TestP4RTVIPLB(object):
                     self._p4rt_viplb_obj.ASIC_DB_TBL_NAME))
         self._p4rt_viplb_obj.get_original_redis_entries(db_list)
 
-        # Fetch the original key to oid information from Redis DB.
-        key_to_oid_helper = util.KeyToOidDBHelper(dvs)
-        _, original_key_oid_info = key_to_oid_helper.get_db_info()
-
         # Create router interface.
         router_interface_id, router_intf_key, attr_list = (
             self._p4rt_router_intf_obj.create_router_interface()
@@ -84,24 +80,12 @@ class TestP4RTVIPLB(object):
         util.verify_response(self.response_consumer, router_intf_key,
                              attr_list, "SWSS_RC_SUCCESS")
 
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count = 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
-
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = (
             self._p4rt_neighbor_obj.create_neighbor()
         )
         util.verify_response(self.response_consumer, neighbor_key, attr_list,
                              "SWSS_RC_SUCCESS")
-
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count += 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
 
         # Create nexthop.
         first_nexthop_id, first_nexthop_key, attr_list = (
@@ -113,24 +97,12 @@ class TestP4RTVIPLB(object):
         first_nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
         assert first_nexthop_oid is not None
 
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count += 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
-
         # Create viplb.
         viplb_key, attr_list = (
             self._p4rt_viplb_obj.create_viplb(first_nexthop_id)
         )
         util.verify_response(self.response_consumer, viplb_key, attr_list,
                              "SWSS_RC_SUCCESS")
-
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count += 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
 
         # Query application database for viplb entries.
         viplb_entries = util.get_keys(
@@ -164,12 +136,6 @@ class TestP4RTVIPLB(object):
         util.verify_response(self.response_consumer, router_intf_key,
                              attr_list, "SWSS_RC_SUCCESS")
 
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count += 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
-
         # Create another neighbor.
         neighbor_id, neighbor_key, attr_list = (
             self._p4rt_neighbor_obj.create_neighbor(router_interface_id="20", neighbor_id="10.0.0.1")
@@ -177,24 +143,12 @@ class TestP4RTVIPLB(object):
         util.verify_response(self.response_consumer, neighbor_key, attr_list,
                              "SWSS_RC_SUCCESS")
 
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count += 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
-
         # Create another nexthop.
         second_nexthop_id, second_nexthop_key, attr_list = (
             self._p4rt_nexthop_obj.create_next_hop(router_interface_id="20", neighbor_id="10.0.0.1", nexthop_id="16")
         )
         util.verify_response(self.response_consumer, second_nexthop_key, attr_list,
                              "SWSS_RC_SUCCESS")
-
-        # Verify that P4RT key to OID count incremented by 1 in Redis DB.
-        count += 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
 
         # Update viplb.
         viplb_key, attr_list = (
@@ -209,12 +163,6 @@ class TestP4RTVIPLB(object):
         util.verify_response(self.response_consumer, first_nexthop_key, [],
                              "SWSS_RC_SUCCESS")
 
-        # Verify that P4RT key to OID count decremented by 1 in Redis DB.
-        count -= 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
-
         # get crm counters
         time.sleep(1)
         used_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
@@ -225,12 +173,6 @@ class TestP4RTVIPLB(object):
         self._p4rt_viplb_obj.remove_app_db_entry(viplb_key)
         util.verify_response(
             self.response_consumer, viplb_key, [], "SWSS_RC_SUCCESS")
-
-        # Verify that P4RT key to OID count decremented by 1 in Redis DB.
-        count -= 1
-        status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
-        assert len(fvs) == len(original_key_oid_info) + count
 
         # get crm counters
         time.sleep(1)
