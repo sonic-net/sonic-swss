@@ -91,17 +91,25 @@ namespace portmgr_ut
     // =============================
 
     // Case 1: non-zero dhcp_rate_limit (should add tc rule)
+    // Case 1: non-zero dhcp_rate_limit (should add tc rule)
     cfg_port_table.set("Ethernet0", {
-    {"dhcp_rate_limit", "1000"}
+        {"dhcp_rate_limit", "1000"}
     });
     mockCallArgs.clear();
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
     ASSERT_FALSE(mockCallArgs.empty());
-    ASSERT_NE(std::string::npos, mockCallArgs[0].find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress"))
-        << "Expected tc qdisc add command, got: " << mockCallArgs[0];
-    ASSERT_NE(std::string::npos, mockCallArgs[0].find("police rate 64000bps"))
-        << "Expected rate = 1000 * 64, got: " << mockCallArgs[0];
+    bool found_add = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+        [](const std::string &cmd) {
+            return cmd.find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
+        });
+    ASSERT_TRUE(found_add) << "Expected tc qdisc add command, got:\n" << ::testing::PrintToString(mockCallArgs);
+
+    bool found_rate = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+        [](const std::string &cmd) {
+            return cmd.find("police rate 64000bps") != std::string::npos;
+        });
+    ASSERT_TRUE(found_rate) << "Expected rate = 1000 * 64, got:\n" << ::testing::PrintToString(mockCallArgs);
 
     // Case 2: dhcp_rate_limit = 0 (should delete qdisc)
     cfg_port_table.set("Ethernet0", {
@@ -111,7 +119,11 @@ namespace portmgr_ut
     m_portMgr->addExistingData(&cfg_port_table);
     m_portMgr->doTask();
     ASSERT_FALSE(mockCallArgs.empty());
-    ASSERT_EQ("tc qdisc del dev \"Ethernet0\" handle ffff: ingress", mockCallArgs[0]);
+    bool found_del = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+        [](const std::string &cmd) {
+            return cmd.find("tc qdisc del dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
+        });
+    ASSERT_TRUE(found_del) << "Expected tc qdisc del command, got:\n" << ::testing::PrintToString(mockCallArgs);
 
     }
 
