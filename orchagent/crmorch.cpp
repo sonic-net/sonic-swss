@@ -569,6 +569,21 @@ void CrmOrch::decCrmResUsedCounter(CrmResourceType resource)
     }
 }
 
+bool CrmOrch::getCrmResUsedCounter(CrmResourceType resource, uint32_t &count)
+{
+    SWSS_LOG_ENTER();
+    try
+    {
+        count = m_resourcesMap.at(resource).countersMap[CRM_COUNTERS_TABLE_KEY].usedCounter;
+        return true;
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("Failed to get \"used\" counter for the %s CRM resource.", crmResTypeNameMap.at(resource).c_str());
+        return false;
+    }
+}
+
 void CrmOrch::incCrmAclUsedCounter(CrmResourceType resource, sai_acl_stage_t stage, sai_acl_bind_point_type_t point)
 {
     SWSS_LOG_ENTER();
