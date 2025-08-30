@@ -865,6 +865,10 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.vni = vni;
             fdbData.is_flush_pending = false;
             fdbData.discard = discard;
+
+            // Set the resolved port name in the FdbEntry before calling addFdbEntry
+            entry.port_name = port;
+
             if (addFdbEntry(entry, port, fdbData))
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
