@@ -29,6 +29,7 @@ namespace dashvnetorch_test
     using ::testing::DoAll;
     using ::testing::SetArrayArgument;
     using ::testing::SetArgPointee;
+    using ::testing::InSequence;
 
     class DashVnetOrchTest : public MockDashOrchTest
     {
@@ -65,28 +66,26 @@ namespace dashvnetorch_test
     TEST_F(DashVnetOrchTest, AddRemoveVnet)
     {
         std::vector<sai_status_t> exp_status = {SAI_STATUS_SUCCESS};
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
-        EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets)
-            .Times(1).WillOnce(DoAll(
-                SetArgPointee<5>(0x1234),
-                SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
-                Return(SAI_STATUS_SUCCESS)
-            )
-            );
-        CreateVnet();
-        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
-            .Times(1).WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries)
-            .Times(1).WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-        AddVnetMap();
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddPLRoutingType();
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(1);
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
+            EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(1);
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(2);
+            EXPECT_CALL(*mock_sai_dash_pa_validation_api, remove_pa_validation_entries).Times(1);
+            EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(1);
+        }
 
-        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries)
-            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        CreateVnet();
+        AddVnetMap();
+        AddPortMap();
+        AddVnetMapPL();
+
         RemoveVnetMap();
-        EXPECT_CALL(*mock_sai_dash_pa_validation_api, remove_pa_validation_entries)
-            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets)
-            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveVnetMapPL();
         RemoveVnet();
     }
 
@@ -96,13 +95,13 @@ namespace dashvnetorch_test
             .Times(0);
         EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries)
             .Times(0);
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         AddVnetMap(false);
     }
 
     TEST_F(DashVnetOrchTest, AddExistingOutboundCaToPaSuccessful)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN); 
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
         AddVnetMap();
         std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
@@ -128,7 +127,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, InvalidEncapVnetMapFails)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_UNSPECIFIED);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_UNSPECIFIED);
         CreateVnet();
         AddVnetMap();
         EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
@@ -138,7 +137,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, AddExistPaValidationSuccessful)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
         std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
         int expectedUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION);
@@ -151,7 +150,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, RemovePaValidationInUseFails)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
         AddVnetMap();
 
