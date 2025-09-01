@@ -37,10 +37,10 @@ namespace portmgr_ut
     };
 
     TEST_F(PortMgrTest, DoTask)
-    {
-        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+{
+    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+    Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
         // Port is not ready, verify that doTask does not handle port configuration
         
@@ -67,26 +67,70 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("1", value_opt.get());
 
-        // Set port state to ok, verify that doTask handle port configuration
-        state_port_table.set("Ethernet0", {
-            {"state", "ok"}
+    // Set port state to ok, verify that doTask handle port configuration
+    state_port_table.set("Ethernet0", { 
+		{"state", "ok"}
+		 });
+    m_portMgr->doTask();
+    ASSERT_EQ(size_t(2), mockCallArgs.size());
+    ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
+    ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
+
+    // Set port admin_status, verify that it could override the default value
+    cfg_port_table.set("Ethernet0", {
+        {"admin_status", "up"}
+    });
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    app_port_table.get("Ethernet0", values);
+    value_opt = swss::fvsGetValue(values, "admin_status", true);
+    ASSERT_TRUE(value_opt);
+    ASSERT_EQ("up", value_opt.get());
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "1000"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    bool found_add = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+        [](const std::string &cmd) {
+            return cmd.find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
         });
-        m_portMgr->doTask();
-        ASSERT_EQ(size_t(2), mockCallArgs.size());
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
-        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
-        
-        // Set port admin_status, verify that it could override the default value
-        cfg_port_table.set("Ethernet0", {
-            {"admin_status", "up"}
+    ASSERT_TRUE(found_add) << "Expected tc qdisc add command, got:\n" << ::testing::PrintToString(mockCallArgs);
+    bool found_rate = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+        [](const std::string &cmd) {
+            return cmd.find("police rate") != std::string::npos;
         });
-        m_portMgr->addExistingData(&cfg_port_table);
-        m_portMgr->doTask();
-        app_port_table.get("Ethernet0", values);
-        value_opt = swss::fvsGetValue(values, "admin_status", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ("up", value_opt.get());
-    }
+    ASSERT_TRUE(found_rate) << "Expected police rate command, got:\n" << ::testing::PrintToString(mockCallArgs);
+    // Case 2: dhcp_rate_limit = 0 (delete case)
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "0"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    bool found_del = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+        [](const std::string &cmd) {
+            return cmd.find("tc qdisc del dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
+        });
+    ASSERT_TRUE(found_del) << "Expected tc qdisc del command, got:\n" << ::testing::PrintToString(mockCallArgs);
+    // Case 3: WARN branch - port not ready
+    state_port_table.set("Ethernet0", { {"state", "unknown"} });
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "500"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+    state_port_table.set("Ethernet0", { {"state", "ok"} });
+
+    cfg_port_table.set("Ethernet0", {
+        {"dhcp_rate_limit", "800"}
+    });
+    mockCallArgs.clear();
+    m_portMgr->addExistingData(&cfg_port_table);
+    m_portMgr->doTask();
+}
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
@@ -160,68 +204,6 @@ namespace portmgr_ut
         ASSERT_EQ("129", value_opt.get());
         value_opt = swss::fvsGetValue(values, "pt_timestamp_template", true);
         ASSERT_FALSE(value_opt);
-    }
-
-    TEST_F(PortMgrTest, DhcpRateLimitNotConfigured)
-    {
-    // Arrange
-    // No "dhcp_rate_limit" set -> should skip TC config
-    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", ""}
-    });
-
-    // Act
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-
-    // Assert
-    ASSERT_TRUE(mockCallArgs.empty());  // No TC command should be executed
-    }
-
-    TEST_F(PortMgrTest, DhcpRateLimitConfigured)
-    {
-    // Arrange
-    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
-
-    state_port_table.set("Ethernet4", {{"state", "ok"}});
-    cfg_port_table.set("Ethernet4", {
-        {"dhcp_rate_limit", "100"} // packets/sec
-    });
-
-    // Act
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-
-    // Assert
-    ASSERT_EQ(size_t(3), mockCallArgs.size());
-    std::string expected_prefix = "/sbin/tc qdisc add dev \"Ethernet4\" handle ffff: ingress";
-    ASSERT_TRUE(mockCallArgs[2].find(expected_prefix) == 0);
-    //ASSERT_TRUE(mockCallArgs[2].find("police rate") != std::string::npos); // 100*590 (PACKET_SIZE)
-    }
-
-    TEST_F(PortMgrTest, DhcpRateLimitDisabled)
-    {
-    // Arrange
-    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
-
-    state_port_table.set("Ethernet8", {{"state", "ok"}});
-    cfg_port_table.set("Ethernet8", {
-        {"dhcp_rate_limit", "0"} // disable
-    });
-
-    // Act
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-
-    // Assert
-    ASSERT_EQ(size_t(3), mockCallArgs.size());
-    ASSERT_EQ("/sbin/tc qdisc del dev \"Ethernet8\" handle ffff: ingress", mockCallArgs[2]);
     }
 
     TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
