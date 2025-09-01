@@ -34,7 +34,7 @@ char *gMirrorSession1 = "mirror-session-1";
 sai_object_id_t kMirrorSessionOid1 = 9001;
 char *gMirrorSession2 = "mirror-session-2";
 sai_object_id_t kMirrorSessionOid2 = 9002;
-sai_object_id_t gUnderlayIfId;
+sai_object_id_t gUnderlayIfId = 0x101;
 string gMyAsicName = "";
 event_handle_t g_events_handle;
 
