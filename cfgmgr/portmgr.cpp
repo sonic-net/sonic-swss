@@ -7,7 +7,6 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include <swss/redisutility.h>
-#include <iostream>
 
 using namespace std;
 using namespace swss;
