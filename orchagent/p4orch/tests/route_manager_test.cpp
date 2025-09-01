@@ -2797,9 +2797,11 @@ TEST_F(RouteManagerTest, BatchedCreateSucceeds)
         mock_sai_route_,
         create_route_entries(
             Eq(2),
-            RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv6, exp_sai_route_entry_ipv4}),
+            RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                      exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6}),
             ArrayEq(std::vector<uint32_t>{1, 1}),
-            AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{{exp_sai_attr_ipv6}, {exp_sai_attr_ipv4}}),
+            AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                      {exp_sai_attr_ipv4}, {exp_sai_attr_ipv6}}),
             Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(CreateRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4, route_entry_ipv6}),
@@ -2850,14 +2852,16 @@ TEST_F(RouteManagerTest, BatchedCreatePartiallySucceeds)
     exp_sai_attr_ipv6.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
     exp_sai_attr_ipv6.value.oid = kWcmpGroupOid1;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE, SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
     EXPECT_CALL(
         mock_sai_route_,
         create_route_entries(
             Eq(2),
-            RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv6, exp_sai_route_entry_ipv4}),
+            RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                      exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6}),
             ArrayEq(std::vector<uint32_t>{1, 1}),
-            AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{{exp_sai_attr_ipv6}, {exp_sai_attr_ipv4}}),
+            AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                      {exp_sai_attr_ipv4}, {exp_sai_attr_ipv6}}),
             Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_FAILURE)));
     EXPECT_THAT(CreateRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4, route_entry_ipv6}),
@@ -2916,9 +2920,10 @@ TEST_F(RouteManagerTest, BatchedUpdateSucceeds)
     std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
                                      Eq(2),
-                                     RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv6,
-                                                                                      exp_sai_route_entry_ipv4}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv6, exp_sai_attr_ipv4}),
+                                     RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                                         exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6}),
+                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv4,
+                                                           exp_sai_attr_ipv6}),
                                      Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
         .WillOnce(DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()), Return(SAI_STATUS_SUCCESS)));
 
@@ -2986,12 +2991,14 @@ TEST_F(RouteManagerTest, BatchedUpdatePartiallySucceeds)
     exp_sai_attr_ipv6.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
     exp_sai_attr_ipv6.value.oid = kWcmpGroupOid2;
 
-    std::vector<sai_status_t> exp_status_1{SAI_STATUS_FAILURE, SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_FAILURE};
     EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
                                      Eq(2),
-                                     RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv6,
-                                                                                      exp_sai_route_entry_ipv4}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv6, exp_sai_attr_ipv4}),
+                                     RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                                        exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6}),
+                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv4,
+                                                           exp_sai_attr_ipv6}),
                                      Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
         .WillOnce(DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()), Return(SAI_STATUS_FAILURE)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4, route_entry_ipv6}),
@@ -3038,7 +3045,7 @@ TEST_F(RouteManagerTest, BatchedDeleteSucceeds)
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, remove_route_entries(Eq(2),
                                                       RouteEntryArrayEq(std::vector<sai_route_entry_t>{
-                                                          exp_sai_route_entry_ipv6, exp_sai_route_entry_ipv4}),
+                                                          exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6}),
                                                       Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
         .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(DeleteRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4, route_entry_ipv6}),
@@ -3079,10 +3086,10 @@ TEST_F(RouteManagerTest, BatchedDeletePartiallySucceeds)
     exp_sai_route_entry_ipv6.vr_id = gVrfOid;
     exp_sai_route_entry_ipv6.destination = sai_ipv6_route_prefix;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE, SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
     EXPECT_CALL(mock_sai_route_, remove_route_entries(Eq(2),
                                                       RouteEntryArrayEq(std::vector<sai_route_entry_t>{
-                                                          exp_sai_route_entry_ipv6, exp_sai_route_entry_ipv4}),
+                                                         exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6}),
                                                       Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
         .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_FAILURE)));
     EXPECT_THAT(DeleteRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4, route_entry_ipv6}),

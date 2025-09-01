@@ -34,13 +34,15 @@ def get_key(db, tbl_name, key):
 
 def verify_attr(fvs, attr_list):
   """ Verifies attribute list for given key in a database table."""
-  assert len(fvs) == len(attr_list)
+  assert len(fvs) == len(attr_list), "Unexpected size: '%d' received, expected '%d'" % \
+                (len(fvs), len(attr_list))
   d = dict(attr_list)
   for fv in fvs:
     if fv[0] in d:
-      assert fv[1] == d[fv[0]]
+      assert fv[1] == d[fv[0]], "Unexpected value of attribute '%s': '%s' received, expected '%s'" % \
+                (fv[0], fv[1], d[fv[0]])
     else:
-      assert False
+      assert False, "Unexpected attribute '%s' received" % (fv[0])
 
 def prepend_match_field(match_field):
   return "match/" + match_field
