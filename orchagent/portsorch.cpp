@@ -626,10 +626,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha;
+    string queueWmSha, pgWmSha, portRateSha, portFlrSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
+    string portFlrPluginName = "port_flr.lua";
 
     try
     {
@@ -641,10 +642,28 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
         portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
+
+        string portFlrLuaScript = swss::loadLuaScript(portFlrPluginName);
+        portFlrSha = swss::loadRedisScript(m_counter_db.get(), portFlrLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
+    }
+
+    // Build portStatPlugins string, only adding non-empty plugin SHAs
+    std::string portStatPlugins;
+    if (!portRateSha.empty())
+    {
+        portStatPlugins = portRateSha;
+    }
+    if (!portFlrSha.empty())
+    {
+        if (!portStatPlugins.empty())
+        {
+            portStatPlugins += ",";
+        }
+        portStatPlugins += portFlrSha;
     }
 
     setFlexCounterGroupParameter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
@@ -663,7 +682,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                                  PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
                                  STATS_MODE_READ,
                                  PORT_PLUGIN_FIELD,
-                                 portRateSha);
+                                 portStatPlugins);
 
     setFlexCounterGroupParameter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
