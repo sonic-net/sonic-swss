@@ -1081,7 +1081,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
     if (nlmsg_type == RTM_DELROUTE)
     {
         string routeTableKeyStr = string(routeTableKey);
-        string srv6SidListTableKey = routeTableKeyStr;
+        string srv6SidListTableKey = vpn_sid_str;
 
 
         vector<FieldValueTuple> fvVector;
@@ -1095,7 +1095,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         string routeTableKeyStr = string(routeTableKey);
         /* Write SID list to SRV6_SID_LIST_TABLE */
 
-        string srv6SidListTableKey = routeTableKeyStr;
+        string srv6SidListTableKey = vpn_sid_str;
 
         vector<FieldValueTuple> fvVectorSidList;
 
