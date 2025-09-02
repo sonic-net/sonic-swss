@@ -584,7 +584,7 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
         && !m_ha_set_entries.empty()
         && m_ha_set_entries[0].metadata.scope() == dash::types::HaScope::HA_SCOPE_DPU)
     {
-       gBfdOrch->removeAllSoftwareBfdSession();
+       gBfdOrch->removeAllSoftwareBfdSessions();
     }
 
     sai_attribute_t ha_scope_attr;
@@ -834,13 +834,39 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (!m_ha_set_entries.empty() && m_ha_set_entries[0].metadata.scope() == dash::types::HA_SCOPE_ENI)
+            bool has_eni_scope = false;
+            for (const auto& ha_set_entry : m_ha_set_entries)
+            {
+                if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_ENI)
+                {
+                    has_eni_scope = true;
+                    break;
+                }
+            }
+            
+            if (!m_ha_set_entries.empty() && has_eni_scope)
             {
                 gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
 
-            if (!m_ha_set_entries.empty() && m_ha_set_entries[0].metadata.scope() == dash::types::HA_SCOPE_DPU
-                && !m_ha_scope_entries.empty() && m_ha_scope_entries[0].metadata.ha_role() != dash::types::HA_ROLE_DEAD)
+            bool has_dpu_scope_ha_role_active = false;
+            for (const auto& ha_set_entry : m_ha_set_entries)
+            {
+                if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
+                {
+                    for (const auto& ha_scope_entry : m_ha_scope_entries)
+                    {
+                        if (ha_scope_entry.second.metadata.ha_role() != dash::types::HA_ROLE_DEAD)
+                        {
+                            has_dpu_scope_ha_role_active = true;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (!m_ha_set_entries.empty() && has_dpu_scope_ha_role_active)
             {
                 gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }

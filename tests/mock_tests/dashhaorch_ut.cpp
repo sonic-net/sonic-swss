@@ -18,6 +18,18 @@ namespace dashhaorch_ut
 
     using namespace mock_orch_test;
 
+    class MockBfdOrch : public BfdOrch
+    {
+    public:
+        MockBfdOrch(DBConnector* db, DBConnector* state_db) 
+            : BfdOrch(db, APP_BFD_SESSION_TABLE_NAME, TableConnector(state_db, STATE_BFD_SESSION_TABLE_NAME)) {}
+
+        MOCK_METHOD(void, createSoftwareBfdSession,
+                    (const string& key, const vector<FieldValueTuple>& data));
+        MOCK_METHOD(void, removeSoftwareBfdSession, (const string& key));
+        MOCK_METHOD(void, removeAllSoftwareBfdSessions, ());
+    };
+
     class DashHaOrchTestable : public DashHaOrch
     {
     public:
@@ -27,6 +39,13 @@ namespace dashhaorch_ut
     class DashHaOrchTest : public MockOrchTest
     {
     protected:
+        unique_ptr<MockBfdOrch> m_mockBfdOrch;
+
+        void PostSetUp() override
+        {
+            m_mockBfdOrch = make_unique<MockBfdOrch>(m_app_db.get(), m_state_db.get());
+            gBfdOrch = m_mockBfdOrch.get();
+        }
 
         void ApplySaiMock()
         {
@@ -37,6 +56,7 @@ namespace dashhaorch_ut
         void PreTearDown() override
         {
             RestoreSaiApis();
+            gBfdOrch = nullptr;
             DEINIT_SAI_API_MOCK(dash_ha);
         }
 
@@ -463,6 +483,37 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
+        void CreateSoftwareBfdSession()
+        {
+            auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
+
+            string bfd_session_key = "default:default:192.168.1.100";
+            vector<FieldValueTuple> bfd_session_data = {
+                {"local_addr", "192.168.1.1"},
+                {"tx_interval", "1000"},
+                {"rx_interval", "1000"},
+                {"multiplier", "3"},
+                {"type", "async_active"},
+                {"multihop", "true"}
+            };
+
+            bfd_consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            bfd_session_key,
+                            SET_COMMAND,
+                            bfd_session_data
+                        }
+                    }
+                )
+            );
+
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*bfd_consumer.get());
+        }
+
         void HaSetEvent(sai_ha_set_event_t event_type)
         {
             mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
@@ -849,5 +900,48 @@ namespace dashhaorch_ut
 
         HaSetScopeUnspecified();
         CreateHaScope();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingEni)
+    {
+        CreateEniScopeHaSet();
+        CreateHaScope();
+
+        EXPECT_CALL(*m_mockBfdOrch, createSoftwareBfdSession)
+        .Times(1);
+        CreateSoftwareBfdSession();
+
+        SetHaScopeHaRole();
+
+        EXPECT_CALL(*m_mockBfdOrch, removeAllSoftwareBfdSessions())
+        .Times(0);
+        SetHaScopeHaRole("dead");
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingDpu)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        EXPECT_CALL(*m_mockBfdOrch, createSoftwareBfdSession)
+        .Times(0);
+        CreateSoftwareBfdSession();
+
+        SetHaScopeHaRole();
+
+        EXPECT_CALL(*m_mockBfdOrch, createSoftwareBfdSession)
+        .Times(1);
+        CreateSoftwareBfdSession();
+
+        EXPECT_CALL(*m_mockBfdOrch, removeAllSoftwareBfdSessions())
+        .Times(1);
+        SetHaScopeHaRole("dead");
+
+        RemoveHaScope();
+        RemoveHaSet();
     }
 }
