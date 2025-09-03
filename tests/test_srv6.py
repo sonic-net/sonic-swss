@@ -1559,12 +1559,12 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
-        expected_fields = {"segment": "Vrf13:192.0.2.0/24", "seg_src": "fc00:0:2::1"}
+        expected_fields = {"segment": "fc00:0:1:e000::", "seg_src": "fc00:0:2::1"}
         self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:192.0.2.0/24", expected_fields)
 
-        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24")
+        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
         expected_fields = {"path": "fc00:0:1:e000::"}
-        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24", expected_fields)
+        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::", expected_fields)
 
         # verify that the route has been programmed into the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
@@ -1625,7 +1625,7 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
-        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
 
         # verify that the route has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))
@@ -1664,12 +1664,12 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64")
-        expected_fields = {"segment": "Vrf13:2001:db8:1:1::/64", "seg_src": "fc00:0:2::1"}
+        expected_fields = {"segment": "fc00:0:1:e000::", "seg_src": "fc00:0:2::1"}
         self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64", expected_fields)
 
-        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64")
+        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
         expected_fields = {"path": "fc00:0:1:e000::"}
-        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64", expected_fields)
+        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::", expected_fields)
 
         # verify that the route has been programmed into the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
@@ -1730,7 +1730,7 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64")
-        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
 
         # verify that the route has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))
