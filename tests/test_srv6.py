@@ -1532,7 +1532,6 @@ class TestSrv6VpnFpmsyncd(object):
         self.remove_vrf("Vrf13")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_vrf_entries) - 1)
 
-    @pytest.mark.xfail(reason="Failing after Bookworm/libnl 3.7.0 upgrade")
     def test_AddRemoveSrv6SteeringRouteIpv4(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1637,7 +1636,6 @@ class TestSrv6VpnFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
-    @pytest.mark.xfail(reason="Failing after Bookworm/libnl 3.7.0 upgrade")
     def test_AddRemoveSrv6SteeringRouteIpv6(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
