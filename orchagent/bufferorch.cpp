@@ -282,6 +282,27 @@ void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t obj
     }
 }
 
+void BufferOrch::addBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id)
+{
+    if (m_isBufferPoolWatermarkCounterIdListGenerated)
+    {
+        // Detokenize the SAI watermark stats to a string, separated by comma
+        string statList;
+        for (const auto &it : bufferPoolWatermarkStatIds)
+        {
+            statList += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
+        }
+        if (!statList.empty())
+        {
+            statList.pop_back();
+        }
+
+        string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
+        string stats_mode = "";
+        startFlexCounterPolling(gSwitchId, key, statList, BUFFER_POOL_COUNTER_ID_LIST, stats_mode);
+    }
+}
+
 void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 {
     // This function will be called in FlexCounterOrch when field:value tuple "FLEX_COUNTER_STATUS":"enable"
@@ -537,6 +558,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
+            addBufferPoolWatermarkCounterIdList(sai_object);
             // Here we take the PFC watchdog approach to update the COUNTERS_DB metadata (e.g., PFC_WD_DETECTION_TIME per queue)
             // at initialization (creation and registration phase)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
