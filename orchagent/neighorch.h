@@ -110,6 +110,8 @@ public:
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
     bool ifChangeInformRemoteNextHop(const string &, bool);
 
+    void clearBulkers();
+
 private:
     PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
