@@ -645,7 +645,7 @@ int main(int argc, char **argv)
     }
 
     // Enable FIPS POST if needed.
-    // TODO: MACSec POST needs to be eanbled in switch creation. So it's expected to
+    // TODO: MACSec POST needs to be enabled in switch creation. So it's expected to
     // to provide a config for orchagent to check if POST needs to be enabled or not.
     bool macsec_post_enabled = false;
 
