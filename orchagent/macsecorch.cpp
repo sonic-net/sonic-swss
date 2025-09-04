@@ -786,6 +786,10 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
                 SWSS_LOG_ERROR("Switch MACSec POST failed");
             }
         }
+        else if (post_state == "macsec-level-post-in-progress")
+        {
+            SWSS_LOG_ERROR("POST enabled in MACSec init, but got notification from switch init");
+        }
     }
 
     if (op == "macsec_post_status")
