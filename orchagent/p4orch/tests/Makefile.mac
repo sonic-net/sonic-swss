@@ -1,0 +1,65 @@
+# Makefile for Mac - Fixed header search paths
+CXX = clang++
+CXXFLAGS = -std=c++17 -Wall -Wextra -g -O0
+
+# Fix for macOS header search path issues
+SDK_PATH = $(shell xcrun --show-sdk-path)
+CXXFLAGS += -isysroot $(SDK_PATH)
+CXXFLAGS += -stdlib=libc++
+
+# Auto-detect Google Test location
+GTEST_PREFIX := $(shell brew --prefix googletest 2>/dev/null)
+ifeq ($(GTEST_PREFIX),)
+    GTEST_PREFIX := /usr/local
+endif
+
+# Proper include order: C++ standard library first, then project includes
+INCLUDES = -isystem $(SDK_PATH)/usr/include/c++/v1 \
+           -isystem $(GTEST_PREFIX)/include \
+           -I../../../ \
+           -I../../../../common
+
+LIBS = -L$(GTEST_PREFIX)/lib \
+       -lgtest -lgmock -lpthread
+
+# Source files
+TEST_SOURCES = $(wildcard *.cpp)
+TEST_OBJECTS = $(TEST_SOURCES:.cpp=.o)
+
+# Target executable
+TARGET = test_main
+
+# Build rules
+all: check-deps $(TARGET)
+
+check-deps:
+	@echo "🔍 Checking build environment..."
+	@echo "SDK Path: $(SDK_PATH)"
+	@echo "Google Test: $(GTEST_PREFIX)"
+	@command -v $(CXX) >/dev/null || (echo "❌ clang++ not found" && exit 1)
+	@test -d "$(GTEST_PREFIX)/include/gtest" || (echo "❌ Google Test not found" && exit 1)
+	@echo "✅ Environment OK"
+
+$(TARGET): $(TEST_OBJECTS)
+	@echo "🔗 Linking $(TARGET)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+	@echo "✅ Build successful!"
+
+%.o: %.cpp
+	@echo "🔨 Compiling $<..."
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+clean:
+	@echo "🧹 Cleaning..."
+	rm -f $(TEST_OBJECTS) $(TARGET)
+
+debug:
+	@echo "Debug information:"
+	@echo "CXX: $(CXX)"
+	@echo "CXXFLAGS: $(CXXFLAGS)"
+	@echo "INCLUDES: $(INCLUDES)"
+	@echo "LIBS: $(LIBS)"
+	@echo "SDK_PATH: $(SDK_PATH)"
+	@echo "GTEST_PREFIX: $(GTEST_PREFIX)"
+
+.PHONY: all clean check-deps debug

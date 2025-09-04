@@ -1,0 +1,27 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/orchagent/**",
+                "/usr/local/include"
+                //"/Users/tritm/Codes/sonic-swss-common/common"
+                // "${workspaceFolder}/common"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/orchagent",
+                    "${workspaceFolder}/**"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "defines": [],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++14",
+            "intelliSenseMode": "macos-clang-x64"
+        }
+    ],
+    "version": 4
+}
