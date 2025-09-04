@@ -22,6 +22,7 @@
 #include "saihelper.h"
 #include "directory.h"
 #include "dashtunnelorch.h"
+#include "dashportmaporch.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -383,9 +384,25 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK;
         to_sai(ctxt.metadata.overlay_sip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        if (ctxt.metadata.has_port_map())
+        {
+            auto port_map_oid =
+                gDirectory.get<DashPortMapOrch*>()->getPortMapOid(ctxt.metadata.port_map());
+            if (port_map_oid == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_ERROR("Portmap %s for VnetMap %s does not exist yet",
+                               ctxt.metadata.port_map().c_str(), key.c_str());
+                return false;
+            }
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OUTBOUND_PORT_MAP_ID;
+            outbound_ca_to_pa_attr.value.oid = port_map_oid;
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        }
     }
 
-    if (ctxt.metadata.has_metering_class_or()) {
+    if (ctxt.metadata.has_metering_class_or())
+    {
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_METER_CLASS_OR;
         outbound_ca_to_pa_attr.value.u32 = ctxt.metadata.metering_class_or();
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);

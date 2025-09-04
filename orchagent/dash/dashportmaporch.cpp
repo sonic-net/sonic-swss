@@ -168,6 +168,18 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
     }
 }
 
+sai_object_id_t DashPortMapOrch::getPortMapOid(const std::string& port_map_name)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = port_map_table_.find(port_map_name);
+    if (it == port_map_table_.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+    return it->second;
+}
+
 bool DashPortMapOrch::addPortMap(const std::string &port_map_id, DashPortMapBulkContext &ctxt)
 {
     SWSS_LOG_ENTER();
