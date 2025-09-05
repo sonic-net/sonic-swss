@@ -20,7 +20,6 @@ using namespace swss;
 
 // types --------------------------------------------------------------------------------------------------------------
 
-typedef decltype(PortConfig::serdes) PortSerdes_t;
 typedef decltype(PortConfig::link_event_damping_config) PortDampingConfig_t;
 
 // constants ----------------------------------------------------------------------------------------------------------
@@ -697,6 +696,27 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
+// custom_collection specialization
+bool PortHelper::parsePortSerdes(
+    decltype(PortSerdes_t::custom_collection)& serdes,
+    const std::string& field,
+    const std::string& value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited",
+                       field.c_str());
+        return false;
+    }
+
+    // directly assign the raw string
+    serdes.value  = value;
+    serdes.is_set = true;
+    return true;
+}
+
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -1178,6 +1198,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_REGN_BFM1N)
         {
             if (!this->parsePortSerdes(port.serdes.regn_bfm1n, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_CUSTOM_SERDES_ATTRS)
+        {
+            if (!this->parsePortSerdes(port.serdes.custom_collection, field, value))
             {
                 return false;
             }
