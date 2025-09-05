@@ -411,6 +411,31 @@ class TestHFT(object):
         self.delete_hft_group(dvs)
         self.delete_hft_profile(dvs)
 
+    def test_hft_empty_fields_with_disabled_status(self, dvs, testlog):
+        """Test HFT with empty object_names and object_counters when profile is disabled."""
+        # Create HFT profile with disabled status
+        self.create_hft_profile(dvs, status="disabled")
+        
+        # Create HFT group with empty object_names and object_counters
+        self.create_hft_group(dvs,
+                              object_names="",
+                              object_counters="")
+
+        # Wait for processing
+        time.sleep(3)
+
+        # Verify that no counter subscriptions are created when 
+        # profile is disabled and fields are empty
+        asic_db = self.get_asic_db_objects(dvs)
+        
+        assert len(asic_db["tam_counter_subscription"]) == 0, \
+            "Expected no tam counter subscriptions when profile is disabled " \
+            "and object_names/object_counters are empty"
+
+        # Clean up
+        self.delete_hft_group(dvs)
+        self.delete_hft_profile(dvs)
+
 
     def test_hft_multiple_groups(self, dvs, testlog):
         """Test HFT with multiple groups and objects."""
