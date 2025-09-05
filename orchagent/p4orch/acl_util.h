@@ -324,6 +324,7 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_MATCH_SRC_IPV6_WORD3 "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD3"
 #define P4_MATCH_SRC_IPV6_WORD2 "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD2"
 #define P4_MATCH_ROUTE_DST_USER_META "SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META"
+#define P4_MATCH_ACL_USER_META "SAI_ACL_TABLE_ATTR_FIELD_ACL_USER_META"
 
 #define P4_ACTION_PACKET_ACTION "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION"
 #define P4_ACTION_REDIRECT "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT"
@@ -352,6 +353,7 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_ACTION_SET_L4_DST_PORT "SAI_ACL_ENTRY_ATTR_ACTION_SET_L4_DST_PORT"
 #define P4_ACTION_SET_DO_NOT_LEARN "SAI_ACL_ENTRY_ATTR_ACTION_SET_DO_NOT_LEARN"
 #define P4_ACTION_SET_VRF "SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF"
+#define P4_ACTION_SET_ACL_META_DATA "SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA"
 #define P4_ACTION_SET_QOS_QUEUE "QOS_QUEUE"
 
 #define P4_PACKET_ACTION_FORWARD "SAI_PACKET_ACTION_FORWARD"
@@ -359,6 +361,9 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_PACKET_ACTION_COPY "SAI_PACKET_ACTION_COPY"
 #define P4_PACKET_ACTION_PUNT "SAI_PACKET_ACTION_TRAP"
 #define P4_PACKET_ACTION_LOG "SAI_PACKET_ACTION_LOG"
+#define P4_PACKET_ACTION_COPY_CANCEL "SAI_PACKET_ACTION_COPY_CANCEL"
+#define P4_PACKET_ACTION_DENY "SAI_PACKET_ACTION_DENY"
+
 
 #define P4_PACKET_ACTION_REDIRECT "REDIRECT"
 
@@ -425,7 +430,12 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define GENL_PACKET_TRAP_GROUP_NAME_PREFIX "trap.group.cpu.queue."
 
 #define EMPTY_STRING ""
-#define P4_CPU_QUEUE_MAX_NUM 8
+
+// TODO :  To avoid existing p4 tests failure, extend the queue
+// temporarily, should set to 7-14 later.
+#define P4_CPU_QUEUE_MIN_NUM 1 // 7
+#define P4_CPU_QUEUE_MAX_NUM 15 // 14
+
 #define IPV6_SINGLE_WORD_BYTES_LENGTH 4
 #define BYTE_BITWIDTH 8
 
@@ -484,6 +494,7 @@ static const acl_table_attr_lookup_t aclMatchTableAttrLookup = {
     {P4_MATCH_TUNNEL_VNI, SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI},
     {P4_MATCH_IPV6_NEXT_HEADER, SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER},
     {P4_MATCH_ROUTE_DST_USER_META, SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META},
+    {P4_MATCH_ACL_USER_META, SAI_ACL_TABLE_ATTR_FIELD_ACL_USER_META},
 };
 
 static const acl_table_attr_format_lookup_t aclMatchTableAttrFormatLookup = {
@@ -533,6 +544,7 @@ static const acl_table_attr_format_lookup_t aclMatchTableAttrFormatLookup = {
     {SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI, Format::HEX_STRING},
     {SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER, Format::HEX_STRING},
     {SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META, Format::HEX_STRING},
+    {SAI_ACL_TABLE_ATTR_FIELD_ACL_USER_META, Format::HEX_STRING},
 };
 
 static const acl_table_attr_lookup_t aclCompositeMatchTableAttrLookup = {
@@ -589,6 +601,7 @@ static const acl_rule_attr_lookup_t aclMatchEntryAttrLookup = {
     {P4_MATCH_TUNNEL_VNI, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI},
     {P4_MATCH_IPV6_NEXT_HEADER, SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER},
     {P4_MATCH_ROUTE_DST_USER_META, SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META},
+    {P4_MATCH_ACL_USER_META, SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META},
 };
 
 static const acl_rule_attr_lookup_t aclCompositeMatchEntryAttrLookup = {
@@ -602,6 +615,8 @@ static const acl_packet_action_lookup_t aclPacketActionLookup = {
     {P4_PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD}, {P4_PACKET_ACTION_DROP, SAI_PACKET_ACTION_DROP},
     {P4_PACKET_ACTION_COPY, SAI_PACKET_ACTION_COPY},       {P4_PACKET_ACTION_PUNT, SAI_PACKET_ACTION_TRAP},
     {P4_PACKET_ACTION_LOG, SAI_PACKET_ACTION_LOG},
+    {P4_PACKET_ACTION_COPY_CANCEL, SAI_PACKET_ACTION_COPY_CANCEL},
+    {P4_PACKET_ACTION_DENY, SAI_PACKET_ACTION_DENY},
 };
 
 static const acl_rule_attr_lookup_t aclActionLookup = {
@@ -631,6 +646,7 @@ static const acl_rule_attr_lookup_t aclActionLookup = {
     {P4_ACTION_SET_QOS_QUEUE, SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID},
     {P4_ACTION_SET_DO_NOT_LEARN, SAI_ACL_ENTRY_ATTR_ACTION_SET_DO_NOT_LEARN},
     {P4_ACTION_SET_VRF, SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF},
+    {P4_ACTION_SET_ACL_META_DATA, SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA},
 };
 
 static const acl_packet_color_policer_attr_lookup_t aclPacketColorPolicerAttrLookup = {
