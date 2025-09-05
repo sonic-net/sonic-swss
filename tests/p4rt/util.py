@@ -124,15 +124,3 @@ class DBInterface(object):
       table = i[1]
       self._original_entries["{}:{}".format(db, table)]= get_keys(db, table)
 
-class KeyToOidDBHelper(object):
-  """Provides helper APIs for P4RT key to OID mapping in Redis DB."""
-
-  # Table name in Redis DB for the mapping.
-  TBL_NAME = "P4RT_KEY_TO_OID"
-  KEY = ""
-
-  def __init__(self, dvs):
-    self.table = swsscommon.Table(_set_up_appl_state_db(dvs), self.TBL_NAME)
-
-  def get_db_info(self):
-    return self.table.get(self.KEY)
