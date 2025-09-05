@@ -1,4 +1,3 @@
-AC_INIT([sonic-swss],[1.0])
 AC_CONFIG_SRCDIR([])
 AC_CONFIG_AUX_DIR(config)
 AM_CONFIG_HEADER(config.h)
