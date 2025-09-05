@@ -283,7 +283,6 @@ void PortMgr::doTask(Consumer &consumer)
             }
 
             if (!dhcp_rate_limit.empty())
-            if (!dhcp_rate_limit.empty())
             {
                 setPortDHCPMitigationRate(alias, dhcp_rate_limit);
                 SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
