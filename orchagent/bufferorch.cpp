@@ -52,6 +52,7 @@ std::map<string, std::map<size_t, string>> queue_port_flags;
 
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
+    m_counterNameMapUpdater(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_BUFFER_POOL_NAME_MAP)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
@@ -542,7 +543,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
-            m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
+            m_counterNameMapUpdater->setCounterNameMap(object_name, sai_object);
         }
 
         // Only publish the result when shared headroom pool is enabled and it has been successfully applied to SAI
@@ -582,7 +583,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         }
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
-        m_countersDb->hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
+        m_counterNameMapUpdater->delCounterNameMap(object_name);
 
         vector<FieldValueTuple> fvs;
         m_publisher.publish(APP_BUFFER_POOL_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
