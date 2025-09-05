@@ -34,6 +34,7 @@ using ::testing::StrictMock;
 using ::testing::Truly;
 
 extern sai_object_id_t gSwitchId;
+extern sai_object_id_t gUnderlayIfId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_router_interface_api_t *sai_router_intfs_api;
 extern MockSaiTunnel *mock_sai_tunnel;
@@ -45,7 +46,6 @@ constexpr sai_object_id_t kRouterInterfaceOid1 = 1;
 constexpr char *kGreTunnelP4AppDbId1 = "tunnel-1";
 constexpr char *kGreTunnelP4AppDbKey1 = R"({"match/tunnel_id":"tunnel-1"})";
 constexpr sai_object_id_t kGreTunnelOid1 = 0x11;
-constexpr sai_object_id_t kOverlayRifOid1 = 0x101;
 
 // APP DB entries for Add request.
 const P4GreTunnelAppDbEntry kP4GreTunnelAppDbEntry1{/*tunnel_id=*/"tunnel-1",
@@ -69,7 +69,7 @@ std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateAttributeListForG
     tunnel_attrs.insert({tunnel_attr.id, tunnel_attr.value});
 
     tunnel_attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
-    tunnel_attr.value.oid = kOverlayRifOid1;
+    tunnel_attr.value.oid = gUnderlayIfId;
     tunnel_attrs.insert({tunnel_attr.id, tunnel_attr.value});
 
     tunnel_attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
@@ -285,9 +285,6 @@ P4GreTunnelEntry *GreTunnelManagerTest::AddGreTunnelEntry1()
                                       kRouterInterfaceOid1));
 
     // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
-
     EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
                                                 Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
                                                                 CreateAttributeListForGreTunnelObject(
@@ -343,22 +340,6 @@ TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenDependingPortIsNotPr
     EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
 }
 
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenRifSaiCallFails)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
-                                      kRouterInterfaceOid1));
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_FAILURE)));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
-
-    // The add request failed for the gre tunnel entry.
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
-}
-
 TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenTunnelSaiCallFails)
 {
     const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
@@ -366,40 +347,11 @@ TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenTunnelSaiCallFails)
                                       KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
                                       kRouterInterfaceOid1));
     // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
                                                 Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
                                                                 CreateAttributeListForGreTunnelObject(
                                                                     kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
         .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
-
-    // The add request failed for the gre tunnel entry.
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
-}
-
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldRaiseCriticalWhenRecoverySaiCallFails)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
-                                      kRouterInterfaceOid1));
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    // TODO: Expect critical state.
-
     EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
 
     // The add request failed for the gre tunnel entry.
@@ -463,66 +415,6 @@ TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailIfTunnelSaiCallFails)
     p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
     ASSERT_NE(p4_tunnel_entry, nullptr);
     EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-}
-
-TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailIfRifSaiCallFails)
-{
-    auto *p4_tunnel_entry = AddGreTunnelEntry1();
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(Eq(p4_tunnel_entry->tunnel_oid))).WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(DoAll(SetArgPointee<0>(kGreTunnelOid1), Return(SAI_STATUS_SUCCESS)));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessDeleteRequest(gre_tunnel_key));
-
-    // Validate the gre tunnel entry is not deleted in either P4 gre tunnel
-    // manager or central mapper.
-    p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-    EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-}
-
-TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldRaiseCriticalIfRecoverySaiCallFails)
-{
-    auto *p4_tunnel_entry = AddGreTunnelEntry1();
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(Eq(p4_tunnel_entry->tunnel_oid))).WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-
-    // TODO: Expect critical state.
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessDeleteRequest(gre_tunnel_key));
-
-    // Validate the gre tunnel entry is not deleted in either P4 gre tunnel
-    // manager or central mapper.
-    p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-    EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-}
-
-TEST_F(GreTunnelManagerTest, GetGreTunnelEntryShouldReturnNullPointerForNonexistingGreTunnel)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
 }
 
 TEST_F(GreTunnelManagerTest, DeserializeP4GreTunnelAppDbEntryShouldReturnNullPointerForInvalidField)
@@ -601,8 +493,6 @@ TEST_F(GreTunnelManagerTest, DrainDeleteRequestShouldSucceedForExistingGreTunnel
     std::vector<swss::FieldValueTuple> fvs;
     swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
                                               DEL_COMMAND, fvs);
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(Eq(p4_tunnel_entry->tunnel_oid))).WillOnce(Return(SAI_STATUS_SUCCESS));
 
     Enqueue(app_db_entry);
@@ -634,8 +524,6 @@ TEST_F(GreTunnelManagerTest, DrainValidAppEntryShouldSucceed)
                                               SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
 
     EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kGreTunnelOid1), Return(SAI_STATUS_SUCCESS)));
