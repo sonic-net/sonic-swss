@@ -59,12 +59,10 @@ private:
     task_process_status taskUpdateIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
     task_process_status taskDeleteIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
 
-    Table m_state_post_state;
+    DBConnector * m_state_db;
     shared_ptr<DBConnector> m_notificationsDb;
     NotificationConsumer* m_postCompletionNotificationConsumer;
     bool m_enable_post;
-    void setMacsecPostState(const std::string & postState);
-    std::string getMacsecPostState();
 
     PortsOrch * m_port_orch;
 
