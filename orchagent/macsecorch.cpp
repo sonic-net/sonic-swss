@@ -1,4 +1,5 @@
 #include "macsecorch.h"
+#include "macsecpost.h"
 #include "notifier.h"
 
 #include <macaddress.h>
@@ -600,7 +601,7 @@ MACsecOrch::MACsecOrch(
     const std::vector<std::string> &tables,
     PortsOrch *port_orch) : Orch(app_db, tables),
                             m_port_orch(port_orch),
-                            m_state_post_state(state_db, STATE_FIPS_MACSEC_POST_TABLE_NAME),
+                            m_state_db(state_db),
                             m_state_macsec_port(state_db, STATE_MACSEC_PORT_TABLE_NAME),
                             m_state_macsec_egress_sc(state_db, STATE_MACSEC_EGRESS_SC_TABLE_NAME),
                             m_state_macsec_ingress_sc(state_db, STATE_MACSEC_INGRESS_SC_TABLE_NAME),
@@ -653,7 +654,7 @@ MACsecOrch::MACsecOrch(
     }
 
     // Add handler for POST completion callback/notification.
-    string post_state = getMacsecPostState();
+    string post_state = getMacsecPostState(m_state_db);
     if (post_state == "switch-level-post-in-progress" ||
         post_state == "macsec-level-post-in-progress" )
     {
@@ -673,12 +674,12 @@ MACsecOrch::MACsecOrch(
         {
             if (attr.value.s32 == SAI_SWITCH_MACSEC_POST_STATUS_PASS)
             {
-                setMacsecPostState("pass");
+                setMacsecPostState(m_state_db, "pass");
                 SWSS_LOG_NOTICE("Switch MACSec POST passed");
             }
             else if (attr.value.s32 == SAI_SWITCH_MACSEC_POST_STATUS_FAIL)
             {
-                setMacsecPostState("fail");
+                setMacsecPostState(m_state_db, "fail");
                 SWSS_LOG_ERROR("Switch MACSec POST failed: oid %" PRIu64, gSwitchId);
             }
             else
@@ -727,29 +728,6 @@ void MACsecOrch::doTask(NotificationConsumer &consumer)
     }
 }
 
-void MACsecOrch::setMacsecPostState(const std::string & postState)
-{
-    vector<FieldValueTuple> fvts;
-    FieldValueTuple postStateFvt("post_state", postState);
-    fvts.push_back(postStateFvt);
-    m_state_post_state.set("sai", fvts);
-}
-
-std::string MACsecOrch::getMacsecPostState()
-{
-    std::string postState = "";
-    std::vector<FieldValueTuple> fvts;
-    if (m_state_post_state.get("sai", fvts))
-    {
-        auto state = fvsGetValue(fvts, "post_state", true);
-        if (state)
-        {
-            postState = *state;
-        }
-    }
-    return postState;
-}
-
 void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry)
 {
     SWSS_LOG_ENTER();
@@ -769,7 +747,7 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
         sai_switch_macsec_post_status_t switch_macsec_post_status;
         sai_deserialize_switch_macsec_post_status_ntf(data, switch_id, switch_macsec_post_status);
 
-        string post_state = getMacsecPostState();
+        string post_state = getMacsecPostState(m_state_db);
         if (post_state == "switch-level-post-in-progress")
         {
             // MACSec POST was enabled in switch init. SAI enables POST in all HW MACSec engines.
@@ -777,12 +755,12 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
 
             if (switch_macsec_post_status == SAI_SWITCH_MACSEC_POST_STATUS_PASS)
             {
-                setMacsecPostState("pass");
+                setMacsecPostState(m_state_db, "pass");
                 SWSS_LOG_NOTICE("Switch MACSec POST passed");
             }
             else if (switch_macsec_post_status == SAI_SWITCH_MACSEC_POST_STATUS_FAIL)
             {
-                setMacsecPostState("fail");
+                setMacsecPostState(m_state_db, "fail");
                 SWSS_LOG_ERROR("Switch MACSec POST failed");
             }
         }
@@ -831,14 +809,14 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
                 // Check if POST passed on both MACSec objects.
                 if (macsec_obj->second.m_ingress_post_passed && macsec_obj->second.m_egress_post_passed)
                 {
-                    setMacsecPostState("pass");
+                    setMacsecPostState(m_state_db, "pass");
                     SWSS_LOG_NOTICE("MACSec POST passed: oid %" PRIu64 ", direction %s", macsec_id, direction.c_str());
                 }
             }
             else if(macsec_post_status == SAI_MACSEC_POST_STATUS_FAIL)
             {
                 // Consider POST failed since it failed on one MACSec object.
-                setMacsecPostState("fail");
+                setMacsecPostState(m_state_db, "fail");
                 SWSS_LOG_ERROR("MACSec POST failed: oid %" PRIu64 ", direction %s", macsec_id, direction.c_str());
             }
         }
