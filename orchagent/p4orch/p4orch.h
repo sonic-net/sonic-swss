@@ -25,6 +25,7 @@
 #include "p4orch/tables_definition_manager.h"
 #include "p4orch/wcmp_manager.h"
 #include "response_publisher.h"
+#include "return_code.h"
 #include "vrforch.h"
 
 static const std::map<std::string, std::string> FixedTablesMap = {
@@ -60,7 +61,7 @@ class P4Orch : public Orch
     void doTask(swss::SelectableTimer &timer);
     void doTask(swss::NotificationConsumer &consumer);
     void enqueue(const swss::KeyOpFieldsValuesTuple& entry);
-    void drain(const std::string& op);
+    ReturnCode drain(const std::string& op);
     void handleP4rtNotification(const std::vector<swss::FieldValueTuple>& values);
     void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
 

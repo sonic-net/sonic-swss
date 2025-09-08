@@ -189,21 +189,32 @@ void P4Orch::enqueue(const swss::KeyOpFieldsValuesTuple& entry) {
   }
 }
 
-void P4Orch::drain(const std::string& op) {
+ReturnCode P4Orch::drain(const std::string& op) {
+  ReturnCode status;
   if (op == SET_COMMAND) {
     for (const auto& manager : m_p4ManagerAddPrecedence) {
-      manager->drain();
+      if (status.ok()) {
+        status = manager->drain();
+      } else {
+        manager->drainWithNotExecuted();
+      }
     }
   } else {
     for (const auto& manager : m_p4ManagerDelPrecedence) {
-      manager->drain();
+      if (status.ok()) {
+        status = manager->drain();
+      } else {
+        manager->drainWithNotExecuted();
+      }
     }
   }
+  return status;
 }
 
 void P4Orch::handleP4rtNotification(
     const std::vector<swss::FieldValueTuple>& values) {
   std::string prev_op = "";
+  ReturnCode status;
   for (const auto& value : values) {
     std::string op = DEL_COMMAND;
     std::vector<swss::FieldValueTuple> vals;
@@ -217,15 +228,21 @@ void P4Orch::handleP4rtNotification(
     swss::KeyOpFieldsValuesTuple key_op_fvs_tuple(fvField(value), op, vals);
 
     // Call drain after grouping the same type of requests together.
-    if (op != prev_op) {
-      drain(prev_op);
+    if (op != prev_op && status.ok()) {
+      status = drain(prev_op);
       prev_op = op;
     }
 
-    // Enqueue the entry.
-    enqueue(key_op_fvs_tuple);
+    // Stop enqueue if there is any failure.
+    if (status.ok()) {
+      enqueue(key_op_fvs_tuple);
+    } else {
+      m_publisher.publish(APP_P4RT_TABLE_NAME, fvField(value), vals,
+                          ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                          /*replace=*/true);
+    }
   }
-  if (!prev_op.empty()) {
+  if (!prev_op.empty() && status.ok()) {
     drain(prev_op);
   }
 }

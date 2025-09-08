@@ -176,75 +176,81 @@ void AclRuleManager::enqueue(const std::string &table_name, const swss::KeyOpFie
     m_entries.push_back(entry);
 }
 
-void AclRuleManager::drain()
-{
-    SWSS_LOG_ENTER();
+void AclRuleManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string db_key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
-        const auto &op = kfvOp(key_op_fvs_tuple);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode AclRuleManager::drain() {
+  SWSS_LOG_ENTER();
 
-        SWSS_LOG_NOTICE("OP: %s, RULE_KEY: %s", op.c_str(), QuotedVar(db_key).c_str());
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string db_key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
+    const auto& op = kfvOp(key_op_fvs_tuple);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
-        auto app_db_entry_or = deserializeAclRuleAppDbEntry(table_name, db_key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
+    SWSS_LOG_NOTICE("OP: %s, RULE_KEY: %s", op.c_str(),
+                    QuotedVar(db_key).c_str());
 
-        status = validateAclRuleAppDbEntry(app_db_entry);
-        if (!status.ok())
-        {
-            SWSS_LOG_ERROR("Validation failed for ACL rule APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-
-        const auto &acl_table_name = app_db_entry.acl_table_name;
-        const auto &acl_rule_key =
-            KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, std::to_string(app_db_entry.priority));
-
-        const auto &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto *acl_rule = getAclRule(acl_table_name, acl_rule_key);
-            if (acl_rule == nullptr)
-            {
-                status = processAddRuleRequest(acl_rule_key, app_db_entry);
-            }
-            else
-            {
-                status = processUpdateRuleRequest(app_db_entry, *acl_rule);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            status = processDeleteRuleRequest(acl_table_name, acl_rule_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << operation;
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    auto app_db_entry_or =
+        deserializeAclRuleAppDbEntry(table_name, db_key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + db_key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    auto& app_db_entry = *app_db_entry_or;
+
+    status = validateAclRuleAppDbEntry(app_db_entry);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR(
+          "Validation failed for ACL rule APP DB entry with key %s: %s",
+          QuotedVar(table_name + ":" + db_key).c_str(),
+          status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+
+    const auto& acl_table_name = app_db_entry.acl_table_name;
+    const auto& acl_rule_key = KeyGenerator::generateAclRuleKey(
+        app_db_entry.match_fvs, std::to_string(app_db_entry.priority));
+
+    const auto& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto* acl_rule = getAclRule(acl_table_name, acl_rule_key);
+      if (acl_rule == nullptr) {
+        status = processAddRuleRequest(acl_rule_key, app_db_entry);
+      } else {
+        status = processUpdateRuleRequest(app_db_entry, *acl_rule);
+      }
+    } else if (operation == DEL_COMMAND) {
+      status = processDeleteRuleRequest(acl_table_name, acl_rule_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << operation;
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 ReturnCode AclRuleManager::setUpUserDefinedTraps()

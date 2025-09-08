@@ -767,73 +767,78 @@ void WcmpManager::enqueue(const std::string &table_name, const swss::KeyOpFields
     m_entries.push_back(entry);
 }
 
-void WcmpManager::drain()
-{
-    SWSS_LOG_ENTER();
+void WcmpManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string db_key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode WcmpManager::drain() {
+  SWSS_LOG_ENTER();
 
-        ReturnCode status;
-        auto app_db_entry_or = deserializeP4WcmpGroupAppDbEntry(db_key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize APP DB WCMP group entry with key %s: %s",
-                           QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string db_key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
 
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            status = validateWcmpGroupEntry(app_db_entry);
-            if (!status.ok())
-            {
-                SWSS_LOG_ERROR("Invalid WCMP group with id %s: %s", QuotedVar(app_db_entry.wcmp_group_id).c_str(),
-                               status.message().c_str());
-                m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status,
-                                     /*replace=*/true);
-                continue;
-            }
-            auto *wcmp_group_entry = getWcmpGroupEntry(app_db_entry.wcmp_group_id);
-            if (wcmp_group_entry == nullptr)
-            {
-                // Create WCMP group
-                status = processAddRequest(&app_db_entry);
-            }
-            else
-            {
-                // Modify existing WCMP group
-                status = processUpdateRequest(&app_db_entry);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            // Delete WCMP group
-            status = removeWcmpGroup(app_db_entry.wcmp_group_id);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                     << "Unknown operation type: " << QuotedVar(operation) << " for WCMP group entry with key "
-                     << QuotedVar(table_name) << ":" << QuotedVar(db_key)
-                     << "; only SET and DEL operations are allowed.";
-            SWSS_LOG_ERROR("Unknown operation type %s\n", QuotedVar(operation).c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    auto app_db_entry_or = deserializeP4WcmpGroupAppDbEntry(db_key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR(
+          "Unable to deserialize APP DB WCMP group entry with key %s: %s",
+          QuotedVar(table_name + ":" + db_key).c_str(),
+          status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    auto& app_db_entry = *app_db_entry_or;
+
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      status = validateWcmpGroupEntry(app_db_entry);
+      if (!status.ok()) {
+        SWSS_LOG_ERROR("Invalid WCMP group with id %s: %s",
+                       QuotedVar(app_db_entry.wcmp_group_id).c_str(),
+                       status.message().c_str());
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
+        break;
+      }
+      auto* wcmp_group_entry = getWcmpGroupEntry(app_db_entry.wcmp_group_id);
+      if (wcmp_group_entry == nullptr) {
+        // Create WCMP group
+        status = processAddRequest(&app_db_entry);
+      } else {
+        // Modify existing WCMP group
+        status = processUpdateRequest(&app_db_entry);
+      }
+    } else if (operation == DEL_COMMAND) {
+      // Delete WCMP group
+      status = removeWcmpGroup(app_db_entry.wcmp_group_id);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type: " << QuotedVar(operation)
+               << " for WCMP group entry with key " << QuotedVar(table_name)
+               << ":" << QuotedVar(db_key)
+               << "; only SET and DEL operations are allowed.";
+      SWSS_LOG_ERROR("Unknown operation type %s\n",
+                     QuotedVar(operation).c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 std::string WcmpManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)

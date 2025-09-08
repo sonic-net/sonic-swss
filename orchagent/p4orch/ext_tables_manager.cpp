@@ -683,120 +683,118 @@ void ExtTablesManager::enqueue(const std::string &table_name, const swss::KeyOpF
     m_entriesTables[table_name].push_back(entry);
 }
 
-void ExtTablesManager::drain()
-{
-    SWSS_LOG_ENTER();
-    std::string table_prefix = "EXT_";
+void ExtTablesManager::drainWithNotExecuted() {
+  for (auto& entries_table : m_entriesTables) {
+    drainMgmtWithNotExecuted(entries_table.second, m_publisher);
+  }
+}
 
-    if (gP4Orch->tablesinfo)
-    {
-        for (auto table_it = gP4Orch->tablesinfo->m_tablePrecedenceMap.begin();
-             table_it != gP4Orch->tablesinfo->m_tablePrecedenceMap.end(); ++table_it)
-        {
-            auto table_name = table_prefix + table_it->second;
-            boost::algorithm::to_upper(table_name);
-            auto it_m = m_entriesTables.find(table_name);
-            if (it_m == m_entriesTables.end())
-            {
-                continue;
-            }
+ReturnCode ExtTablesManager::drain() {
+  SWSS_LOG_ENTER();
+  std::string table_prefix = "EXT_";
+  ReturnCode ret;
 
-            for (const auto &key_op_fvs_tuple : it_m->second)
-            {
-                std::string table_name;
-                std::string table_key;
+  if (gP4Orch->tablesinfo) {
+    for (auto table_it = gP4Orch->tablesinfo->m_tablePrecedenceMap.begin();
+         table_it != gP4Orch->tablesinfo->m_tablePrecedenceMap.end();
+         ++table_it) {
+      auto table_name = table_prefix + table_it->second;
+      boost::algorithm::to_upper(table_name);
+      auto it_m = m_entriesTables.find(table_name);
+      if (it_m == m_entriesTables.end()) {
+        continue;
+      }
 
-                parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &table_key);
-                const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+      ReturnCode status;
+      while (!it_m->second.empty()) {
+        auto key_op_fvs_tuple = it_m->second.front();
+        it_m->second.pop_front();
+        std::string table_name;
+        std::string table_key;
 
-                if (table_name.rfind(table_prefix, 0) == std::string::npos)
-                {
-                    SWSS_LOG_ERROR("Table %s is without prefix %s", table_name.c_str(), table_prefix.c_str());
-                    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                                         kfvFieldsValues(key_op_fvs_tuple), StatusCode::SWSS_RC_INVALID_PARAM,
-                                         /*replace=*/true);
-                    continue;
-                }
-                table_name = table_name.substr(table_prefix.length());
-                boost::algorithm::to_lower(table_name);
+        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &table_key);
+        const std::vector<swss::FieldValueTuple>& attributes =
+            kfvFieldsValues(key_op_fvs_tuple);
 
-                ReturnCode status;
-                auto app_db_entry_or = deserializeP4ExtTableEntry(table_name, table_key, attributes);
-                if (!app_db_entry_or.ok())
-                {
-                    status = app_db_entry_or.status();
-                    SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                                   QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
-                    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                                         kfvFieldsValues(key_op_fvs_tuple), status,
-                                         /*replace=*/true);
-                    continue;
-                }
-
-                auto &app_db_entry = *app_db_entry_or;
-                status = validateP4ExtTableAppDbEntry(app_db_entry);
-                if (!status.ok())
-                {
-                    SWSS_LOG_ERROR("Validation failed for extension APP DB entry with key %s: %s",
-                                   QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
-                    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                                         kfvFieldsValues(key_op_fvs_tuple), status,
-                                         /*replace=*/true);
-                    continue;
-                }
-
-                const std::string &operation = kfvOp(key_op_fvs_tuple);
-                if (operation == SET_COMMAND)
-                {
-                    auto *ext_table_entry = getP4ExtTableEntry(app_db_entry.table_name, app_db_entry.table_key);
-                    if (ext_table_entry == nullptr)
-                    {
-                        // Create extension entry
-                        app_db_entry.db_key = kfvKey(key_op_fvs_tuple);
-                        status = processAddRequest(app_db_entry);
-                    }
-                    else
-                    {
-                        // Modify existing extension entry
-                        status = processUpdateRequest(app_db_entry, ext_table_entry);
-                    }
-                }
-                else if (operation == DEL_COMMAND)
-                {
-                    // Delete extension entry
-                    status = processDeleteRequest(app_db_entry);
-                }
-                else
-                {
-                    status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                             << "Unknown operation type " << QuotedVar(operation);
-                    SWSS_LOG_ERROR("%s", status.message().c_str());
-                }
-                if (!status.ok())
-                {
-                    SWSS_LOG_ERROR("Processing failed for extension APP_DB entry with key %s: %s",
-                                   QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
-                }
-                m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status,
-                                     /*replace=*/true);
-            }
-
-            it_m->second.clear();
+        if (table_name.rfind(table_prefix, 0) == std::string::npos) {
+          status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM);
+          SWSS_LOG_ERROR("Table %s is without prefix %s", table_name.c_str(),
+                         table_prefix.c_str());
+          m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                               kfvFieldsValues(key_op_fvs_tuple), status,
+                               /*replace=*/true);
+          break;
         }
-    }
+        table_name = table_name.substr(table_prefix.length());
+        boost::algorithm::to_lower(table_name);
 
-    // Now report error for all remaining un-processed entries
-    for (auto it_m = m_entriesTables.begin(); it_m != m_entriesTables.end(); it_m++)
-    {
-        for (const auto &key_op_fvs_tuple : it_m->second)
-        {
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 StatusCode::SWSS_RC_INVALID_PARAM, /*replace=*/true);
+        auto app_db_entry_or =
+            deserializeP4ExtTableEntry(table_name, table_key, attributes);
+        if (!app_db_entry_or.ok()) {
+          status = app_db_entry_or.status();
+          SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                         QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(),
+                         status.message().c_str());
+          m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                               kfvFieldsValues(key_op_fvs_tuple), status,
+                               /*replace=*/true);
+          break;
         }
 
-        it_m->second.clear();
+        auto& app_db_entry = *app_db_entry_or;
+        status = validateP4ExtTableAppDbEntry(app_db_entry);
+        if (!status.ok()) {
+          SWSS_LOG_ERROR(
+              "Validation failed for extension APP DB entry with key %s: %s",
+              QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(),
+              status.message().c_str());
+          m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                               kfvFieldsValues(key_op_fvs_tuple), status,
+                               /*replace=*/true);
+          break;
+        }
+
+        const std::string& operation = kfvOp(key_op_fvs_tuple);
+        if (operation == SET_COMMAND) {
+          auto* ext_table_entry = getP4ExtTableEntry(app_db_entry.table_name,
+                                                     app_db_entry.table_key);
+          if (ext_table_entry == nullptr) {
+            // Create extension entry
+            app_db_entry.db_key = kfvKey(key_op_fvs_tuple);
+            status = processAddRequest(app_db_entry);
+          } else {
+            // Modify existing extension entry
+            status = processUpdateRequest(app_db_entry, ext_table_entry);
+          }
+        } else if (operation == DEL_COMMAND) {
+          // Delete extension entry
+          status = processDeleteRequest(app_db_entry);
+        } else {
+          status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                   << "Unknown operation type " << QuotedVar(operation);
+          SWSS_LOG_ERROR("%s", status.message().c_str());
+        }
+        if (!status.ok()) {
+          SWSS_LOG_ERROR(
+              "Processing failed for extension APP_DB entry with key %s: %s",
+              QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(),
+              status.message().c_str());
+        }
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
+        if (!status.ok()) {
+          break;
+        }
+      }
+      if (!status.ok()) {
+        ret = status;
+      }
     }
+  }
+
+  drainWithNotExecuted();
+  return ret;
 }
 
 void ExtTablesManager::doExtCounterStatsTask()

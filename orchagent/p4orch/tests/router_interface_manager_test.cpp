@@ -167,9 +167,12 @@ class RouterInterfaceManagerTest : public ::testing::Test
         router_intf_manager_.enqueue(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        router_intf_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        router_intf_manager_.drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return router_intf_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -261,7 +264,7 @@ class RouterInterfaceManagerTest : public ::testing::Test
     }
 
     StrictMock<MockSaiRouterInterface> mock_sai_router_intf_;
-    MockResponsePublisher publisher_;
+    StrictMock<MockResponsePublisher> publisher_;
     P4OidMapper p4_oid_mapper_;
     RouterInterfaceManager router_intf_manager_;
 };
@@ -770,7 +773,10 @@ TEST_F(RouterInterfaceManagerTest, DrainValidAttributes)
 
     EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kRouterInterfaceOid1), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key),
+                                    Eq(attributes),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
@@ -782,7 +788,10 @@ TEST_F(RouterInterfaceManagerTest, DrainValidAttributes)
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
 
     EXPECT_CALL(mock_sai_router_intf_, set_router_interface_attribute(_, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-    Drain();
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key),
+                                    Eq(attributes),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     router_intf_entry.src_mac_address = kMacAddress2;
     ValidateRouterInterfaceEntry(router_intf_entry);
@@ -792,7 +801,10 @@ TEST_F(RouterInterfaceManagerTest, DrainValidAttributes)
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, DEL_COMMAND, attributes));
 
     EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
-    Drain();
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key),
+                                    Eq(attributes),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     ValidateRouterInterfaceEntryNotPresent(router_intf_entry.router_interface_id);
 }
@@ -807,7 +819,12 @@ TEST_F(RouterInterfaceManagerTest, DrainInvalidAppDbEntryKey)
     // Enqueue entry for create operation.
     std::vector<swss::FieldValueTuple> attributes;
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
-    Drain();
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
     ValidateRouterInterfaceEntryNotPresent(kRouterInterfaceId1);
 }
@@ -821,14 +838,24 @@ TEST_F(RouterInterfaceManagerTest, DrainInvalidAppDbEntryAttributes)
     std::vector<swss::FieldValueTuple> attributes;
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), "xyz"});
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
+    ValidateRouterInterfaceEntryNotPresent(kRouterInterfaceId1);
 
     // Zero mac address attribute.
     attributes.clear();
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kZeroMacAddress.to_string()});
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
-
-    Drain();
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     ValidateRouterInterfaceEntryNotPresent(kRouterInterfaceId1);
 }
 
@@ -842,9 +869,99 @@ TEST_F(RouterInterfaceManagerTest, DrainInvalidOperation)
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kMacAddress1.to_string()});
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, "INVALID", attributes));
-    Drain();
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
     ValidateRouterInterfaceEntryNotPresent(kRouterInterfaceId1);
+}
+
+TEST_F(RouterInterfaceManagerTest, DrainNotExecuted) {
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+
+  const std::string appl_db_key_1 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-3/4\"}";
+  const std::string appl_db_key_2 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-3/5\"}";
+  const std::string appl_db_key_3 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-3/6\"}";
+
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_1, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_2, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_3, SET_COMMAND, attributes));
+
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_1), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_2), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetRouterInterfaceEntry(
+                         KeyGenerator::generateRouterInterfaceKey("intf-3/4")));
+  EXPECT_EQ(nullptr, GetRouterInterfaceEntry(
+                         KeyGenerator::generateRouterInterfaceKey("intf-3/5")));
+  EXPECT_EQ(nullptr, GetRouterInterfaceEntry(
+                         KeyGenerator::generateRouterInterfaceKey("intf-3/6")));
+}
+
+TEST_F(RouterInterfaceManagerTest, DrainStopOnFirstFailure) {
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+
+  const std::string appl_db_key_1 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-3/4\"}";
+  const std::string appl_db_key_2 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-3/5\"}";
+  const std::string appl_db_key_3 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-3/6\"}";
+
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_1, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_2, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_3, SET_COMMAND, attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_1),
+                                  Eq(attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_2),
+                                  Eq(attributes),
+                                  Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetRouterInterfaceEntry(
+                         KeyGenerator::generateRouterInterfaceKey("intf-3/4")));
+  EXPECT_EQ(nullptr, GetRouterInterfaceEntry(
+                         KeyGenerator::generateRouterInterfaceKey("intf-3/5")));
+  EXPECT_EQ(nullptr, GetRouterInterfaceEntry(
+                         KeyGenerator::generateRouterInterfaceKey("intf-3/6")));
 }
 
 TEST_F(RouterInterfaceManagerTest, VerifyStateTest)
