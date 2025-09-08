@@ -34,6 +34,9 @@ constexpr sai_object_id_t kRouterInterfaceOid1 = 0x295100;
 constexpr char *kRouterInterfaceId2 = "Ethernet20";
 constexpr sai_object_id_t kRouterInterfaceOid2 = 0x51411;
 
+constexpr char* kRouterInterfaceId3 = "Ethernet21";
+constexpr sai_object_id_t kRouterInterfaceOid3 = 0x51412;
+
 const swss::IpAddress kNeighborId1("10.0.0.22");
 const swss::MacAddress kMacAddress1("00:01:02:03:04:05");
 
@@ -135,9 +138,12 @@ class NeighborManagerTest : public ::testing::Test
         neighbor_manager_.enqueue(APP_P4RT_NEIGHBOR_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        neighbor_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        neighbor_manager_.drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return neighbor_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -256,7 +262,7 @@ class NeighborManagerTest : public ::testing::Test
     }
 
     StrictMock<MockSaiNeighbor> mock_sai_neighbor_;
-    MockResponsePublisher publisher_;
+    StrictMock<MockResponsePublisher> publisher_;
     P4OidMapper p4_oid_mapper_;
     NeighborManager neighbor_manager_;
 };
@@ -730,7 +736,10 @@ TEST_F(NeighborManagerTest, DrainValidAttributes)
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
 
     EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-    Drain();
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key),
+                                    Eq(attributes),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     P4NeighborEntry neighbor_entry(kRouterInterfaceId1, kNeighborId1, kMacAddress1);
     neighbor_entry.neigh_entry.switch_id = gSwitchId;
@@ -744,7 +753,10 @@ TEST_F(NeighborManagerTest, DrainValidAttributes)
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
 
     EXPECT_CALL(mock_sai_neighbor_, set_neighbor_entry_attribute(_, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-    Drain();
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key),
+                                    Eq(attributes),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     neighbor_entry.dst_mac_address = kMacAddress2;
     ValidateNeighborEntry(neighbor_entry, /*router_intf_ref_count=*/1);
@@ -754,7 +766,10 @@ TEST_F(NeighborManagerTest, DrainValidAttributes)
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, DEL_COMMAND, attributes));
 
     EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
-    Drain();
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key),
+                                    Eq(attributes),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     ValidateNeighborEntryNotPresent(neighbor_entry, /*check_ref_count=*/true);
 }
@@ -774,7 +789,12 @@ TEST_F(NeighborManagerTest, DrainInvalidAppDbEntryKey)
     // Enqueue entry for create operation.
     std::vector<swss::FieldValueTuple> attributes;
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
-    Drain();
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
     P4NeighborEntry neighbor_entry(kRouterInterfaceId1, kNeighborId1, kMacAddress1);
     ValidateNeighborEntryNotPresent(neighbor_entry, /*check_ref_count=*/true);
@@ -792,6 +812,11 @@ TEST_F(NeighborManagerTest, DrainInvalidAppDbEntryAttributes)
 
     std::vector<swss::FieldValueTuple> attributes;
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
 
     appl_db_key = std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) + kTableKeyDelimiter +
                   CreateNeighborAppDbKey(kRouterInterfaceId1, kNeighborId1);
@@ -799,8 +824,12 @@ TEST_F(NeighborManagerTest, DrainInvalidAppDbEntryAttributes)
     attributes.clear();
     attributes.push_back(swss::FieldValueTuple{p4orch::kDstMac, swss::MacAddress().to_string()});
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
-
-    Drain();
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
     // Validate that first create operation did not create a neighbor entry.
     P4NeighborEntry neighbor_entry1(kRouterInterfaceId2, kNeighborId1, kMacAddress1);
@@ -822,10 +851,120 @@ TEST_F(NeighborManagerTest, DrainInvalidOperation)
 
     std::vector<swss::FieldValueTuple> attributes;
     Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, "INVALID", attributes));
-    Drain();
+    EXPECT_CALL(
+        publisher_,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
     P4NeighborEntry neighbor_entry(kRouterInterfaceId1, kNeighborId1, kMacAddress1);
     ValidateNeighborEntryNotPresent(neighbor_entry, /*check_ref_count=*/true);
+}
+
+TEST_F(NeighborManagerTest, DrainNotExecuted) {
+  ASSERT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
+      kRouterInterfaceOid1));
+  ASSERT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId2),
+      kRouterInterfaceOid2));
+  ASSERT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId3),
+      kRouterInterfaceOid3));
+
+  const std::string appl_db_key_1 =
+      std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) + kTableKeyDelimiter +
+      CreateNeighborAppDbKey(kRouterInterfaceId1, kNeighborId1);
+  const std::string appl_db_key_2 =
+      std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) + kTableKeyDelimiter +
+      CreateNeighborAppDbKey(kRouterInterfaceId2, kNeighborId1);
+  const std::string appl_db_key_3 =
+      std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) + kTableKeyDelimiter +
+      CreateNeighborAppDbKey(kRouterInterfaceId3, kNeighborId1);
+
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstMac),
+                                             kMacAddress1.to_string()});
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_1, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_2, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_3, SET_COMMAND, attributes));
+
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_1), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_2), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetNeighborEntry(KeyGenerator::generateNeighborKey(
+                         kRouterInterfaceId1, kNeighborId1)));
+  EXPECT_EQ(nullptr, GetNeighborEntry(KeyGenerator::generateNeighborKey(
+                         kRouterInterfaceId2, kNeighborId1)));
+  EXPECT_EQ(nullptr, GetNeighborEntry(KeyGenerator::generateNeighborKey(
+                         kRouterInterfaceId3, kNeighborId1)));
+}
+
+TEST_F(NeighborManagerTest, DrainStopOnFirstFailure) {
+  ASSERT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
+      kRouterInterfaceOid1));
+  ASSERT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId2),
+      kRouterInterfaceOid2));
+  ASSERT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId3),
+      kRouterInterfaceOid3));
+
+  const std::string appl_db_key_1 =
+      std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) + kTableKeyDelimiter +
+      CreateNeighborAppDbKey(kRouterInterfaceId1, kNeighborId1);
+  const std::string appl_db_key_2 =
+      std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) + kTableKeyDelimiter +
+      CreateNeighborAppDbKey(kRouterInterfaceId2, kNeighborId1);
+  const std::string appl_db_key_3 =
+      std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) + kTableKeyDelimiter +
+      CreateNeighborAppDbKey(kRouterInterfaceId3, kNeighborId1);
+
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstMac),
+                                             kMacAddress1.to_string()});
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_1, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_2, SET_COMMAND, attributes));
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key_3, SET_COMMAND, attributes));
+
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_1),
+                                  Eq(attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_2),
+                                  Eq(attributes),
+                                  Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetNeighborEntry(KeyGenerator::generateNeighborKey(
+                         kRouterInterfaceId1, kNeighborId1)));
+  EXPECT_EQ(nullptr, GetNeighborEntry(KeyGenerator::generateNeighborKey(
+                         kRouterInterfaceId2, kNeighborId1)));
+  EXPECT_EQ(nullptr, GetNeighborEntry(KeyGenerator::generateNeighborKey(
+                         kRouterInterfaceId3, kNeighborId1)));
 }
 
 TEST_F(NeighborManagerTest, VerifyStateTest)
