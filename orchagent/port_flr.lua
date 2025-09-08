@@ -15,6 +15,7 @@ local counters_table_name = ARGV[2]
 local delta = tonumber(ARGV[3])
 
 local rates_table_name = "RATES"
+local bookmark_table_name = "RATES:GLOBAL"
 local BIN_FILTER_VALUE = 10
 
 -- Get configuration
@@ -309,17 +310,29 @@ local function compute_observed_flr(port)
     return 0
 end
 
+-- Update FLR timestamp in bookmark table
+local function update_flr_timestamp()
+    local time = redis.call('TIME')
+    local timestamp_current = time[1]
+    redis.call('HSET', bookmark_table_name, 'FEC_FLR_TIMESTAMP_last', timestamp_current)
+end
+
 -- Check if FLR calculation interval has elapsed (default 120s)
-local function time_to_calculate_flr(port)
+local function time_to_calculate_flr()
     local time = redis.call('TIME')
     local timestamp_current = time[1]
 
-    local timestamp_last = redis.call('HGET', rates_table_name .. ':' .. port, 'FEC_FLR_TIMESTAMP_last')
+    -- Check if FEC_FLR_TIMESTAMP_last exists in the bookmark table
+    local timestamp_last = redis.call('HGET', bookmark_table_name, 'FEC_FLR_TIMESTAMP_last')
+
+    -- If the key doesn't exist, return true
+    if timestamp_last == false then
+        return true  -- First time calculation
+    end
+
     timestamp_last = tonumber(timestamp_last) or 0
 
     if (timestamp_last == 0) or ((timestamp_current - timestamp_last) >= 120) then
-        -- update timestamp_last in db
-        redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_FLR_TIMESTAMP_last', timestamp_current)
         return true
     end
 
@@ -343,7 +356,7 @@ end
 -- Parameters:
 --   port: Port identifier
 local function compute_flr_for_port(port)
-    if (time_to_calculate_flr(port) and fec_data_exists(port)) then
+    if (fec_data_exists(port)) then
         -- Calculate observed FLR from uncorrectable codeword ratio
         local fec_flr = compute_observed_flr(port)
         redis.call('HSET', rates_table_name ..':' .. port, 'FEC_FLR', fec_flr)
@@ -355,8 +368,12 @@ local function compute_flr_for_port(port)
 end
 
 local n = table.getn(KEYS)
-for i = 1, n do
-    compute_flr_for_port(KEYS[i])
+
+if (time_to_calculate_flr()) then
+    for i = 1, n do
+        compute_flr_for_port(KEYS[i])
+    end
+    update_flr_timestamp()
 end
 
 return logtable
