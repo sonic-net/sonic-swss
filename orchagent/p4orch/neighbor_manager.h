@@ -75,7 +75,7 @@ class NeighborManager : public ObjectManagerInterface
       const std::string& op, bool update);
     std::string verifyStateCache(const P4NeighborAppDbEntry &app_db_entry, const P4NeighborEntry *neighbor_entry);
     std::string verifyStateAsicDb(const P4NeighborEntry *neighbor_entry);
-    sai_neighbor_entry_t prepareSaiEntry(const P4NeighborEntry& neighbor_entry);
+    ReturnCodeOr<sai_neighbor_entry_t> prepareSaiEntry(const P4NeighborEntry &neighbor_entry);
 
     P4OidMapper *m_p4OidMapper;
     P4NeighborTable m_neighborTable;
