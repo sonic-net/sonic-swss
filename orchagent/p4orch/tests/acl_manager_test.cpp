@@ -10,6 +10,7 @@
 #include "acl_table_manager.h"
 #include "acl_util.h"
 #include "acltable.h"
+#include "mock_response_publisher.h"
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"
 #include "mock_sai_policer.h"
@@ -37,6 +38,7 @@ extern sai_udf_api_t *sai_udf_api;
 extern int gBatchSize;
 extern VRFOrch *gVrfOrch;
 extern P4Orch *gP4Orch;
+extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVrfOid;
@@ -815,6 +817,7 @@ class AclManagerTest : public ::testing::Test
         delete gP4Orch;
         delete copp_orch_;
         delete gSwitchOrch;
+        gMockResponsePublisher.reset();
     }
 
     void setUpMockApi()
@@ -943,6 +946,7 @@ class AclManagerTest : public ::testing::Test
         acl_table_manager_ = gP4Orch->getAclTableManager();
         acl_rule_manager_ = gP4Orch->getAclRuleManager();
         p4_oid_mapper_ = acl_table_manager_->m_p4OidMapper;
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
     }
 
     void AddDefaultUserTrapsSaiCalls(sai_object_id_t *user_defined_trap_oid)
@@ -977,10 +981,14 @@ class AclManagerTest : public ::testing::Test
             IsExpectedAclTableDefinitionMapping(*GetAclTable(app_db_entry.acl_table_name), app_db_entry));
     }
 
-    void DrainTableTuples()
-    {
-        acl_table_manager_->drain();
+    ReturnCode DrainTableTuples(bool failure_before) {
+      if (failure_before) {
+        acl_table_manager_->drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return acl_table_manager_->drain();
     }
+
     void EnqueueTableTuple(const swss::KeyOpFieldsValuesTuple &entry)
     {
         acl_table_manager_->enqueue(APP_P4RT_ACL_TABLE_DEFINITION_NAME, entry);
@@ -990,10 +998,14 @@ class AclManagerTest : public ::testing::Test
         return acl_table_manager_->verifyState(key, tuple);
     }
 
-    void DrainRuleTuples()
-    {
-        acl_rule_manager_->drain();
+    ReturnCode DrainRuleTuples(bool failure_before) {
+      if (failure_before) {
+        acl_rule_manager_->drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return acl_rule_manager_->drain();
     }
+
     void EnqueueRuleTuple(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
     {
         acl_rule_manager_->enqueue(table_name, entry);
@@ -1067,6 +1079,7 @@ class AclManagerTest : public ::testing::Test
     StrictMock<MockSaiHostif> mock_sai_hostif_;
     StrictMock<MockSaiSwitch> mock_sai_switch_;
     StrictMock<MockSaiUdf> mock_sai_udf_;
+    // StrictMock<MockResponsePublisher> *gMockResponsePublisher;
     CoppOrch *copp_orch_;
     P4OidMapper *p4_oid_mapper_;
     p4orch::AclTableManager *acl_table_manager_;
@@ -1093,7 +1106,12 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(getDefaultTableDefFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_NE(nullptr, GetAclTable(kAclIngressTableName));
 
     // Drain table tuples to process DEL request
@@ -1103,7 +1121,12 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
     EXPECT_CALL(mock_sai_udf_, remove_udf_group(Eq(kUdfGroupOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_udf_, remove_udf(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, DEL_COMMAND, {}}));
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(std::vector<swss::FieldValueTuple>{}),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 }
 
@@ -1129,14 +1152,24 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessUpdateRequestExpectFails)
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
 
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_NE(nullptr, GetAclTable(kAclIngressTableName));
 
     // Drain table tuples to process SET request, try to update table priority
     // to 100: should fail to update.
     attributes.push_back(swss::FieldValueTuple{kPriority, "100"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_UNIMPLEMENTED), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(234, GetAclTable(kAclIngressTableName)->priority);
 }
 
@@ -1147,13 +1180,23 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidTableNameOpsFails)
         swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
     // Drain table tuples to process SET request on invalid ACL definition table
     // name: "UNDEFINED"
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(getDefaultTableDefFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     p4rtAclTableName = std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter + kAclIngressTableName;
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, "UPDATE", getDefaultTableDefFieldValueTuples()}));
     // Drain table tuples to process invalid operation: "UPDATE"
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(getDefaultTableDefFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 }
 
@@ -1167,7 +1210,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"undefined", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     // Invalid attribute field
@@ -1175,7 +1223,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"undefined/undefined", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     // Invalid meter unit value
@@ -1183,7 +1236,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"meter/unit", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     // Invalid counter unit value
@@ -1191,7 +1249,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"counter/unit", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 }
 
@@ -2333,7 +2396,13 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestSucceeds)
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key),
+                        Eq(getDefaultRuleFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+        .Times(2);
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
 
     const auto &acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                                "fdf8:f53b:82e4::53:priority=15";
@@ -2360,7 +2429,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
     // Populate counter stats
     EXPECT_CALL(mock_sai_policer_, get_policer_stats(Eq(kAclMeterOid1), _, _, _))
         .WillOnce(DoAll(Invoke([](sai_object_id_t policer_id, uint32_t number_of_counters,
@@ -2394,7 +2468,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
     EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
@@ -2409,7 +2488,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKey
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     // Drain rule tuple to process SET request with invalid ACL table name:
     // "INVALID_TABLE_NAME"
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+              DrainRuleTuples(/*failure_before=*/false));
 
     auto acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                         "fdf8:f53b:82e4::53:priority=15";
@@ -2426,7 +2510,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKey
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     // Drain rule tuple to process SET request without priority field in rule
     // JSON key
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainRuleTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
@@ -2487,7 +2576,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesWithInvalidCommand)
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     EnqueueRuleTuple(std::string(kAclIngressTableName),
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, "INVALID_COMMAND", attributes}));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainRuleTuples(/*failure_before=*/false));
     const auto &acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                                "fdf8:f53b:82e4::53:priority=15";
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
@@ -4576,6 +4670,277 @@ TEST_F(AclManagerTest, DISABLED_InitBindGroupToSwitchFails)
     EXPECT_THROW(new SwitchOrch(gAppDb, switch_tables, stateDbSwitchTable), std::runtime_error);
 }
 
+TEST_F(AclManagerTest, CreatePreIngressTableWillCreateDefaultRule) {
+  auto app_db_entry = getDefaultAclTableDefAppDbEntry();
+  app_db_entry.stage = STAGE_PRE_INGRESS;
+  EXPECT_CALL(mock_sai_acl_, create_acl_table(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclTableIngressOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_table_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclGroupMemberIngressOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
+      .Times(3)
+      .WillRepeatedly(
+          DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
+      .Times(3)
+      .WillRepeatedly(
+          DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _)).Times(0);
+  sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
+  AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+  ASSERT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddTableRequest(app_db_entry));
+  ASSERT_NO_FATAL_FAILURE(IsExpectedAclTableDefinitionMapping(
+      *GetAclTable(app_db_entry.acl_table_name), app_db_entry));
+}
+
+TEST_F(AclManagerTest, DrainTableNotExecuted) {
+  const auto& p4rtAclTableName_1 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_1";
+  const auto& p4rtAclTableName_2 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_2";
+  const auto& p4rtAclTableName_3 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_3";
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_1, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_2, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_3, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_1),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_2),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_3),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED,
+            DrainTableTuples(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_1"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_2"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_3"));
+}
+
+TEST_F(AclManagerTest, DrainTableStopOnFirstFailure) {
+  const auto& p4rtAclTableName_1 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_1";
+  const auto& p4rtAclTableName_2 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_2";
+  const auto& p4rtAclTableName_3 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_3";
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_1, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_2, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_3, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+
+  EXPECT_CALL(mock_sai_acl_,
+              create_acl_table(_, Eq(gSwitchId), Gt(2),
+                               Truly(std::bind(MatchSaiAttributeAclTableStage,
+                                               SAI_ACL_STAGE_INGRESS,
+                                               std::placeholders::_1))))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclTableIngressOid),
+                      Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_acl_,
+              create_acl_table_group_member(_, Eq(gSwitchId), Eq(3), NotNull()))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclGroupMemberIngressOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, remove_udf_group(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_udf_, remove_udf(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_1),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_2),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_3),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
+            DrainTableTuples(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetAclTable("ACL_TABLE_1"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_2"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_3"));
+}
+
+TEST_F(AclManagerTest, DrainRuleNotExecuted) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto attributes = getDefaultRuleFieldValueTuples();
+  const auto& acl_rule_json_key_1 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+      "fdf8:f53b:82e4::53\",\"priority\":15}";
+  const auto& rule_tuple_key_1 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_1;
+  const auto& acl_rule_json_key_2 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
+      "fdf8:f53b:82e4::54\",\"priority\":15}";
+  const auto& rule_tuple_key_2 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_2;
+  const auto& acl_rule_json_key_3 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::55 & "
+      "fdf8:f53b:82e4::55\",\"priority\":15}";
+  const auto& rule_tuple_key_3 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_3;
+
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_1, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_2, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_3, SET_COMMAND, attributes}));
+
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_1), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_2), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED,
+            DrainRuleTuples(/*failure_before=*/true));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+                 "fdf8:f53b:82e4::53:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::54 & "
+                 "fdf8:f53b:82e4::54:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::55 & "
+                 "fdf8:f53b:82e4::55:priority=15"));
+}
+
+TEST_F(AclManagerTest, DrainRuleStopOnFirstFailure) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto attributes = getDefaultRuleFieldValueTuples();
+  const auto& acl_rule_json_key_1 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+      "fdf8:f53b:82e4::53\",\"priority\":15}";
+  const auto& rule_tuple_key_1 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_1;
+  const auto& acl_rule_json_key_2 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
+      "fdf8:f53b:82e4::54\",\"priority\":15}";
+  const auto& rule_tuple_key_2 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_2;
+  const auto& acl_rule_json_key_3 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::55 & "
+      "fdf8:f53b:82e4::55\",\"priority\":15}";
+  const auto& rule_tuple_key_3 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_3;
+
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_1, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_2, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_3, SET_COMMAND, attributes}));
+
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, remove_policer(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_1), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_2), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
+            DrainRuleTuples(/*failure_before=*/false));
+  EXPECT_NE(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+                 "fdf8:f53b:82e4::53:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::54 & "
+                 "fdf8:f53b:82e4::54:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::55 & "
+                 "fdf8:f53b:82e4::55:priority=15"));
+}
+
 TEST_F(AclManagerTest, AclTableVerifyStateTest)
 {
     const auto &p4rtAclTableName =
@@ -4594,7 +4959,12 @@ TEST_F(AclManagerTest, AclTableVerifyStateTest)
         .WillOnce(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     auto *acl_table = GetAclTable(kAclIngressTableName);
     EXPECT_NE(acl_table, nullptr);
 
@@ -4784,7 +5154,12 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
         .WillOnce(DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
@@ -5091,7 +5466,12 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
         .WillOnce(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     auto *acl_table = GetAclTable(kAclIngressTableName);
     EXPECT_NE(acl_table, nullptr);
 
@@ -5213,7 +5593,12 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
         .WillOnce(DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
