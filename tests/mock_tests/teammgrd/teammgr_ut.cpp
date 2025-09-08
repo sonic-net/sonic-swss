@@ -161,8 +161,6 @@ namespace teammgr_ut
             std::vector<swss::FieldValueTuple> vec;
             vec.emplace_back("mac", "01:23:45:67:89:ab");
             metadata_table.set("localhost", vec);
-	    swss::Table cfg_mode_table = swss::Table(m_config_db.get(), CFG_TEAMD_MODE_TABLE_NAME);
-            cfg_mode_table.set("GLOBAL",{ {"mode","multi-process"} });
 
             TableConnector conf_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
             TableConnector conf_lag_member_table(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
@@ -285,9 +283,9 @@ namespace teammgr_ut
 
     TEST_F(TeamMgrTest, testIpcSendRetry)
     {
-        swss::Table cfg_mode_table(m_config_db.get(), CFG_TEAMD_MODE_TABLE_NAME);
+        swss::Table cfg_mode_table = swss::Table(m_config_db.get(), CFG_TEAMD_MODE_TABLE_NAME);
+        cfg_mode_table.set("GLOBAL",{ {"mode","unified-process"} });
         swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
-	cfg_mode_table.del("GLOBAL");
         cfg_lag_table.set("PortChannel123", {
             {"admin_status", "up"},
             {"mtu", "9100"},
