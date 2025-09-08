@@ -37,112 +37,108 @@ namespace portmgr_ut
     };
 
     TEST_F(PortMgrTest, DoTask)
-{
-    Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
-    Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
-    Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
-    // Port is not ready, verify that doTask does not handle port configuration
-    cfg_port_table.set("Ethernet0", {
-        {"speed", "100000"},
-        {"index", "1"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    ASSERT_TRUE(mockCallArgs.empty());
-    std::vector<FieldValueTuple> values;
-    app_port_table.get("Ethernet0", values);
-    auto value_opt = swss::fvsGetValue(values, "mtu", true);
-    ASSERT_TRUE(value_opt);
-    ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
-    value_opt = swss::fvsGetValue(values, "admin_status", true);
-    ASSERT_TRUE(value_opt);
-    ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
-    value_opt = swss::fvsGetValue(values, "speed", true);
-    ASSERT_TRUE(value_opt);
-    ASSERT_EQ("100000", value_opt.get());
-    value_opt = swss::fvsGetValue(values, "index", true);
-    ASSERT_TRUE(value_opt);
-    ASSERT_EQ("1", value_opt.get());
-
-    // Set port state to ok, verify that doTask handle port configuration
-    state_port_table.set("Ethernet0", { {"state", "ok"} });
-    m_portMgr->doTask();
-    ASSERT_EQ(size_t(2), mockCallArgs.size());
-    ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
-    ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
-
-    // Set port admin_status, verify that it could override the default value
-    cfg_port_table.set("Ethernet0", {
-        {"admin_status", "up"}
-    });
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    app_port_table.get("Ethernet0", values);
-    value_opt = swss::fvsGetValue(values, "admin_status", true);
-    ASSERT_TRUE(value_opt);
-    ASSERT_EQ("up", value_opt.get());
-
-    //
-    // --- New DHCP rate limit tests ---
-    //
-
-    // Case 1: Add DHCP rate limit (valid case)
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "1000"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-
-    bool found_add = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
-        [](const std::string &cmd) {
-            return cmd.find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
+        // Port is not ready, verify that doTask does not handle port configuration
+        
+        cfg_port_table.set("Ethernet0", {
+            {"speed", "100000"},
+            {"index", "1"}
         });
-    ASSERT_TRUE(found_add) << "Expected tc qdisc add command, got:\n" << ::testing::PrintToString(mockCallArgs);
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty());
+        std::vector<FieldValueTuple> values;
+        app_port_table.get("Ethernet0", values);
+        auto value_opt = swss::fvsGetValue(values, "mtu", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "admin_status", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "speed", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("100000", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "index", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("1", value_opt.get());
 
-    bool found_rate = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
-        [](const std::string &cmd) {
-            return cmd.find("police rate") != std::string::npos;
+        // Set port state to ok, verify that doTask handle port configuration
+        state_port_table.set("Ethernet0", {
+            {"state", "ok"}
         });
-    ASSERT_TRUE(found_rate) << "Expected police rate command, got:\n" << ::testing::PrintToString(mockCallArgs);
-
-    // Case 2: dhcp_rate_limit = 0 (delete case)
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "0"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    bool found_del = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
-        [](const std::string &cmd) {
-            return cmd.find("tc qdisc del dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
+        m_portMgr->doTask();
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[0]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[1]);
+        
+        // Set port admin_status, verify that it could override the default value
+        cfg_port_table.set("Ethernet0", {
+            {"admin_status", "up"}
         });
-    ASSERT_TRUE(found_del) << "Expected tc qdisc del command, got:\n" << ::testing::PrintToString(mockCallArgs);
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        app_port_table.get("Ethernet0", values);
+        value_opt = swss::fvsGetValue(values, "admin_status", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("up", value_opt.get());
+		
+		// Case 1: Add DHCP rate limit (valid case)
+	    cfg_port_table.set("Ethernet0", {
+	        {"dhcp_rate_limit", "1000"}
+	    });
+	    mockCallArgs.clear();
+	    m_portMgr->addExistingData(&cfg_port_table);
+	    m_portMgr->doTask();
 
-    // Case 3: WARN branch - port not ready
-    state_port_table.set("Ethernet0", { {"state", "unknown"} });
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "500"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    // No assert on mockCallArgs required; just executing this covers WARN path
+	    bool found_add = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+	        [](const std::string &cmd) {
+	            return cmd.find("tc qdisc add dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
+	        });
+	    ASSERT_TRUE(found_add) << "Expected tc qdisc add command, got:\n" << ::testing::PrintToString(mockCallArgs);
 
-    // Restore port state to ok for next case
-    state_port_table.set("Ethernet0", { {"state", "ok"} });
+	    bool found_rate = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+	        [](const std::string &cmd) {
+	            return cmd.find("police rate") != std::string::npos;
+	        });
+	    ASSERT_TRUE(found_rate) << "Expected police rate command, got:\n" << ::testing::PrintToString(mockCallArgs);
 
-    // Case 4: ERROR branch - simulate exec failure
-    cfg_port_table.set("Ethernet0", {
-        {"dhcp_rate_limit", "800"}
-    });
-    mockCallArgs.clear();
-    m_portMgr->addExistingData(&cfg_port_table);
-    m_portMgr->doTask();
-    // Execution goes to ERROR path. We just ensure it ran without crash.
-}
+	    // Case 2: dhcp_rate_limit = 0 (delete case)
+	    cfg_port_table.set("Ethernet0", {
+	        {"dhcp_rate_limit", "0"}
+	    });
+	    mockCallArgs.clear();
+	    m_portMgr->addExistingData(&cfg_port_table);
+	    m_portMgr->doTask();
+	    bool found_del = std::any_of(mockCallArgs.begin(), mockCallArgs.end(),
+	        [](const std::string &cmd) {
+	            return cmd.find("tc qdisc del dev \"Ethernet0\" handle ffff: ingress") != std::string::npos;
+	        });
+	    ASSERT_TRUE(found_del) << "Expected tc qdisc del command, got:\n" << ::testing::PrintToString(mockCallArgs);
+
+	    // Case 3: WARN branch - port not ready
+	    state_port_table.set("Ethernet0", { {"state", "unknown"} });
+	    cfg_port_table.set("Ethernet0", {
+	        {"dhcp_rate_limit", "500"}
+	    });
+	    mockCallArgs.clear();
+	    m_portMgr->addExistingData(&cfg_port_table);
+	    m_portMgr->doTask();
+	    // Restore port state to ok for next case
+	    state_port_table.set("Ethernet0", { {"state", "ok"} });
+
+	    // Case 4: ERROR branch - simulate exec failure
+	    cfg_port_table.set("Ethernet0", {
+	        {"dhcp_rate_limit", "800"}
+	    });
+	    mockCallArgs.clear();
+	    m_portMgr->addExistingData(&cfg_port_table);
+	    m_portMgr->doTask();
+    }
 
     TEST_F(PortMgrTest, ConfigureDuringRetry)
     {
