@@ -22,8 +22,6 @@ extern sai_dash_eni_api_t*  sai_dash_eni_api;
 extern sai_object_id_t      gSwitchId;
 extern sai_switch_api_t*    sai_switch_api;
 
-extern BfdOrch *gBfdOrch;
-
 static const map<sai_ha_set_event_t, string> sai_ha_set_event_type_name =
 {
     { SAI_HA_SET_EVENT_DP_CHANNEL_UP, "up" },
