@@ -598,6 +598,33 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
         }
     }
 
+    /*
+        Create bfd passive sessions cached when moving out of DEAD role (scope == DPU)
+    */
+    if (m_ha_scope_entries[key].metadata.ha_role() == dash::types::HA_ROLE_DEAD
+        && entry.ha_role() != dash::types::HA_ROLE_DEAD
+        && !m_ha_set_entries.empty())
+    {
+        bool has_dpu_scope = false;
+        for (const auto& ha_set_entry : m_ha_set_entries)
+        {
+            if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
+            {
+                has_dpu_scope = true;
+                break;
+            }
+        }
+
+        if (has_dpu_scope && !m_bfd_session_pending_creation.empty())
+        {
+            for (const auto& bfd_entry : m_bfd_session_pending_creation)
+            {
+                m_bfd_orch->createSoftwareBfdSession(bfd_entry.first, bfd_entry.second);
+            }
+            m_bfd_session_pending_creation.clear();
+        }
+    }
+
     sai_attribute_t ha_scope_attr;
     ha_scope_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
     ha_scope_attr.value.u32 = to_sai(entry.ha_role());
@@ -860,11 +887,14 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
                 m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
 
+            bool has_dpu_scope = false;
             bool has_dpu_scope_ha_role_active = false;
             for (const auto& ha_set_entry : m_ha_set_entries)
             {
                 if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
                 {
+                    has_dpu_scope = true;
+
                     for (const auto& ha_scope_entry : m_ha_scope_entries)
                     {
                         if (ha_scope_entry.second.metadata.ha_role() != dash::types::HA_ROLE_DEAD)
@@ -880,6 +910,18 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
             if (!m_ha_set_entries.empty() && has_dpu_scope_ha_role_active)
             {
                 m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+            }
+
+            /*
+                In case bfd sessions are programmed before HA, cache them until HA scopes are created.
+            */
+            if (m_ha_set_entries.empty() ||
+                (has_dpu_scope && m_ha_scope_entries.empty()) ||
+                (has_dpu_scope && !has_dpu_scope_ha_role_active))
+            {
+                SWSS_LOG_INFO("Caching BFD session %s as there is no non-dead DPU HA Scope", key.c_str());
+
+                m_bfd_session_pending_creation[key] = kfvFieldsValues(tuple);
             }
 
             it = consumer.m_toSync.erase(it);

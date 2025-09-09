@@ -33,6 +33,7 @@ struct HaScopeEntry
 
 typedef std::map<std::string, HaSetEntry> HaSetTable;
 typedef std::map<std::string, HaScopeEntry> HaScopeTable;
+typedef std::map<std::string, vector<swss::FieldValueTuple>> DashBfdSessionTable;
 
 template <typename T>
 bool in(T value, std::initializer_list<T> list) {
@@ -47,6 +48,7 @@ public:
 protected:
     HaSetTable m_ha_set_entries;
     HaScopeTable m_ha_scope_entries;
+    DashBfdSessionTable m_bfd_session_pending_creation;
 
     DashOrch *m_dash_orch;
     BfdOrch *m_bfd_orch;

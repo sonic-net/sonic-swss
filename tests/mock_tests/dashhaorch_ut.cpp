@@ -949,7 +949,6 @@ namespace dashhaorch_ut
         RemoveHaSet();
     }
 
-
     TEST_F(DashHaOrchTest, BfdSessionHandlingDpu)
     {
         CreateHaSet();
@@ -961,13 +960,31 @@ namespace dashhaorch_ut
         SetHaScopeHaRole();
         HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
                     SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
-        CreateSoftwareBfdSession();
         EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
 
         SetHaScopeHaRole("dead");
         HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
                     SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
         EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingNoHaScope)
+    {
+        CreateHaSet();
+
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        CreateHaScope();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
 
         RemoveHaScope();
         RemoveHaSet();
