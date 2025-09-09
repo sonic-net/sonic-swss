@@ -22,6 +22,30 @@ constexpr sai_object_id_t kOid1 = 1;
 constexpr sai_object_id_t kOid2 = 2;
 
 
+std::string cache_dump =
+    R"({
+    "SAI_OBJECT_TYPE_NEXT_HOP": {
+        "NextHop1": {
+            "ref_count": 0,
+            "sai_oid": "oid:0x1"
+        },
+        "NextHop2": {
+            "ref_count": 100,
+            "sai_oid": "oid:0x2"
+        }
+    },
+    "SAI_OBJECT_TYPE_ROUTE_ENTRY": {
+        "Route1": {
+            "ref_count": 0,
+            "sai_oid": "oid:0xdeadf00ddeadf00d"
+        },
+        "Route2": {
+            "ref_count": 200,
+            "sai_oid": "oid:0xdeadf00ddeadf00d"
+        }
+    }
+})";
+
 TEST(P4OidMapperTest, MapperTest)
 {
     P4OidMapper mapper;
@@ -141,6 +165,25 @@ TEST(P4OidMapperTest, VerifyMapperTest)
     EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid1).empty());
     EXPECT_FALSE(mapper.verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, "invalid", kOid1).empty());
 
+}
+
+TEST(P4OidMapperTest, DumpEmptyStateCacheTest) {
+  P4OidMapper mapper;
+  std::string msg = mapper.dumpStateCache();
+  EXPECT_EQ(msg, "{}");
+}
+
+TEST(P4OidMapperTest, DumpStateCacheTest) {
+  P4OidMapper mapper;
+  EXPECT_TRUE(mapper.setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject1, kOid1));
+  EXPECT_TRUE(mapper.setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNextHopObject2, kOid2,
+                            /*ref_count=*/100));
+  EXPECT_TRUE(mapper.setDummyOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, kRouteObject1));
+  EXPECT_TRUE(mapper.setDummyOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, kRouteObject2,
+                                 /*ref_count=*/200));
+
+  std::string msg = mapper.dumpStateCache();
+  EXPECT_EQ(msg, cache_dump);
 }
 
 } // namespace
