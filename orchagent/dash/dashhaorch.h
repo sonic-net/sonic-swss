@@ -4,6 +4,7 @@
 
 #include "dbconnector.h"
 #include "dashorch.h"
+#include "bfdorch.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
 #include "saitypes.h"
@@ -41,13 +42,14 @@ bool in(T value, std::initializer_list<T> list) {
 class DashHaOrch : public ZmqOrch
 {
 public:
-    DashHaOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
+    DashHaOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, BfdOrch *bfd_orch, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
 
 protected:
     HaSetTable m_ha_set_entries;
     HaScopeTable m_ha_scope_entries;
 
     DashOrch *m_dash_orch;
+    BfdOrch *m_bfd_orch;
 
     void doTask(ConsumerBase &consumer);
     void doTask(swss::NotificationConsumer &consumer);

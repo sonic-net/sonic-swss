@@ -61,9 +61,10 @@ static const map<sai_ha_scope_event_t, string> sai_ha_scope_event_type_name =
     { SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED, "split_brain_detected" }
 };
 
-DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
+DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, BfdOrch *bfd_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tables, zmqServer),
-    m_dash_orch(dash_orch)
+    m_dash_orch(dash_orch),
+    m_bfd_orch(bfd_orch)
 {
     SWSS_LOG_ENTER();
 
@@ -581,10 +582,22 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
         Remove bfd passive sessions in planned shutdown (scope == DPU)
     */
     if (entry.ha_role() == dash::types::HA_ROLE_DEAD
-        && !m_ha_set_entries.empty()
-        && m_ha_set_entries[0].metadata.scope() == dash::types::HaScope::HA_SCOPE_DPU)
+        && !m_ha_set_entries.empty())
     {
-       gBfdOrch->removeAllSoftwareBfdSessions();
+        bool has_dpu_scope = false;
+        for (const auto& ha_set_entry : m_ha_set_entries)
+        {
+            if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
+            {
+                has_dpu_scope = true;
+                break;
+            }
+        }
+
+        if (has_dpu_scope)
+        {
+            m_bfd_orch->removeAllSoftwareBfdSessions();
+        }
     }
 
     sai_attribute_t ha_scope_attr;
@@ -846,7 +859,7 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
             
             if (!m_ha_set_entries.empty() && has_eni_scope)
             {
-                gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+                m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
 
             bool has_dpu_scope_ha_role_active = false;
@@ -868,14 +881,14 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
 
             if (!m_ha_set_entries.empty() && has_dpu_scope_ha_role_active)
             {
-                gBfdOrch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+                m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
 
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
         {
-            gBfdOrch->removeSoftwareBfdSession(key);
+            m_bfd_orch->removeSoftwareBfdSession(key);
             it = consumer.m_toSync.erase(it);
         }
         else

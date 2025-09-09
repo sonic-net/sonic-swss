@@ -1282,7 +1282,7 @@ bool DpuOrchDaemon::init()
         APP_BFD_SESSION_TABLE_NAME
     };
 
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, gBfdOrch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {

@@ -21,13 +21,32 @@ namespace dashhaorch_ut
     class MockBfdOrch : public BfdOrch
     {
     public:
+
         MockBfdOrch(DBConnector* db, DBConnector* state_db) 
             : BfdOrch(db, APP_BFD_SESSION_TABLE_NAME, TableConnector(state_db, STATE_BFD_SESSION_TABLE_NAME)) {}
 
-        MOCK_METHOD(void, createSoftwareBfdSession,
-                    (const string& key, const vector<FieldValueTuple>& data));
-        MOCK_METHOD(void, removeSoftwareBfdSession, (const string& key));
-        MOCK_METHOD(void, removeAllSoftwareBfdSessions, ());
+        void createSoftwareBfdSession(
+            const std::string& key,
+            const std::vector<swss::FieldValueTuple>& data) override
+        {
+            createSoftwareBfdSession_invoked_times++;
+        }
+
+        void removeSoftwareBfdSession(
+            const std::string& key) override
+        {
+            removeSoftwareBfdSession_invoked_times++;
+        }
+
+        void removeAllSoftwareBfdSessions() override
+        {
+            removeAllSoftwareBfdSessions_invoked_times++;
+        }
+
+        uint32_t createSoftwareBfdSession_invoked_times = 0;
+        uint32_t removeSoftwareBfdSession_invoked_times = 0;
+        uint32_t removeAllSoftwareBfdSessions_invoked_times = 0;
+
     };
 
     class DashHaOrchTestable : public DashHaOrch
@@ -39,12 +58,19 @@ namespace dashhaorch_ut
     class DashHaOrchTest : public MockOrchTest
     {
     protected:
-        unique_ptr<MockBfdOrch> m_mockBfdOrch;
+        std::unique_ptr<MockBfdOrch> m_mockBfdOrch;
 
         void PostSetUp() override
         {
-            m_mockBfdOrch = make_unique<MockBfdOrch>(m_app_db.get(), m_state_db.get());
-            gBfdOrch = m_mockBfdOrch.get();
+            m_mockBfdOrch = std::make_unique<MockBfdOrch>(m_app_db.get(), m_state_db.get());
+
+            vector<string> dash_ha_tables = {
+                APP_DASH_HA_SET_TABLE_NAME,
+                APP_DASH_HA_SCOPE_TABLE_NAME
+            };
+            m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
+            gDirectory.set(m_dashHaOrch);
+            ut_orch_list.push_back((Orch **)&m_dashHaOrch);
         }
 
         void ApplySaiMock()
@@ -907,15 +933,15 @@ namespace dashhaorch_ut
         CreateEniScopeHaSet();
         CreateHaScope();
 
-        EXPECT_CALL(*m_mockBfdOrch, createSoftwareBfdSession)
-        .Times(1);
         CreateSoftwareBfdSession();
+
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
 
         SetHaScopeHaRole();
 
-        EXPECT_CALL(*m_mockBfdOrch, removeAllSoftwareBfdSessions())
-        .Times(0);
         SetHaScopeHaRole("dead");
+
+        EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 0);
 
         RemoveHaScope();
         RemoveHaSet();
@@ -927,19 +953,19 @@ namespace dashhaorch_ut
         CreateHaSet();
         CreateHaScope();
 
-        EXPECT_CALL(*m_mockBfdOrch, createSoftwareBfdSession)
-        .Times(0);
         CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
 
         SetHaScopeHaRole();
-
-        EXPECT_CALL(*m_mockBfdOrch, createSoftwareBfdSession)
-        .Times(1);
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
         CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
 
-        EXPECT_CALL(*m_mockBfdOrch, removeAllSoftwareBfdSessions())
-        .Times(1);
         SetHaScopeHaRole("dead");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
+        EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 1);
 
         RemoveHaScope();
         RemoveHaSet();
