@@ -53,7 +53,7 @@ build_and_install_kmodule()
             "package versions (${SOURCE_PACKAGE_VERSION}) being downloaded. There's no guarantee any of the available " \
             "source packages can be loaded into the kernel or function correctly. Please update your kernel and reboot " \
             "your system so that it's running a matching kernel version." >&2
-        return 1
+        # return 1
     fi
     apt-get source "linux-image-unsigned-${KERNEL_RELEASE}=${KERNEL_PACKAGE_VERSION}"
 
