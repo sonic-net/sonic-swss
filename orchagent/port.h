@@ -14,6 +14,7 @@ extern "C" {
 #include <unordered_set>
 #include <iomanip>
 #include <sstream>
+#include <boost/variant.hpp>
 #include <macaddress.h>
 #include <sairedis.h>
 
@@ -32,6 +33,28 @@ extern "C" {
 #define DEFAULT_TPID             0x8100
 
 #define VNID_NONE               0xFFFFFFFF
+
+// SerdesValue using boost::variant to support both vector<uint32_t> and string values
+using SerdesValue = boost::variant<std::vector<uint32_t>, std::string>;
+
+// Visitor class for processing SerdesValue in SAI attribute setting
+class SerdesValueVisitor : public boost::static_visitor<void> {
+public:
+    explicit SerdesValueVisitor(sai_attribute_t& attr) : attr_(attr) {}
+
+    void operator()(const std::vector<uint32_t>& values) const {
+        attr_.value.u32list.count = static_cast<uint32_t>(values.size());
+        attr_.value.u32list.list = const_cast<uint32_t*>(values.data());
+    }
+
+    void operator()(const std::string& str_value) const {
+        attr_.value.json.json.count = static_cast<uint32_t>(str_value.size());
+        attr_.value.json.json.list = reinterpret_cast<int8_t*>(const_cast<char*>(str_value.data()));
+    }
+
+private:
+    sai_attribute_t& attr_;
+};
 
 namespace swss {
 
@@ -241,9 +264,8 @@ public:
     /* Port oper error status to event map*/
     std::unordered_map<sai_port_error_status_t, PortOperErrorEvent> m_portOperErrorToEvent;
 
-    /* pre-emphasis */
-    std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
-    std::string m_custom_serdes_attrs;
+    /* serdes attributes */
+    std::map<sai_port_serdes_attr_t, SerdesValue> m_serdes_attrs;
 
     /* Force initial parameter configuration flags */
     bool m_an_cfg = false;        // Auto-negotiation (AN)

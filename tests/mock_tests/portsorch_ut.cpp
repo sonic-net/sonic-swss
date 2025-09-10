@@ -20,6 +20,19 @@
 
 #include <sstream>
 
+// Add operator<< for vector<uint32_t> to support boost::variant printing in tests for SerdesValue
+namespace std {
+    inline ostream& operator<<(ostream& os, const vector<uint32_t>& vec) {
+        os << "[";
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << vec[i];  // Decimal format
+        }
+        os << "]";
+        return os;
+    }
+}
+
 extern redisReply *mockReply;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 using ::testing::_;
@@ -1106,78 +1119,78 @@ namespace portsorch_test
 
         // Verify preemphasis
         std::vector<std::uint32_t> preemphasis = { 0xcad0, 0xc6e0, 0xc6e0, 0xd2b0 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_PREEMPHASIS), preemphasis);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_PREEMPHASIS), SerdesValue(preemphasis));
 
         // Verify idriver
         std::vector<std::uint32_t> idriver = { 0x5, 0x3, 0x4, 0x1 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
 
         // Verify ipredriver
         std::vector<std::uint32_t> ipredriver = { 0x1, 0x4, 0x3, 0x5 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IPREDRIVER), ipredriver);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IPREDRIVER), SerdesValue(ipredriver));
 
         // Verify pre1
         std::vector<std::uint32_t> pre1 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1), pre1);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1), SerdesValue(pre1));
 
         // Verify pre2
         std::vector<std::uint32_t> pre2 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2), pre2);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2), SerdesValue(pre2));
 
         // Verify pre3
         std::vector<std::uint32_t> pre3 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3), pre3);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3), SerdesValue(pre3));
 
         // Verify main
         std::vector<std::uint32_t> main = { 0x90, 0x92, 0x91, 0x93 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN), main);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN), SerdesValue(main));
 
         // Verify post1
         std::vector<std::uint32_t> post1 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST1), post1);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST1), SerdesValue(post1));
 
         // Verify post2
         std::vector<std::uint32_t> post2 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST2), post2);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST2), SerdesValue(post2));
 
         // Verify post3
         std::vector<std::uint32_t> post3 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST3), post3);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST3), SerdesValue(post3));
 
         // Verify attn
         std::vector<std::uint32_t> attn = { 0x80, 0x82, 0x81, 0x83 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), attn);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), SerdesValue(attn));
 
         // Verify ob_m2lp
         std::vector<std::uint32_t> ob_m2lp = { 0x4, 0x6, 0x5, 0x7 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO), ob_m2lp);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO), SerdesValue(ob_m2lp));
 
         // Verify ob_alev_out
         std::vector<std::uint32_t> ob_alev_out = { 0xf, 0x11, 0x10, 0x12 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE), ob_alev_out);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE), SerdesValue(ob_alev_out));
 
         // Verify obplev
         std::vector<std::uint32_t> obplev = { 0x69, 0x6b, 0x6a, 0x6c };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE), obplev);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE), SerdesValue(obplev));
 
         // Verify obnlev
         std::vector<std::uint32_t> obnlev = { 0x5f, 0x61, 0x60, 0x62 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE), obnlev);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE), SerdesValue(obnlev));
 
         // Verify regn_bfm1p
         std::vector<std::uint32_t> regn_bfm1p = { 0x1e, 0x20, 0x1f, 0x21 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG), regn_bfm1p);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG), SerdesValue(regn_bfm1p));
 
         // Verify regn_bfm1n
         std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), SerdesValue(regn_bfm1n));
+
+        // Verify custom_serdes_attrs
+        std::string custom_serdes_attrs = "{'attributes':[{'attr_xyz':{'value':[1,2,3,4]}}]}";
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION), SerdesValue(custom_serdes_attrs));
 
         // Verify unreliablelos
         ASSERT_EQ(p.m_unreliable_los, false);
-
-        // Verify custom_serdes_attrs
-        std::string custom_serdes_attrs = "{'attributes':[]}";
-        ASSERT_EQ(p.m_custom_serdes_attrs, custom_serdes_attrs);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
@@ -1261,7 +1274,7 @@ namespace portsorch_test
 
         // Verify idriver
         std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
 
         // Verify admin-disable then admin-enable
         ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);

@@ -20,6 +20,7 @@ using namespace swss;
 
 // types --------------------------------------------------------------------------------------------------------------
 
+typedef decltype(PortConfig::serdes) PortSerdes_t;
 typedef decltype(PortConfig::link_event_damping_config) PortDampingConfig_t;
 
 // constants ----------------------------------------------------------------------------------------------------------
@@ -696,27 +697,6 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
-// custom_collection specialization
-bool PortHelper::parsePortSerdes(
-    decltype(PortSerdes_t::custom_collection)& serdes,
-    const std::string& field,
-    const std::string& value) const
-{
-    SWSS_LOG_ENTER();
-
-    if (value.empty())
-    {
-        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited",
-                       field.c_str());
-        return false;
-    }
-
-    // directly assign the raw string
-    serdes.value  = value;
-    serdes.is_set = true;
-    return true;
-}
-
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -728,6 +708,25 @@ bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std:
         return false;
     }
 
+    // Use SFINAE with enable_if for extensible type handling for serdes.value
+    return parseSerdesValueImpl(serdes, field, value);
+}
+
+// Helper function for JSON string-based serdes (custom_collection)
+template<typename T>
+typename std::enable_if<std::is_same<decltype(T::value), std::string>::value, bool>::type
+PortHelper::parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const
+{
+    serdes.value = value;
+    serdes.is_set = true;
+    return true;
+}
+
+// Helper function for vector<uint32_t>-based serdes (most serdes attributes)
+template<typename T>
+typename std::enable_if<std::is_same<decltype(T::value), std::vector<std::uint32_t>>::value, bool>::type
+PortHelper::parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const
+{
     const auto &serdesList = tokenize(value, ',');
 
     try
@@ -765,6 +764,7 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obplev) &serdes
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obnlev) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1p) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1n) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
 
 
 
