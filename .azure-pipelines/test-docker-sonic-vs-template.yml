@@ -91,10 +91,11 @@ jobs:
   - script: |
         set -ex
         # Install .NET CORE
-        curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-        sudo apt-add-repository https://packages.microsoft.com/ubuntu/22.04/prod
+        wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+        sudo dpkg -i packages-microsoft-prod.deb
+        rm packages-microsoft-prod.deb
         sudo apt-get update
-        sudo apt-get install -y dotnet-sdk-8.0
+        sudo apt-get install -y dotnet-sdk-9.0
         sudo dotnet tool install dotnet-reportgenerator-globaltool --tool-path /usr/bin 2>&1 | tee log.log || grep 'already installed' log.log
         rm log.log
     displayName: "Install .NET CORE"
