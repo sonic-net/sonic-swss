@@ -55,7 +55,7 @@ build_and_install_kmodule()
             "your system so that it's running a matching kernel version." >&2
         # return 1
     fi
-    apt-get source "linux-image-unsigned-${KERNEL_RELEASE}=${KERNEL_PACKAGE_VERSION}"
+    apt-get source "linux-image-unsigned-${KERNEL_RELEASE}=${SOURCE_PACKAGE_VERSION}"
 
     # Recover the original apt sources list
     cp /etc/apt/sources.list.bk /etc/apt/sources.list
