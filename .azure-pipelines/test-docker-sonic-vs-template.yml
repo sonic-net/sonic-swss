@@ -52,6 +52,8 @@ jobs:
       DIFF_COVER_COVERAGE_FILES: Cobertura.xml
 
   pool: sonictest
+  container:
+    image: sonicdev-microsoft.azurecr.io/sonic-slave-bookworm:latest
 
   steps:
   - script: |
