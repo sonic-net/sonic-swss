@@ -114,8 +114,7 @@ jobs:
           libboost-serialization1.74.0 \
           libboost1.74-dev \
           libboost-dev \
-          libhiredis0.14 \
-          libyang-dev \
+          libhiredis0.14
 
       sudo .azure-pipelines/build_and_install_module.sh
 
