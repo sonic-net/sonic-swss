@@ -854,8 +854,13 @@ void BufferMgrDynamic::checkSharedBufferPoolSize(bool force_update_during_initia
         }
     }
 
-    if (!m_mmuSize.empty())
+    // Execute recalculateSharedBufferPool when MMU size is available, and avoid extra recalculation in startup:
+    // 1. Buffer is completely initialized (normal case)
+    // 2. Buffer pools are not ready yet (bootstrap case to generate once buffer pools for buffer profile dependencies)
+    if (!m_mmuSize.empty() && (m_bufferCompletelyInitialized || !m_bufferPoolReady))
+    {
         recalculateSharedBufferPool();
+    }
 }
 
 // For buffer pool, only size can be updated on-the-fly
@@ -1047,6 +1052,11 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
     // port: used to fetch the maximum headroom size
     // profile: the profile referenced by the new_pg (if provided) or all PGs
     // new_pg: which pg is newly added?
+
+    if (!m_bufferCompletelyInitialized)
+    {
+        return true;
+    }
 
     if (!profile.lossless && new_pg.empty())
     {
