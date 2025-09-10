@@ -7,6 +7,7 @@
 #include <sairedis.h>
 #include "warm_restart.h"
 #include <iostream>
+#include "orch_zmq_config.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -66,6 +67,7 @@ TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
+HFTelOrch *gHFTOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -173,10 +175,12 @@ bool OrchDaemon::init()
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
+    TableConnector conf_switch_trim(m_configDb, CFG_SWITCH_TRIMMING_TABLE_NAME);
     TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
+        conf_switch_trim,
         conf_asic_sensors,
         conf_suppress_asic_sdk_health_categories,
         app_switch_table
@@ -228,7 +232,8 @@ bool OrchDaemon::init()
     vector<string> stp_tables = {
         APP_STP_VLAN_INSTANCE_TABLE_NAME,
         APP_STP_PORT_STATE_TABLE_NAME,
-        APP_STP_FASTAGEING_FLUSH_TABLE_NAME
+        APP_STP_FASTAGEING_FLUSH_TABLE_NAME,
+        APP_STP_INST_PORT_FLUSH_TABLE_NAME
     };
     gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
     gDirectory.set(gStpOrch);
@@ -298,7 +303,12 @@ bool OrchDaemon::init()
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch);
+
+    // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
+    auto enable_route_zmq = get_feature_status(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false);
+    auto route_zmq_sever = enable_route_zmq ? m_zmqServer : nullptr;
+
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_sever);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
@@ -813,6 +823,21 @@ bool OrchDaemon::init()
     TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
     m_orchList.push_back(twamp_orch);
 
+    if (HFTelOrch::isSupportedHFTel(gSwitchId))
+    {
+        const vector<string> stel_tables = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
+        };
+        gHFTOrch = new HFTelOrch(m_configDb, m_stateDb, stel_tables);
+        m_orchList.push_back(gHFTOrch);
+        SWSS_LOG_NOTICE("High Frequency Telemetry is supported on this platform");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("High Frequency Telemetry is not supported on this platform");
+    }
+
     if (WarmStart::isWarmStart())
     {
         bool suc = warmRestoreAndSyncUp();
@@ -836,7 +861,7 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        handleSaiFailure(true);
+        handleSaiFailure(SAI_API_SWITCH, "set", status);
     }
 
     for (auto* orch: m_orchList)
@@ -1059,8 +1084,10 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     syncd_apply_view();
 
-    /* Start dynamic state sync up */
-    gPortsOrch->refreshPortStatus();
+    for (Orch *o : m_orchList)
+    {
+        o->onWarmBootEnd();
+    }
 
     /*
      * Note. Arp sync up is handled in neighsyncd.
@@ -1222,11 +1249,20 @@ bool DpuOrchDaemon::init()
 {
     SWSS_LOG_NOTICE("DpuOrchDaemon init...");
     OrchDaemon::init();
+
+    // Enable the gNMI service to send DASH events to orchagent via the ZMQ channel.
+    ZmqServer *dash_zmq_server = nullptr;
+    if (get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, true))
+    {
+        SWSS_LOG_NOTICE("Enable the gNMI service to send DASH events to orchagent via the ZMQ channel.");
+        dash_zmq_server = m_zmqServer;
+    }
+
     vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
-    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_dpu_appstateDb, m_zmqServer);
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_vnet_orch);
 
     vector<string> dash_tables = {
@@ -1237,7 +1273,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, m_zmqServer);
+    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_orch);
 
     vector<string> dash_ha_tables = {
@@ -1245,7 +1281,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_HA_SCOPE_TABLE_NAME
     };
 
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
@@ -1254,7 +1290,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_ROUTE_GROUP_TABLE_NAME
     };
 
-    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_route_orch);
 
     vector<string> dash_acl_tables = {
@@ -1264,21 +1300,28 @@ bool DpuOrchDaemon::init()
         APP_DASH_ACL_GROUP_TABLE_NAME,
         APP_DASH_ACL_RULE_TABLE_NAME
     };
-    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_acl_orch);
 
     vector<string> dash_tunnel_tables = {
         APP_DASH_TUNNEL_TABLE_NAME
     };
-    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, m_zmqServer);
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_tunnel_orch);
 
     vector<string> dash_meter_tables = {
         APP_DASH_METER_POLICY_TABLE_NAME,
         APP_DASH_METER_RULE_TABLE_NAME
     };
-    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, m_zmqServer);
+    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
+
+    vector<string> dash_port_map_tables = {
+        APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
+        APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
+    };
+    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_applDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
+    gDirectory.set(dash_port_map_orch);
 
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
@@ -1286,6 +1329,8 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_orch);
     addOrchList(dash_tunnel_orch);
     addOrchList(dash_meter_orch);
+    addOrchList(dash_ha_orch);
+    addOrchList(dash_port_map_orch);
 
     return true;
 }

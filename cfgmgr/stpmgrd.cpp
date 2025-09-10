@@ -42,20 +42,24 @@ int main(int argc, char **argv)
         TableConnector conf_stp_vlan_table(&conf_db, CFG_STP_VLAN_TABLE_NAME);
         TableConnector conf_stp_vlan_port_table(&conf_db, CFG_STP_VLAN_PORT_TABLE_NAME);
         TableConnector conf_stp_port_table(&conf_db, CFG_STP_PORT_TABLE_NAME);
-
+        TableConnector conf_mst_global_table(&conf_db, "STP_MST");
+        TableConnector conf_mst_inst_table(&conf_db, "STP_MST_INST");
+        TableConnector conf_mst_inst_port_table(&conf_db, "STP_MST_PORT");
         // VLAN DB Tables
         TableConnector state_vlan_member_table(&state_db, STATE_VLAN_MEMBER_TABLE_NAME);
 
         // LAG Tables
         TableConnector conf_lag_member_table(&conf_db, CFG_LAG_MEMBER_TABLE_NAME);
-
         vector<TableConnector> tables = {
             conf_stp_global_table,
             conf_stp_vlan_table,
             conf_stp_vlan_port_table,
             conf_stp_port_table,
             conf_lag_member_table,
-            state_vlan_member_table
+            state_vlan_member_table,
+            conf_mst_global_table,
+            conf_mst_inst_table,
+            conf_mst_inst_port_table
         };
 
 
@@ -64,7 +68,7 @@ int main(int argc, char **argv)
         // Open a Unix Domain Socket with STPd for communication
         stpmgr.ipcInitStpd();
         stpmgr.isPortInitDone(&app_db);
-        
+
         // Get max STP instances from state DB and send to stpd
         STP_INIT_READY_MSG msg;
         memset(&msg, 0, sizeof(STP_INIT_READY_MSG));

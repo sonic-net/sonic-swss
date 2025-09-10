@@ -2054,9 +2054,9 @@ namespace aclorch_test
         auto it_rule = aclTableObject.rules.find(aclRuleName);
         ASSERT_NE(it_rule, aclTableObject.rules.end());
         ASSERT_TRUE(validateAclRuleByConfOp(*it_rule->second, kfvFieldsValues(kvfAclRule.front())));
-}
+    }
 
-TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
+    TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
     {
         const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TABLE_TYPE";
         const string aclTableName = "INNER_SRC_MAC_REWRITE_TABLE";
@@ -2305,4 +2305,63 @@ TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
 
     }
 
+    TEST_F(AclOrchTest, AclRule_TrimDisableAction)
+    {
+        const std::string aclTableTypeName = "TRIM_TYPE";
+        const std::string aclTableName = "TRIM_TABLE";
+        const std::string aclRuleName = "TRIM_RULE";
+
+        // Create ACL OA
+
+        auto orch = createAclOrch();
+
+        // Create ACL table type
+
+        auto tableTypeKofvt = std::deque<KeyOpFieldsValuesTuple>({
+            {
+                aclTableTypeName,
+                SET_COMMAND,
+                {
+                    { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                    { ACL_TABLE_TYPE_ACTIONS, ACTION_DISABLE_TRIM },
+                    { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                }
+            }
+        });
+        orch->doAclTableTypeTask(tableTypeKofvt);
+        ASSERT_NE(orch->getAclTableType(aclTableTypeName), nullptr);
+
+        // Create ACL table
+
+        auto tableKofvt = std::deque<KeyOpFieldsValuesTuple>({
+            {
+                aclTableName,
+                SET_COMMAND,
+                {
+                    { ACL_TABLE_DESCRIPTION, "Test trim table" },
+                    { ACL_TABLE_TYPE, aclTableTypeName },
+                    { ACL_TABLE_STAGE, STAGE_INGRESS },
+                    { ACL_TABLE_PORTS, "1,2" },
+                }
+            }
+        });
+        orch->doAclTableTask(tableKofvt);
+        ASSERT_NE(orch->getAclTable(aclTableName), nullptr);
+
+        // Create ACL rule
+
+        auto ruleKofvt = std::deque<KeyOpFieldsValuesTuple>({
+            {
+                aclTableName + "|" + aclRuleName,
+                SET_COMMAND,
+                {
+                    { RULE_PRIORITY, "999" },
+                    { MATCH_SRC_IP, "1.1.1.1/32" },
+                    { ACTION_PACKET_ACTION, PACKET_ACTION_DISABLE_TRIM },
+                }
+            }
+        });
+        orch->doAclRuleTask(ruleKofvt);
+        ASSERT_NE(orch->getAclRule(aclTableName, aclRuleName), nullptr);
+    }
 } // namespace nsAclOrchTest

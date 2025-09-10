@@ -6,6 +6,7 @@
 #include <exception>
 #include <inttypes.h>
 #include <algorithm>
+#include <numeric>
 
 #include "sai.h"
 #include "saiextensions.h"
@@ -161,13 +162,12 @@ bool VNetVrfObject::hasRoute(IpPrefix& ipPrefix)
 
 bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
 {
-    if (nexthops.is_overlay_nexthop())
+
+    tunnels_[ipPrefix] = nexthops;
+
+    if (!nexthops.is_overlay_nexthop())
     {
-        tunnels_[ipPrefix] = nexthops;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Input %s is not overlay nexthop group", nexthops.to_string().c_str());
+        SWSS_LOG_NOTICE("Input %s is not overlay nexthop group", nexthops.to_string().c_str());
         return false;
     }
 
@@ -727,12 +727,15 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TABLE_NAME, &VNetRouteOrch::handleRoutes));
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 
+    config_db_ = shared_ptr<DBConnector>(new DBConnector("CONFIG_DB", 0));
     state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     app_db_ = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
 
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
     state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));
     monitor_session_producer_ = unique_ptr<Table>(new Table(app_db_.get(), APP_VNET_MONITOR_TABLE_NAME));
+
+    vnet_tunnel_term_acl_ = make_shared<VNetTunnelTermAcl>(config_db_.get(), app_db_.get());
 
     gBfdOrch->attach(this);
 }
@@ -748,7 +751,7 @@ sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextH
     return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 }
 
-bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring,  const bool isLocalEp)
 {
     SWSS_LOG_ENTER();
 
@@ -773,7 +776,12 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         {
             continue;
         }
-        sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(it);
+        if (isLocalEp && !gNeighOrch->hasNextHop(it))
+        {
+            SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", it.to_string().c_str());
+            continue;
+        }
+        sai_object_id_t next_hop_id = isLocalEp? gNeighOrch->getNextHopId(it):vrf_obj->getTunnelNextHop(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
     }
@@ -887,7 +895,13 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
             return false;
         }
 
-        vrf_obj->removeTunnelNextHop(nexthop);
+        /* For local endpoint, we don't remove the next hop from NeighOrch,
+         * as it is not created by VNetRouteOrch.
+        */
+        if (!isLocalEndpoint(vnet, nexthop.ip_address))
+        {
+            vrf_obj->removeTunnelNextHop(nexthop);
+        }
 
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         nhop = next_hop_group_entry->second.active_members.erase(nhop);
@@ -920,10 +934,26 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     }
     else if (nexthops.getSize() == 1)
     {
-        NextHopKey nexthop(nexthops.to_string(), true);
+        NextHopKey nexthop = *nexthops.getNextHops().begin();
+        bool isLocalEp = isLocalEndpoint(vnet, nexthop.ip_address);
+        if (isLocalEp && !gNeighOrch->hasNextHop(nexthop))
+        {
+            SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", nexthop.to_string().c_str());
+            return false;
+        }
         NextHopGroupInfo next_hop_group_entry;
-        next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
-        next_hop_group_entry.ref_count = 0;
+        if (isLocalEp)
+        {
+            gNeighOrch->increaseNextHopRefCount(nexthop);
+            next_hop_group_entry.next_hop_group_id = gNeighOrch->getNextHopId(nexthop);
+            next_hop_group_entry.ref_count = gNeighOrch->getNextHopRefCount(nexthop);
+        }
+        else
+        {
+            next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
+            next_hop_group_entry.ref_count = 0;
+        }
+
         if (monitoring == "custom" || nexthop_info_[vnet].find(nexthop.ip_address) == nexthop_info_[vnet].end() || nexthop_info_[vnet][nexthop.ip_address].bfd_state == SAI_BFD_SESSION_STATE_UP)
         {
             SWSS_LOG_INFO("Adding nexthop: %s to the active group", nexthop.ip_address.to_string().c_str());
@@ -933,7 +963,8 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     }
     else
     {
-        if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring))
+        const bool isLocalEp = isLocalEndpoint(vnet, nexthops.getNextHops().begin()->ip_address);
+        if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring, isLocalEp))
         {
             SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
             return false;
@@ -1235,8 +1266,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                         syncd_nexthop_groups_[vnet].erase(nhg);
                         if(nhg.getSize() == 1)
                         {
-                            NextHopKey nexthop(nhg.to_string(), true);
-                            vrf_obj->removeTunnelNextHop(nexthop);
+                            NextHopKey nexthop = *nhg.getNextHops().begin();
+                            if (!isLocalEndpoint(vnet, nexthop.ip_address))
+                            {
+                                vrf_obj->removeTunnelNextHop(nexthop);
+                            }
                         }
                     }
                     if (monitoring != "custom")
@@ -1331,8 +1365,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 // In case of Priority routes we can end up in a situation where the active NHG has 0 nexthops.
                 if(nhg.getSize() == 1)
                 {
-                    NextHopKey nexthop(nhg.to_string(), true);
-                    vrf_obj->removeTunnelNextHop(nexthop);
+                    NextHopKey nexthop = *nhg.getNextHops().begin();
+                    if (!isLocalEndpoint(vnet, nexthop.ip_address))
+                    {
+                        vrf_obj->removeTunnelNextHop(nexthop);
+                    }
                 }
             }
             if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
@@ -1868,6 +1905,9 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         auto tun_name = vnet_orch_->getTunnelName(vnet);
         VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
         auto tunnel_obj = vxlan_orch->getVxlanTunnel(tun_name);
+        /*
+            Even for local endpoints, we will use tunnel source IP as local_addr of BFD session.
+        */
         IpAddress src_ip = tunnel_obj->getSrcIP();
 
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
@@ -2419,8 +2459,11 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                     }
                 }
 
-                vrf_obj->removeTunnelNextHop(endpoint);
-                SWSS_LOG_INFO("Successfully removed nexthop: %s\n",endpoint.to_string().c_str() );
+                if (!isLocalEndpoint(vnet, endpoint.ip_address))
+                {
+                    vrf_obj->removeTunnelNextHop(endpoint);
+                    SWSS_LOG_INFO("Successfully removed nexthop: %s\n",endpoint.to_string().c_str() );
+                }
 
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
             }
@@ -2657,7 +2700,10 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
                 if(active_nhg_size == 1)
                 {
                     NextHopKey nexthop(active_nhg.to_string(), true);
-                    vrf_obj->removeTunnelNextHop(nexthop);
+                    if (!isLocalEndpoint(vnet, nexthop.ip_address))
+                    {
+                        vrf_obj->removeTunnelNextHop(nexthop);
+                    }
                 }
             }
         }
@@ -2720,10 +2766,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<IpAddress> monitor_list;
     string profile = "";
     vector<IpAddress> primary_list;
+    vector<IpAddress> secondary_list;
     string monitoring;
     swss::IpPrefix adv_prefix;
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
+    bool check_directly_connected = false;
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
@@ -2761,6 +2809,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             adv_prefix = request.getAttrIpPrefix(name);
             has_adv_pfx = true;
         }
+        else if (name == "check_directly_connected")
+        {
+            check_directly_connected = request.getAttrBool(name);
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -2795,6 +2847,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
 
+    vnet_tunnel_route_check_directly_connected[vnet_name] = check_directly_connected;
+
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
@@ -2804,13 +2858,50 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         SWSS_LOG_INFO("Handling Priority Tunnel with prefix %s", ip_pfx.to_string().c_str());
     }
 
-    NextHopGroupKey nhg_primary("", true);
-    NextHopGroupKey nhg_secondary("", true);
+    if (primary_list.size() != ip_list.size())
+    {
+        for (auto& ip : primary_list)
+        {
+            if (std::find(ip_list.begin(), ip_list.end(), ip) == ip_list.end())
+            {
+                secondary_list.push_back(ip);
+            }
+        }
+    }
+
+    /*
+    * A local endpoint is an endpoint that is directly connected, i.e., present in the neighbor table.
+    * This check ensures that for primary/backup endpoint groups, all endpoints must be either local or all remote.
+    * Partially local means that some endpoints are local and some are not. Mixing local and remote endpoints in a
+    * single group is not supported.
+    */
+    if (check_directly_connected &&  (isPartiallyLocal(primary_list) || isPartiallyLocal(secondary_list) ))
+    {
+        SWSS_LOG_ERROR("Endpoints in Primary/backup should either all be local endpoints or no local endpoint at all.");
+        return false;
+    }
+
+    NextHopGroupKey nhg_primary;
+    NextHopGroupKey nhg_secondary;
+    if (check_directly_connected)
+    {
+        nhg_primary = NextHopGroupKey("", primary_list.empty() || !isLocalEndpoint(vnet_name, primary_list[0]));
+        nhg_secondary = NextHopGroupKey("", secondary_list.empty() || !isLocalEndpoint(vnet_name, secondary_list[0]));
+    }
+    else
+    {
+        nhg_primary = NextHopGroupKey("", true);
+        nhg_secondary = NextHopGroupKey("", true);
+    }
     NextHopGroupKey nhg("", true);
     map<NextHopKey, IpAddress> monitors;
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
     {
         IpAddress ip = ip_list[idx_ip];
+        bool is_local = isLocalEndpoint(vnet_name, ip);
+        bool is_overlay = !is_local;
+        IpAddress nh_ip = is_local ? monitor_list[idx_ip] : ip;
+        string alias = is_local ? gIntfsOrch->getRouterIntfsAlias(ip) : "";
         MacAddress mac;
         uint32_t vni = 0;
         if (vni_list.size() == 1 && vni_list[0] != "")
@@ -2827,7 +2918,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             mac = MacAddress(mac_list[idx_ip]);
         }
 
-        NextHopKey nh(ip, mac, vni, true);
+        if (is_local)
+        {
+            vnet_tunnel_term_acl_->createAclRule(vnet_name, ip_pfx, nh_ip);
+        }
+
+        NextHopKey nh(ip, alias, mac, vni, is_overlay);
         if (!monitor_list.empty())
         {
             monitors[nh] = monitor_list[idx_ip];
@@ -2905,6 +3001,38 @@ bool VNetRouteOrch::delOperation(const Request& request)
 
     return true;
 }
+
+bool VNetRouteOrch::isLocalEndpoint(const string&vnet, const IpAddress &ipAddr)
+{
+    auto it = vnet_tunnel_route_check_directly_connected.find(vnet);
+    if (it == vnet_tunnel_route_check_directly_connected.end() || !it->second)
+    {
+        return false;
+    }
+
+    NeighborEntry n;
+    MacAddress m;
+    return gNeighOrch->getNeighborEntry(ipAddr, n, m);
+}
+
+bool VNetRouteOrch::isPartiallyLocal(const std::vector<swss::IpAddress>& ip_list)
+{
+    bool all_true = std::all_of(ip_list.begin(), ip_list.end(),
+        [this](const swss::IpAddress& ip) {
+            NeighborEntry n;
+            MacAddress m;
+            return gNeighOrch->getNeighborEntry(ip, n, m);
+        });
+    bool all_false = std::all_of(ip_list.begin(), ip_list.end(),
+        [this](const swss::IpAddress& ip) {
+            NeighborEntry n;
+            MacAddress m;
+            return !gNeighOrch->getNeighborEntry(ip, n, m);
+        });
+
+    return !(all_true || all_false);
+}
+
 
 VNetCfgRouteOrch::VNetCfgRouteOrch(DBConnector *db, DBConnector *appDb, vector<string> &tableNames)
                                   : Orch(db, tableNames),
@@ -3038,4 +3166,149 @@ bool MonitorOrch::delOperation(const Request& request)
     vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, "" );
 
     return true;
+}
+
+VNetTunnelTermAcl::VNetTunnelTermAcl(DBConnector *cfgDb, DBConnector *appDb)
+{
+    SWSS_LOG_ENTER();
+
+    acl_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TABLE_NAME);
+    acl_table_type_ = make_unique<ProducerStateTable>(appDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
+    acl_rule_table_ = make_unique<ProducerStateTable>(appDb, APP_ACL_RULE_TABLE_NAME);
+
+    ctx_ = make_shared<TunnelTermHelper>(cfgDb);
+}
+
+void VNetTunnelTermAcl::lazyInit()
+{
+
+    SWSS_LOG_ENTER();
+
+    if (acl_table_initialized_)
+    {
+        return;
+    }
+
+    ctx_->initialize();
+
+    vector<string> match_list = {
+        MATCH_DST_IP,
+        MATCH_DST_IPV6,
+        MATCH_TUNNEL_TERM
+    };
+    string matches = std::accumulate(std::next(match_list.begin()), match_list.end(), match_list[0], concat);
+
+    vector<string> bpoint_list = {
+        BIND_POINT_TYPE_PORT,
+        BIND_POINT_TYPE_PORTCHANNEL
+    };
+    string bpoints = std::accumulate(std::next(bpoint_list.begin()), bpoint_list.end(), bpoint_list[0], concat);
+
+    vector<FieldValueTuple> fvs = {
+        {ACL_TABLE_TYPE_MATCHES, matches},
+        {ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION},
+        {ACL_TABLE_TYPE_BPOINT_TYPES, bpoints}
+    };
+
+    acl_table_type_->set(VNET_TUNNEL_TERM_ACL_TABLE_TYPE, fvs);
+
+    std::string ports_str = "";
+    auto ports = ctx_->getBindPoints();
+    if (!ports.empty())
+    {
+        ports_str = std::accumulate(std::next(ports.begin()), ports.end(), ports[0], concat);
+    }
+
+    vector<FieldValueTuple> fvs2 = {
+        {ACL_TABLE_DESCRIPTION, "Vnet Tunnel Termination ACL"},
+        {ACL_TABLE_TYPE, VNET_TUNNEL_TERM_ACL_TABLE_TYPE},
+        {ACL_TABLE_STAGE, STAGE_INGRESS},
+        {ACL_TABLE_PORTS, ports_str}
+    };
+
+    acl_table_->set(VNET_TUNNEL_TERM_ACL_TABLE, fvs2);
+
+    acl_table_initialized_ = true;
+}
+
+bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vip, swss::IpAddress nh_ip)
+{
+    SWSS_LOG_ENTER();
+
+    lazyInit();
+
+    VNetLocEpAclRule rule;
+
+    if (getAclRule(vnet_name, vip, rule))
+    {
+        /* If there are more than one local points for the same VIP, we will not create a new rule. */
+        return true;
+    }
+
+    std::string rule_name = ctx_->getRuleName(vnet_name, vip);
+    std::string alias = ctx_->getNbrAlias(nh_ip);
+
+    if (alias.empty())
+    {
+        SWSS_LOG_ERROR("Failed to get interface alias for IP %s", nh_ip.to_string().c_str());
+        return false;
+    }
+
+    vector<FieldValueTuple> fvs = {
+        {RULE_PRIORITY, to_string(VNET_TUNNEL_TERM_ACL_BASE_PRIORITY)},
+        {MATCH_DST_IP, vip.to_string()},
+        /* This tunnel term acl is to handle a transient state in DPU failover, so the redirect can't point to a VIP.*/
+        {ACTION_REDIRECT_ACTION, alias}
+    };
+
+    acl_rule_table_->set(rule_name, fvs);
+
+    rule.rule_name = rule_name;
+    rule.vip = vip;
+    rule.nh_ip = nh_ip;
+
+    vnet_loc_ep_acl_rule_map_[vnet_name].push_back(rule);
+
+    return true;
+}
+
+bool VNetTunnelTermAcl::removeAclRule(const string vnet_name, swss::IpPrefix& vip)
+{
+    SWSS_LOG_ENTER();
+
+    VNetLocEpAclRule rule;
+
+    if (!getAclRule(vnet_name, vip, rule))
+    {
+        SWSS_LOG_ERROR("No ACL rule found for VNet %s with VIP %s", vnet_name.c_str(), vip.to_string().c_str());
+        return false;
+    }
+
+    acl_rule_table_->del(rule.rule_name);
+
+    vnet_loc_ep_acl_rule_map_[vnet_name].erase(
+        std::remove_if(vnet_loc_ep_acl_rule_map_[vnet_name].begin(),
+                       vnet_loc_ep_acl_rule_map_[vnet_name].end(),
+                       [&vip](const VNetLocEpAclRule& rule) { return rule.vip == vip; }),
+        vnet_loc_ep_acl_rule_map_[vnet_name].end());
+
+    return true;
+}
+
+bool VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix& vip, VNetLocEpAclRule& rule_found)
+{
+    auto it = vnet_loc_ep_acl_rule_map_.find(vnet_name);
+    if (it != vnet_loc_ep_acl_rule_map_.end())
+    {
+        for (const auto& rule : it->second)
+        {
+            if (rule.vip == vip)
+            {
+                rule_found = rule;
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
