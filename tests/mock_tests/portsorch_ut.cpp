@@ -1080,6 +1080,7 @@ namespace portsorch_test
         // Port count: 32 Data + 1 CPU
         ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
 
+        std::string custom_serdes_attrs = "{'attributes':[{'attr_xyz':{'value':[1,2,3,4]}}]}";
         // Generate port serdes config
         std::deque<KeyOpFieldsValuesTuple> kfvList = {{
             "Ethernet0",
@@ -1102,7 +1103,7 @@ namespace portsorch_test
                 { "obnlev",        "0x5f,0x61,0x60,0x62"         },
                 { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
                 { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
-                { "custom_serdes_attrs", "{'attributes':[]}"     }
+                { "custom_serdes_attrs", custom_serdes_attrs     }
             }
         }};
 
@@ -1186,7 +1187,6 @@ namespace portsorch_test
         ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), SerdesValue(regn_bfm1n));
 
         // Verify custom_serdes_attrs
-        std::string custom_serdes_attrs = "{'attributes':[{'attr_xyz':{'value':[1,2,3,4]}}]}";
         ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION), SerdesValue(custom_serdes_attrs));
 
         // Verify unreliablelos
