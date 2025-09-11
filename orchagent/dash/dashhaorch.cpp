@@ -526,7 +526,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    m_ha_scope_entries[key] = HaScopeEntry {sai_ha_scope_oid, entry, getNowTime()};
+    m_ha_scope_entries[key] = HaScopeEntry {sai_ha_scope_oid, entry, getNowTime(), SAI_DASH_HA_STATE_DEAD, getNowTime()};
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
 
     // set HA Scope ID to ENI
@@ -582,46 +582,9 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
     if (entry.ha_role() == dash::types::HA_ROLE_DEAD
         && !m_ha_set_entries.empty())
     {
-        bool has_dpu_scope = false;
-        for (const auto& ha_set_entry : m_ha_set_entries)
-        {
-            if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
-            {
-                has_dpu_scope = true;
-                break;
-            }
-        }
-
-        if (has_dpu_scope)
+        if (has_dpu_scope())
         {
             m_bfd_orch->removeAllSoftwareBfdSessions();
-        }
-    }
-
-    /*
-        Create bfd passive sessions cached when moving out of DEAD role (scope == DPU)
-    */
-    if (m_ha_scope_entries[key].metadata.ha_role() == dash::types::HA_ROLE_DEAD
-        && entry.ha_role() != dash::types::HA_ROLE_DEAD
-        && !m_ha_set_entries.empty())
-    {
-        bool has_dpu_scope = false;
-        for (const auto& ha_set_entry : m_ha_set_entries)
-        {
-            if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
-            {
-                has_dpu_scope = true;
-                break;
-            }
-        }
-
-        if (has_dpu_scope && !m_bfd_session_pending_creation.empty())
-        {
-            for (const auto& bfd_entry : m_bfd_session_pending_creation)
-            {
-                m_bfd_orch->createSoftwareBfdSession(bfd_entry.first, bfd_entry.second);
-            }
-            m_bfd_session_pending_creation.clear();
         }
     }
 
@@ -872,42 +835,27 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
 
         if (op == SET_COMMAND)
         {
-            bool has_eni_scope = false;
-            for (const auto& ha_set_entry : m_ha_set_entries)
-            {
-                if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_ENI)
-                {
-                    has_eni_scope = true;
-                    break;
-                }
-            }
-            
-            if (!m_ha_set_entries.empty() && has_eni_scope)
+            if (has_eni_scope())
             {
                 m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
 
-            bool has_dpu_scope = false;
-            bool has_dpu_scope_ha_role_active = false;
-            for (const auto& ha_set_entry : m_ha_set_entries)
+            bool has_dpu_scope_ha_state_active = false;
+            if (has_dpu_scope())
             {
-                if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
+                for (const auto& ha_scope_entry : m_ha_scope_entries)
                 {
-                    has_dpu_scope = true;
-
-                    for (const auto& ha_scope_entry : m_ha_scope_entries)
+                    if (in(ha_scope_entry.second.ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                            SAI_DASH_HA_STATE_STANDBY,
+                                                            SAI_DASH_HA_STATE_STANDALONE}))
                     {
-                        if (ha_scope_entry.second.metadata.ha_role() != dash::types::HA_ROLE_DEAD)
-                        {
-                            has_dpu_scope_ha_role_active = true;
-                            break;
-                        }
+                        has_dpu_scope_ha_state_active = true;
+                        break;
                     }
-                    break;
                 }
             }
 
-            if (!m_ha_set_entries.empty() && has_dpu_scope_ha_role_active)
+            if (has_dpu_scope_ha_state_active)
             {
                 m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
@@ -915,9 +863,9 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
             /*
                 In case bfd sessions are programmed before HA, cache them until HA scopes are created.
             */
-            if (m_ha_set_entries.empty() ||
-                (has_dpu_scope && m_ha_scope_entries.empty()) ||
-                (has_dpu_scope && !has_dpu_scope_ha_role_active))
+            if ( (!has_eni_scope()) ||
+                (has_dpu_scope() && m_ha_scope_entries.empty()) ||
+                (has_dpu_scope() && !has_dpu_scope_ha_state_active))
             {
                 SWSS_LOG_INFO("Caching BFD session %s as there is no non-dead DPU HA Scope", key.c_str());
 
@@ -1066,6 +1014,17 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                         }
 
                         fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
+                        fvs.push_back({"ha_state_start_time", to_string(now_time)});
+
+                        m_ha_scope_entries[key].ha_state = ha_scope_event[i].ha_state;
+                        m_ha_scope_entries[key].last_state_start_time = now_time;
+
+                        if (has_dpu_scope() && in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                            SAI_DASH_HA_STATE_STANDBY,
+                                                            SAI_DASH_HA_STATE_STANDALONE}))
+                        {
+                            processCachedBfdSessions();
+                        }
                         break;
                     default:
                         SWSS_LOG_ERROR("Unknown HA Scope event type %d for %s", event_type, key.c_str());
@@ -1250,4 +1209,43 @@ bool DashHaOrch::convertKfvToHaScopePb(const std::vector<FieldValueTuple> &kfv, 
         }
     }
     return true;
+}
+
+bool DashHaOrch::has_dpu_scope()
+{
+    for (const auto& ha_set_entry : m_ha_set_entries)
+    {
+        if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DashHaOrch::has_eni_scope()
+{
+    for (const auto& ha_set_entry : m_ha_set_entries)
+    {
+        if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_ENI)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DashHaOrch::processCachedBfdSessions()
+{
+    /*
+        Create bfd passive sessions cached when moving out of DEAD role (scope == DPU)
+    */
+    if (has_dpu_scope() && !m_bfd_session_pending_creation.empty())
+    {
+        for (const auto& bfd_entry : m_bfd_session_pending_creation)
+        {
+            m_bfd_orch->createSoftwareBfdSession(bfd_entry.first, bfd_entry.second);
+        }
+        m_bfd_session_pending_creation.clear();
+    }
 }

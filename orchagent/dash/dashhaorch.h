@@ -29,6 +29,9 @@ struct HaScopeEntry
     sai_object_id_t ha_scope_id;
     dash::ha_scope::HaScope metadata;
     std::time_t last_role_start_time;
+
+    sai_dash_ha_state_t ha_state;
+    std::time_t last_state_start_time;
 };
 
 typedef std::map<std::string, HaSetEntry> HaSetTable;
@@ -71,6 +74,11 @@ protected:
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
     bool register_ha_set_notifier();
     bool register_ha_scope_notifier();
+
+    bool has_dpu_scope();
+    bool has_eni_scope();
+
+    void processCachedBfdSessions();
 
     bool convertKfvToHaSetPb(
         const std::vector<swss::FieldValueTuple> &kfv,
