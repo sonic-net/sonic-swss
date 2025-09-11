@@ -508,13 +508,12 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
-        void CreateSoftwareBfdSession()
+        void CreateSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
         {
             auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
                 m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
 
-            string bfd_session_key = "default:default:192.168.1.100";
             vector<FieldValueTuple> bfd_session_data = {
                 {"local_addr", "192.168.1.1"},
                 {"tx_interval", "1000"},
@@ -531,6 +530,27 @@ namespace dashhaorch_ut
                             bfd_session_key,
                             SET_COMMAND,
                             bfd_session_data
+                        }
+                    }
+                )
+            );
+
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*bfd_consumer.get());
+        }
+
+        void deleteSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
+        {
+            auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
+
+            bfd_consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            bfd_session_key,
+                            DEL_COMMAND,
+                            {}
                         }
                     }
                 )
@@ -966,6 +986,12 @@ namespace dashhaorch_ut
         HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
                     SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
         EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        CreateSoftwareBfdSession("default:default:192.168.1.101");
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 2);
+
+        deleteSoftwareBfdSession("default:default:192.168.1.101");
+        EXPECT_EQ(m_mockBfdOrch->removeSoftwareBfdSession_invoked_times, 1);
 
         // bfd sessions should be removed immediately when ha_role is set to dead
         SetHaScopeHaRole("dead");
