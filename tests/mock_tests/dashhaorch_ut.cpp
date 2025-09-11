@@ -959,12 +959,16 @@ namespace dashhaorch_ut
 
         SetHaScopeHaRole();
         HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        // bfd sessions should be created when ha_state is set to active
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
                     SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
         EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
 
+        // bfd sessions should be removed immediately when ha_role is set to dead
         SetHaScopeHaRole("dead");
-        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
-                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
         EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 1);
 
         RemoveHaScope();
