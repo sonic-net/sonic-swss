@@ -42,17 +42,6 @@ static void sig_handler(int signo)
     return;
 }
 
-bool isFipsPostStateReady(DBConnector *stateDb)
-{
-    std::string state = getMacsecPostState(stateDb);
-    if (state == "pass" || state == "disabled")
-    {
-        SWSS_LOG_NOTICE("FIPS POST ready: state %s", state.c_str());
-        return true;
-    }
-    return false;
-}
-
 int main(int argc, char **argv)
 {
 
@@ -73,13 +62,6 @@ int main(int argc, char **argv)
         swss::DBConnector cfgDb("CONFIG_DB", 0);
         swss::DBConnector stateDb("STATE_DB", 0);
 
-        /* Don't process any config until POST state is ready */
-        SWSS_LOG_NOTICE("checking FIPS POST state");
-        while (!isFipsPostStateReady(&stateDb))
-        {
-            sleep(1);
-        }
-
         std::vector<std::string> cfg_macsec_tables = {
             CFG_MACSEC_PROFILE_TABLE_NAME,
             CFG_PORT_TABLE_NAME,
@@ -95,9 +77,28 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        bool isPostStateReady = false;
+
         SWSS_LOG_NOTICE("starting main loop");
         while (!received_sigterm)
         {
+            /* Don't process any config until POST state is ready */
+            if (!isPostStateReady)
+            {
+                std::string state = getMacsecPostState(stateDb);
+                if (state == "pass" || state == "disabled")
+                {
+                    SWSS_LOG_NOTICE("FIPS MACSec POST ready: state %s", state.c_str());
+                    isPostStateReady = true;
+                }
+                else
+                {
+                    /* Yield before retry */
+                    sleep(1);
+                    continue;
+                }
+            }
+
             Selectable *sel;
             int ret;
 
