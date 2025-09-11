@@ -342,6 +342,38 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
     return true;
 }
 
+bool isFipsEnabled()
+{
+    // Check if FIPS was enabled via config file, i.e., /etc/sonic/fips.json
+    std::ifstream fips_enable_file("/etc/fips/fips_enable");
+    if (fips_enable_file.is_open())
+    {
+        bool fips_enabled;
+        fips_enable_file >> fips_enabled;
+        if (fips_enabled)
+        {
+            SWSS_LOG_NOTICE("FIPS enabled in /etc/fips/fips_enable");
+            return true;
+        }
+    }
+
+    // Check if FIPS was enabled via sonic-installer.
+    std::ifstream proc_cmdline_file("/proc/cmdline");
+    if (proc_cmdline_file.is_open())
+    {
+        std::string cmdline;
+        std::getline(proc_cmdline_file, cmdline);
+        if (cmdline.find("sonic_fips=1") != std::string::npos)
+        {
+            SWSS_LOG_NOTICE("FIPS enabled in /proc/cmdline");
+            return true;
+        }
+    }
+
+    SWSS_LOG_NOTICE("FIPS disabled");
+    return false;
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
@@ -644,10 +676,8 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
-    // Enable FIPS POST if needed.
-    // TODO: MACSec POST needs to be enabled in switch creation. So it's expected to
-    // to provide a config for orchagent to check if POST needs to be enabled or not.
-    bool macsec_post_enabled = false;
+    // Enable MACSec POST if FIPS is enabled.
+    bool macsec_post_enabled = isFipsEnabled();
 
     string macsec_post_state;
     if (gMySwitchType != "fabric" && macsec_post_enabled)
