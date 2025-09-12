@@ -2685,7 +2685,7 @@ class TestVnetOrch(object):
         self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', rx_monitor_timer=100, tx_monitor_timer=100, adv_prefix='100.100.1.0/24', check_directly_connected=True)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
         # verify tunnel term acl 
         expected_sai_qualifiers = {
@@ -2968,6 +2968,57 @@ class TestVnetOrch(object):
         self.remove_neighbor("Ethernet12", "9.1.0.4")
         self.remove_ip_address("Ethernet12", "9.1.0.4/32")
         self.set_admin_status("Ethernet12", "down")
+
+    '''
+    Test 30 - Test for priority vnet tunnel routes with local endpoint + bfd monitoring + rx and tx timer.
+    '''
+    def test_vnet_orch_30(self, dvs, dvs_acl, testlog):
+        self.setup_db(dvs)
+        self.clear_srv_config(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_28'
+        vnet_name = 'Vnet28'
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10028', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10028')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet8", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet8", "9.1.0.1/32")
+
+        # bring up interface
+        self.set_admin_status("Ethernet8", "up")
+
+        # add neighbor for direcetly connected endpoint
+        self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='', rx_monitor_timer=100, tx_monitor_timer=100, adv_prefix='100.100.1.0/24', check_directly_connected=True)
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        self.remove_neighbor("Ethernet8", "9.1.0.1")
+        self.remove_ip_address("Ethernet8", "9.1.0.1/32")
+        self.set_admin_status("Ethernet8", "down")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

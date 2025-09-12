@@ -174,6 +174,12 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
     if check_directly_connected:
         attrs.append(('check_directly_connected', 'true'))
 
+    if rx_monitor_timer != -1:
+        attrs.append(('rx_monitor_timer', str(rx_monitor_timer)))
+
+    if tx_monitor_timer != -1:
+        attrs.append(('tx_monitor_timer', str(tx_monitor_timer)))
+
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
     tbl.set("%s|%s" % (vnet_name, prefix), fvs)
