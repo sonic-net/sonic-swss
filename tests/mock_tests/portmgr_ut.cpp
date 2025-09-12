@@ -87,8 +87,7 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("up", value_opt.get());
 		
-		// Case 1: Add DHCP rate limit (valid case)
-	    cfg_port_table.set("Ethernet0", {
+		cfg_port_table.set("Ethernet0", {
 	        {"dhcp_rate_limit", "1000"}
 	    });
 	    mockCallArgs.clear();
@@ -107,7 +106,6 @@ namespace portmgr_ut
 	        });
 	    ASSERT_TRUE(found_rate) << "Expected police rate command, got:\n" << ::testing::PrintToString(mockCallArgs);
 
-	    // Case 2: dhcp_rate_limit = 0 (delete case)
 	    cfg_port_table.set("Ethernet0", {
 	        {"dhcp_rate_limit", "0"}
 	    });
@@ -120,7 +118,6 @@ namespace portmgr_ut
 	        });
 	    ASSERT_TRUE(found_del) << "Expected tc qdisc del command, got:\n" << ::testing::PrintToString(mockCallArgs);
 
-	    // Case 3: WARN branch - port not ready
 	    state_port_table.set("Ethernet0", { {"state", "unknown"} });
 	    cfg_port_table.set("Ethernet0", {
 	        {"dhcp_rate_limit", "500"}
