@@ -85,7 +85,7 @@ protected:
 
     std::unique_ptr<swss::Table> dash_ha_set_result_table_;
     std::unique_ptr<swss::Table> dash_ha_scope_result_table_;
-    
+
     std::unique_ptr<swss::DBConnector> m_dpuStateDbConnector;
     std::unique_ptr<swss::Table> m_dpuStateDbHaSetTable;
     std::unique_ptr<swss::Table> m_dpuStateDbHaScopeTable;
@@ -96,6 +96,7 @@ protected:
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
+    HaScopeEntry getHaScopeForEni(const std::string& eni);
 };
 
 #endif // DASHHAORCH_H
