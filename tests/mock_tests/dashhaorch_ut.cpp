@@ -516,6 +516,9 @@ namespace dashhaorch_ut
             event.event_type = event_type;
             event.ha_role = ha_role;
             event.ha_state = ha_state;
+            event.flow_version = sai_uint32_t(0);
+
+            ASSERT_EQ(to_string(event.flow_version), "0");
 
             std::string data = sai_serialize_ha_scope_event_ntf(1, &event);
 
