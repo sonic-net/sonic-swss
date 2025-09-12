@@ -2685,7 +2685,7 @@ class TestVnetOrch(object):
         self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', rx_monitor_timer=100, tx_monitor_timer=100, adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
         # verify tunnel term acl 
         expected_sai_qualifiers = {
