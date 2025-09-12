@@ -879,11 +879,6 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
             m_bfd_orch->removeSoftwareBfdSession(key);
             it = consumer.m_toSync.erase(it);
         }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation %s for BFD Session table", op.c_str());
-            it = consumer.m_toSync.erase(it);
-        }
     }
 }
 
