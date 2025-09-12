@@ -2998,7 +2998,7 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
     context.vrf_id = gVirtualRouterId;
     if (removeRoute(context))
     {
-        SWSS_LOG_INFO("Could not find the route with prefix %s", prefix.to_string().c_str());
+        SWSS_LOG_INFO("Could not find the route  with prefix %s", prefix.to_string().c_str());
         return true;
     }
     gRouteBulker.flush();
