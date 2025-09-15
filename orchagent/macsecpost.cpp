@@ -15,6 +15,14 @@ void setMacsecPostState(DBConnector *stateDb, string postState)
     vector<FieldValueTuple> fvts;
     FieldValueTuple postStateFvt("post_state", postState);
     fvts.push_back(postStateFvt);
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y", std::gmtime(&now_c));
+    FieldValueTuple lastUpdateTimeFvt("last_update_time", buffer);
+    fvts.push_back(lastUpdateTimeFvt);
+
     macsecPostStateTable.set("sai", fvts);
 }
 
