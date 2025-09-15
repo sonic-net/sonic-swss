@@ -970,7 +970,8 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 std::vector<FieldValueTuple> fvs = {
-                    {"last_updated_time", to_string(now_time)}
+                    {"last_updated_time", to_string(now_time)},
+                    {"ha_term", to_string(ha_scope_event[i].flow_version)}
                 };
 
                 auto ha_role = to_pb(ha_scope_event[i].ha_role);
@@ -987,7 +988,7 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 fvs.push_back({"ha_role", sai_ha_role_name.at(ha_scope_event[i].ha_role)});
-                fvs.push_back({"ha_role_start_time ", to_string(role_start_time)});
+                fvs.push_back({"ha_role_start_time", to_string(role_start_time)});
 
                 switch (event_type)
                 {
