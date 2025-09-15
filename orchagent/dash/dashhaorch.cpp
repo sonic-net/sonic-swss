@@ -861,11 +861,9 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
             }
 
             /*
-                In case bfd sessions are programmed before HA, cache them until HA scopes are created.
+                Caching BFD sessions for planned ha_role up->down->up.
             */
-            if ( (!has_eni_scope()) ||
-                (has_dpu_scope() && m_ha_scope_entries.empty()) ||
-                (has_dpu_scope() && !has_dpu_scope_ha_state_active))
+            if ((!has_eni_scope()))
             {
                 SWSS_LOG_INFO("Caching BFD session %s as there is no non-dead DPU HA Scope", key.c_str());
 
@@ -1241,6 +1239,5 @@ void DashHaOrch::processCachedBfdSessions()
         {
             m_bfd_orch->createSoftwareBfdSession(bfd_entry.first, bfd_entry.second);
         }
-        m_bfd_session_pending_creation.clear();
     }
 }
