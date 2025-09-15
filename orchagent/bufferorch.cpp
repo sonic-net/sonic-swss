@@ -780,7 +780,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
             }
 
-            for (auto &attribute : attribs)
+            for (auto &attribute : attribs_to_retry)
             {
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
                 if (SAI_STATUS_SUCCESS != sai_status)
