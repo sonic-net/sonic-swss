@@ -1,0 +1,47 @@
+[package]
+name = "countersyncd"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# Configuration and serialization
+yaml-rust = { workspace = true }
+
+# Netlink for network operations
+neli = { workspace = true }
+
+# IPFIX parser for traffic flow analysis
+ipfixrw = { workspace = true }
+ahash = { workspace = true }
+binrw = { workspace = true }
+byteorder = { workspace = true }
+
+# Logging and error handling
+log = { workspace = true }
+env_logger = { workspace = true }
+chrono = { workspace = true }
+
+# Utilities
+rand = { workspace = true }
+once_cell = { workspace = true }
+
+# Command line utilities
+clap = { workspace = true }
+color-eyre = { workspace = true }
+
+# SONiC specific dependencies
+swss-common = { workspace = true }
+
+[dev-dependencies]
+# Test utilities  
+tempfile = { workspace = true }
+serial_test = { workspace = true }
+async-trait = { workspace = true }
