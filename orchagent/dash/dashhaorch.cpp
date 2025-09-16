@@ -876,6 +876,7 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
         {
             m_bfd_orch->removeSoftwareBfdSession(key);
             it = consumer.m_toSync.erase(it);
+            m_bfd_session_pending_creation.erase(key);
         }
     }
 }

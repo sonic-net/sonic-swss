@@ -958,6 +958,7 @@ namespace dashhaorch_ut
         CreateSoftwareBfdSession();
 
         EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 0);
 
         SetHaScopeHaRole();
         HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
@@ -992,9 +993,11 @@ namespace dashhaorch_ut
 
         CreateSoftwareBfdSession("default:default:192.168.1.101");
         EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 2);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 2);
 
         deleteSoftwareBfdSession("default:default:192.168.1.101");
         EXPECT_EQ(m_mockBfdOrch->removeSoftwareBfdSession_invoked_times, 1);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 1);
 
         // bfd sessions should be removed immediately when ha_role is set to dead
         SetHaScopeHaRole("dead");
