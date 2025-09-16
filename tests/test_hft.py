@@ -40,6 +40,16 @@ class TestHFT(object):
         ])
         tbl.set(key, fvs)
 
+    def create_hft_group_without_fields(self, dvs, profile_name="test", group_name="PORT"):
+        """Create HFT group in CONFIG_DB without object_names and object_counters fields."""
+        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_GROUP")
+
+        key = f"{profile_name}|{group_name}"
+        # Create empty field-value pairs - no object_names or object_counters
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(key, fvs)
+
     def delete_hft_profile(self, dvs, name="test"):
         """Delete HFT profile from CONFIG_DB."""
         config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -77,6 +87,8 @@ class TestHFT(object):
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF_TRAP_GROUP")
         ports_tbl = swsscommon.Table(
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        buffer_pool_tbl = swsscommon.Table(
+            asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL")
 
         return {
             "tam_transport": self._get_table_entries(tam_transport_tbl),
@@ -90,7 +102,8 @@ class TestHFT(object):
             "hostif_user_defined_trap": self._get_table_entries(
                 hostif_trap_tbl),
             "host_trap_group": self._get_table_entries(host_trap_group_tbl),
-            "ports": self._get_table_entries(ports_tbl)
+            "ports": self._get_table_entries(ports_tbl),
+            "buffer_pool": self._get_table_entries(buffer_pool_tbl)
         }
 
     def _get_table_entries(self, table):
@@ -103,7 +116,7 @@ class TestHFT(object):
                 entries[key] = dict(fvs)
         return entries
 
-    def verify_asic_db_objects(self, asic_db, groups=[(1, 1)]):
+    def verify_asic_db_objects(self, asic_db, groups=[(1, 1)], watermark_count=0):
         """Verify HFT objects are created correctly in ASIC_STATE DB."""
 
         # If no groups, we expect minimal or no HFT objects
@@ -202,6 +215,8 @@ class TestHFT(object):
         assert len(asic_db["tam_counter_subscription"]) == counters_number, \
             f"Expected {counters_number} tam counter subscriptions"
 
+        read_mode_count = 0
+        watermark_mode_count = 0
         for tam_counter_sub in asic_db["tam_counter_subscription"].values():
             # Fix: Use only the object ID
             tel_type_oid = tam_counter_sub[
@@ -211,18 +226,24 @@ class TestHFT(object):
                 "telemetry type"
 
             # Fix: Use only the object ID
-            port_oid = tam_counter_sub[
+            subscription_oid = tam_counter_sub[
                 "SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID"]
-            assert port_oid in asic_db["ports"], \
+            assert (subscription_oid in asic_db["ports"] or subscription_oid in asic_db["buffer_pool"]), \
                 "Expected tam counter subscription to reference port"
 
             # Only check if we have counter subscriptions
             if counters_number > 0:
-                assert tam_counter_sub[
-                    "SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STATS_MODE"] == \
-                    "SAI_STATS_MODE_READ", \
-                    "Expected tam counter subscription stats mode to be " \
-                    "SAI_STATS_MODE_READ"
+                if tam_counter_sub[
+                        "SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STATS_MODE"] == "SAI_STATS_MODE_READ":
+                    read_mode_count += 1
+                elif tam_counter_sub[
+                        "SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STATS_MODE"] == "SAI_STATS_MODE_READ_AND_CLEAR":
+                    watermark_mode_count += 1
+        if counters_number > 0:
+            assert read_mode_count == counters_number - watermark_count, \
+                f"Expected {counters_number - watermark_count} read mode subscriptions"
+            assert watermark_mode_count == watermark_count, \
+                f"Expected {watermark_count} watermark mode subscriptions"
 
         # Verify TAM telemetry
         assert len(asic_db["tam_telemetry"]) == 1, "Expected one tam telemetry"
@@ -400,6 +421,98 @@ class TestHFT(object):
         self.delete_hft_group(dvs)
         self.delete_hft_profile(dvs)
 
+    def test_hft_empty_fields_with_disabled_status(self, dvs, testlog):
+        """Test HFT with empty object_names and object_counters when profile is disabled."""
+        # Create HFT profile with disabled status
+        self.create_hft_profile(dvs, status="disabled")
+        
+        # Create HFT group with empty object_names and object_counters
+        self.create_hft_group(dvs,
+                              object_names="",
+                              object_counters="")
+
+        # Wait for processing
+        time.sleep(3)
+
+        # Verify that no counter subscriptions are created when 
+        # profile is disabled and fields are empty
+        asic_db = self.get_asic_db_objects(dvs)
+        
+        assert len(asic_db["tam_counter_subscription"]) == 0, \
+            "Expected no tam counter subscriptions when profile is disabled " \
+            "and object_names/object_counters are empty"
+
+        # Clean up
+        self.delete_hft_group(dvs)
+        self.delete_hft_profile(dvs)
+
+    def test_hft_missing_fields_with_disabled_status(self, dvs, testlog):
+        """Test HFT without object_names and object_counters fields when profile is disabled."""
+        # Create HFT profile with disabled status
+        self.create_hft_profile(dvs, status="disabled")
+        
+        # Create HFT group without object_names and object_counters fields
+        self.create_hft_group_without_fields(dvs)
+
+        # Wait for processing
+        time.sleep(3)
+
+        # Verify that no counter subscriptions are created when 
+        # profile is disabled and fields are missing entirely
+        asic_db = self.get_asic_db_objects(dvs)
+        
+        assert len(asic_db["tam_counter_subscription"]) == 0, \
+            "Expected no tam counter subscriptions when profile is disabled " \
+            "and object_names/object_counters fields are missing"
+
+        # Clean up
+        self.delete_hft_group(dvs)
+        self.delete_hft_profile(dvs)
+
+    def test_hft_multiple_groups(self, dvs, testlog):
+        """Test HFT with multiple groups and objects."""
+        # Create HFT profile and groups
+        self.create_hft_profile(dvs)
+        self.create_hft_group(dvs,
+                              object_names="Ethernet0,Ethernet4,Ethernet8",
+                              object_counters="IF_IN_OCTETS,IF_IN_UCAST_PKTS,"
+                                              "IF_IN_DISCARDS")
+        self.create_hft_group(dvs,
+                              group_name="BUFFER_POOL",
+                              object_names="egress_lossless_pool,egress_lossy_pool,ingress_lossless_pool",
+                              object_counters="DROPPED_PACKETS,CURR_OCCUPANCY_BYTES,"
+                                              "WATERMARK_BYTES")
+        # The KVM latform doesn't support ingress priority groups and queues
+        # self.create_hft_group(dvs,
+        #                       group_name="INGRESS_PRIORITY_GROUP",
+        #                       object_names="Ethernet0|0,Ethernet4|0,Ethernet8|0",
+        #                       object_counters="PACKETS,BYTES,WATERMARK_BYTES")
+        # self.create_hft_group(dvs,
+        #                       group_name="QUEUE",
+        #                       object_names="Ethernet0|0,Ethernet4|0,Ethernet8|0",
+        #                       object_counters="PACKETS,BYTES,WATERMARK_BYTES")
+
+        # Wait for objects to be created
+        time.sleep(5)
+
+        # Verify ASIC objects are created (4 groups subscriptions)
+        asic_db = self.get_asic_db_objects(dvs)
+        self.verify_asic_db_objects(asic_db, groups=[(3, 3), (3,3)], watermark_count=3)
+        # self.verify_asic_db_objects(asic_db, groups=[(3, 3), (3,3), (3, 3), (3, 3)])
+
+        # Clean up group
+        self.delete_hft_group(dvs, group_name="PORT")
+        self.delete_hft_group(dvs, group_name="BUFFER_POOL")
+        self.delete_hft_group(dvs, group_name="INGRESS_PRIORITY_GROUP")
+        self.delete_hft_group(dvs, group_name="QUEUE")
+        time.sleep(2)
+
+        # Verify counter subscriptions are cleaned up
+        asic_db = self.get_asic_db_objects(dvs)
+        self.verify_asic_db_objects(asic_db, groups=[])
+
+        # Clean up profile
+        self.delete_hft_profile(dvs)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

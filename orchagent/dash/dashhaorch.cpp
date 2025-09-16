@@ -390,6 +390,12 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             repeated_message = false;
         }
 
+        if (ha_scope_it->second.metadata.disabled() != entry.disabled())
+        {
+            success = success && setHaScopeDisabled(key, entry.disabled());
+            repeated_message = false;
+        }
+
         if (repeated_message)
         {
             SWSS_LOG_WARN("HA Scope entry already exists for %s", key.c_str());
@@ -402,18 +408,22 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
         return success;
     }
 
-    if (m_ha_set_entries.empty())
+    std::map<std::string, HaSetEntry>::iterator ha_set_it;
+    if (!entry.ha_set_id().empty())
     {
-        SWSS_LOG_ERROR("HA Set entry does not exist for %s", key.c_str());
-        return false;
+        ha_set_it = m_ha_set_entries.find(entry.ha_set_id());
+    }
+    else
+    {
+        /* ha_set_id field in ha_scope_table was added as a revision of detailed HLD, adding backward compatibility for ha_set_id mapping. */
+        ha_set_it = m_ha_set_entries.find(key);
     }
 
-    auto ha_set_it = m_ha_set_entries.find(key);
     if (ha_set_it == m_ha_set_entries.end())
     {
-        // If it's ENI level HA, ha_set id won't map to ha_scope id.
-        // So we will use the first HA Set entry.
-        ha_set_it = m_ha_set_entries.begin();
+        // If there is no HA Set entry, we cannot create HA Scope.
+        SWSS_LOG_ERROR("HA Set entry does not exist for %s", key.c_str());
+        return false;
     }
     sai_object_id_t ha_set_oid = ha_set_it->second.ha_set_id;
 
@@ -426,18 +436,39 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     ha_set_attr.value.oid = ha_set_oid;
     ha_scope_attrs.push_back(ha_set_attr);
 
-    // TODO: add ha_role to attribute value enum
     sai_attribute_t ha_role_attr = {};
     ha_role_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
     ha_role_attr.value.u16 = to_sai(entry.ha_role());
     ha_scope_attrs.push_back(ha_role_attr);
 
-    if (ha_set_it->second.metadata.has_vip_v4() && ha_set_it->second.metadata.vip_v4().has_ipv4())
+    sai_attribute_t disabled_attr = {};
+    disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    disabled_attr.value.booldata = !entry.disabled();
+    ha_scope_attrs.push_back(disabled_attr);
+
+    if (entry.has_vip_v4() && entry.vip_v4().has_ipv4())
     {
+        sai_ip_address_t sai_vip_v4 = {};
+        if(to_sai(entry.vip_v4(), sai_vip_v4))
+        {
+            sai_attribute_t vip_v4_attr = {};
+            vip_v4_attr.id = SAI_HA_SCOPE_ATTR_VIP_V4;
+            vip_v4_attr.value.ipaddr = sai_vip_v4;
+            ha_scope_attrs.push_back(vip_v4_attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to convert VIP V4 for HA Scope %s", key.c_str());
+        }
+    }
+    else if (ha_set_it->second.metadata.has_vip_v4() && ha_set_it->second.metadata.vip_v4().has_ipv4())
+    {
+        SWSS_LOG_NOTICE("HA Scope entry %s does not have VIP V4, using HA Set metadata", key.c_str());
+
         sai_ip_address_t sai_vip_v4 = {};
         if (to_sai(ha_set_it->second.metadata.vip_v4(), sai_vip_v4))
         {
-            sai_attribute_t vip_v4_attr = {};  // Create new attribute for V4
+            sai_attribute_t vip_v4_attr = {};
             vip_v4_attr.id = SAI_HA_SCOPE_ATTR_VIP_V4;
             vip_v4_attr.value.ipaddr = sai_vip_v4;
             ha_scope_attrs.push_back(vip_v4_attr);
@@ -448,12 +479,27 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
         }
     }
 
-    if (ha_set_it->second.metadata.has_vip_v6() && !ha_set_it->second.metadata.vip_v6().ipv6().empty())
+    if (entry.has_vip_v6() && entry.vip_v6().has_ipv6())
+    {
+        sai_ip_address_t sai_vip_v6 = {};
+        if(to_sai(entry.vip_v6(), sai_vip_v6))
+        {
+            sai_attribute_t vip_v6_attr = {};
+            vip_v6_attr.id = SAI_HA_SCOPE_ATTR_VIP_V6;
+            vip_v6_attr.value.ipaddr = sai_vip_v6;
+            ha_scope_attrs.push_back(vip_v6_attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to convert VIP V6 for HA Scope %s", key.c_str());
+        }
+    }
+    else if (ha_set_it->second.metadata.has_vip_v6() && !ha_set_it->second.metadata.vip_v6().ipv6().empty())
     {
         sai_ip_address_t sai_vip_v6 = {};
         if (to_sai(ha_set_it->second.metadata.vip_v6(), sai_vip_v6))
         {
-            sai_attribute_t vip_v6_attr = {};  // Create new attribute for V6
+            sai_attribute_t vip_v6_attr = {};
             vip_v6_attr.id = SAI_HA_SCOPE_ATTR_VIP_V6;
             vip_v6_attr.value.ipaddr = sai_vip_v6;
             ha_scope_attrs.push_back(vip_v6_attr);
@@ -603,6 +649,35 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
     return true;
 }
 
+bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    sai_attribute_t ha_scope_attr;
+    ha_scope_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    ha_scope_attr.value.booldata = !disabled;
+
+    sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
+                                                                &ha_scope_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope admin state to %d in SAI for %s", disabled, key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    m_ha_scope_entries[key].metadata.set_disabled(disabled);
+    SWSS_LOG_NOTICE("Set HA Scope admin state for %s to %d", key.c_str(), !disabled);
+
+    return true;
+}
+
 bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id)
 {
     SWSS_LOG_ENTER();
@@ -673,6 +748,12 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         {
             dash::ha_scope::HaScope entry;
 
+            auto existing_it = m_ha_scope_entries.find(key);
+            if (existing_it != m_ha_scope_entries.end())
+            {
+                // Start with existing entry to preserve unmodified fields
+                entry.CopyFrom(existing_it->second.metadata);
+            }
 
             /*
             * For HA internal tables, kfv format was used instead of serialized pb objects in the end.
@@ -810,7 +891,8 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 std::vector<FieldValueTuple> fvs = {
-                    {"last_updated_time", to_string(now_time)}
+                    {"last_updated_time", to_string(now_time)},
+                    {"ha_term", to_string(ha_scope_event[i].flow_version)}
                 };
 
                 auto ha_role = to_pb(ha_scope_event[i].ha_role);
@@ -827,7 +909,7 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 fvs.push_back({"ha_role", sai_ha_role_name.at(ha_scope_event[i].ha_role)});
-                fvs.push_back({"ha_role_start_time ", to_string(role_start_time)});
+                fvs.push_back({"ha_role_start_time", to_string(role_start_time)});
 
                 switch (event_type)
                 {
@@ -962,7 +1044,6 @@ bool DashHaOrch::convertKfvToHaSetPb(const std::vector<FieldValueTuple> &kfv, da
         else
         {
             SWSS_LOG_WARN("Unknown field %s in HA Set entry", field.c_str());
-            return false;
         }
     }
     return true;
@@ -1002,10 +1083,33 @@ bool DashHaOrch::convertKfvToHaScopePb(const std::vector<FieldValueTuple> &kfv, 
         {
             entry.set_activate_role_requested(value == "true" || value == "1");
         }
+        else if (field == "vip_v4")
+        {
+            dash::types::IpAddress temp_ip;
+            if (!to_pb(value, temp_ip) || !temp_ip.has_ipv4())
+            {
+                SWSS_LOG_ERROR("Invalid IPv4 address %s", value.c_str());
+                return false;
+            }
+            entry.mutable_vip_v4()->CopyFrom(temp_ip);
+        }
+        else if (field == "vip_v6")
+        {
+            dash::types::IpAddress temp_ip;
+            if (!to_pb(value, temp_ip) || !temp_ip.has_ipv6())
+            {
+                SWSS_LOG_ERROR("Invalid IPv6 address %s", value.c_str());
+                return false;
+            }
+            entry.mutable_vip_v6()->CopyFrom(temp_ip);
+        }
+        else if (field == "ha_set_id")
+        {
+            entry.set_ha_set_id(value);
+        }
         else
         {
             SWSS_LOG_WARN("Unknown field %s in HA Scope entry", field.c_str());
-            return false;
         }
     }
     return true;
