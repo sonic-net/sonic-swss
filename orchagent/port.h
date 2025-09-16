@@ -211,7 +211,6 @@ public:
     uint32_t  m_fdb_count = 0;
     uint64_t  m_flap_count = 0;
     uint32_t  m_up_member_count = 0;
-    uint32_t  m_maximum_headroom = 0;
     std::set<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
     std::set<sai_port_interface_type_t> m_adv_interface_types;
@@ -251,7 +250,6 @@ public:
     bool m_adv_intf_cfg = false;  // Advertised interface type
     bool m_fec_cfg = false;       // Forward Error Correction (FEC)
     bool m_override_fec = false;  // Enable Override FEC
-    bool m_pfc_asym_cfg = false;  // Asymmetric Priority Flow Control (PFC)
     bool m_lm_cfg = false;        // Forwarding Database (FDB) Learning Mode (LM)
     bool m_lt_cfg = false;        // Link Training (LT)
 
@@ -269,6 +267,8 @@ public:
     uint32_t m_suppress_threshold = 0;
     uint32_t m_reuse_threshold = 0;
     uint32_t m_flap_penalty = 0;
+
+    Role m_role;
 };
 
 }
