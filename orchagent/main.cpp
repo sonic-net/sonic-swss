@@ -30,6 +30,7 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+#include "macsecpost.h"
 
 using namespace std;
 using namespace swss;
@@ -341,6 +342,38 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
     return true;
 }
 
+bool isFipsEnabled()
+{
+    // Check if FIPS was enabled via config file, i.e., /etc/sonic/fips.json
+    std::ifstream fips_enable_file("/etc/fips/fips_enable");
+    if (fips_enable_file.is_open())
+    {
+        bool fips_enabled;
+        fips_enable_file >> fips_enabled;
+        if (fips_enabled)
+        {
+            SWSS_LOG_NOTICE("FIPS enabled in /etc/fips/fips_enable");
+            return true;
+        }
+    }
+
+    // Check if FIPS was enabled via sonic-installer.
+    std::ifstream proc_cmdline_file("/proc/cmdline");
+    if (proc_cmdline_file.is_open())
+    {
+        std::string cmdline;
+        std::getline(proc_cmdline_file, cmdline);
+        if (cmdline.find("sonic_fips=1") != std::string::npos)
+        {
+            SWSS_LOG_NOTICE("FIPS enabled in /proc/cmdline");
+            return true;
+        }
+    }
+
+    SWSS_LOG_NOTICE("FIPS disabled");
+    return false;
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
@@ -643,6 +676,32 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
+    // Enable MACSec POST if FIPS is enabled.
+    bool macsec_post_enabled = isFipsEnabled();
+
+    string macsec_post_state;
+    if (gMySwitchType != "fabric" && macsec_post_enabled)
+    {
+        macsec_post_state = "switch-level-post-in-progress";
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_ENABLE_POST;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_switch_macsec_post_status_notify;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_macsec_post_status_notify;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        macsec_post_state = "disabled";
+    }
+    setMacsecPostState(&state_db, macsec_post_state);
+
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
     attr.value.u64 = gSwitchId;
@@ -755,6 +814,35 @@ int main(int argc, char **argv)
 
         gVirtualRouterId = attr.value.oid;
         SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
+
+        /* Query MACSec POST capability and set POST state in state DB accordingly */
+        if (macsec_post_enabled)
+        {
+            sai_attr_capability_t post_capability;
+            if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                               SAI_SWITCH_ATTR_MACSEC_ENABLE_POST,
+                                               &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is supported in switch init, and it was already enabled in switch init.
+                SWSS_LOG_NOTICE("MACSec POST enabled in switch init");
+            }
+            else if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MACSEC,
+                                                    SAI_MACSEC_ATTR_ENABLE_POST,
+                                                    &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is only supported in MACSec init. Set POST state to notify MACSecOrch
+                // to perform POST.
+                setMacsecPostState(&state_db, "macsec-level-post-in-progress");
+                SWSS_LOG_NOTICE("MACSec POST will be enabled in MACSec init");
+            }
+            else
+            {
+                setMacsecPostState(&state_db, "fail");
+                SWSS_LOG_ERROR("MACSec POST is not supported by SAI. POST failed");
+            }
+        }
 
         /* Get the NAT supported info */
         attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
