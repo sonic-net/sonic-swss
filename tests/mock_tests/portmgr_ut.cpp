@@ -128,7 +128,7 @@ namespace portmgr_ut
 	    // Restore port state to ok for next case
 	    state_port_table.set("Ethernet0", { {"state", "ok"} });
 
-	    // Case 4: ERROR branch - simulate exec failure
+	    
 	    cfg_port_table.set("Ethernet0", {
 	        {"dhcp_rate_limit", "800"}
 	    });
