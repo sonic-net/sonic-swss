@@ -97,6 +97,24 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+
+    // Read create_only_config_db_buffers configuration once during initialization
+    std::string createOnlyConfigDbBuffersValue;
+    try
+    {
+        if (m_deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
+        {
+            if (createOnlyConfigDbBuffersValue == "true")
+            {
+                m_createOnlyConfigDbBuffers = true;
+            }
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error reading create_only_config_db_buffers: %s", e.what());
+    }
+
     m_delayTimer = std::make_unique<SelectableTimer>(timespec{.tv_sec = FLEX_COUNTER_DELAY_SEC, .tv_nsec = 0});
     if (WarmStart::isWarmStart())
     {
@@ -393,6 +411,11 @@ bool FlexCounterOrch::getWredPortCountersState() const
     return m_wred_port_counter_enabled;
 }
 
+bool FlexCounterOrch::isCreateOnlyConfigDbBuffers() const
+{
+    return m_createOnlyConfigDbBuffers;
+}
+
 bool FlexCounterOrch::bake()
 {
     /*
@@ -406,35 +429,13 @@ bool FlexCounterOrch::bake()
     return true;
 }
 
-static bool isCreateOnlyConfigDbBuffers(Table& deviceMetadataConfigTable)
-{
-    std::string createOnlyConfigDbBuffersValue;
-
-    try
-    {
-        if (deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
-        {
-            if (createOnlyConfigDbBuffersValue == "true")
-            {
-                return true;
-            }
-        }
-    }
-    catch(const std::system_error& e)
-    {
-        SWSS_LOG_ERROR("System error: %s", e.what());
-    }
-
-    return false;
-}
-
 map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 {
     SWSS_LOG_ENTER();
 
     map<string, FlexCounterQueueStates> queuesStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    if (!isCreateOnlyConfigDbBuffers())
     {
         FlexCounterQueueStates flexCounterQueueState(0);
         queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));
@@ -503,7 +504,7 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
 
     map<string, FlexCounterPgStates> pgsStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    if (!isCreateOnlyConfigDbBuffers())
     {
         FlexCounterPgStates flexCounterPgState(0);
         pgsStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterPgState));
