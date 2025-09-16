@@ -172,7 +172,19 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     }
     pfc_enable = m_portPfcStatus[port];
 
-    speed = m_speedLookup[port];
+    auto speed_iter = m_speedLookup.find(port);
+    if (speed_iter != m_speedLookup.end() && s_autonegEnabled.find(port) == s_autonegEnabled.end())
+    {
+        SWSS_LOG_NOTICE("Skipping dynamic creation of BUFFER_PROFILE and related BUFFER_PG entries for port %s because "
+                        "port speed is set to %s Mbps and autoneg is not enabled for the port.",
+                        port.c_str(), speed_iter->second.c_str());
+        return task_process_status::task_success;
+    }
+    if (speed_iter == m_speedLookup.end())
+        speed = "";
+    else
+        speed = speed_iter->second;
+
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
@@ -544,6 +556,8 @@ void BufferMgr::doTask(Consumer &consumer)
                         m_portStatusLookup[port] = fvValue(i);
                         admin_status_found = true;
                     }
+                    else if (fvField(i) == "autoneg" && (fvValue(i) == "on" || fvValue(i) == "1"))
+                        s_autonegEnabled.insert(port);
                 }
                 
                 // Ensure admin_status is set to "down" if not received
