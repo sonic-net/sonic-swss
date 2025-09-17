@@ -41,12 +41,17 @@ constexpr char *kPortName2 = "Ethernet2";
 constexpr sai_object_id_t kPortOid2 = 0x1fed3;
 constexpr uint32_t kMtu2 = 4500;
 
+constexpr char* kPortName10 = "Ethernet10";
+constexpr sai_object_id_t kPortOid10 = 0xabcfff;
+constexpr uint32_t kMtu10 = 9100;
+
 constexpr char *kRouterInterfaceId1 = "intf-3/4";
 constexpr sai_object_id_t kRouterInterfaceOid1 = 0x295100;
 const swss::MacAddress kMacAddress1("00:01:02:03:04:05");
 
 constexpr char *kRouterInterfaceId2 = "Ethernet20";
 constexpr sai_object_id_t kRouterInterfaceOid2 = 0x51411;
+constexpr sai_object_id_t kVlanOid2 = 0xffffff;
 const swss::MacAddress kMacAddress2("00:ff:ee:dd:cc:bb");
 
 const swss::MacAddress kZeroMacAddress("00:00:00:00:00:00");
@@ -55,7 +60,7 @@ constexpr char *kRouterIntfAppDbKey = R"({"match/router_interface_id":"intf-3/4"
 
 std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateRouterInterfaceAttributeList(
     const sai_object_id_t &virtual_router_oid, const swss::MacAddress mac_address, const sai_object_id_t &port_oid,
-    const uint32_t mtu)
+    const uint32_t mtu, const bool sub_port = false, const sai_object_id_t& vlan_oid = 0)
 {
     std::unordered_map<sai_attr_id_t, sai_attribute_value_t> attr_list;
     sai_attribute_value_t attr_value;
@@ -69,7 +74,14 @@ std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateRouterInterfaceAt
         attr_list[SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS] = attr_value;
     }
 
-    attr_value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
+    if (sub_port)
+    {
+        attr_value.oid = vlan_oid;
+        attr_list[SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID] = attr_value;
+
+        attr_value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
+    } else
+        attr_value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
     attr_list[SAI_ROUTER_INTERFACE_ATTR_TYPE] = attr_value;
 
     attr_value.oid = port_oid;
@@ -129,6 +141,16 @@ bool MatchCreateRouterInterfaceAttributeList(
 
         case SAI_ROUTER_INTERFACE_ATTR_MTU:
             if (attr_list[i].value.u32 != expected_attr_list.at(SAI_ROUTER_INTERFACE_ATTR_MTU).u32)
+            {
+                return false;
+            }
+            matched_attr_num++;
+            break;
+
+        case SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID:
+            if (attr_list[i].value.oid !=
+                expected_attr_list.at(SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID)
+                    .oid)
             {
                 return false;
             }
@@ -248,14 +270,15 @@ class RouterInterfaceManagerTest : public ::testing::Test
     }
 
     void AddRouterInterfaceEntry(P4RouterInterfaceEntry &router_intf_entry, const sai_object_id_t port_oid,
-                                 const uint32_t mtu)
+                                 const uint32_t mtu, const bool sub_port = false,
+                                 const sai_object_id_t vlan_oid = 0)
     {
         EXPECT_CALL(mock_sai_router_intf_,
                     create_router_interface(
-                        ::testing::NotNull(), Eq(gSwitchId), Eq(5),
+                        ::testing::NotNull(), Eq(gSwitchId), sub_port ? Eq(6) : Eq(5),
                         Truly(std::bind(MatchCreateRouterInterfaceAttributeList, std::placeholders::_1,
                                         CreateRouterInterfaceAttributeList(
-                                            gVirtualRouterId, router_intf_entry.src_mac_address, port_oid, mtu)))))
+                                            gVirtualRouterId, router_intf_entry.src_mac_address, port_oid, mtu, sub_port, vlan_oid)))))
             .WillOnce(DoAll(SetArgPointee<0>(router_intf_entry.router_interface_oid), Return(SAI_STATUS_SUCCESS)));
 
         const std::string router_intf_key =
@@ -273,6 +296,16 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceValidAttributes)
 {
     P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
+
+    ValidateRouterInterfaceEntry(router_intf_entry);
+}
+
+TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceWithSubport)
+{
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName10,
+                                             kMacAddress1);
+    AddRouterInterfaceEntry(router_intf_entry, kPortOid10, kMtu10, true,
+                            kVlanOid2);
 
     ValidateRouterInterfaceEntry(router_intf_entry);
 }
