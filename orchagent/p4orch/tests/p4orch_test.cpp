@@ -6,6 +6,7 @@
 #include <string>
 
 #include "mock_response_publisher.h"
+#include "mock_sai_bridge.h"
 #include "mock_sai_hostif.h"
 #include "mock_sai_neighbor.h"
 #include "mock_sai_next_hop.h"
@@ -22,6 +23,7 @@ extern VRFOrch* gVrfOrch;
 extern swss::DBConnector* gAppDb;
 extern sai_hostif_api_t* sai_hostif_api;
 extern sai_switch_api_t* sai_switch_api;
+extern sai_bridge_api_t* sai_bridge_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_neighbor_api_t* sai_neighbor_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
@@ -74,6 +76,22 @@ class P4OrchTest : public ::testing::Test {
     sai_route_api->remove_route_entries = remove_route_entries;
     sai_route_api->set_route_entries_attribute = set_route_entries_attribute;
     sai_route_api->get_route_entries_attribute = get_route_entries_attribute;
+    mock_sai_bridge = &mock_sai_bridge_;
+    sai_bridge_api->create_bridge = mock_create_bridge;
+    sai_bridge_api->remove_bridge = mock_remove_bridge;
+    sai_bridge_api->set_bridge_attribute = mock_set_bridge_attribute;
+    sai_bridge_api->get_bridge_attribute = mock_get_bridge_attribute;
+    sai_bridge_api->get_bridge_stats = mock_get_bridge_stats;
+    sai_bridge_api->get_bridge_stats_ext = mock_get_bridge_stats_ext;
+    sai_bridge_api->clear_bridge_stats = mock_clear_bridge_stats;
+    sai_bridge_api->create_bridge_port = mock_create_bridge_port;
+    sai_bridge_api->remove_bridge_port = mock_remove_bridge_port;
+    sai_bridge_api->set_bridge_port_attribute = mock_set_bridge_port_attribute;
+    sai_bridge_api->get_bridge_port_attribute = mock_get_bridge_port_attribute;
+    sai_bridge_api->get_bridge_port_stats = mock_get_bridge_port_stats;
+    sai_bridge_api->get_bridge_port_stats_ext = mock_get_bridge_port_stats_ext;
+    sai_bridge_api->clear_bridge_port_stats = mock_clear_bridge_port_stats;
+
     copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
     std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
     gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
@@ -97,6 +115,7 @@ class P4OrchTest : public ::testing::Test {
   NiceMock<MockSaiNeighbor> mock_sai_neighbor_;
   NiceMock<MockSaiNextHop> mock_sai_next_hop_;
   NiceMock<MockSaiRoute> mock_sai_route_;
+  NiceMock<MockSaiBridge> mock_sai_bridge_;
   CoppOrch* copp_orch_;
 };
 
