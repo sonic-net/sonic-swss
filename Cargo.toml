@@ -1,0 +1,78 @@
+[workspace]
+resolver = '2'
+members = [
+    "crates/countersyncd",
+]
+exclude = []
+
+[workspace.package]
+version = "0.1.0"
+authors = ["SONiC"]
+license = "Apache-2.0"
+repository = "https://github.com/sonic-net/sonic-swss"
+documentation = "https://github.com/sonic-net/SONiC/tree/master/doc"
+keywords = ["sonic", "swss", "network", "switch"]
+edition = "2021"
+
+[workspace.lints.rust]
+unused_extern_crates = 'warn'
+trivial_numeric_casts = 'warn'
+unstable_features = 'warn'
+unused_import_braces = 'warn'
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.37", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = "0.1"
+
+# Netlink for network operations
+neli = { git = "https://github.com/jbaublitz/neli.git", tag = "neli-v0.7.0-rc2" }
+
+# IPFIX parser for traffic flow analysis
+ipfixrw = "0.1.0"
+ahash = "0.8.11"
+binrw = "0.14.1"
+byteorder = "1.5.0"
+
+# Configuration and serialization
+yaml-rust = "0.4"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Logging and error handling
+log = "0.4.22"
+env_logger = "0.11.6"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "serde"] }
+thiserror = "1"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Command line utilities
+clap = { version = "4", features = ["derive", "cargo", "wrap_help", "unicode", "string", "unstable-styles"] }
+color-eyre = "0.6"
+
+# Utilities
+rand = "0.8.5"
+once_cell = "1.18.0"
+lazy_static = "1.4"
+regex = "1"
+dashmap = "6"
+itertools = "0.13"
+uuid = { version = "1.15", features = ["v4"] }
+
+# SONiC specific dependencies
+swss-common = { git = "https://github.com/sonic-net/sonic-swss-common.git", branch = "master" }
+
+# Development dependencies
+tempfile = "3.12"
+serial_test = "3.1"
+async-trait = "0.1"
+criterion = "0.5"
+pretty_assertions = "1"
+
+# Build dependencies
+tonic-build = "0.12"
+vergen = { version = "8.2", features = ["build", "git", "gitoxide", "cargo", "rustc", "si"] }
