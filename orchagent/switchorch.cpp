@@ -119,17 +119,26 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
 void SwitchOrch::set_switch_bfd_next_hop_capability()
 {
     vector<FieldValueTuple> fvVector;
+    sai_attr_capability_t capability;
 
-    /* check platform to set SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE */
-    string platform = getenv("platform") ? getenv("platform") : "";
-    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    /* check SAI_BFD_SESSION_ATTR_NEXT_HOP_ID capability to set SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE */
+    sai_status_t status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BFD_SESSION, SAI_BFD_SESSION_ATTR_NEXT_HOP_ID, &capability);
+    if (status != SAI_STATUS_SUCCESS)
     {
+        SWSS_LOG_WARN("Could not query attribute SAI_BFD_SESSION_ATTR_NEXT_HOP_ID %x", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "false");
+    }
+    else if (capability.set_implemented && capability.create_implemented)
+    {
+        SWSS_LOG_INFO("SAI_BFD_SESSION_ATTR_NEXT_HOP_ID set and create are implemented");
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "true");
     }
     else
     {
+        SWSS_LOG_INFO("SAI_BFD_SESSION_ATTR_NEXT_HOP_ID set and create are not implemented");
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, "false");
     }
+
     set_switch_capability(fvVector);
 }
 
