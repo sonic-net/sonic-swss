@@ -919,6 +919,32 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
     return true;
 }
 
+class RouteTableFieldValueTupleWrapper {
+    public:
+	RouteTableFieldValueTupleWrapper(string && _protocol) :  protocol(std::move(_protocol)) {}
+
+	vector<FieldValueTuple> fieldValueTupleVector() {
+	    vector<FieldValueTuple> fvVector;
+	    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+	    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+	    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+	    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+	    fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
+	    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+	    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+	    // Return value optimization will avoid copy of the following vector
+	    return fvVector;
+	}
+
+	string protocol = "";
+	string blackhole = "false";
+	string nexthop = "";
+	string ifname = "";
+	string nexthop_group = "";
+	string mpls_nh = "";
+	string weight = "";
+};
+
 void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 {
     struct rtmsg *rtm;
@@ -1117,6 +1143,10 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         {
             FieldValueTuple seg_src("seg_src", src_addr_str);
             fvVectorRoute.push_back(seg_src);
+        } else {
+            // For route replace operations nullify the seg_src in case the old 
+            // route we are replacing now did have seg_src
+            fvVectorRoute.push_back(FieldValueTuple("seg_src", ""));
         }
         setRouteWithWarmRestart(routeTableKeyStr, fvVectorRoute, m_routeTable, SET_COMMAND);
         SWSS_LOG_INFO("SRV6 RouteTable set msg: %s vpn_sid:%s src_addr:%s",
@@ -1594,11 +1624,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     {
         case RTN_BLACKHOLE:
         {
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple fv("blackhole", "true");
-            fvVector.push_back(fv);
-            fvVector.push_back(proto);
-            setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
+            RouteTableFieldValueTupleWrapper fvw {std::move(proto_str)};
+            fvw.blackhole = "true";
+            setRouteWithWarmRestart(destipprefix, fvw.fieldValueTupleVector(), m_routeTable, SET_COMMAND);
             SWSS_LOG_INFO("RouteTable set blackhole msg: %s", destipprefix);
             return;
         }
@@ -1615,7 +1643,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             return;
     }
 
-    vector<FieldValueTuple> fvVector;
+    RouteTableFieldValueTupleWrapper fvw {std::move(proto_str)};
     string gw_list;
     string intf_list;
     string mpls_list;
@@ -1640,23 +1668,17 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
         getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
 
-        FieldValueTuple gw("nexthop", nexthops.c_str());
-        FieldValueTuple intf("ifname", ifnames.c_str());
-        fvVector.push_back(gw);
-        fvVector.push_back(intf);
+        fvw.nexthop = std::move(nexthops);
+        fvw.ifname = std::move(ifnames);
 
         SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
         }
         else
         {
             nhg_id_key = getNextHopGroupKeyAsString(nhg_id);
-            FieldValueTuple nhg("nexthop_group", nhg_id_key.c_str());
-            fvVector.push_back(nhg);
+            fvw.nexthop_group = std::move(nhg_id_key);
             installNextHopGroup(nhg_id);
         }
-
-        fvVector.push_back(proto);
-
     }
     else
     {
@@ -1704,32 +1726,26 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         }
 
 
-        FieldValueTuple gw("nexthop", gw_list);
-        FieldValueTuple intf("ifname", intf_list);
+        fvw.nexthop = std::move(gw_list);
+        fvw.ifname = std::move(intf_list);
 
-        fvVector.push_back(proto);
-        fvVector.push_back(gw);
-        fvVector.push_back(intf);
         if (!mpls_list.empty())
         {
-            FieldValueTuple mpls_nh("mpls_nh", mpls_list);
-            fvVector.push_back(mpls_nh);
+            fvw.mpls_nh = std::move(mpls_list);
         }
         if (!weights.empty())
         {
-            FieldValueTuple wt("weight", weights);
-            fvVector.push_back(wt);
+            fvw.weight = std::move(weights);
         }
     }
 
+    setRouteWithWarmRestart(destipprefix, fvw.fieldValueTupleVector(), m_routeTable, SET_COMMAND);
     if (nhg_id)
     {
-        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
         SWSS_LOG_INFO("RouteTable set msg with NHG: %s nhg_id:%d", destipprefix, nhg_id);
     }
     else
     {
-        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
         SWSS_LOG_INFO("RouteTable set msg: %s nexthop:%s ifname:%s mpls:%s weight:%s",
                       destipprefix, gw_list.c_str(), intf_list.c_str(),
                       mpls_list.empty() ? "na" : mpls_list.c_str(),
@@ -2066,6 +2082,11 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
         }
         else
         {
+            // This function could be invoked from onRouteMsg.
+            // When route-replace semantics is used, it is possible that the earlier
+            // call was with nexthop and the later call was without nexthop.
+            // Set nexthop to an explicit empty string nullify earlier state.
+            fvVector.push_back(FieldValueTuple("nexthop", ""));
             SWSS_LOG_DEBUG("%s set msg: %s %s",
                            APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str());
         }
@@ -2626,6 +2647,12 @@ void RouteSync::updateNextHopGroupDb(const NextHopGroup& nhg)
     {
         FieldValueTuple wg("weight", weights.c_str());
         fvVector.push_back(wg);
+    } else {
+        // This function could be invoked from onRouteMsg.
+        // When route-replace semantics is used, it is possible that the earlier
+        // call was with weight and the later call was without weights.
+        // Set weight to an explicit empty string to nullify earlier state.
+        fvVector.push_back(FieldValueTuple("weight", ""));
     }
     SWSS_LOG_INFO("NextHopGroup table set: key [%s] nexthop[%s] ifname[%s] weight[%s]", key.c_str(), nexthops.c_str(), ifnames.c_str(), weights.c_str());
 
