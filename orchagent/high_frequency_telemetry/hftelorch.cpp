@@ -454,44 +454,56 @@ void HFTelOrch::doTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME)
+        try
         {
-            if (op == SET_COMMAND)
+            if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME)
             {
-                status = profileTableSet(key, kfvFieldsValues(t));
+                if (op == SET_COMMAND)
+                {
+                    status = profileTableSet(key, kfvFieldsValues(t));
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    status = profileTableDel(key);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                }
             }
-            else if (op == DEL_COMMAND)
+            else if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME)
             {
-                status = profileTableDel(key);
+                auto tokens = tokenize(key, '|');
+                if (tokens.size() != 2)
+                {
+                    SWSS_LOG_THROW("Invalid key %s in the %s", key.c_str(), table_name.c_str());
+                }
+                if (op == SET_COMMAND)
+                {
+                    status = groupTableSet(tokens[0], tokens[1], kfvFieldsValues(t));
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    status = groupTableDel(tokens[0], tokens[1]);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                }
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                SWSS_LOG_ERROR("Unknown table %s\n", table_name.c_str());
             }
         }
-        else if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME)
+        catch (const std::exception &e)
         {
-            auto tokens = tokenize(key, '|');
-            if (tokens.size() != 2)
-            {
-                SWSS_LOG_THROW("Invalid key %s in the %s", key.c_str(), table_name.c_str());
-            }
-            if (op == SET_COMMAND)
-            {
-                status = groupTableSet(tokens[0], tokens[1], kfvFieldsValues(t));
-            }
-            else if (op == DEL_COMMAND)
-            {
-                status = groupTableDel(tokens[0], tokens[1]);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
-            }
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown table %s\n", table_name.c_str());
+            SWSS_LOG_ERROR("Failed to process the task for table %s, key %s, operation %s: %s",
+                           table_name.c_str(),
+                           key.c_str(),
+                           op.c_str(),
+                           e.what());
+            status = task_process_status::task_failed;
         }
 
         if (status == task_process_status::task_need_retry)
