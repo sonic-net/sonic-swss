@@ -514,6 +514,37 @@ class TestHFT(object):
         # Clean up profile
         self.delete_hft_profile(dvs)
 
+
+def test_hft_invalid_counters_no_orchagent_restart(self, dvs, testlog):
+    """Test that invalid object_counters don't cause orchagent to restart."""
+    # Get orchagent PID inside the DVS container and record it
+    (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+    if exitcode != 0 or not out.strip():
+        # orchagent not found; skip
+        return
+
+    original_pid = out.strip().splitlines()[0].strip()
+
+    # Create HFT profile and group with invalid counters
+    self.create_hft_profile(dvs)
+    self.create_hft_group(dvs, object_counters="INVALID_STATS1,INVALID_STATS2")
+
+    # Allow some time for processing; orchagent should not restart
+    time.sleep(5)
+
+    # Re-check orchagent PID inside the container
+    (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+    assert exitcode == 0 and out.strip(), "orchagent disappeared after applying invalid object_counters"
+
+    new_pid = out.strip().splitlines()[0].strip()
+
+    assert new_pid == original_pid, "orchagent restarted (PID changed) after applying invalid object_counters"
+
+    # Clean up created config
+    self.delete_hft_group(dvs)
+    self.delete_hft_profile(dvs)
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
