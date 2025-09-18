@@ -60,6 +60,7 @@ public:
     bool bake() override;
 
 private:
+    void handleDeviceMetadataTable(Consumer &consumer);
     bool m_port_counter_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
     bool m_queue_enabled = false;

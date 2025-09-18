@@ -137,6 +137,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // Handle DEVICE_METADATA table changes for create_only_config_db_buffers
+    if (consumer.getTableName() == CFG_DEVICE_METADATA_TABLE_NAME)
+    {
+        handleDeviceMetadataTable(consumer);
+        return;
+    }
+
     if (!m_delayTimerExpired)
     {
         return;
@@ -414,6 +421,43 @@ bool FlexCounterOrch::getWredPortCountersState() const
 bool FlexCounterOrch::isCreateOnlyConfigDbBuffers() const
 {
     return m_createOnlyConfigDbBuffers;
+}
+
+void FlexCounterOrch::handleDeviceMetadataTable(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        auto data = kfvFieldsValues(t);
+
+        // Only process localhost entries
+        if (key == "localhost" && op == SET_COMMAND)
+        {
+            for (auto valuePair : data)
+            {
+                const auto &field = fvField(valuePair);
+                const auto &value = fvValue(valuePair);
+
+                if (field == "create_only_config_db_buffers")
+                {
+                    bool newValue = (value == "true");
+                    if (m_createOnlyConfigDbBuffers != newValue)
+                    {
+                        SWSS_LOG_NOTICE("Updating create_only_config_db_buffers from %s to %s",
+                                       m_createOnlyConfigDbBuffers ? "true" : "false",
+                                       value.c_str());
+                        m_createOnlyConfigDbBuffers = newValue;
+                    }
+                }
+            }
+        }
+        consumer.m_toSync.erase(it++);
+    }
 }
 
 bool FlexCounterOrch::bake()
