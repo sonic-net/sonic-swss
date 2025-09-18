@@ -52,6 +52,34 @@ void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification
     // which causes concurrency access to the DB
 }
 
+void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer ha_set_event(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_ha_set_event_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward ha_set_event notification to be handled in dashhaorch doTask()
+        ha_set_event.send(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT, sdata, values);
+    }
+}
+
+void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer ha_scope_event(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_ha_scope_event_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward ha_scope_event notification to be handled in dashhaorch doTask()
+        ha_scope_event.send(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT, sdata, values);
+    }
+}
+
 void on_switch_shutdown_request(sai_object_id_t switch_id)
 {
     SWSS_LOG_ENTER();
@@ -98,4 +126,8 @@ void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                             category,
                                             data,
                                             description);
+}
+
+void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id)
+{
 }

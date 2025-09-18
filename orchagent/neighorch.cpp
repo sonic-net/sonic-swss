@@ -41,8 +41,8 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     m_fdbOrch->attach(this);
 
     // Some UTs instantiate NeighOrch but gBfdOrch is null, it is not null in orchagent
-    if (gBfdOrch) 
-    {  
+    if (gBfdOrch)
+    {
         gBfdOrch->attach(this);
     }
 
@@ -1864,7 +1864,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         size_t pos = alias.find('|');
         std::string port_hostname = (pos != std::string::npos) ? alias.substr(0, pos) : alias;
-        if(gIntfsOrch->isLocalSystemPortIntf(alias) || (gMySwitchType == "voq" && gMyHostName == port_hostname))
+        if(gIntfsOrch->isLocalSystemPortIntf(alias))
         {
             //Synced local neighbor. Skip
             it = consumer.m_toSync.erase(it);
@@ -2425,4 +2425,10 @@ bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
         }
     }
     return rc;
+}
+
+void NeighOrch::clearBulkers()
+{
+    gNeighBulker.clear();
+    gNextHopBulker.clear();
 }

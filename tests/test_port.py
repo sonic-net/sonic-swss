@@ -286,6 +286,8 @@ class TestPort(object):
             status, fvs = atbl.get(intf)
             assert status, "Error getting value for key"
             attributes = dict(fvs)
+            if attributes.get("SAI_HOSTIF_ATTR_TYPE") != "SAI_HOSTIF_TYPE_NETDEV":
+                continue
             hostif_queue = attributes.get("SAI_HOSTIF_ATTR_QUEUE")
             assert hostif_queue == "7"
 

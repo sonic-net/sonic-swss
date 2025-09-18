@@ -3,8 +3,11 @@
 #include "acltable.h"
 #include "orch.h"
 #include "timer.h"
+#include "flex_counter/flex_counter_manager.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
+#include "switch/trimming/capabilities.h"
+#include "switch/trimming/helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
@@ -24,6 +27,8 @@
 #define SWITCH_CAPABILITY_TABLE_REG_FATAL_ASIC_SDK_HEALTH_CATEGORY     "REG_FATAL_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_REG_WARNING_ASIC_SDK_HEALTH_CATEGORY   "REG_WARNING_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY    "REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY"
+
+#define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
 
 struct WarmRestartCheck
 {
@@ -72,16 +77,23 @@ public:
     bool bindAclTableToSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
     bool unbindAclTableFromSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
 
+    // Statistics
+    void generateSwitchCounterIdList();
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doCfgSwitchHashTableTask(Consumer &consumer);
+    void doCfgSwitchTrimmingTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+
+    // Statistics
+    void generateSwitchCounterNameMap() const;
 
     // Switch hash
     bool setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const;
@@ -91,6 +103,15 @@ private:
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
     void setSwitchIcmpOffloadCapability();
+
+    // Switch trimming
+    bool setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpModeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingTcSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimming(const SwitchTrimming &trim);
 
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
@@ -150,13 +171,19 @@ private:
         } lagHash;
     } m_switchHashDefaults;
 
+    // Statistics
+    FlexCounterManager m_counterManager;
+    bool m_isSwitchCounterIdListGenerated = false;
+
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check
     WarmRestartCheck m_warmRestartCheck = {false, false, false};
 
     // Switch OA capabilities
     SwitchCapabilities swCap;
+    SwitchTrimmingCapabilities trimCap;
 
     // Switch OA helper
     SwitchHelper swHlpr;
+    SwitchTrimmingHelper trimHlpr;
 };
