@@ -120,6 +120,18 @@ std::string KeyGenerator::generateTablesInfoKey(const std::string &context)
     return generateKey(fv_map);
 }
 
+void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
+                              ResponsePublisherInterface* publisher) {
+  for (const auto& key_op_fvs_tuple : entries) {
+    publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                       kfvFieldsValues(key_op_fvs_tuple),
+                       ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                       /*replace=*/true);
+  }
+  entries.clear();
+  return;
+}
+
 std::string KeyGenerator::generateRouteKey(const std::string &vrf_id, const swss::IpPrefix &ip_prefix)
 {
     std::map<std::string, std::string> fv_map = {
