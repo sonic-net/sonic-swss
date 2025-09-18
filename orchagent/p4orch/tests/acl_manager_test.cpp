@@ -636,10 +636,16 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.match_field_lookup["inner_vlan_pri"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_PRI);
     app_db_entry.match_field_lookup["inner_vlan_id"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_ID);
     app_db_entry.match_field_lookup["inner_vlan_cfi"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_CFI);
-    app_db_entry.match_field_lookup["l3_class_id"] =
+    app_db_entry.match_field_lookup["vrf_id"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_VRF_ID, P4_FORMAT_HEX_STRING,
+                                           /*bitwidth=*/16);
+    app_db_entry.match_field_lookup["ipmc_table_hit"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_IPMC_TABLE_HIT,
+                                           P4_FORMAT_HEX_STRING, /*bitwidth=*/1);
+    app_db_entry.match_field_lookup["l3_clasvs_id"] =
         BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ROUTE_DST_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/32);
     app_db_entry.match_field_lookup["acl_user_meta"] = 
-	BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ACL_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/8);
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ACL_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/8);
     app_db_entry.match_field_lookup["src_ipv6_64bit"] = BuildMatchFieldJsonStrKindComposite(
         {nlohmann::json::parse(BuildMatchFieldJsonStrKindSaiField(P4_MATCH_SRC_IPV6_WORD3, P4_FORMAT_IPV6, 32)),
          nlohmann::json::parse(BuildMatchFieldJsonStrKindSaiField(P4_MATCH_SRC_IPV6_WORD2, P4_FORMAT_IPV6, 32))},
@@ -2794,6 +2800,8 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     app_db_entry.match_fvs["inner_vlan_pri"] = "200";
     app_db_entry.match_fvs["inner_vlan_id"] = "200";
     app_db_entry.match_fvs["inner_vlan_cfi"] = "200";
+    app_db_entry.match_fvs["vrf_id"] = "0x777";
+    app_db_entry.match_fvs["ipmc_table_hit"] = "0x1";
 
     const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
 
@@ -2890,6 +2898,11 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     EXPECT_EQ(SAI_ACL_IP_FRAG_HEAD, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG].aclfield.data.u32);
     EXPECT_EQ(SAI_PACKET_VLAN_SINGLE_OUTER_TAG,
               acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN].aclfield.data.u32);
+    EXPECT_EQ(0x777, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID].aclfield.data.u16);
+    EXPECT_EQ(0xFFFF, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID].aclfield.mask.u16);
+    EXPECT_EQ(true,
+              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT]
+                  .aclfield.data.booldata);
 
     // Check action field value
     EXPECT_EQ(SAI_PACKET_ACTION_TRAP,
@@ -5146,7 +5159,8 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"match/arp_tpa\": \"0xff112231\", "
                                     "\"match/in_ports\": \"Ethernet1,Ethernet2\", \"match/out_ports\": "
-                                    "\"Ethernet4,Ethernet5\", \"priority\":15}";
+                                    "\"Ethernet4,Ethernet5\", \"priority\":15,\"match/ipmc_table_hit\":"
+                                    "\"0x1\"}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     EnqueueRuleTuple(std::string(kAclIngressTableName),
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
@@ -5176,6 +5190,7 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE",
                                   "SAI_ACL_IP_TYPE_ANY&mask:0xffffffffffffffff"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "2:255,17&mask:2:0xff,0xff"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT", "true"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1", "2:34,49&mask:2:0xff,0xff"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS", "2:oid:0x112233,oid:0x1fed3"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS", "2:oid:0x9988,oid:0x56789abcdef"},
@@ -5209,12 +5224,14 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
                                      ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
                                      "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
-                                     "fdf8:f53b:82e4::53\",\"priority\":0}",
+                                     "fdf8:f53b:82e4::53\",\"priority\":0,\"match/ipmc_table_hit\":"
+                                     "\"0x1\"}",
                                  attributes)
                      .empty());
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
                                      ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
-                                     "ipv6_dst\":\"127.0.0.1/24\",\"priority\":15}",
+                                     "ipv6_dst\":\"127.0.0.1/24\",\"priority\":15,"
+                                     "\"match/ipmc_table_hit\":\"0x1\"}",
                                  attributes)
                      .empty());
 
@@ -5222,7 +5239,8 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
                                      ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
                                      "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
-                                     "fdf8:f53b:82e4::54\",\"priority\":15}",
+                                     "fdf8:f53b:82e4::54\",\"priority\":15,\"match/ipmc_table_hit\":"
+                                     "\"0x1\"}",
                                  attributes)
                      .empty());
 
@@ -5232,7 +5250,8 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     auto *acl_table = GetAclTable(kAclIngressTableName);
     EXPECT_NE(acl_table, nullptr);
     const auto &acl_rule_key = "match/arp_tpa=0xff112231:match/ether_type=0x0800:match/"
-                               "in_ports=Ethernet1,Ethernet2:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+                               "in_ports=Ethernet1,Ethernet2:match/ipmc_table_hit=0x1:"
+                               "match/ipv6_dst=fdf8:f53b:82e4::53 & "
                                "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:priority=15";
     auto *acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(acl_rule, nullptr);
