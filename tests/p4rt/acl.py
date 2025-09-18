@@ -42,6 +42,7 @@ class P4RtAclTableDefinitionWrapper(util.DBInterface):
     ACTION_COPY_AND_SET_TC = "action/copy_and_set_tc"
     ACTION_PUNT_AND_SET_TC = "action/punt_and_set_tc"
     ACTION_SET_QOS_QUEUE = "action/qos_queue"
+    ACTION_SET_ACL_METADATA = "action/set_acl_metadata"
     METER_UNIT = "meter/unit"
     COUNTER_UNIT = "counter/unit"
 
@@ -67,6 +68,7 @@ class P4RtAclRuleWrapper(util.DBInterface):
     SAI_ATTR_ACTION_PACKET_ACTION = "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION"
     SAI_ATTR_ACTION_SET_TC = "SAI_ACL_ENTRY_ATTR_ACTION_SET_TC"
     SAI_ATTR_ACTION_SET_USER_TRAP_ID = "SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID"
+    SAI_ATTR_ACTION_SET_ACL_META_DATA = "SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA"
 
     # table name in APP_DB and attribute fields
     APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
