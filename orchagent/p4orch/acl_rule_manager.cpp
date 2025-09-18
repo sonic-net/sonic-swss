@@ -764,6 +764,7 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
                                          sai_attribute_value_t *value, P4AclRule *acl_rule,
                                          const std::string &ip_type_bit_type)
 {
+    SWSS_LOG_ENTER();
     try
     {
         switch (attr_name)
@@ -859,6 +860,7 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
         case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
         case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
+        case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
@@ -1026,6 +1028,18 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
             }
             value->aclfield.data.u32 = packet_vlan_it->second;
             value->aclfield.mask.u32 = 0xFFFFFFFF;
+            break;
+        }
+        case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+        {
+            const std::vector<std::string>& value_and_mask =
+                tokenize(attr_value, kDataMaskDelimiter);
+            uint8_t hit_value = to_uint<uint8_t>(trim(value_and_mask[0]));
+            if (value_and_mask.size() > 1)
+            {
+                SWSS_LOG_INFO("Mask ignored for IPMC table hit field.");
+            }
+            value->aclfield.data.booldata = hit_value != 0;
             break;
         }
         default: {
