@@ -58,6 +58,12 @@ const P4L3AdmitAppDbEntry kP4L3AdmitAppDbEntry2{/*port_name=*/kPortName1,
                                                 /*mac_address_mask=*/swss::MacAddress("ff:ff:ff:ff:ff:00"),
                                                 /*priority=*/2030};
 
+const P4L3AdmitAppDbEntry kP4L3AdmitAppDbEntry3{
+    /*port_name=*/kPortName1,
+    /*mac_address_data=*/swss::MacAddress("00:02:03:04:05:06"),
+    /*mac_address_mask=*/swss::MacAddress("ff:ff:ff:ff:ff:ff"),
+    /*priority=*/2030};
+
 std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateAttributeListForL3AdmitObject(
     const P4L3AdmitAppDbEntry &app_entry, const sai_object_id_t &port_oid)
 {
@@ -181,9 +187,12 @@ class L3AdmitManagerTest : public ::testing::Test
         l3_admit_manager_.enqueue(APP_P4RT_L3_ADMIT_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        l3_admit_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        l3_admit_manager_.drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return l3_admit_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -233,7 +242,7 @@ class L3AdmitManagerTest : public ::testing::Test
     }
 
     StrictMock<MockSaiMyMac> mock_sai_my_mac_;
-    MockResponsePublisher publisher_;
+    StrictMock<MockResponsePublisher> publisher_;
     P4OidMapper p4_oid_mapper_;
     L3AdmitManager l3_admit_manager_;
 };
@@ -453,7 +462,11 @@ TEST_F(L3AdmitManagerTest, DrainDuplicateSetRequestShouldSucceed)
                                               SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Expect that the update call will fail, so l3 admit entry's fields stay
     // the same.
@@ -478,7 +491,11 @@ TEST_F(L3AdmitManagerTest, DrainDeleteRequestShouldSucceedForExistingL3Admit)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
     Enqueue(app_db_entry);
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Validate the l3 admit entry has been deleted in both P4 l3 admit
     // manager
@@ -509,28 +526,157 @@ TEST_F(L3AdmitManagerTest, DrainValidAppEntryShouldSucceed)
     EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kL3AdmitOid2), Return(SAI_STATUS_SUCCESS)));
 
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     EXPECT_TRUE(ValidateL3AdmitEntryAdd(kP4L3AdmitAppDbEntry2));
 }
 
-TEST_F(L3AdmitManagerTest, DrainInValidAppEntryShouldSucceed)
-{
-    nlohmann::json j;
-    j[prependMatchField(p4orch::kDstMac)] = "1"; // Invalid Mac
-    j[p4orch::kPriority] = 1000;
+TEST_F(L3AdmitManagerTest, DrainInValidAppEntryShouldFail) {
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kDstMac)] = "1";  // Invalid Mac
+  j[p4orch::kPriority] = 1000;
 
-    std::vector<swss::FieldValueTuple> fvs{{p4orch::kAction, p4orch::kL3AdmitAction}};
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kL3AdmitAction}};
 
-    swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
-                                              SET_COMMAND, fvs);
+  swss::KeyOpFieldsValuesTuple app_db_entry(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
 
-    Enqueue(app_db_entry);
+  Enqueue(app_db_entry);
 
-    Drain();
-    constexpr char *kL3AdmitKey = R"({"match/dst_mac":"1","priority":1000})";
-    EXPECT_EQ(GetL3AdmitEntry(kL3AdmitKey), nullptr);
-    EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_MY_MAC, kL3AdmitKey));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                      Eq(kfvFieldsValues(app_db_entry)),
+                      Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
+  constexpr char* kL3AdmitKey = R"({"match/dst_mac":"1","priority":1000})";
+  EXPECT_EQ(GetL3AdmitEntry(kL3AdmitKey), nullptr);
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_MY_MAC, kL3AdmitKey));
+}
+
+TEST_F(L3AdmitManagerTest, DrainNotExecuted) {
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kL3AdmitAction}};
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry1.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry1.mac_address_mask.to_string();
+  j[p4orch::kPriority] = kP4L3AdmitAppDbEntry1.priority;
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry2.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry2.mac_address_mask.to_string();
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry3.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry3.mac_address_mask.to_string();
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetL3AdmitEntry(KeyGenerator::generateL3AdmitKey(
+                         kP4L3AdmitAppDbEntry1.mac_address_data,
+                         kP4L3AdmitAppDbEntry1.mac_address_mask, "",
+                         kP4L3AdmitAppDbEntry1.priority)));
+  EXPECT_EQ(nullptr, GetL3AdmitEntry(KeyGenerator::generateL3AdmitKey(
+                         kP4L3AdmitAppDbEntry2.mac_address_data,
+                         kP4L3AdmitAppDbEntry2.mac_address_mask, "",
+                         kP4L3AdmitAppDbEntry2.priority)));
+  EXPECT_EQ(nullptr, GetL3AdmitEntry(KeyGenerator::generateL3AdmitKey(
+                         kP4L3AdmitAppDbEntry3.mac_address_data,
+                         kP4L3AdmitAppDbEntry3.mac_address_mask, "",
+                         kP4L3AdmitAppDbEntry3.priority)));
+}
+
+TEST_F(L3AdmitManagerTest, DrainStopOnFirstFailure) {
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kL3AdmitAction}};
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry1.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry1.mac_address_mask.to_string();
+  j[p4orch::kPriority] = kP4L3AdmitAppDbEntry1.priority;
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry2.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry2.mac_address_mask.to_string();
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry3.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry3.mac_address_mask.to_string();
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kL3AdmitOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetL3AdmitEntry(KeyGenerator::generateL3AdmitKey(
+                         kP4L3AdmitAppDbEntry1.mac_address_data,
+                         kP4L3AdmitAppDbEntry1.mac_address_mask, "",
+                         kP4L3AdmitAppDbEntry1.priority)));
+  EXPECT_EQ(nullptr, GetL3AdmitEntry(KeyGenerator::generateL3AdmitKey(
+                         kP4L3AdmitAppDbEntry2.mac_address_data,
+                         kP4L3AdmitAppDbEntry2.mac_address_mask, "",
+                         kP4L3AdmitAppDbEntry2.priority)));
+  EXPECT_EQ(nullptr, GetL3AdmitEntry(KeyGenerator::generateL3AdmitKey(
+                         kP4L3AdmitAppDbEntry3.mac_address_data,
+                         kP4L3AdmitAppDbEntry3.mac_address_mask, "",
+                         kP4L3AdmitAppDbEntry3.priority)));
 }
 
 TEST_F(L3AdmitManagerTest, VerifyStateTest)

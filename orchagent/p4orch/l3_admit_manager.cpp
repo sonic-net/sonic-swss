@@ -75,66 +75,70 @@ void L3AdmitManager::enqueue(const std::string &table_name, const swss::KeyOpFie
     m_entries.push_back(entry);
 }
 
-void L3AdmitManager::drain()
-{
-    SWSS_LOG_ENTER();
+void L3AdmitManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode L3AdmitManager::drain() {
+  SWSS_LOG_ENTER();
 
-        ReturnCode status;
-        auto app_db_entry_or = deserializeP4L3AdmitAppDbEntry(key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
 
-        const std::string l3_admit_key =
-            KeyGenerator::generateL3AdmitKey(app_db_entry.mac_address_data, app_db_entry.mac_address_mask,
-                                             app_db_entry.port_name, app_db_entry.priority);
-
-        // Fulfill the operation.
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto *l3_admit_entry = getL3AdmitEntry(l3_admit_key);
-            if (l3_admit_entry == nullptr)
-            {
-                // Create new l3 admit.
-                status = processAddRequest(app_db_entry, l3_admit_key);
-            }
-            else
-            {
-                // Duplicate l3 admit entry, no-op
-                status = ReturnCode(StatusCode::SWSS_RC_SUCCESS)
-                         << "L3 Admit entry with the same key received: " << QuotedVar(l3_admit_key);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            // Delete l3 admit.
-            status = processDeleteRequest(l3_admit_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    auto app_db_entry_or = deserializeP4L3AdmitAppDbEntry(key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    auto& app_db_entry = *app_db_entry_or;
+
+    const std::string l3_admit_key = KeyGenerator::generateL3AdmitKey(
+        app_db_entry.mac_address_data, app_db_entry.mac_address_mask,
+        app_db_entry.port_name, app_db_entry.priority);
+
+    // Fulfill the operation.
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto* l3_admit_entry = getL3AdmitEntry(l3_admit_key);
+      if (l3_admit_entry == nullptr) {
+        // Create new l3 admit.
+        status = processAddRequest(app_db_entry, l3_admit_key);
+      } else {
+        // Duplicate l3 admit entry, no-op
+        status = ReturnCode(StatusCode::SWSS_RC_SUCCESS)
+                 << "L3 Admit entry with the same key received: "
+                 << QuotedVar(l3_admit_key);
+      }
+    } else if (operation == DEL_COMMAND) {
+      // Delete l3 admit.
+      status = processDeleteRequest(l3_admit_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << QuotedVar(operation);
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 P4L3AdmitEntry *L3AdmitManager::getL3AdmitEntry(const std::string &l3_admit_key)
