@@ -1,3 +1,7 @@
+#include <cstdlib>
+#include <cstring>
+#include <algorithm>
+
 #include "portsorch.h"
 #include "intfsorch.h"
 #include "bufferorch.h"
@@ -257,7 +261,9 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
     SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15,
     SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
-    SAI_PORT_STAT_TRIM_PACKETS
+    SAI_PORT_STAT_TRIM_PACKETS,
+    SAI_PORT_STAT_DROPPED_TRIM_PACKETS,
+    SAI_PORT_STAT_TX_TRIM_PACKETS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -294,7 +300,9 @@ static const vector<sai_queue_stat_t> queue_stat_ids =
     SAI_QUEUE_STAT_BYTES,
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
-    SAI_QUEUE_STAT_TRIM_PACKETS
+    SAI_QUEUE_STAT_TRIM_PACKETS,
+    SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS,
+    SAI_QUEUE_STAT_TX_TRIM_PACKETS
 };
 static const vector<sai_queue_stat_t> voq_stat_ids =
 {
@@ -540,6 +548,56 @@ bool PortsOrch::checkPathTracingCapability()
     return m_isPathTracingSupported;
 }
 
+static bool isPortStatSupported(sai_port_stat_t stat)
+{
+    static std::vector<sai_stat_capability_t> statList;
+
+    if (statList.empty())
+    {
+        sai_stat_capability_list_t capList = { .count = 0, .list = nullptr };
+
+        auto status = sai_query_stats_capability(gSwitchId, SAI_OBJECT_TYPE_PORT, &capList);
+        if ((status != SAI_STATUS_SUCCESS) && (status != SAI_STATUS_BUFFER_OVERFLOW))
+        {
+            return false;
+        }
+
+        statList.resize(capList.count);
+        capList.list = statList.data();
+
+        status = sai_query_stats_capability(gSwitchId, SAI_OBJECT_TYPE_PORT, &capList);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            return false;
+        }
+    }
+
+    return std::any_of(
+        statList.cbegin(),
+        statList.cend(),
+        [stat](const sai_stat_capability_t &cap) {
+            return static_cast<sai_port_stat_t>(cap.stat_enum) == stat;
+        }
+    );
+}
+
+static bool isMlnxPlatform()
+{
+    const auto *platform = std::getenv("platform");
+    if (platform == nullptr)
+    {
+        return false;
+    }
+
+    const auto *result = std::strstr(platform, MLNX_PLATFORM_SUBSTRING);
+    if (result == nullptr)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 // Port OA ------------------------------------------------------------------------------------------------------------
 
 /*
@@ -589,7 +647,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize counter table */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    // m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
     m_counterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP));
     m_counterSysPortTable = unique_ptr<Table>(
                     new Table(m_counter_db.get(), COUNTERS_SYSTEM_PORT_NAME_MAP));
@@ -607,14 +664,14 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
 
     /* Initialize queue tables */
-    m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
+    m_queueCounterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_QUEUE_NAME_MAP));
     m_voqTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_VOQ_NAME_MAP));
     m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
     m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
     m_queueTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_TYPE_MAP));
 
     /* Initialize ingress priority group tables */
-    m_pgTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_NAME_MAP));
+    m_pgCounterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PG_NAME_MAP));
     m_pgPortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_PORT_MAP));
     m_pgIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_INDEX_MAP));
 
@@ -627,10 +684,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha;
+    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
+    string nvdaPortTrimPluginName = "nvda_port_trim_drop.lua";
 
     try
     {
@@ -642,10 +700,24 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
         portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
+
+        string nvdaPortTrimLuaScript = swss::loadLuaScript(nvdaPortTrimPluginName);
+        nvdaPortTrimSha = swss::loadRedisScript(m_counter_db.get(), nvdaPortTrimLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
+    }
+
+    std::string portStatPlugins = portRateSha;
+
+    // Nvidia custom trim stat calculation
+    if (isMlnxPlatform() && \
+        isPortStatSupported(SAI_PORT_STAT_TRIM_PACKETS) && \
+        isPortStatSupported(SAI_PORT_STAT_TX_TRIM_PACKETS) && \
+        !isPortStatSupported(SAI_PORT_STAT_DROPPED_TRIM_PACKETS))
+    {
+        portStatPlugins += "," + nvdaPortTrimSha;
     }
 
     setFlexCounterGroupParameter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
@@ -664,7 +736,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                                  PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
                                  STATS_MODE_READ,
                                  PORT_PLUGIN_FIELD,
-                                 portRateSha);
+                                 portStatPlugins);
 
     setFlexCounterGroupParameter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
@@ -819,11 +891,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_defaultVlan = attrs[1].value.oid;
     }
 
-    /* Get System ports */
-    getSystemPorts();
-
     if (gMySwitchType != "dpu")
     {
+        // System Ports not supported on dpu
+        // Get System ports
+        getSystemPorts();
+
         removeDefaultVlanMembers();
         removeDefaultBridgePorts();
     }
@@ -3767,7 +3840,6 @@ bool PortsOrch::initPort(const PortConfig &port)
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
                 vector<FieldValueTuple> fields;
                 fields.push_back(tuple);
-                // m_counterTable->set("", fields);
                 m_counterNameMapUpdater->setCounterNameMap(p.m_alias, p.m_port_id);
 
                 // Install a flex counter for this port to track stats
@@ -3873,7 +3945,6 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     }
 
     /* remove port name map from counter table */
-    // m_counterTable->hdel("", alias);
     m_counterNameMapUpdater->delCounterNameMap(alias);
 
     /* Remove the associated port serdes attribute */
@@ -7754,7 +7825,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
     }
     else
     {
-        m_queueTable->set("", queueVector);
+        m_queueCounterNameMapUpdater->setCounterNameMap(queueVector);
         CounterCheckOrch::getInstance().addPort(port);
     }
     m_queuePortTable->set("", queuePortVector);
@@ -7973,7 +8044,7 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
         }
     }
 
-    m_queueTable->set("", queueVector);
+    m_queueCounterNameMapUpdater->setCounterNameMap(queueVector);
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
     m_queueTypeTable->set("", queueTypeVector);
@@ -8007,7 +8078,7 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, b
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
         // Remove the queue counter from counters DB maps
-        m_queueTable->hdel("", name.str());
+        m_queueCounterNameMapUpdater->delCounterNameMap(name.str());
         m_queuePortTable->hdel("", id);
 
         sai_queue_type_t queueType;
@@ -8100,7 +8171,7 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgS
 
     }
 
-    m_pgTable->set("", pgVector);
+    m_pgCounterNameMapUpdater->setCounterNameMap(pgVector);
     m_pgPortTable->set("", pgPortVector);
     m_pgIndexTable->set("", pgIndexVector);
 
@@ -8149,7 +8220,7 @@ void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
         }
     }
 
-    m_pgTable->set("", pgVector);
+    m_pgCounterNameMapUpdater->setCounterNameMap(pgVector);
     m_pgPortTable->set("", pgPortVector);
     m_pgIndexTable->set("", pgIndexVector);
 
@@ -8287,7 +8358,7 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
         const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
 
         // Remove the pg counter from counters DB maps
-        m_pgTable->hdel("", name.str());
+        m_pgCounterNameMapUpdater->delCounterNameMap(name.str());
         m_pgPortTable->hdel("", id);
         m_pgIndexTable->hdel("", id);
 

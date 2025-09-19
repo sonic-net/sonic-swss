@@ -26,7 +26,7 @@ typedef decltype(PortConfig::link_event_damping_config) PortDampingConfig_t;
 // constants ----------------------------------------------------------------------------------------------------------
 
 static const std::uint32_t minPortSpeed = 1;
-static const std::uint32_t maxPortSpeed = 800000;
+static const std::uint32_t maxPortSpeed = 1600000;
 
 static const std::uint32_t minPortMtu = 68;
 static const std::uint32_t maxPortMtu = 9216;
