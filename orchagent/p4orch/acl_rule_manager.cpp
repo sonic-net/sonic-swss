@@ -860,7 +860,6 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
         case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
         case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
-        case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
@@ -1029,6 +1028,20 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
             value->aclfield.data.u32 = packet_vlan_it->second;
             value->aclfield.mask.u32 = 0xFFFFFFFF;
             break;
+        }
+        case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID: {
+          const std::vector<std::string>& value_and_mask =
+              tokenize(attr_value, kDataMaskDelimiter);
+          const std::string vrf_id = trim(value_and_mask[0]);
+          if (vrf_id.empty() || !m_vrfOrch->isVRFexists(vrf_id)) {
+            return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                   << "VRF ID " << QuotedVar(vrf_id) << " was not found.";
+          }
+          value->aclfield.data.oid = m_vrfOrch->getVRFid(vrf_id);
+          if (value_and_mask.size() > 1) {
+            SWSS_LOG_INFO("Mask ignored for VRF ID.");
+          }
+          break;
         }
         case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
         {
