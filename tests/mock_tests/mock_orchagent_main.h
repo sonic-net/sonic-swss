@@ -32,6 +32,7 @@
 #include "copporch.h"
 #include "twamporch.h"
 #include "mlagorch.h"
+#include "high_frequency_telemetry/hftelorch.h"
 #define private public
 #include "stporch.h"
 #undef private 
@@ -72,6 +73,7 @@ extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
+extern HFTelOrch *gHFTOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;

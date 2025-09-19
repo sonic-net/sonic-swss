@@ -307,6 +307,12 @@ namespace bufferorch_test
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
             gDirectory.set(flexCounterOrch);
 
+            const vector<string> stel_tables = {
+                CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+                CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
+            };
+            gHFTOrch = new HFTelOrch(m_config_db.get(), m_state_db.get(), stel_tables);
+
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
 
@@ -421,6 +427,13 @@ namespace bufferorch_test
                 i.second->clear();
             }
 
+            // Clean up FlexCounterOrch
+            auto* flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+            if (flexCounterOrch)
+            {
+                delete flexCounterOrch;
+            }
+
             gDirectory.m_values.clear();
 
             delete gCrmOrch;
@@ -449,13 +462,6 @@ namespace bufferorch_test
 
             delete gQosOrch;
             gQosOrch = nullptr;
-
-            // Clean up FlexCounterOrch
-            auto* flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
-            if (flexCounterOrch)
-            {
-                delete flexCounterOrch;
-            }
 
             ut_helper::uninitSaiApi();
         }
