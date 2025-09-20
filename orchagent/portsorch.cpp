@@ -6327,8 +6327,11 @@ bool PortsOrch::initializePort(Port &port)
         return false;
     }
 
+    /* initialize port autoneg status */
+    port.m_autoneg = isAutoNegEnabled(port.m_port_id);
+
     /* initialize port admin speed */
-    if (!isAutoNegEnabled(port.m_port_id) && !getPortSpeed(port.m_port_id, port.m_speed))
+    if (!port.m_autoneg && !getPortSpeed(port.m_port_id, port.m_speed))
     {
         SWSS_LOG_ERROR("Failed to get initial port admin speed %d", port.m_speed);
         return false;
