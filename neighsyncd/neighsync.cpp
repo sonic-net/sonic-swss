@@ -146,12 +146,32 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     if (use_zero_mac)
     {
+       try
+    {
         std::string zero_mac = "00:00:00:00:00:00";
         strncpy(macStr, zero_mac.c_str(), zero_mac.length());
+         macStr[sizeof(macStr) - 1] = '\0';
+    }
+	catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Exception during zero MAC address null termination: %s", e.what());
+        return;
+    }
+       
     }
     else
     {
+         try
+    {
         nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+        macStr[MAX_ADDR_SIZE] = '\0';
+    }
+	 catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Exception during MAC address null termination: %s", e.what());
+        return;
+    }
+	 
     }
 
     if (!delete_key && !strncmp(macStr, "none", MAX_ADDR_SIZE))
