@@ -466,6 +466,8 @@ void BufferMgr::doTask(Consumer &consumer)
          SWSS_LOG_DEBUG("Dynamic buffer model enabled. Skipping further processing");
          return;
     }
+
+    SWSS_LOG_INFO("doTask for table %s", table_name.c_str());
     if (table_name == CFG_BUFFER_POOL_TABLE_NAME)
     {
         doBufferTableTask(consumer, m_applBufferPoolTable);
