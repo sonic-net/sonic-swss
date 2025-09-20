@@ -6133,7 +6133,6 @@ void PortsOrch::initializeQueues(Port &port)
 
 void PortsOrch::initializeSchedulerGroups(Port &port)
 {
-    std::vector<sai_object_id_t> scheduler_group_ids;
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
@@ -6150,7 +6149,7 @@ void PortsOrch::initializeSchedulerGroups(Port &port)
     }
     SWSS_LOG_INFO("Got %d number of scheduler groups for port %s", attr.value.u32, port.m_alias.c_str());
 
-    scheduler_group_ids.resize(attr.value.u32);
+    port.m_scheduler_group_ids.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -6158,8 +6157,8 @@ void PortsOrch::initializeSchedulerGroups(Port &port)
     }
 
     attr.id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
-    attr.value.objlist.count = (uint32_t)scheduler_group_ids.size();
-    attr.value.objlist.list = scheduler_group_ids.data();
+    attr.value.objlist.count = (uint32_t)port.m_scheduler_group_ids.size();
+    attr.value.objlist.list = port.m_scheduler_group_ids.data();
 
     status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
