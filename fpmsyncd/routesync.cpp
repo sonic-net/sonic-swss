@@ -1087,7 +1087,32 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         vector<FieldValueTuple> fvVector;
         setRouteWithWarmRestart(routeTableKeyStr, fvVector, m_routeTable, DEL_COMMAND);
         SWSS_LOG_INFO("SRV6 RouteTable del msg: %s", routeTableKeyStr.c_str());
-        m_srv6SidListTable.del(srv6SidListTableKey);
+
+        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
+        if (it != m_srv6_sidlist_refcnt.end())
+        {
+            assert (it->second > 0);
+
+            /* Decrement the refcount for this SID list */
+            (it->second)--;
+            SWSS_LOG_INFO("Refcount for SID list '%s' decreased to %u",
+                          srv6SidListTableKey.c_str(), it->second);
+
+            /* If the refcount drops to zero, remove the SID list from ApplDB */
+            if (it->second == 0)
+            {
+                m_srv6SidListTable.del(srv6SidListTableKey);
+                SWSS_LOG_INFO("Refcount for SID list '%s' is zero. SID list removed from ApplDB",
+                              srv6SidListTableKey.c_str());
+
+                m_srv6_sidlist_refcnt.erase(srv6SidListTableKey);
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("SID list '%s' not found in the map.", srv6SidListTableKey.c_str());
+        }
+
         return;
     }
     else if (nlmsg_type == RTM_NEWROUTE)
@@ -1097,14 +1122,30 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 
         string srv6SidListTableKey = vpn_sid_str;
 
-        vector<FieldValueTuple> fvVectorSidList;
+        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
+        if (it != m_srv6_sidlist_refcnt.end())
+        {
+            /* SID list already exists: just bump the refcount */
+            (it->second)++;
+            SWSS_LOG_INFO("Refcount for SID list'%s' increased to %u",
+                          srv6SidListTableKey.c_str(), it->second);
+        }
+        else
+        {
+            /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
+            vector<FieldValueTuple> fvVectorSidList;
 
-        FieldValueTuple path("path", vpn_sid_str);
-        fvVectorSidList.push_back(path);
+            FieldValueTuple path("path", vpn_sid_str);
+            fvVectorSidList.push_back(path);
 
-        m_srv6SidListTable.set(srv6SidListTableKey, fvVectorSidList);
-        SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
-                        srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+            m_srv6SidListTable.set(srv6SidListTableKey, fvVectorSidList);
+            SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
+                            srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+
+            m_srv6_sidlist_refcnt[srv6SidListTableKey] = 1;
+            SWSS_LOG_INFO("SID list '%s' created and refcount initialized to 1",
+                          srv6SidListTableKey.c_str());
+        }
 
         /* Write route to ROUTE_TABLE */
 
