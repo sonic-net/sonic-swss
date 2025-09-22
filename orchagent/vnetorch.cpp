@@ -2919,6 +2919,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
 
         if (is_local)
         {
+            SWSS_LOG_INFO("Attempting to add TUNNEL TERM ACL for local endpoint %s", ip.to_string().c_str());
             vnet_tunnel_term_acl_->createAclRule(vnet_name, ip_pfx, ip);
         }
 
@@ -3241,6 +3242,7 @@ bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vi
     if (getAclRule(vnet_name, vip, rule))
     {
         /* If there are more than one local points for the same VIP, we will not create a new rule. */
+        SWSS_LOG_NOTICE("ACL rule already exists for VNet %s with VIP %s", vnet_name.c_str(), vip.to_string().c_str());
         return true;
     }
 
@@ -3259,6 +3261,9 @@ bool VNetTunnelTermAcl::createAclRule(const string vnet_name, swss::IpPrefix& vi
         /* This tunnel term acl is to handle a transient state in DPU failover, so the redirect can't point to a VIP.*/
         {ACTION_REDIRECT_ACTION, alias}
     };
+
+    SWSS_LOG_NOTICE("Creating ACL rule %s for VNet %s with VIP %s to redirect to %s",
+                   rule_name.c_str(), vnet_name.c_str(), vip.to_string().c_str(), alias.c_str());
 
     acl_rule_table_->set(rule_name, fvs);
 
