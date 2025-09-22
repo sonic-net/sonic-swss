@@ -1192,7 +1192,7 @@ private:
 
     sai_bulk_object_create_fn                               create_entries;
     sai_bulk_object_remove_fn                               remove_entries;
-    sai_bulk_set_entry_attribute_fn                         set_entries_attribute;
+    sai_bulk_object_set_attribute_fn                        set_entries_attribute;
 
     std::unordered_map<sai_object_id_t, sai_status_t>       create_statuses;
 
