@@ -14,9 +14,87 @@ local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
 local delta = tonumber(ARGV[3])
 
+local APPL_DB         = 0      -- Application database
+local COUNTERS_DB     = 2      -- Counters and statistics
+local STATE_DB        = 6      -- State database
+
+local KEY_SPEED = 'speed'
+local KEY_LANES = 'lanes'
+local KEY_OPER_STATUS = 'oper_status'
+
+local STATE_DB_PORT_TABLE_PREFIX = 'PORT_TABLE|'
+local APPL_DB_PORT_TABLE_PREFIX  = 'PORT_TABLE:'
+
 local rates_table_name = "RATES"
 local bookmark_table_name = "RATES:GLOBAL"
 local BIN_FILTER_VALUE = 10
+
+local function get_port_name_from_oid(port)
+    redis.call('SELECT', COUNTERS_DB)
+    local port_name_hash = redis.call('HGETALL', 'COUNTERS_PORT_NAME_MAP')
+    local num_port_keys = redis.call('HLEN', 'COUNTERS_PORT_NAME_MAP')
+    -- flip port name hash
+    for i = 1, num_port_keys do
+        local k_index = i*2 -1
+        local v_index = i*2
+        if (port_name_hash[v_index] == port) then
+            return port_name_hash[k_index]
+        end
+    end
+    return 0
+end
+
+local function get_port_speed(port_name)
+    redis.call('SELECT', STATE_DB)
+    local raw_speed = redis.call('HGET', STATE_DB_PORT_TABLE_PREFIX .. port_name, KEY_SPEED)
+
+    redis.call('SELECT', APPL_DB)
+    local oper_status = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. port_name, KEY_OPER_STATUS)
+
+    if (raw_speed == false) or (oper_status ~= 'up') then
+        redis.call('SELECT', APPL_DB)
+        raw_speed = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. port_name, KEY_SPEED)
+    end
+    return raw_speed
+end
+
+local function get_port_numlanes(port_name)
+    redis.call('SELECT', APPL_DB)
+    local port_lanes = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. port_name, KEY_LANES)
+    local count = select(2, string.gsub(port_lanes, ',', ''))
+    return (count+1)
+end
+
+
+local function get_interleaving_factor_for_port(port_oid)
+    -- Correlation between port-speeds, number of lanes and
+    -- Interleaving factor
+    -- This lookup table is a direct implementation of the table present in the HLD.
+    -- The key is a string in the format: 'speed_lanes'
+    local interleaving_map = {
+        ['1600000_8'] = 4,
+        ['800000_8']  = 4,
+        ['400000_8']  = 2,
+        ['400000_4']  = 2,
+        ['200000_4']  = 2,
+        ['200000_2']  = 2,
+        ['100000_2']  = 2,
+    }
+
+    local port_name = get_port_name_from_oid(port_oid)
+    local port_speed = get_port_speed(port_name)
+    local port_numlanes = get_port_numlanes(port_name)
+
+    -- Create the key from the port's properties to search the map.
+    local key = tostring(port_speed) .. '_' .. tostring(port_numlanes)
+
+    -- reset redis object to COUNTERS_DB
+    redis.call('SELECT', COUNTERS_DB)
+
+    -- Look up the factor.
+    -- REVIEW : what should be default ?
+    return interleaving_map[key] or 1
+end
 
 -- Get configuration
 redis.call('SELECT', counters_db)
@@ -255,7 +333,8 @@ local function compute_predicted_flr(port)
     local flr = 0
 
     local sum_window = {16,20}
-    cer, flr = extrapolate_flr_from_regression(slope, intercept, {16, 20}, 2, 8)
+    local x_interleaving = get_interleaving_factor_for_port(port)
+    cer, flr = extrapolate_flr_from_regression(slope, intercept, {16, 20}, x_interleaving, 8)
     logit("CER : " .. cer)
     logit("FLR : " .. flr)
     return flr
@@ -298,7 +377,8 @@ local function compute_observed_flr(port)
 
         local codeword_error_ratio = fec_uncorr_codewords_delta / total_codewords_delta
         -- assuming interleaving factor is X = 1
-        local fec_flr = 1.125 * codeword_error_ratio
+        local x_interleaving = get_interleaving_factor_for_port(port)
+        local fec_flr = x_interleaving * codeword_error_ratio
 
         -- update old counter values
         redis.call('HSET', rates_table_name ..':' .. port, 'SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES_last', fec_uncorr_codewords)
