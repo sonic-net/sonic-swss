@@ -42,6 +42,133 @@ struct NextHopGroup {
 /* Path to protocol name database provided by iproute2 */
 constexpr auto DefaultRtProtoPath = "/etc/iproute2/rt_protos";
 
+class FieldValueTupleWrapperBase {
+    public:
+    FieldValueTupleWrapperBase(const string & _key) : key(_key) {}
+    FieldValueTupleWrapperBase(const string && _key) : key(std::move(_key)) {}
+    virtual ~FieldValueTupleWrapperBase() = default;
+
+    virtual vector<FieldValueTuple> fieldValueTupleVector() = 0;
+
+    vector<KeyOpFieldsValuesTuple> KeyOpFieldsValuesTupleVector() {
+        vector<KeyOpFieldsValuesTuple> kfvVector;
+        kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}});
+        auto fvVector = fieldValueTupleVector();
+        kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "SET", fvVector});
+        return kfvVector;
+    }
+
+    // For DEL-only operations with warm restart support
+    vector<KeyOpFieldsValuesTuple> KeyOpFieldsValuesTupleVectorForDel() {
+        vector<KeyOpFieldsValuesTuple> kfvVector;
+        kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}});
+        return kfvVector;
+    }
+
+    string key = string();
+};
+
+class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    RouteTableFieldValueTupleWrapper(const string & _key, string && _protocol) :
+          FieldValueTupleWrapperBase(_key), protocol(std::move(_protocol)) {}
+    RouteTableFieldValueTupleWrapper(const string && _key, string && _protocol) :
+          FieldValueTupleWrapperBase(std::move(_key)), protocol(std::move(_protocol)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string protocol = string();
+    string blackhole = string();
+    string nexthop = string();
+    string ifname = string();
+    string nexthop_group = string();
+    string mpls_nh = string();
+    string weight = string();
+    string vni_label = string();
+    string router_mac = string();
+    string segment = string();
+    string seg_src = string();
+};
+
+class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    LabelRouteTableFieldValueTupleWrapper(const string & _key, string && _protocol) :
+        FieldValueTupleWrapperBase(_key),
+        protocol(std::move(_protocol)) {}
+    LabelRouteTableFieldValueTupleWrapper(const string && _key, string && _protocol) :
+        FieldValueTupleWrapperBase(std::move(_key)),
+        protocol(std::move(_protocol)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string protocol = string();
+    string blackhole = string();
+    string nexthop = string();
+    string ifname = string();
+    string mpls_nh = string();
+    string mpls_pop = string();
+};
+
+class VnetRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    VnetRouteTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    VnetRouteTableFieldValueTupleWrapper(const string && _key)
+        : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string nexthop = string();
+    string ifname = string();
+};
+
+class VnetTunnelTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    VnetTunnelTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    VnetTunnelTableFieldValueTupleWrapper(const string && _key)
+        : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string endpoint = string();
+};
+
+class NextHopGroupTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    NextHopGroupTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    NextHopGroupTableFieldValueTupleWrapper(const string && _key)
+        : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string nexthop = string();
+    string ifname = string();
+    string weight = string();
+};
+
+class Srv6MySidTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    Srv6MySidTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    Srv6MySidTableFieldValueTupleWrapper(const string && _key)
+       : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string action = string();
+    string vrf = string();
+    string adj = string();
+};
+
+class Srv6SidListTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    Srv6SidListTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    Srv6SidListTableFieldValueTupleWrapper(const string && _key)
+       : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string path = string();
+};
+
 class RouteSync : public NetMsg
 {
 public:
@@ -61,8 +188,56 @@ public:
     }
 
     /* Helper method to set route table with warm restart support */
-    void setRouteWithWarmRestart(const std::string& key, const std::vector<FieldValueTuple>& fvVector,
-                                 shared_ptr<ProducerStateTable> table, const std::string& cmd = SET_COMMAND);
+    void setRouteWithWarmRestart(
+        const std::string& key,
+        const std::vector<FieldValueTuple>& fvVector,
+        ProducerStateTable & table,
+        const std::string& cmd = SET_COMMAND);
+
+    void setRouteWithWarmRestart(
+        RouteTableFieldValueTupleWrapper & fvw,
+        ProducerStateTable & table);
+
+    void setRouteWithWarmRestart(
+        LabelRouteTableFieldValueTupleWrapper & fvw,
+        ProducerStateTable & table);
+
+    void setTable(
+        VnetRouteTableFieldValueTupleWrapper & fvw,
+        ProducerStateTable & table);
+
+    void setTable(
+        VnetTunnelTableFieldValueTupleWrapper & fvw,
+        ProducerStateTable & table);
+
+    void setTable(
+        NextHopGroupTableFieldValueTupleWrapper & fvw,
+        ProducerStateTable & table);
+
+    void setTable(
+        Srv6MySidTableFieldValueTupleWrapper & fvw,
+        ProducerStateTable & table);
+
+    void setTable(
+        Srv6SidListTableFieldValueTupleWrapper & fvw,
+        ProducerStateTable & table);
+
+    // Generic method for DEL operations with warm restart support
+    template<typename WrapperType>
+    void delWithWarmRestart(WrapperType && fvw, ProducerStateTable & table) {
+        bool warmRestartInProgress = m_warmStartHelper.inProgress();
+        if (!warmRestartInProgress) {
+            table.set(fvw.KeyOpFieldsValuesTupleVectorForDel());
+        } else {
+            m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel()[0]);
+        }
+    }
+
+    // Generic method for DEL operations (non-shared_ptr tables, no warm restart)
+    template<typename WrapperType>
+    void delKey(WrapperType && fvw, ProducerStateTable & table) {
+        table.set(fvw.KeyOpFieldsValuesTupleVectorForDel());
+    }
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 

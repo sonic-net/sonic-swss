@@ -143,6 +143,33 @@ namespace swss
         table.erase(key);
     }
 
+    void ProducerStateTable::set(const std::vector<KeyOpFieldsValuesTuple>& values)
+    {
+        for (const auto& kfv : values)
+        {
+            const std::string& key = kfvKey(kfv);
+            const std::string& op = kfvOp(kfv);
+            const std::vector<FieldValueTuple>& fvs = kfvFieldsValues(kfv);
+
+            if (op == SET_COMMAND)
+            {
+                set(key, fvs);
+            }
+            else if (op == DEL_COMMAND)
+            {
+                del(key);
+            }
+        }
+    }
+
+    void ProducerStateTable::del(const std::vector<std::string>& keys)
+    {
+        for (const auto& key : keys)
+        {
+            del(key);
+        }
+    }
+
     std::shared_ptr<std::string> DBConnector::hget(const std::string &key, const std::string &field)
     {
         std::string value;
