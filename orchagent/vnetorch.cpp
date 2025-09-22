@@ -2900,7 +2900,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         IpAddress ip = ip_list[idx_ip];
         bool is_local = isLocalEndpoint(vnet_name, ip);
         bool is_overlay = !is_local;
-        IpAddress nh_ip = is_local ? monitor_list[idx_ip] : ip;
         string alias = is_local ? gIntfsOrch->getRouterIntfsAlias(ip) : "";
         MacAddress mac;
         uint32_t vni = 0;
@@ -2920,7 +2919,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
 
         if (is_local)
         {
-            vnet_tunnel_term_acl_->createAclRule(vnet_name, ip_pfx, nh_ip);
+            vnet_tunnel_term_acl_->createAclRule(vnet_name, ip_pfx, ip);
         }
 
         NextHopKey nh(ip, alias, mac, vni, is_overlay);
