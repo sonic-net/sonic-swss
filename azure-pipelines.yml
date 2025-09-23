@@ -132,6 +132,7 @@ stages:
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-${{ parameters.debian_version }}
       archive_gcov: true
+      debian_version: ${{ parameters.debian_version }}
 
 - stage: TestAsan
   dependsOn: BuildDockerAsan
@@ -144,6 +145,7 @@ stages:
       sonic_slave: sonic-slave-${{ parameters.debian_version }}
       docker_sonic_vs_name: docker-sonic-vs-asan
       asan: true
+      debian_version: ${{ parameters.debian_version }}
 
 - stage: Gcov
   condition: false
