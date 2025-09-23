@@ -2,6 +2,7 @@
 from swsscommon import swsscommon
 
 import time
+import json
 
 
 def _set_up_appl_db(dvs):
@@ -33,13 +34,15 @@ def get_key(db, tbl_name, key):
 
 def verify_attr(fvs, attr_list):
   """ Verifies attribute list for given key in a database table."""
-  assert len(fvs) == len(attr_list)
+  assert len(fvs) == len(attr_list), "Unexpected size: '%d' received, expected '%d'" % \
+                (len(fvs), len(attr_list))
   d = dict(attr_list)
   for fv in fvs:
     if fv[0] in d:
-      assert fv[1] == d[fv[0]]
+      assert fv[1] == d[fv[0]], "Unexpected value of attribute '%s': '%s' received, expected '%s'" % \
+                (fv[0], fv[1], d[fv[0]])
     else:
-      assert False
+      assert False, "Unexpected attribute '%s' received" % (fv[0])
 
 def prepend_match_field(match_field):
   return "match/" + match_field
@@ -61,6 +64,23 @@ def verify_response(consumer, key, attr_list, status, err_message = "SWSS_RC_SUC
                 (values[0][1], err_message)
   values = values[1:]
   verify_attr(values, attr_list)
+
+
+def p4rt_verify_response(consumer, send_op, send_data, send_attrs, key):
+  while consumer.peek() <= 0:
+     consumer.readData()
+  (rcvd_op, rcvd_data, rcvd_values) = consumer.pop()
+  assert rcvd_op == send_op, f"Expected rcvd_op={send_op}, got {rcvd_op}"
+  assert rcvd_data == send_data, f"Expected rcvd_data={send_data}, got {rcvd_data}"
+  if send_op == "SET":
+     rkey, rcvd_json = rcvd_values[0]
+     rcvd_attr_list = json.loads(rcvd_json)
+     rcvd_attrs_dict = dict(zip(rcvd_attr_list[0::2], rcvd_attr_list[1::2]))
+     expected_attrs_dict = dict(send_attrs)
+     assert rcvd_attrs_dict == expected_attrs_dict, f"Expected attributes={expected_attrs_dict}, but got={rcvd_attrs_dict}"
+  elif send_op == "DEL":
+     assert rcvd_values[0][0] == key, f"Expected key={key}, got {rcvd_values[0][0]}"
+     assert rcvd_values[0][1] == "", f"Expected empty value, got {rcvd_values[0][1]}"
 
 
 def check_syslog(dvs, marker, process, err_log, expected_cnt):
