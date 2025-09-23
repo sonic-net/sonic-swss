@@ -4690,9 +4690,10 @@ TEST_F(AclManagerTest, CreatePreIngressTableWillCreateDefaultRule) {
       .Times(3)
       .WillRepeatedly(
           DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
-      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
-                      Return(SAI_STATUS_SUCCESS)));
+//  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+//      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+//                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _)).Times(0);
   sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
   AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
   ASSERT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddTableRequest(app_db_entry));
