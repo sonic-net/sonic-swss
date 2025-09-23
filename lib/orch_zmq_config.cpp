@@ -72,7 +72,10 @@ std::shared_ptr<swss::ZmqServer> swss::create_zmq_server(std::string zmq_address
     }
 
     SWSS_LOG_NOTICE("Create ZMQ server with address: %s, vrf: %s", zmq_address.c_str(), vrf.c_str());
-    return std::make_shared<ZmqServer>(zmq_address, vrf);
+
+    // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
+    // use lazy binding and call bind() only after the handler has been registered.
+    return std::make_shared<ZmqServer>(zmq_address, vrf, true);
 }
 
 bool swss::get_feature_status(std::string feature, bool default_value)
