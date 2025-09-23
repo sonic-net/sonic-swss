@@ -23,6 +23,7 @@
 #include "return_code.h"
 #include "sai_serialize.h"
 #include "timer.h"
+#include "timestamp.h"
 
 extern PortsOrch *gPortsOrch;
 #define P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME "P4_ACL_COUNTERS_STATS_POLL_TIMER"
@@ -60,18 +61,21 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4TableToManagerMap[APP_P4RT_L3_ADMIT_TABLE_NAME] = m_l3AdmitManager.get();
     m_p4TableToManagerMap[APP_P4RT_EXT_TABLES_MANAGER] = m_extTablesManager.get();
 
-    m_p4ManagerPrecedence.push_back(m_tablesDefnManager.get());
-    m_p4ManagerPrecedence.push_back(m_routerIntfManager.get());
-    m_p4ManagerPrecedence.push_back(m_neighborManager.get());
-    m_p4ManagerPrecedence.push_back(m_greTunnelManager.get());
-    m_p4ManagerPrecedence.push_back(m_nextHopManager.get());
-    m_p4ManagerPrecedence.push_back(m_wcmpManager.get());
-    m_p4ManagerPrecedence.push_back(m_routeManager.get());
-    m_p4ManagerPrecedence.push_back(m_mirrorSessionManager.get());
-    m_p4ManagerPrecedence.push_back(m_aclTableManager.get());
-    m_p4ManagerPrecedence.push_back(m_aclRuleManager.get());
-    m_p4ManagerPrecedence.push_back(m_l3AdmitManager.get());
-    m_p4ManagerPrecedence.push_back(m_extTablesManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_tablesDefnManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_routerIntfManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_neighborManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_greTunnelManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_nextHopManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_wcmpManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_routeManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_mirrorSessionManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_aclTableManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_aclRuleManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_l3AdmitManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_extTablesManager.get());
+    for (auto* manager : m_p4ManagerAddPrecedence) {
+      m_p4ManagerDelPrecedence.insert(m_p4ManagerDelPrecedence.begin(), manager);
+    }
 
     tablesinfo = nullptr;
     // Add timer executor to update ACL counters stats in COUNTERS_DB
@@ -88,8 +92,16 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     Orch::addExecutor(ext_executor);
     m_extCounterStatsTimer->start();
 
-    // Add port state change notification handling support
+    // Add p4rt notification handling support
     swss::DBConnector notificationsDb("ASIC_DB", 0);
+
+    m_p4rtNotificationConsumer =
+        new swss::NotificationConsumer(&notificationsDb, APP_P4RT_TABLE_NAME);
+    auto p4rtNotifier =
+        new Notifier(m_p4rtNotificationConsumer, this, "P4RT_NOTIFICATIONS");
+    Orch::addExecutor(p4rtNotifier);
+
+    // Add port state change notification handling support
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
     auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotifier);
@@ -114,47 +126,10 @@ void P4Orch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        const swss::KeyOpFieldsValuesTuple key_op_fvs_tuple = it->second;
-        const std::string key = kfvKey(key_op_fvs_tuple);
+        enqueue(it->second);
         it = consumer.m_toSync.erase(it);
-        std::string table_name;
-        std::string key_content;
-        parseP4RTKey(key, &table_name, &key_content);
-        if (table_name.empty())
-        {
-            auto status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                          << "Table name cannot be empty, but was empty in key: " << key;
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-            m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                status);
-            continue;
-        }
-        if (m_p4TableToManagerMap.find(table_name) != m_p4TableToManagerMap.end())
-        {
-            m_p4TableToManagerMap[table_name]->enqueue(table_name, key_op_fvs_tuple);
-        }
-        else
-        {
-            if (table_name.rfind(p4orch::kTablePrefixEXT, 0) != std::string::npos)
-            {
-                m_p4TableToManagerMap[APP_P4RT_EXT_TABLES_MANAGER]->enqueue(table_name, key_op_fvs_tuple);
-            }
-            else
-            {
-                auto status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                              << "Failed to find P4Orch Manager for " << table_name << " P4RT DB table";
-                SWSS_LOG_ERROR("%s", status.message().c_str());
-                m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                    status);
-            }
-        }
     }
-
-    for (const auto &manager : m_p4ManagerPrecedence)
-    {
-        manager->drain();
-    }
-
+    drain(SET_COMMAND);
     m_publisher.flush();
 }
 
@@ -180,6 +155,79 @@ void P4Orch::doTask(swss::SelectableTimer &timer)
         SWSS_LOG_NOTICE("Unrecognized timer passed in P4Orch::doTask(swss::SelectableTimer& "
                         "timer)");
     }
+}
+
+void P4Orch::enqueue(const swss::KeyOpFieldsValuesTuple& entry) {
+  const std::string& key = kfvKey(entry);
+  const std::vector<swss::FieldValueTuple>& values = kfvFieldsValues(entry);
+  std::string table_name;
+  std::string key_content;
+  parseP4RTKey(key, &table_name, &key_content);
+  if (table_name.empty()) {
+    auto status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                  << "Table name cannot be empty, but was empty in key: "
+                  << key;
+    SWSS_LOG_ERROR("%s", status.message().c_str());
+    m_publisher.publish(APP_P4RT_TABLE_NAME, key, values, status,
+                        /*replace=*/true);
+    return;
+  }
+  if (m_p4TableToManagerMap.find(table_name) != m_p4TableToManagerMap.end()) {
+    m_p4TableToManagerMap[table_name]->enqueue(table_name, entry);
+  } else {
+    if (table_name.rfind(p4orch::kTablePrefixEXT, 0) != std::string::npos) {
+      m_p4TableToManagerMap[APP_P4RT_EXT_TABLES_MANAGER]->enqueue(table_name,
+                                                                  entry);
+    } else {
+      auto status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                    << "Failed to find P4Orch Manager for " << table_name
+                    << " P4RT DB table";
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+      m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(entry),
+                          kfvFieldsValues(entry), status, /*replace=*/true);
+    }
+  }
+}
+
+void P4Orch::drain(const std::string& op) {
+  if (op == SET_COMMAND) {
+    for (const auto& manager : m_p4ManagerAddPrecedence) {
+      manager->drain();
+    }
+  } else {
+    for (const auto& manager : m_p4ManagerDelPrecedence) {
+      manager->drain();
+    }
+  }
+}
+
+void P4Orch::handleP4rtNotification(
+    const std::vector<swss::FieldValueTuple>& values) {
+  std::string prev_op = "";
+  for (const auto& value : values) {
+    std::string op = DEL_COMMAND;
+    std::vector<swss::FieldValueTuple> vals;
+    if (!fvValue(value).empty()) {
+      op = SET_COMMAND;
+      JSon::readJson(fvValue(value), vals);
+    }
+    if (prev_op.empty()) {
+      prev_op = op;
+    }
+    swss::KeyOpFieldsValuesTuple key_op_fvs_tuple(fvField(value), op, vals);
+
+    // Call drain after grouping the same type of requests together.
+    if (op != prev_op) {
+      drain(prev_op);
+      prev_op = op;
+    }
+
+    // Enqueue the entry.
+    enqueue(key_op_fvs_tuple);
+  }
+  if (!prev_op.empty()) {
+    drain(prev_op);
+  }
 }
 
 void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std::string &data)
@@ -233,8 +281,10 @@ void P4Orch::doTask(NotificationConsumer &consumer)
 
     consumer.pop(op, data, values);
 
-    if (&consumer == m_portStatusNotificationConsumer)
-    {
+
+    if (&consumer == m_p4rtNotificationConsumer) {
+      handleP4rtNotification(values);
+    } else if (&consumer == m_portStatusNotificationConsumer) {
         handlePortStatusChangeNotification(op, data);
     }
 }
