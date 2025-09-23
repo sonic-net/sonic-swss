@@ -2,6 +2,7 @@
 from swsscommon import swsscommon
 
 import time
+import json
 
 
 def _set_up_appl_db(dvs):
@@ -61,6 +62,23 @@ def verify_response(consumer, key, attr_list, status, err_message = "SWSS_RC_SUC
                 (values[0][1], err_message)
   values = values[1:]
   verify_attr(values, attr_list)
+
+
+def p4rt_verify_response(consumer, send_op, send_data, send_attrs, key):
+  while consumer.peek() <= 0:
+     consumer.readData()
+  (rcvd_op, rcvd_data, rcvd_values) = consumer.pop()
+  assert rcvd_op == send_op, f"Expected rcvd_op={send_op}, got {rcvd_op}"
+  assert rcvd_data == send_data, f"Expected rcvd_data={send_data}, got {rcvd_data}"
+  if send_op == "SET":
+     rkey, rcvd_json = rcvd_values[0]
+     rcvd_attr_list = json.loads(rcvd_json)
+     rcvd_attrs_dict = dict(zip(rcvd_attr_list[0::2], rcvd_attr_list[1::2]))
+     expected_attrs_dict = dict(send_attrs)
+     assert rcvd_attrs_dict == expected_attrs_dict, f"Expected attributes={expected_attrs_dict}, but got={rcvd_attrs_dict}"
+  elif send_op == "DEL":
+     assert rcvd_values[0][0] == key, f"Expected key={key}, got {rcvd_values[0][0]}"
+     assert rcvd_values[0][1] == "", f"Expected empty value, got {rcvd_values[0][1]}"
 
 
 def check_syslog(dvs, marker, process, err_log, expected_cnt):
@@ -124,15 +142,3 @@ class DBInterface(object):
       table = i[1]
       self._original_entries["{}:{}".format(db, table)]= get_keys(db, table)
 
-class KeyToOidDBHelper(object):
-  """Provides helper APIs for P4RT key to OID mapping in Redis DB."""
-
-  # Table name in Redis DB for the mapping.
-  TBL_NAME = "P4RT_KEY_TO_OID"
-  KEY = ""
-
-  def __init__(self, dvs):
-    self.table = swsscommon.Table(_set_up_appl_state_db(dvs), self.TBL_NAME)
-
-  def get_db_info(self):
-    return self.table.get(self.KEY)

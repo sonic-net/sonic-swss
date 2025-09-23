@@ -18,6 +18,7 @@
 #include <map>
 #include "zmqorch.h"
 #include "zmqserver.h"
+#include <unordered_map>
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
@@ -106,7 +107,7 @@ struct RouteKey
 };
 
 /* NextHopGroupTable: NextHopGroupKey, NextHopGroupEntry */
-typedef std::map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
+typedef std::unordered_map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, NextHopGroupKey */
 typedef std::map<IpPrefix, RouteNhg> RouteTable;
 /* RouteTables: vrf_id, RouteTable */

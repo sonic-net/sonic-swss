@@ -16,11 +16,14 @@ namespace mock_orch_test
                 {APP_DASH_ROUTE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_TUNNEL_TABLE_NAME, (Orch**) &m_DashTunnelOrch},
                 {APP_DASH_ENI_TABLE_NAME, (Orch**) &m_DashOrch},
+                { APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, (Orch **)&m_dashPortMapOrch },
+                { APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, (Orch **)&m_dashPortMapOrch }
             };
             void SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set = true, bool expect_empty = true);
             dash::appliance::Appliance BuildApplianceEntry();
             void CreateApplianceEntry();
-            void AddRoutingType(dash::route_type::EncapType encap_type);
+            void AddVnetEncapRoutingType(dash::route_type::EncapType encap_type);
+            void AddPLRoutingType();
             void CreateVnet();
             void RemoveVnet(bool expect_empty = true);
             void AddVnetMap(bool expect_empty = true);
@@ -28,13 +31,18 @@ namespace mock_orch_test
             void AddOutboundRoutingGroup();
             void AddOutboundRoutingEntry(bool expect_empty = true);
             void AddTunnel();
+            void AddVnetMapPL(bool expect_empty = true);
+            void RemoveVnetMapPL(bool expect_empty = true);
+            void AddPortMap();
             dash::eni::Eni BuildEniEntry();
 
             std::string vnet1 = "VNET_1";
             std::string vnet_map_ip1 = "2.2.2.2";
+            std::string vnet_map_ip2 = "2.3.3.3";
             std::string appliance1 = "APPLIANCE_1";
             std::string route_group1 = "ROUTE_GROUP_1";
             std::string tunnel1 = "TUNNEL_1";
             std::string eni1 = "ENI_1";
+            std::string portmap1 = "PORTMAP_1";
     };
 }
