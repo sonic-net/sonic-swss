@@ -1005,6 +1005,19 @@ void NeighOrch::doTask(Consumer &consumer)
     }
 }
 
+void NeighOrch::getNeighborsForPort(string port_name, std::vector<NextHopKey> neighbors)
+{
+    for (const auto &entry : m_syncdNeighbors)
+    {
+        if (entry.first.alias == port_name)
+        {
+            SWSS_LOG_INFO("Neighbor %s found on port %s",
+                entry.first.ip_address.to_string().c_str(), entry.first.alias.c_str());
+            neighbors.push_back(entry.first);
+        }
+    }
+}
+
 bool NeighOrch::addNeighbor(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
