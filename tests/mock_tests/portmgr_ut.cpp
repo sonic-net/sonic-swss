@@ -87,9 +87,9 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("up", value_opt.get());
 		
-		cfg_port_table.set("Ethernet0", {
-	        {"dhcp_rate_limit", "1000"}
-	    });
+        cfg_port_table.set("Ethernet0", {
+            {"dhcp_rate_limit", "1000"}
+        });
 	    mockCallArgs.clear();
 	    m_portMgr->addExistingData(&cfg_port_table);
 	    m_portMgr->doTask();
@@ -128,7 +128,6 @@ namespace portmgr_ut
 	    // Restore port state to ok for next case
 	    state_port_table.set("Ethernet0", { {"state", "ok"} });
 
-	    
 	    cfg_port_table.set("Ethernet0", {
 	        {"dhcp_rate_limit", "800"}
 	    });

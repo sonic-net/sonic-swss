@@ -116,8 +116,8 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     }
     else
     {
-        SWSS_LOG_ERROR("Setting DHCP rate limit to alias:%s failed with cmd:%s, rc:%d, error:%s", 
-                      alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        SWSS_LOG_WARN("Setting DHCP rate limit to alias:%s failed (isPortStateOk=true) with cmd:%s, rc:%d, error:%s",
+                  alias.c_str(), cmd_str.c_str(), ret, res.c_str);
         return false;
     }
 }
