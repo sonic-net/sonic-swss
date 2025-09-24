@@ -484,6 +484,12 @@ namespace flexcounter_test
     TEST_P(FlexCounterTest, CounterTest)
     {
         // Check flex counter database after system initialization
+        ASSERT_TRUE(checkFlexCounterGroup(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"}
+                                          }));
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
@@ -607,6 +613,7 @@ namespace flexcounter_test
 
         // Enable and check counters
         const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        flexCounterCfg.set("SWITCH", values);
         flexCounterCfg.set("PG_WATERMARK", values);
         flexCounterCfg.set("QUEUE_WATERMARK", values);
         flexCounterCfg.set("QUEUE", values);
@@ -629,6 +636,12 @@ namespace flexcounter_test
 
         isNoPendingCounterObjects();
 
+        ASSERT_TRUE(checkFlexCounterGroup(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"}
+                                          }));
         ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
@@ -682,6 +695,13 @@ namespace flexcounter_test
         Port firstPort;
         gPortsOrch->getPort(firstPortName, firstPort);
         auto pgOid = firstPort.m_priority_group_ids[3];
+        ASSERT_TRUE(checkFlexCounter(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP, gSwitchId,
+                                     {
+                                         {SWITCH_COUNTER_ID_LIST,
+                                          "SAI_SWITCH_STAT_TX_TRIM_PACKETS,"
+                                          "SAI_SWITCH_STAT_DROPPED_TRIM_PACKETS"
+                                         }
+                                     }));
         ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid,
                                      {
                                          {PG_COUNTER_ID_LIST,
@@ -705,6 +725,8 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid,
                                      {
                                          {QUEUE_COUNTER_ID_LIST,
+                                          "SAI_QUEUE_STAT_TX_TRIM_PACKETS,"
+                                          "SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS,"
                                           "SAI_QUEUE_STAT_TRIM_PACKETS,"
                                           "SAI_QUEUE_STAT_DROPPED_BYTES,SAI_QUEUE_STAT_DROPPED_PACKETS,"
                                           "SAI_QUEUE_STAT_BYTES,SAI_QUEUE_STAT_PACKETS"
