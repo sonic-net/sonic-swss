@@ -59,10 +59,8 @@ class FieldValueTupleWrapperBase {
     }
 
     // For DEL-only operations with warm restart support
-    vector<KeyOpFieldsValuesTuple> KeyOpFieldsValuesTupleVectorForDel() {
-        vector<KeyOpFieldsValuesTuple> kfvVector;
-        kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}});
-        return kfvVector;
+    KeyOpFieldsValuesTuple KeyOpFieldsValuesTupleVectorForDel() {
+        return KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}};
     }
 
     string key = string();
@@ -227,16 +225,10 @@ public:
     void delWithWarmRestart(WrapperType && fvw, ProducerStateTable & table) {
         bool warmRestartInProgress = m_warmStartHelper.inProgress();
         if (!warmRestartInProgress) {
-            table.set(fvw.KeyOpFieldsValuesTupleVectorForDel());
+            table.del(fvw.key);
         } else {
-            m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel()[0]);
+            m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel());
         }
-    }
-
-    // Generic method for DEL operations (non-shared_ptr tables, no warm restart)
-    template<typename WrapperType>
-    void delKey(WrapperType && fvw, ProducerStateTable & table) {
-        table.set(fvw.KeyOpFieldsValuesTupleVectorForDel());
     }
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);

@@ -163,31 +163,6 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
-void RouteSync::setRouteWithWarmRestart(const std::string& key,
-                                      const std::vector<FieldValueTuple>& fvVector,
-                                      ProducerStateTable & table,
-                                      const std::string& cmd)
-{
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
-    if (!warmRestartInProgress)
-    {
-        if (cmd == SET_COMMAND)
-        {
-            table.set(key, fvVector);
-        }
-        else if (cmd == DEL_COMMAND)
-        {
-            table.del(key);
-        }
-    }
-    else
-    {
-        const KeyOpFieldsValuesTuple kfv = std::make_tuple(key, cmd, fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
-    }
-}
-
 void RouteSync::setRouteWithWarmRestart(RouteTableFieldValueTupleWrapper & fvw,
                                         ProducerStateTable & table )
 {
@@ -1284,8 +1259,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         delWithWarmRestart(
             RouteTableFieldValueTupleWrapper{std::move(routeTableKeyStr), std::string()},
             *m_routeTable);
-        delKey(Srv6SidListTableFieldValueTupleWrapper{std::move(srv6SidListTableKey)},
-               m_srv6SidListTable);
+        m_srv6SidListTable.del(srv6SidListTableKey);
         return;
     }
     else if (nlmsg_type == RTM_NEWROUTE)
@@ -1430,8 +1404,7 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
 
     if (nlmsg_type == RTM_DELSRV6LOCALSID)
     {
-        delKey(Srv6MySidTableFieldValueTupleWrapper{std::move(my_sid_table_key)},
-               m_srv6MySidTable);
+        m_srv6MySidTable.del(my_sid_table_key);
         return;
     }
 
@@ -2164,9 +2137,9 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     if (nlmsg_type == RTM_DELROUTE)
     {
         /* Duplicated delete as we do not know if it is a VXLAN tunnel route*/
-        delKey(VnetRouteTableFieldValueTupleWrapper{vnet_dip}, m_vnet_routeTable);
-        delKey(VnetTunnelTableFieldValueTupleWrapper{std::move(vnet_dip)},
-               m_vnet_tunnelTable);
+        m_vnet_routeTable.del(vnet_dip);
+        m_vnet_tunnelTable.del(vnet_dip);
+
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -2767,8 +2740,7 @@ void RouteSync::deleteNextHopGroup(uint32_t nh_id)
     {
         string key = getNextHopGroupKeyAsString(nh_id);
         SWSS_LOG_DEBUG("NextHopGroup table del: key [%s]", key.c_str());
-        delKey(NextHopGroupTableFieldValueTupleWrapper(std::move(key)),
-               m_nexthop_groupTable);
+        m_nexthop_groupTable.del(key);
     }
     m_nh_groups.erase(git);
 }
