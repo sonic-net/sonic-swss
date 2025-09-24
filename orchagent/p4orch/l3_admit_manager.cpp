@@ -54,6 +54,13 @@ ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4L3AdmitEntry &l3_
             LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
                                  << "Failed to get port info for port " << QuotedVar(l3_admit_entry.port_name));
         }
+	if (port.m_type != Port::Type::PHY) {
+          LOG_ERROR_AND_RETURN(
+              ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+              << "Port " << QuotedVar(l3_admit_entry.port_name) << "'s type "
+              << port.m_type
+              << " is not physical and is not supported for L3 Admit entry.");
+        }
         l3_admit_attr.id = SAI_MY_MAC_ATTR_PORT_ID;
         l3_admit_attr.value.oid = port.m_port_id;
         l3_admit_attrs.push_back(l3_admit_attr);
@@ -196,9 +203,21 @@ ReturnCodeOr<P4L3AdmitAppDbEntry> L3AdmitManager::deserializeP4L3AdmitAppDbEntry
 
         // "match/in_port":"Ethernet0"
         if (j.find(prependMatchField(p4orch::kInPort)) != j.end())
-        {
-            app_db_entry.port_name = j[prependMatchField(p4orch::kInPort)];
-        }
+	{
+		std::string in_port = j[prependMatchField(p4orch::kInPort)];
+		swss::Port port;
+		if (!gPortsOrch->getPort(in_port, port)) {
+			return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+				<< "Failed to get port info for port " << QuotedVar(in_port);
+		}
+		if (port.m_type != Port::Type::PHY) {
+			return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+				<< "Port " << QuotedVar(in_port) << "'s type " << port.m_type
+				<< " is not physical and is not supported for "
+				"L3 Admit entry.";
+		}
+		app_db_entry.port_name = j[prependMatchField(p4orch::kInPort)];
+	}
     }
     catch (std::exception &ex)
     {
