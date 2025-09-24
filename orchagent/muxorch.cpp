@@ -1772,6 +1772,19 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                                    (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type));
         addSkipNeighbors(skip_neighbors);
 
+        // Add neighbors that were learned before this mux port was configured.
+        std::vector<NextHopKey> neighbors;
+        gNeighOrch->getNeighborsForPort(port_name, neighbors);
+        auto it = neighbors.begin();
+        while (it !=  neighbors.end())
+        {
+            if (!containsNextHop(*it) && !isSkipNeighbor(it->ip_address))
+            {
+                bool add = mux_cable_tb_[port_name]->isActive();
+                mux_cable_tb_[port_name]->updateNeighbor(*it, add);
+            }
+        }
+
         SWSS_LOG_NOTICE("Mux entry for port '%s' was added, cable type %d", port_name.c_str(), cable_type);
     }
     else

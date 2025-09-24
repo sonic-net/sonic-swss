@@ -586,8 +586,8 @@ class TestMuxTunnelBase():
         neigh = "192.168.0.100"
         mux_port = "Ethernet0"
 
+        # Test adding route then neighbor in standby
         try:
-            # Test adding route then neighbor in standby
             self.set_mux_state(appdb, mux_port, "standby")
 
             self.add_route(dvs, route, ["192.168.0.100"])
@@ -610,8 +610,8 @@ class TestMuxTunnelBase():
             self.del_route(dvs, route)
             self.del_neighbor(dvs, neigh_info.ipv4)
 
+        # Test adding route then neighbor in active
         try:
-            # Test adding route then neighbor in active
             self.set_mux_state(appdb, mux_port, "active")
 
             self.add_route(dvs, route, ["192.168.0.100"])
@@ -1627,6 +1627,45 @@ class TestMuxTunnel(TestMuxTunnelBase):
         self.remove_qos_map(db, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, dscp_to_tc_map_oid)
         self.remove_qos_map(db, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, tc_to_pg_map_oid)
 
+    def test_neighbor_learned_before_mux_config(self, dvs, dvs_route, setup_vlan, setup_mux_cable, testlog):
+        """ test neighbors learned before mux config """
+        dvs.runcmd("ip neigh flush all")
+        for state in ["active", "standby"]
+            try:
+                self.add_fdb(dvs, "Ethernet12", "00-00-00-11-11-11")
+
+                self.add_neighbor(dvs, self.SERV1_IPV4, "00:00:00:11:11:11")
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV4, expect_route=False)
+
+                self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:11:11:11")
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV6, expect_route=False)
+
+                self.set_mux_state(appdb, "Ethernet12", "state")
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV4, expect_route=(state == "standby"))
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV6, expect_route=(state == "standby"))
+
+            finally:
+                dvs.runcmd("ip neigh flush all")
+
+        for state in ["active", "standby"]
+            try:
+                self.add_fdb(dvs, "Ethernet12", "00-00-00-11-11-11")
+
+                self.add_neighbor(dvs, self.SERV1_IPV4, "00:00:00:11:11:11")
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV4, expect_route=False)
+
+                self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:11:11:11")
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV6, expect_route=False)
+
+                self.add_route(dvs, "11.11.11.11/32", ["192.168.0.100"])
+
+                self.set_mux_state(appdb, "Ethernet12", "state")
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV4, expect_route=(state == "standby"))
+                self.check_neighbor_state(dvs, dvs_route, self.SERV1_IPV6, expect_route=(state == "standby"))
+
+            finally:
+                self.del_route(dvs, "11.11.11.11/32")
+                dvs.runcmd("ip neigh flush all")
 
     def test_Tunnel(self, dvs, setup_tunnel, restore_tunnel, testlog, setup):
         """ test IPv4 Mux tunnel creation """
