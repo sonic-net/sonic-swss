@@ -13,6 +13,7 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
+#include "vnetorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -29,6 +30,7 @@ extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
+extern VNetOrch *gVnetOrch;
 
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
@@ -700,17 +702,26 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             sai_object_id_t& vrf_id = ctx.vrf_id;
             IpPrefix& ip_prefix = ctx.ip_prefix;
 
-            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX) || !key.compare(0, 4, "Vnet"))
             {
                 size_t found = key.find(':');
                 string vrf_name = key.substr(0, found);
 
-                if (!m_vrfOrch->isVRFexists(vrf_name))
+                // Check if vrf associated with route
+                if (m_vrfOrch->isVRFexists(vrf_name))
                 {
+                    // Found vrf for the route
+                    vrf_id = m_vrfOrch->getVRFid(vrf_name);
+                }
+                // Check if vnet associated with route and get its vrf id if vnet exists
+                else if (!gVnetOrch->getVrfIdByVnetName(vrf_name, vrf_id))
+                {
+                    // No vrf or vnet found for the route
+                    SWSS_LOG_INFO("No vrf or vnet found for the key %s", key.c_str());
                     it++;
                     continue;
                 }
-                vrf_id = m_vrfOrch->getVRFid(vrf_name);
+                SWSS_LOG_INFO("Found vrf or vnet %s for the key %s", vrf_name.c_str(), key.c_str());
                 ip_prefix = IpPrefix(key.substr(found+1));
             }
             else

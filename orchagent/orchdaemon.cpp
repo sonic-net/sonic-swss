@@ -68,6 +68,7 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
+VNetOrch *gVnetOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -248,13 +249,12 @@ bool OrchDaemon::init()
             CFG_VNET_RT_TUNNEL_TABLE_NAME
     };
 
-    VNetOrch *vnet_orch;
-    vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    gVnetOrch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
 
-    gDirectory.set(vnet_orch);
+    gDirectory.set(gVnetOrch);
     VNetCfgRouteOrch *cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_configDb, m_applDb, cfg_vnet_tables);
     gDirectory.set(cfg_vnet_rt_orch);
-    VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
+    VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, gVnetOrch);
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
@@ -562,7 +562,7 @@ bool OrchDaemon::init()
 
     m_orchList.push_back(vxlan_vrf_orch);
     m_orchList.push_back(cfg_vnet_rt_orch);
-    m_orchList.push_back(vnet_orch);
+    m_orchList.push_back(gVnetOrch);
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
     m_orchList.push_back(gMlagOrch);
