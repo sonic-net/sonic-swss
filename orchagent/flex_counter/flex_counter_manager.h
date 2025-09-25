@@ -40,7 +40,8 @@ enum class CounterType
     ROUTE,
     ENI,
     DASH_METER,
-    SRV6
+    SRV6,
+    SWITCH,
 };
 
 extern bool gTraditionalFlexCounter;

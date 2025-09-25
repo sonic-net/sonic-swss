@@ -40,7 +40,7 @@ public:
 
     virtual void doTask(Consumer& consumer);
     virtual bool startWdOnPort(const Port& port,
-            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) = 0;
+            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory) = 0;
     virtual bool stopWdOnPort(const Port& port) = 0;
 
     shared_ptr<Table> getCountersTable(void)
@@ -89,7 +89,7 @@ public:
 
     void doTask(Consumer& consumer) override;
     virtual bool startWdOnPort(const Port& port,
-            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
+            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory);
     virtual bool stopWdOnPort(const Port& port);
 
     task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data) override;
@@ -121,7 +121,7 @@ private:
     template <typename T>
     static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T));
     bool registerInWdDb(const Port& port,
-            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
+            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory);
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);
 

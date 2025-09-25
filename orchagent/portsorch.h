@@ -260,18 +260,17 @@ public:
 
 private:
     unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
-    // unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_sendToIngressPortTable;
     unique_ptr<Table> m_gearboxTable;
-    unique_ptr<Table> m_queueTable;
+    unique_ptr<CounterNameMapUpdater> m_queueCounterNameMapUpdater;
     unique_ptr<Table> m_voqTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<Table> m_queueTypeTable;
-    unique_ptr<Table> m_pgTable;
+    unique_ptr<CounterNameMapUpdater> m_pgCounterNameMapUpdater;
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
@@ -391,11 +390,14 @@ private:
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
 
-    bool initializePort(Port &port);
-    void initializePriorityGroups(Port &port);
-    void initializePortBufferMaximumParameters(Port &port);
-    void initializeQueues(Port &port);
-    void initializeSchedulerGroups(Port &port);
+    bool initializePorts(std::vector<Port>& ports);
+    void initializePriorityGroupsBulk(std::vector<Port>& ports);
+    void initializeQueuesBulk(std::vector<Port>& ports);
+    void initializeSchedulerGroupsBulk(std::vector<Port>& ports);
+    void initializePortHostTxReadyBulk(std::vector<Port>& ports);
+    void initializePortMtuBulk(std::vector<Port>& ports);
+
+    void initializePortBufferMaximumParameters(const Port &port);
     void initializeVoqs(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
@@ -415,7 +417,10 @@ private:
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
 
     sai_status_t removePort(sai_object_id_t port_id);
-    bool initPort(const PortConfig &port);
+    bool initExistingPort(const PortConfig &port);
+    bool initPortsBulk(std::vector<Port>& ports);
+    void registerPort(Port &p);
+    
     void deInitPort(string alias, sai_object_id_t port_id);
 
     void initPortCapAutoNeg(Port &port);
@@ -567,7 +572,7 @@ private:
     auto getPortConfigState() const -> port_config_state_t;
     void setPortConfigState(port_config_state_t value);
 
-    bool addPortBulk(const std::vector<PortConfig> &portList);
+    bool addPortBulk(const std::vector<PortConfig> &portList, std::vector<Port>& addedPorts);
     bool removePortBulk(const std::vector<sai_object_id_t> &portList);
 
     /* Prototypes for Path Tracing */
