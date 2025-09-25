@@ -1374,7 +1374,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         }
 
         m_portListLaneMap[portList.at(i).lanes.value] = oidList.at(i);
-        p.m_port_id = oidList.at(i);
+        addedPorts.at(i).m_port_id = oidList.at(i);
         m_portCount++;
     }
 
