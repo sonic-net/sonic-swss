@@ -635,7 +635,9 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.match_field_lookup["inner_vlan_id"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_ID);
     app_db_entry.match_field_lookup["inner_vlan_cfi"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_CFI);
     app_db_entry.match_field_lookup["l3_class_id"] =
-        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ROUTE_DST_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/6);
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ROUTE_DST_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/32);
+    app_db_entry.match_field_lookup["acl_user_meta"] = 
+	BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ACL_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/8);
     app_db_entry.match_field_lookup["src_ipv6_64bit"] = BuildMatchFieldJsonStrKindComposite(
         {nlohmann::json::parse(BuildMatchFieldJsonStrKindSaiField(P4_MATCH_SRC_IPV6_WORD3, P4_FORMAT_IPV6, 32)),
          nlohmann::json::parse(BuildMatchFieldJsonStrKindSaiField(P4_MATCH_SRC_IPV6_WORD2, P4_FORMAT_IPV6, 32))},
