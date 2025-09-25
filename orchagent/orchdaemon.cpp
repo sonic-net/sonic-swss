@@ -999,6 +999,8 @@ void OrchDaemon::start(long heartBeatInterval)
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
+    SWSS_LOG_ENTER();
+
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
 
     for (Orch *o : m_orchList)
