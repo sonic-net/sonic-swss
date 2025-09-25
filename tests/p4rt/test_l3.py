@@ -23,6 +23,13 @@ class TestP4RTL3(object):
         self._p4rt_nexthop_obj.set_up_databases(dvs)
         self._p4rt_route_obj.set_up_databases(dvs)
         self._p4rt_wcmp_group_obj.set_up_databases(dvs)
+        APP_P4RT_CHANNEL_NAME="P4rt_Channel"
+        self.p4rt_notifier = swsscommon.NotificationProducer(
+            self._p4rt_route_obj.appl_db, APP_P4RT_CHANNEL_NAME
+        )
+        self.p4rt_response_consumer = swsscommon.NotificationConsumer(
+            self._p4rt_route_obj.appl_db, APP_P4RT_CHANNEL_NAME 
+        )
         self.response_consumer = swsscommon.NotificationConsumer(
             self._p4rt_route_obj.appl_db, "APPL_DB_" +
             swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
@@ -1941,4 +1948,149 @@ class TestP4RTL3(object):
             self._p4rt_nexthop_obj.get_original_asic_db_entries_count()
         )
 
+        self._clean_vrf(dvs)
+
+    def test_P4rtNotification(self, dvs, testlog):
+        # Initialize L3 objects and database connectors.
+        self._set_up(dvs)
+        self._set_vrf(dvs)
+
+        # Set IP type for route object.
+        self._p4rt_route_obj.set_ip_type("IPV4")
+
+        # Maintain list of original Application and ASIC DB entries before
+        # adding new route.
+        db_list = (
+            (
+                self._p4rt_route_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
+            ),
+            (self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_route_obj.get_original_redis_entries(db_list)
+
+        # Add router interface.
+        router_intf_key = self._p4rt_router_intf_obj.generate_app_db_key(
+            self._p4rt_router_intf_obj.DEFAULT_ROUTER_INTERFACE_ID)
+        ritf_attrs = [
+            (util.prepend_param_field(self._p4rt_router_intf_obj.PORT_FIELD),
+             self._p4rt_router_intf_obj.DEFAULT_PORT_ID),
+            (util.prepend_param_field(self._p4rt_router_intf_obj.SRC_MAC_FIELD),
+             self._p4rt_router_intf_obj.DEFAULT_SRC_MAC),
+            (self._p4rt_router_intf_obj.ACTION_FIELD,
+             self._p4rt_router_intf_obj.DEFAULT_ACTION)
+        ]
+        attr_list = [
+            util.prepend_param_field(
+                self._p4rt_router_intf_obj.PORT_FIELD), self._p4rt_router_intf_obj.DEFAULT_PORT_ID,
+            util.prepend_param_field(
+                self._p4rt_router_intf_obj.SRC_MAC_FIELD), self._p4rt_router_intf_obj.DEFAULT_SRC_MAC,
+            self._p4rt_router_intf_obj.ACTION_FIELD, self._p4rt_router_intf_obj.DEFAULT_ACTION
+        ]
+        sop = "SET"
+        sdata = self._p4rt_router_intf_obj.DEFAULT_PORT_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(router_intf_key, json.dumps(attr_list))]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, ritf_attrs, router_intf_key)
+
+        # Add neighbor.
+        neighbor_key = self._p4rt_neighbor_obj.generate_app_db_key(
+            self._p4rt_neighbor_obj.DEFAULT_ROUTER_INTERFACE_ID, self._p4rt_neighbor_obj.DEFAULT_IPV4_NEIGHBOR_ID)
+        neighbor_attrs = [
+            (util.prepend_param_field(self._p4rt_neighbor_obj.DST_MAC_FIELD),
+             self._p4rt_neighbor_obj.DEFAULT_DST_MAC),
+            (self._p4rt_neighbor_obj.ACTION_FIELD,
+             self._p4rt_neighbor_obj.DEFAULT_ACTION)
+        ]
+        attr_list = [
+            util.prepend_param_field(
+                self._p4rt_neighbor_obj.DST_MAC_FIELD), self._p4rt_neighbor_obj.DEFAULT_DST_MAC,
+            self._p4rt_neighbor_obj.ACTION_FIELD, self._p4rt_neighbor_obj.DEFAULT_ACTION
+        ]
+        sop = "SET"
+        sdata = self._p4rt_neighbor_obj.DEFAULT_ROUTER_INTERFACE_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(neighbor_key, json.dumps(attr_list))]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, neighbor_attrs, neighbor_key)
+
+        # Add nexthop.
+        nexthop_key = self._p4rt_nexthop_obj.generate_app_db_key(
+            self._p4rt_nexthop_obj.DEFAULT_NEXTHOP_ID)
+        nexthop_attrs = [
+            (self._p4rt_nexthop_obj.ACTION_FIELD,
+             self._p4rt_nexthop_obj.DEFAULT_ACTION),
+            (util.prepend_param_field(self._p4rt_nexthop_obj.RIF_FIELD),
+             self._p4rt_nexthop_obj.DEFAULT_ROUTER_INTERFACE_ID),
+            (util.prepend_param_field(self._p4rt_nexthop_obj.NEIGHBOR_ID_FIELD),
+             self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID)
+        ]
+        attr_list = [
+            self._p4rt_nexthop_obj.ACTION_FIELD, self._p4rt_nexthop_obj.DEFAULT_ACTION,
+            util.prepend_param_field(
+                self._p4rt_nexthop_obj.RIF_FIELD), self._p4rt_nexthop_obj.DEFAULT_ROUTER_INTERFACE_ID,
+            util.prepend_param_field(
+                self._p4rt_nexthop_obj.NEIGHBOR_ID_FIELD), self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID
+        ]
+        sop = "SET"
+        sdata = self._p4rt_nexthop_obj.DEFAULT_NEXTHOP_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(nexthop_key, json.dumps(attr_list))]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, nexthop_attrs, nexthop_key)
+
+        # Add route.
+        route_key = self._p4rt_route_obj.generate_app_db_key(
+            self._p4rt_route_obj.DEFAULT_VRF_ID, self._p4rt_route_obj.DEFAULT_DST)
+        route_attrs = [
+            (self._p4rt_route_obj.ACTION_FIELD,
+             self._p4rt_route_obj.DEFAULT_ACTION),
+            (util.prepend_param_field(self._p4rt_route_obj.NEXTHOP_ID_FIELD),
+             self._p4rt_route_obj.DEFAULT_NEXTHOP_ID),
+        ]
+        attr_list = [
+            self._p4rt_route_obj.ACTION_FIELD, self._p4rt_route_obj.DEFAULT_ACTION,
+            util.prepend_param_field(
+                self._p4rt_route_obj.NEXTHOP_ID_FIELD), self._p4rt_route_obj.DEFAULT_NEXTHOP_ID
+        ]
+        sop = "SET"
+        sdata = self._p4rt_route_obj.DEFAULT_VRF_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(route_key, json.dumps(attr_list))]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, route_attrs, route_key)
+
+        # Delete route.
+        sop = "DEL"
+        sdata = self._p4rt_route_obj.DEFAULT_VRF_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(route_key, "")]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, route_attrs, route_key)
+	
+        # Delete nexthop.
+        sop = "DEL"
+        sdata = self._p4rt_nexthop_obj.DEFAULT_NEXTHOP_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(nexthop_key, "")]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, nexthop_attrs, nexthop_key)
+
+        # Delete neighbor.
+        sop = "DEL"
+        sdata = self._p4rt_neighbor_obj.DEFAULT_ROUTER_INTERFACE_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(neighbor_key, "")]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, neighbor_attrs, neighbor_key)
+
+        # Delete router interface.
+        sop = "DEL"
+        sdata = self._p4rt_router_intf_obj.DEFAULT_PORT_ID
+        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(router_intf_key, "")]))
+        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, ritf_attrs, router_intf_key)
+
+        # Query application database for route entries.
+        route_entries = util.get_keys(
+            self._p4rt_route_obj.appl_db,
+            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
+        )
+        assert len(route_entries) == (
+            self._p4rt_route_obj.get_original_appl_db_entries_count()
+        )
+        # Query ASIC database for route entries.
+        route_entries = util.get_keys(
+            self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME
+        )
+        assert len(route_entries) == (
+            self._p4rt_route_obj.get_original_asic_db_entries_count()
+        )
         self._clean_vrf(dvs)
