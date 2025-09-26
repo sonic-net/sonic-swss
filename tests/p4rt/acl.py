@@ -42,6 +42,7 @@ class P4RtAclTableDefinitionWrapper(util.DBInterface):
     ACTION_COPY_AND_SET_TC = "action/copy_and_set_tc"
     ACTION_PUNT_AND_SET_TC = "action/punt_and_set_tc"
     ACTION_SET_QOS_QUEUE = "action/qos_queue"
+    ACTION_SET_ACL_RATE_LIMIT_COPY = "action/acl_rate_limit_copy"
     METER_UNIT = "meter/unit"
     COUNTER_UNIT = "counter/unit"
 

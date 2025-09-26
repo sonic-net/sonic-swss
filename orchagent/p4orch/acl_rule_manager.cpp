@@ -1399,7 +1399,9 @@ ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_VLAN_PRI:
-    case SAI_ACL_ENTRY_ATTR_ACTION_SET_OUTER_VLAN_PRI: {
+    case SAI_ACL_ENTRY_ATTR_ACTION_SET_OUTER_VLAN_PRI:
+    case SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA: {
+
         try
         {
             value->aclaction.parameter.u8 = to_uint<uint8_t>(attr_value);
@@ -1516,7 +1518,7 @@ ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
 {
     SWSS_LOG_ENTER();
 
-    // Track if the entry creats a new counter or meter
+    // Track if the entry creates a new counter or meter
     bool created_meter = false;
     bool created_counter = false;
     const auto &table_name_and_rule_key = concatTableNameAndRuleKey(acl_rule.acl_table_name, acl_rule.acl_rule_key);
