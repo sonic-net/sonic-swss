@@ -117,7 +117,7 @@ def check_deleted_object(db, table, key):
     assert key not in keys, "The desired key is not removed"
 
 
-def create_vnet_local_routes(dvs, prefix, vnet_name, ifname):
+def create_vnet_local_routes(dvs, prefix, vnet_name, ifname, nexthop=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     create_entry_tbl(
@@ -125,6 +125,7 @@ def create_vnet_local_routes(dvs, prefix, vnet_name, ifname):
         "VNET_ROUTE", '|', "%s|%s" % (vnet_name, prefix),
         [
             ("ifname", ifname),
+            ("nexthop", nexthop),
         ]
     )
 

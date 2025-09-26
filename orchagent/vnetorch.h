@@ -217,8 +217,6 @@ public:
 
     sai_object_id_t getTunnelNextHop(NextHopKey& nh);
     bool removeTunnelNextHop(NextHopKey& nh);
-    void increaseNextHopRefCount(const nextHop&);
-    void decreaseNextHopRefCount(const nextHop&);
 
     const RouteMap &getRouteMap() const { return routes_; }
     const TunnelRoutes &getTunnelRoutes() const { return tunnels_; }
