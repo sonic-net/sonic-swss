@@ -799,10 +799,6 @@ class TestP4RTL3(object):
         # get tunnel_oid of newly created tunnel
         tunnel_oid = self._p4rt_gre_tunnel_obj.get_newly_created_tunnel_oid()
         assert tunnel_oid is not None
-        # get overlay router_interface_oid of newly created router_intf
-        overlay_router_intf_oid = self._p4rt_router_intf_obj.get_newly_created_router_interface_oid(
-            set([router_intf_oid]))
-        assert overlay_router_intf_oid is not None
 
         # Query application database for tunnel entries.
         tunnel_entries = util.get_keys(
@@ -843,7 +839,7 @@ class TestP4RTL3(object):
         attr_list = [
             (self._p4rt_gre_tunnel_obj.SAI_ATTR_UNDERLAY_INTERFACE, router_intf_oid),
             (self._p4rt_gre_tunnel_obj.SAI_ATTR_OVERLAY_INTERFACE,
-             overlay_router_intf_oid),
+             self._p4rt_router_intf_obj.get_default_loopback_oid()),
             (self._p4rt_gre_tunnel_obj.SAI_ATTR_TYPE, "SAI_TUNNEL_TYPE_IPINIP_GRE"),
             (self._p4rt_gre_tunnel_obj.SAI_ATTR_PEER_MODE, "SAI_TUNNEL_PEER_MODE_P2P"),
             (self._p4rt_gre_tunnel_obj.SAI_ATTR_ENCAP_SRC_IP,
