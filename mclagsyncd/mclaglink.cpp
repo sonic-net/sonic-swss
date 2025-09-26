@@ -1877,8 +1877,14 @@ uint64_t MclagLink::readData()
     size_t start = 0, left = 0;
     ssize_t read = 0;
     char * msg = NULL;
-
+    try{
     read = ::read(m_connection_socket, m_messageBuffer + m_pos, m_bufSize - m_pos);
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() << 'ERROR: exceeding buffer size ...';
+    }
+      
     if (read == 0)
         throw MclagConnectionClosedException();
     if (read < 0)
