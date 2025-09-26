@@ -82,7 +82,7 @@ int main(int argc, char **argv)
                 SWSS_LOG_ERROR("Error in RTM_GETLINK dump");
             }
 
-            netlink.dumpRequest(RTM_GETNEIGH);
+            netlink.dumpRequest(RTM_GETNEIGH, AF_BRIDGE);
 
             s.addSelectable(sync.getFdbStateTable());
             s.addSelectable(sync.getMclagRemoteFdbStateTable());
