@@ -70,6 +70,16 @@ std::vector<sai_attribute_t> getRuleSaiAttrs(const P4AclRule &acl_rule)
     // Add actions
     for (const auto &action_fv : acl_rule.action_fvs)
     {
+	// TODO: Pass COPY_CANCEL/DENY actions to SAI once they are
+    	// supported.
+
+    	if (fvField(action_fv) == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION &&
+	    (fvValue(action_fv).aclaction.parameter.s32 == SAI_PACKET_ACTION_DENY ||
+            fvValue(action_fv).aclaction.parameter.s32 ==
+             SAI_PACKET_ACTION_COPY_CANCEL)) {
+      		continue;
+    	}
+
         acl_entry_attr.id = fvField(action_fv);
         acl_entry_attr.value = fvValue(action_fv);
         acl_entry_attrs.push_back(acl_entry_attr);
@@ -155,6 +165,14 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
 
     for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
     {
+	// TODO: Pass COPY_CANCEL/DENY actions to SAI once they are
+        // supported.
+
+    	if (fvValue(packet_color_action) == SAI_PACKET_ACTION_DENY ||
+          fvValue(packet_color_action) == SAI_PACKET_ACTION_COPY_CANCEL) {
+      		continue;
+    	}
+
         meter_attr.id = fvField(packet_color_action);
         meter_attr.value.s32 = fvValue(packet_color_action);
         meter_attrs.push_back(meter_attr);
@@ -471,6 +489,15 @@ ReturnCode AclRuleManager::updateAclMeter(const P4AclMeter &new_acl_meter, const
 
     for (const auto &packet_color_action : new_acl_meter.packet_color_actions)
     {
+
+        // TODO: Pass COPY_CANCEL/DENY actions to SAI once they are
+        // supported.
+
+    	if (fvValue(packet_color_action) == SAI_PACKET_ACTION_DENY ||
+          fvValue(packet_color_action) == SAI_PACKET_ACTION_COPY_CANCEL) {
+      		continue;
+    	}
+
         const auto &it = old_acl_meter.packet_color_actions.find(fvField(packet_color_action));
         if (it == old_acl_meter.packet_color_actions.end() || it->second != fvValue(packet_color_action))
         {
@@ -684,6 +711,15 @@ ReturnCode AclRuleManager::setAclRuleCounterStats(const P4AclRule &acl_rule)
         const auto &packet_colors = acl_rule.meter.packet_color_actions;
         for (const auto &pc : packet_colors)
         {
+
+	    // TODO: Pass COPY_CANCEL/DENY actions to SAI once they are
+            // supported.
+
+      	    if (fvValue(pc) == SAI_PACKET_ACTION_DENY ||
+          	fvValue(pc) == SAI_PACKET_ACTION_COPY_CANCEL) {
+        		continue;
+      	    }
+
             if (acl_rule.counter.packets_enabled)
             {
                 const auto &pkt_stats_id_it = aclCounterColoredPacketsStatsIdMap.find(fvField(pc));
@@ -1379,7 +1415,9 @@ ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_VLAN_PRI:
-    case SAI_ACL_ENTRY_ATTR_ACTION_SET_OUTER_VLAN_PRI: {
+    case SAI_ACL_ENTRY_ATTR_ACTION_SET_OUTER_VLAN_PRI:
+    case SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA: {
+
         try
         {
             value->aclaction.parameter.u8 = to_uint<uint8_t>(attr_value);
@@ -1496,7 +1534,7 @@ ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
 {
     SWSS_LOG_ENTER();
 
-    // Track if the entry creats a new counter or meter
+    // Track if the entry creates a new counter or meter
     bool created_meter = false;
     bool created_counter = false;
     const auto &table_name_and_rule_key = concatTableNameAndRuleKey(acl_rule.acl_table_name, acl_rule.acl_rule_key);
@@ -1585,6 +1623,17 @@ ReturnCode AclRuleManager::updateAclRule(const P4AclRule &acl_rule, const P4AclR
 
     for (const auto &action_fv : acl_rule.action_fvs)
     {
+
+	// TODO: Pass COPY_CANCEL/DENY actions to SAI once they are
+        // supported.
+
+    	if (fvField(action_fv) == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION &&
+           (fvValue(action_fv).aclaction.parameter.s32 == SAI_PACKET_ACTION_DENY ||
+           fvValue(action_fv).aclaction.parameter.s32 ==
+               SAI_PACKET_ACTION_COPY_CANCEL)) {
+      		continue;
+    	}
+
         const auto &it = old_acl_rule.action_fvs.find(fvField(action_fv));
         if (it == old_acl_rule.action_fvs.end())
         {
