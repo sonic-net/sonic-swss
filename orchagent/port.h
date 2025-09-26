@@ -173,6 +173,7 @@ public:
     port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     bool                m_autoneg = false;
     bool                m_unreliable_los = false;
+    bool                m_apply_unreliable_los = false;
     bool                m_link_training = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;
@@ -213,6 +214,7 @@ public:
     uint32_t  m_up_member_count = 0;
     std::set<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
+    sai_port_interface_type_t m_apply_unreliable_los_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
     std::set<sai_port_interface_type_t> m_adv_interface_types;
     bool      m_mpls = false;
     /*
