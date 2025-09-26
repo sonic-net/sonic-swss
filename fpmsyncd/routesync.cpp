@@ -1978,7 +1978,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     char destipprefix[MAX_ADDR_SIZE + 1] = {0};
     nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
 
-    string vnet_dip =  vnet + string(":") + destipprefix;
+    string vnet_dip =  vnet + string("|") + destipprefix;
     SWSS_LOG_DEBUG("Receive new vnet route message %s", vnet_dip.c_str());
 
     /* Ignore IPv6 link-local and mc addresses as Vnet routes */
