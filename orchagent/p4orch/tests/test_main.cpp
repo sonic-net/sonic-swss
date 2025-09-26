@@ -19,6 +19,7 @@ extern "C"
 #include "switchorch.h"
 #include "vrforch.h"
 #include "gtest/gtest.h"
+#include "intfsorch.h"
 
 using ::testing::StrictMock;
 
@@ -53,6 +54,7 @@ P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
+IntfsOrch* gIntfsOrch;
 Directory<Orch *> gDirectory;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
@@ -236,6 +238,9 @@ int main(int argc, char *argv[])
     FlowCounterRouteOrch flow_counter_route_orch(gConfigDb, std::vector<std::string>{});
     gFlowCounterRouteOrch = &flow_counter_route_orch;
     gDirectory.set(static_cast<FlowCounterRouteOrch *>(&flow_counter_route_orch));
+
+    IntfsOrch intfsOrch(gAppDb, APP_INTF_TABLE_NAME, gVrfOrch, gAppDb);
+    gIntfsOrch = &intfsOrch;
 
     // Setup ports for all tests.
     SetupPorts();
