@@ -5512,13 +5512,31 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 {
                     if (m_portVlanMember[port.m_alias].empty())
                     {
-                        removeBridgePort(port);
+                        if (!removeBridgePort(port))
+                        {
+                            SWSS_LOG_NOTICE("Failed to removeBridgePort %s",port.m_alias.c_str());
+                            it++;
+                            continue;
+                        }
                     }
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
                     it++;
+                }
+            }
+            else if (m_portVlanMember[port.m_alias].empty() && port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_WARN("Port %s was removed from vlan, but it is still as bridge port OID %" PRIx64 ", try to remove bridge port again", port.m_alias.c_str(), port.m_bridge_port_id);
+                if (!removeBridgePort(port))
+                {
+                    it++;
+                    continue;
+                }
+                else
+                {
+                    it = consumer.m_toSync.erase(it);
                 }
             }
             else
@@ -6863,11 +6881,15 @@ bool PortsOrch::removeBridgePort(Port &port)
     {
         SWSS_LOG_ERROR("Failed to remove bridge port %s from default 1Q bridge, rv:%d",
             port.m_alias.c_str(), status);
+#if 0
         task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BRIDGE, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+#else
+        return false;
+#endif
     }
     saiOidToAlias.erase(port.m_bridge_port_id);
     port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
