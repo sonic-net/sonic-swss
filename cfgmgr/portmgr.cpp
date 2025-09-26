@@ -87,7 +87,6 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 {
     stringstream cmd;
     string res, cmd_str;
-    int ret;
 
     if (dhcp_rate_limit == "0")
     {
@@ -98,27 +97,20 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     {
         // Assuming dhcp_rate_limit is already validated and contains valid integer
         int byte_rate = atoi(dhcp_rate_limit.c_str()) * PACKET_SIZE;
-        cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " \
-            << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << byte_rate << "bps burst " << byte_rate << "b conform-exceed drop";
+        cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << byte_rate << "bps burst " << byte_rate << "b conform-exceed drop";
     }
     cmd_str = cmd.str();
-    ret = swss::exec(cmd_str, res);
-
+    int ret = swss::exec(cmd_str, res);
     if (!ret)
     {
         return true;
     }
     else
-{
-    bool portOk = isPortStateOk(alias);
-    SWSS_LOG_WARN("Setting DHCP rate limit to alias:%s failed (port state:%s) with cmd:%s, rc:%d, error:%s",
-                  alias.c_str(),
-                  portOk ? "ready" : "not ready",
-                  cmd_str.c_str(),
-                  ret,
-                  res.c_str());
-    return false;
-}
+    {
+        bool portOk = isPortStateOk(alias);
+        SWSS_LOG_WARN("Setting DHCP rate limit to alias:%s failed (port state:%s) with cmd:%s, rc:%d, error:%s", alias.c_str(), portOk ? "ready" : "not ready", cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
 }
 
 bool PortMgr::isPortStateOk(const string &alias)
