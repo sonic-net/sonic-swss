@@ -419,7 +419,8 @@ bool OrchDaemon::init()
 
     vector<string> debug_counter_tables = {
         CFG_DEBUG_COUNTER_TABLE_NAME,
-        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME
+        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
+        CFG_DEBUG_DROP_MONITOR_TABLE_NAME
     };
 
     gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
