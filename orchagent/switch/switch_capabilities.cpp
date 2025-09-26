@@ -5,6 +5,7 @@ extern "C" {
 #include <saiobject.h>
 #include <saistatus.h>
 #include <saihash.h>
+#include <saimetadata.h>
 #include <saiswitch.h>
 }
 
@@ -314,16 +315,20 @@ std::vector<FieldValueTuple> SwitchCapabilities::makeLagHashAlgorithmCapDbEntry(
 
 sai_status_t SwitchCapabilities::queryEnumCapabilitiesSai(std::vector<sai_int32_t> &capList, sai_object_type_t objType, sai_attr_id_t attrId) const
 {
-    sai_s32_list_t enumList = { .count = 0, .list = nullptr };
-
-    auto status = sai_query_attribute_enum_values_capability(gSwitchId, objType, attrId, &enumList);
-    if ((status != SAI_STATUS_SUCCESS) && (status != SAI_STATUS_BUFFER_OVERFLOW))
+    const auto* meta = sai_metadata_get_attr_metadata(objType, attrId);
+    if (!meta || !meta->isenum)
     {
-        return status;
+        SWSS_LOG_ERROR("Failed to get enum metadata for objType:%d attrId:%d", objType, attrId);
+        return SAI_STATUS_FAILURE;
     }
 
-    capList.resize(enumList.count);
-    enumList.list = capList.data();
+    SWSS_LOG_DEBUG("Capability size for objType:%d attrId:%d is count:%d", objType, attrId, meta->enummetadata->valuescount);
+    // Pre-allocate based on metadata to avoid buffer overflow
+    capList.resize(meta->enummetadata->valuescount);
+    sai_s32_list_t enumList = { 
+        .count = static_cast<uint32_t>(capList.size()),
+        .list = capList.data()
+    };
 
     return sai_query_attribute_enum_values_capability(gSwitchId, objType, attrId, &enumList);
 }
