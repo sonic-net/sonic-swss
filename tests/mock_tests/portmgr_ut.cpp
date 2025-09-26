@@ -118,7 +118,6 @@ namespace portmgr_ut
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
 
-        // Restore port state to ok for next case
         state_port_table.set("Ethernet0", {
             {"state", "ok"}
         });
