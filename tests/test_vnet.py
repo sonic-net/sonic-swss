@@ -2969,6 +2969,106 @@ class TestVnetOrch(object):
         self.remove_ip_address("Ethernet12", "9.1.0.4/32")
         self.set_admin_status("Ethernet12", "down")
 
+
+    '''
+    Test 30 - Test vnet local route with single nexthop
+    '''
+    def test_vnet_local_route_single(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_1'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, 'Vnet_2000', tunnel_name, '2000', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet_2000')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2000', '2000')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+
+        # setup interface under vnet
+        create_phy_interface(dvs, "Ethernet12", "Vnet_2000", "10.10.0.9")
+        vnet_obj.check_router_interface(dvs, "Ethernet12", 'Vnet_2000')
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet12", "10.10.0.9", "00:01:02:03:04:05")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", 'Vnet_2000', 'Ethernet12', "10.10.0.9")
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000')
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+
+        delete_phy_interface(dvs, "Ethernet12", "10.10.0.9")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet12")
+
+        delete_vnet_entry(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2000')
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+        self.remove_neighbor("Ethernet12", "10.10.0.9")
+
+    '''
+    Test 31 - Test ecmp vnet local route with multiple nexthops
+    '''
+    def test_vnet_local_route_ecmp(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_1'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, 'Vnet_2000', tunnel_name, '2000', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet_2000')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2000', '2000')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+
+        # setup interfaces under vnet
+        create_phy_interface(dvs, "Ethernet12", "Vnet_2000", "10.10.0.9")
+        create_phy_interface(dvs, "Ethernet16", "Vnet_2000", "10.10.0.11")
+
+        vnet_obj.check_router_interface(dvs, "Ethernet12", 'Vnet_2000')
+        vnet_obj.check_router_interface(dvs, "Ethernet16", 'Vnet_2000')
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet12", "10.10.0.9", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet16", "10.10.0.11", "00:01:02:03:04:06")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", 'Vnet_2000', 'Ethernet12,Ethernet16', "10.10.0.9,10.10.0.11")
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000')
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+
+        delete_phy_interface(dvs, "Ethernet12", "10.10.0.9")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet12")
+        delete_phy_interface(dvs, "Ethernet16", "10.10.0.11")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet16")
+
+        delete_vnet_entry(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2000')
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+        self.remove_neighbor("Ethernet12", "10.10.0.9")
+        self.remove_neighbor("Ethernet16", "10.10.0.11")
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
