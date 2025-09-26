@@ -20,6 +20,9 @@
 #include <sys/types.h>
 #include <signal.h>
 
+#if 1 /* CID-38603: resource leak fd, CP, 2020/11/13 15:02:59 */
+#include <unistd.h>
+#endif
 
 using namespace std;
 using namespace swss;
@@ -388,6 +391,30 @@ bool TeamMgr::checkPortIffUp(const string &port)
     ifr.ifr_name[strlen(port.c_str())] = 0;
 
     int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+
+#if 1 /* CID-38603: resource leak fd, CP, 2020/11/13 15:02:59 */
+
+    if (fd == -1)
+    {
+        SWSS_LOG_ERROR("failed to create socket");
+        return false;
+    }
+
+    // get port status
+    int rv = ioctl(fd, SIOCGIFFLAGS, &ifr);
+
+    // close socket
+    close(fd);
+
+    // failed to get port status
+    if (rv == -1)
+    {
+        SWSS_LOG_ERROR("Failed to get port %s flags", port.c_str());
+        return false;
+    }
+
+#else /* CID-38603: resource leak fd, CP, 2020/11/13 15:02:59 */
+
     if (fd == -1 || ioctl(fd, SIOCGIFFLAGS, &ifr) == -1)
     {
         SWSS_LOG_ERROR("Failed to get port %s flags", port.c_str());
@@ -397,6 +424,7 @@ bool TeamMgr::checkPortIffUp(const string &port)
         }
         return false;
     }
+#endif /* CID-38603: resource leak fd, CP, 2020/11/13 15:02:59 */
 
     SWSS_LOG_INFO("Get port %s flags %i", port.c_str(), ifr.ifr_flags);
     close(fd);
