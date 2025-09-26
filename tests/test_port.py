@@ -434,6 +434,108 @@ class TestPort(object):
         for key, queue in buffer_queues.items():
             dvs.get_config_db().update_entry("BUFFER_QUEUE", key, queue)
 
+    def test_InvalidPortLoopbackMode(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        table_name = "PORT_TABLE"
+        port_name = "Ethernet0"
+        attribute_name = "loopback_mode"
+
+        for attribute_value in ["", "invalid"]:
+            # Set invalid loopback mode.
+            tbl = swsscommon.ProducerStateTable(pdb, table_name)
+            fvs = swsscommon.FieldValuePairs([(attribute_name, attribute_value)])
+            tbl.set(port_name, fvs)
+            time.sleep(1)
+
+            # Check application database.
+            tbl = swsscommon.Table(pdb, table_name)
+            (status, fvs) = tbl.get(port_name)
+            assert status == True
+            attribute_found = False
+            for fv in fvs:
+                if fv[0] == attribute_name:
+                    attribute_found = True
+                    assert fv[1] == attribute_value
+            assert attribute_found == True
+
+            # Check attribute not present in asic database.
+            tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+            (status, fvs) = tbl.get(dvs.asicdb.portnamemap[port_name])
+            assert status == True
+            attribute_found = False
+            for fv in fvs:
+                if fv[0] == "SAI_PORT_ATTR_LOOPBACK_MODE":
+                    attribute_found = True
+            assert attribute_found == False
+
+    def test_PortLoopbackMode(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        table_name = "PORT_TABLE"
+        port_name = "Ethernet0"
+        attribute_name = "loopback_mode"
+        attribute_value = "mac_local"
+
+        # Enable loopback mode.
+        tbl = swsscommon.ProducerStateTable(pdb, table_name)
+        fvs = swsscommon.FieldValuePairs([(attribute_name, attribute_value)])
+        tbl.set(port_name, fvs)
+        time.sleep(1)
+
+        # Check application database.
+        tbl = swsscommon.Table(pdb, table_name)
+        (status, fvs) = tbl.get(port_name)
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == attribute_name:
+                attribute_found = True
+                assert fv[1] == attribute_value
+        assert attribute_found == True
+
+        # Check asic database.
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        (status, fvs) = tbl.get(dvs.asicdb.portnamemap[port_name])
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_LOOPBACK_MODE":
+                attribute_found = True
+                assert fv[1] == "SAI_PORT_LOOPBACK_MODE_MAC"
+        assert attribute_found == True
+
+        # Disable loopback mode.
+        attribute_value = "none"
+        tbl = swsscommon.ProducerStateTable(pdb, table_name)
+        fvs = swsscommon.FieldValuePairs([(attribute_name, attribute_value)])
+        tbl.set(port_name, fvs)
+        time.sleep(1)
+
+        # Check application database.
+        tbl = swsscommon.Table(pdb, table_name)
+        (status, fvs) = tbl.get(port_name)
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == attribute_name:
+                attribute_found = True
+                assert fv[1] == attribute_value
+        assert attribute_found == True
+
+        # Check asic database.
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        (status, fvs) = tbl.get(dvs.asicdb.portnamemap[port_name])
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_LOOPBACK_MODE":
+                attribute_found = True
+                assert fv[1] == "SAI_PORT_LOOPBACK_MODE_NONE"
+        assert attribute_found == True
+
     def test_PortLinkEventDamping(self, dvs, testlog):
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
