@@ -42,4 +42,7 @@ private:
     bool isPortStateOk(const std::string &alias);
 };
 
+
+
+
 }
