@@ -73,6 +73,7 @@ private:
 
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
     bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
+    bool setIntfTimeoutArp(const std::string &alias, const std::string &timeout_arp);
 
     void updateSubIntfAdminStatus(const std::string &alias, const std::string &admin);
     void updateSubIntfMtu(const std::string &alias, const std::string &mtu);
