@@ -311,6 +311,8 @@ const request_description_t vnet_route_description = {
         { "monitoring",             REQ_T_STRING },
         { "adv_prefix",             REQ_T_IP_PREFIX },
         { "check_directly_connected", REQ_T_BOOL },
+        { "rx_monitor_timer",       REQ_T_UINT },
+        { "tx_monitor_timer",       REQ_T_UINT },
     },
     { }
 };
@@ -479,16 +481,17 @@ private:
                             const string& monitoring);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
 
-    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, IpPrefix&,
+    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, const int32_t, const int32_t, IpPrefix&,
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
-    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops,
-                            const string& monitoring, IpPrefix& ipPrefix);
+                            const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
+                            IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
@@ -503,7 +506,8 @@ private:
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
-                    const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
+                    const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
+                    NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
