@@ -47,7 +47,7 @@ bool fipsEnabled(DBConnector *stateDb)
 {
     try
     {
-        // Check if FIPS was enabled via sonic-installer.
+        /* Check if FIPS was enabled via sonic-installer */
         std::ifstream proc_cmdline_file("/proc/cmdline");
         if (proc_cmdline_file.is_open())
         {
@@ -55,14 +55,14 @@ bool fipsEnabled(DBConnector *stateDb)
             std::getline(proc_cmdline_file, cmdline);
             if (cmdline.find("sonic_fips=1") != std::string::npos)
             {
-                SWSS_LOG_NOTICE("FIPS enabled in /proc/cmdline");
+                SWSS_LOG_NOTICE("FIPS mode detected: enabled via parameter 'sonic_fips=1'");
                 return true;
             }
         }
     }
     catch (const std::exception& e)
     {
-        SWSS_LOG_ERROR("failed to fetch FIPS mode: %s", e.what());
+        SWSS_LOG_ERROR("Exception while checking FIPS mode status: %s", e.what());
     }
     return false;
 }
@@ -73,49 +73,56 @@ bool fipsEnabled(DBConnector *stateDb)
 bool getCpCryptoFipsPostStatus(DBConnector *stateDb)
 {
     std::string res;
-    bool status = false;
+    std::string status("unavailable");
+    bool ready = false;
 
-    /* wpa_supplicant argument -F returns the FIPS ready status */
-    int ret = swss::exec("/sbin/wpa_supplicant -F", res);
-    if (ret != 0)
+    /**
+     * FIPS POST status can be queried from wpa_supplicant unsing '-F' argument.
+     * Execute the command with timeout to prevent indefinite blocking. Symcrypt provider,
+     * on detecting a POST failure, enters an infinite loop.
+     */
+    int ret = swss::exec("timeout 5 /sbin/wpa_supplicant -F", res);
+    if (ret == 0)
     {
-        SWSS_LOG_ERROR("'wpa_supplicant -F' returned error: %s", res.c_str());
-        return false;
+        SWSS_LOG_INFO("wpa_supplicant POST query completed successfully: %s", res.c_str());
+        if (res.find("FIPS POST status: pass") != std::string::npos)
+        {
+            ready = true;
+            status = "pass";
+        }
+        else
+        {
+            status = "fail";
+        }
     }
-    SWSS_LOG_DEBUG("cmd: 'wpa_supplicant -F' returned: %s", res.c_str());
-    status = res.find("FIPS POST status: pass") != std::string::npos;
+    else
+    {
+        SWSS_LOG_ERROR("wpa_supplicant timed out or failed (exit code: %d)", ret);
+    }
 
-
-    /* Publish the POST status */
+    /* Publish POST status to STATE_DB for monitoring and audit trail */
+    Table postTable = Table(stateDb, STATE_FIPS_MACSEC_POST_TABLE_NAME);
     std::ostringstream ostream;
+    vector<FieldValueTuple> fvts;
 
-    try
-    {
-        Table postTable = Table(stateDb, STATE_FIPS_MACSEC_POST_TABLE_NAME);
-        vector<FieldValueTuple> fvts;
-        FieldValueTuple fvt("status", status ? "pass" : "fail");
-        fvts.push_back(fvt);
+    /* Record the POST status */
+    FieldValueTuple fvt("status", status);
+    fvts.push_back(fvt);
 
-        /* Add timestamp (UTC date in ISO 8601 format) for audit trail */
-        auto now = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-        ostream << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%S");
-        ostream << "." << std::setfill('0') << std::setw(3) << ms.count() << "Z";
-        FieldValueTuple timestamp_fvt("timestamp", ostream.str());
-        fvts.push_back(timestamp_fvt);
+    /* Add timestamp (UTC date in ISO 8601 format) for audit trail */
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    ostream << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%S");
+    ostream << "." << std::setfill('0') << std::setw(3) << ms.count() << "Z";
+    FieldValueTuple timestamp_fvt("timestamp", ostream.str());
+    fvts.push_back(timestamp_fvt);
 
-        postTable.set("crypto", fvts);
-        SWSS_LOG_DEBUG("control plane crypto POST status recorded");
-    }
-    catch (const std::exception& e)
-    {
-        SWSS_LOG_ERROR("failed to record control plane crypto POST status: %s",
-                       e.what());
-    }
+    /* Publish to STATE_DB */
+    postTable.set("crypto", fvts);
+    SWSS_LOG_DEBUG("control plane crypto POST status recorded");
 
-    return status;
-
+    return ready;
 }
 
 int main(int argc, char **argv)
@@ -143,26 +150,26 @@ int main(int argc, char **argv)
             CFG_PORT_TABLE_NAME,
         };
 
-        /* Check POST status if FIPS mode is enabled */
-        bool isCpPostStateReady=false;
+        /* Perform FIPS compliance check if FIPS mode is enabled */
+        bool isCpPostStateReady = false;
         if (fipsEnabled(&stateDb))
         {
-            SWSS_LOG_NOTICE("running in FIPS mode");
-
-            /* Check if the control plane is FIPS ready. */
-            if (!getCpCryptoFipsPostStatus(&stateDb))
+            SWSS_LOG_NOTICE("System operating in FIPS compliant mode");
+            /* Validate that the control plane cryptographic module passed POST */
+            if (getCpCryptoFipsPostStatus(&stateDb))
             {
-                SWSS_LOG_ERROR("control plane crypto not FIPS ready");
+                SWSS_LOG_NOTICE("control plane crypto is FIPS ready");
                 isCpPostStateReady = true;
             }
             else
             {
-                SWSS_LOG_NOTICE("control plane crypto is FIPS ready");
+                SWSS_LOG_ERROR("control plane crypto is not FIPS ready");
             }
         }
-        else {
-            /* Not running in FIPS mode */
-            isCpPostStateReady=true;
+        else
+        {
+            /* Non-FIPS mode: skip POST validation and proceed normally */
+            isCpPostStateReady = true;
         }
 
         MACsecMgr macsecmgr(&cfgDb, &stateDb, cfg_macsec_tables);
@@ -178,13 +185,14 @@ int main(int argc, char **argv)
         SWSS_LOG_NOTICE("starting main loop");
         while (!received_sigterm)
         {
-
-            /* Don't process any config until POST state is ready */
             if (!isCpPostStateReady)
             {
-                 /* Continue in the infinite loop, making the service un-available. */
-                 sleep(1);
-                 continue;
+                /**
+                 * FIPS compliance enforcement: Continue in the infinite loop, making
+                 * the service un-available
+                 */
+                sleep(1);
+                continue;
             }
 
             Selectable *sel;
