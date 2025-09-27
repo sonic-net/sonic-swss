@@ -41,6 +41,7 @@ namespace
 constexpr char *kIpv4Prefix = "10.11.12.0/24";
 constexpr char *kIpv4Prefix2 = "10.12.12.0/24";
 constexpr char *kIpv6Prefix = "2001:db8:1::/32";
+constexpr char* kIpv6Prefix2 = "2001:db8:2::/32";
 constexpr char *kNexthopId1 = "ju1u32m1.atl11:qe-3/7";
 constexpr sai_object_id_t kNexthopOid1 = 1;
 constexpr char *kNexthopId2 = "ju1u32m2.atl11:qe-3/7";
@@ -247,9 +248,12 @@ class RouteManagerTest : public ::testing::Test
         route_manager_.enqueue(table_name, entry);
     }
 
-    void Drain()
-    {
-        route_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        route_manager_.drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return route_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -1500,25 +1504,27 @@ TEST_F(RouteManagerTest, UpdateRouteFromSetWcmpToSetNextHopAndMetadataSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-    exp_sai_attr.value.u32 = kMetadataInt2;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+    exp_sai_attr_1.value.u32 = kMetadataInt2;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_2.value.oid = kNexthopOid2;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
 
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = kNexthopOid2;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -1586,25 +1592,26 @@ TEST_F(RouteManagerTest, UpdateRouteFromSetNexthopIdAndMetadataToSetWcmpSucceeds
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-    exp_sai_attr.value.u32 = 0;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+    exp_sai_attr_1.value.u32 = 0;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_2.value.oid = kWcmpGroupOid2;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = kWcmpGroupOid2;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -1654,29 +1661,37 @@ TEST_F(RouteManagerTest, UpdateRouteEntryDropWithSaiErrorShouldFail)
     SetupNexthopIdRouteEntry(gVrfName, swss_ipv4_route_prefix, kNexthopId1, kNexthopOid1);
 
     auto route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix, p4orch::kDrop, "");
-    std::vector<sai_status_t> exp_failure_status{SAI_STATUS_FAILURE};
-    std::vector<sai_status_t> exp_success_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_FAILURE,
+                                           SAI_STATUS_NOT_EXECUTED};
+    std::vector<sai_status_t> exp_status_2{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_FAILURE};
+    std::vector<sai_status_t> exp_status_3{SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_status_4{SAI_STATUS_FAILURE};
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_FAILURE)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(1), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_3.begin(), exp_status_3.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(1), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_4.begin(), exp_status_4.end()),
+                  Return(SAI_STATUS_FAILURE)));
     // TODO: Expect critical state.
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
@@ -1688,29 +1703,37 @@ TEST_F(RouteManagerTest, UpdateRouteEntryTrapWithSaiErrorShouldFail)
     SetupNexthopIdRouteEntry(gVrfName, swss_ipv4_route_prefix, kNexthopId1, kNexthopOid1);
 
     auto route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix, p4orch::kTrap, "");
-    std::vector<sai_status_t> exp_failure_status{SAI_STATUS_FAILURE};
-    std::vector<sai_status_t> exp_success_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_FAILURE,
+                                           SAI_STATUS_NOT_EXECUTED};
+    std::vector<sai_status_t> exp_status_2{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_FAILURE};
+    std::vector<sai_status_t> exp_status_3{SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_status_4{SAI_STATUS_FAILURE};
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_FAILURE)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(1), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_3.begin(), exp_status_3.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(1), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_4.begin(), exp_status_4.end()),
+                  Return(SAI_STATUS_FAILURE)));
     // TODO: Expect critical state.
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
@@ -1772,25 +1795,26 @@ TEST_F(RouteManagerTest, UpdateRouteWithDifferentNexthopIdsAndMetadatasSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-    exp_sai_attr.value.u32 = kMetadataInt2;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+    exp_sai_attr_1.value.u32 = kMetadataInt2;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_2.value.oid = kNexthopOid2;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = kNexthopOid2;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -1817,25 +1841,26 @@ TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdToDropSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_1.value.s32 = SAI_PACKET_ACTION_DROP;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_2.value.oid = SAI_NULL_OBJECT_ID;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = SAI_NULL_OBJECT_ID;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -1845,57 +1870,54 @@ TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdToDropSucceeds)
     EXPECT_EQ(0, ref_cnt);
 }
 
-TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdToRouteMetadataSucceeds)
-{
-    auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
-    sai_ip_prefix_t sai_ipv4_route_prefix;
-    copy(sai_ipv4_route_prefix, swss_ipv4_route_prefix);
-    SetupNexthopIdRouteEntry(gVrfName, swss_ipv4_route_prefix, kNexthopId1, kNexthopOid1);
+TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdToDropWithMetadataSucceeds) {
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
+  sai_ip_prefix_t sai_ipv4_route_prefix;
+  copy(sai_ipv4_route_prefix, swss_ipv4_route_prefix);
+  SetupNexthopIdRouteEntry(gVrfName, swss_ipv4_route_prefix, kNexthopId1,
+                           kNexthopOid1);
 
-    auto route_entry =
-        GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix, p4orch::kSetMetadataAndDrop, "", kMetadata1);
+  auto route_entry =
+      GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                           p4orch::kSetMetadataAndDrop, "", kMetadata1);
 
-    sai_route_entry_t exp_sai_route_entry;
-    exp_sai_route_entry.switch_id = gSwitchId;
-    exp_sai_route_entry.vr_id = gVrfOid;
-    exp_sai_route_entry.destination = sai_ipv4_route_prefix;
+  sai_route_entry_t exp_sai_route_entry;
+  exp_sai_route_entry.switch_id = gSwitchId;
+  exp_sai_route_entry.vr_id = gVrfOid;
+  exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-    exp_sai_attr.value.s32 = kMetadataInt1;
+  sai_attribute_t exp_sai_attr_1;
+  exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+  exp_sai_attr_1.value.s32 = SAI_PACKET_ACTION_DROP;
+  sai_attribute_t exp_sai_attr_2;
+  exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+  exp_sai_attr_2.value.oid = SAI_NULL_OBJECT_ID;
+  sai_attribute_t exp_sai_attr_3;
+  exp_sai_attr_3.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+  exp_sai_attr_3.value.s32 = kMetadataInt1;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,
+                                       SAI_STATUS_SUCCESS};
+  EXPECT_CALL(
+      mock_sai_route_,
+      set_route_entries_attribute(
+          Eq(3),
+          RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+              exp_sai_route_entry, exp_sai_route_entry, exp_sai_route_entry}),
+          AttrArrayEq(std::vector<sai_attribute_t>{
+              exp_sai_attr_1, exp_sai_attr_2, exp_sai_attr_3}),
+          Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+      .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
 
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = SAI_NULL_OBJECT_ID;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_DROP;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
-                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
-    VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
-    uint32_t ref_cnt;
-    EXPECT_TRUE(
-        p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), &ref_cnt));
-    EXPECT_EQ(0, ref_cnt);
+  EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+  VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
+  uint32_t ref_cnt;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+      SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1),
+      &ref_cnt));
+  EXPECT_EQ(0, ref_cnt);
 }
 
 TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdAndMetadataToDropSucceeds)
@@ -1912,34 +1934,30 @@ TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdAndMetadataToDropSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_1.value.s32 = SAI_PACKET_ACTION_DROP;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_2.value.oid = SAI_NULL_OBJECT_ID;
+    sai_attribute_t exp_sai_attr_3;
+    exp_sai_attr_3.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+    exp_sai_attr_3.value.u32 = 0;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = SAI_NULL_OBJECT_ID;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-    exp_sai_attr.value.u32 = 0;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(
+        mock_sai_route_,
+        set_route_entries_attribute(
+            Eq(3),
+            RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                exp_sai_route_entry, exp_sai_route_entry, exp_sai_route_entry}),
+            AttrArrayEq(std::vector<sai_attribute_t>{
+                exp_sai_attr_1, exp_sai_attr_2, exp_sai_attr_3}),
+            Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -1965,25 +1983,26 @@ TEST_F(RouteManagerTest, UpdateRouteFromDropToNexthopIdSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = kNexthopOid2;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_1.value.oid = kNexthopOid2;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_2.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -2010,34 +2029,30 @@ TEST_F(RouteManagerTest, UpdateRouteFromDropToWcmpWithMetadataSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-    exp_sai_attr.value.u32 = kMetadataInt2;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+    exp_sai_attr_1.value.u32 = kMetadataInt2;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_2.value.oid = kWcmpGroupOid1;
+    sai_attribute_t exp_sai_attr_3;
+    exp_sai_attr_3.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_3.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = kWcmpGroupOid1;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(
+        mock_sai_route_,
+        set_route_entries_attribute(
+            Eq(3),
+            RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                exp_sai_route_entry, exp_sai_route_entry, exp_sai_route_entry}),
+            AttrArrayEq(std::vector<sai_attribute_t>{
+                exp_sai_attr_1, exp_sai_attr_2, exp_sai_attr_3}),
+            Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -2062,26 +2077,26 @@ TEST_F(RouteManagerTest, UpdateRouteFromTrapToDropAndSetMetadataSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_1.value.s32 = SAI_PACKET_ACTION_DROP;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+    exp_sai_attr_2.value.u32 = kMetadataInt2;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-    exp_sai_attr.value.u32 = kMetadataInt2;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
-
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -2156,25 +2171,27 @@ TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdToTrapSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_TRAP;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_1.value.s32 = SAI_PACKET_ACTION_TRAP;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_2.value.oid = SAI_NULL_OBJECT_ID;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
 
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = SAI_NULL_OBJECT_ID;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -2200,25 +2217,27 @@ TEST_F(RouteManagerTest, UpdateRouteFromTrapToNexthopIdSucceeds)
     exp_sai_route_entry.vr_id = gVrfOid;
     exp_sai_route_entry.destination = sai_ipv4_route_prefix;
 
-    sai_attribute_t exp_sai_attr;
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    exp_sai_attr.value.oid = kNexthopOid2;
+    sai_attribute_t exp_sai_attr_1;
+    exp_sai_attr_1.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    exp_sai_attr_1.value.oid = kNexthopOid2;
+    sai_attribute_t exp_sai_attr_2;
+    exp_sai_attr_2.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_2.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
 
-    exp_sai_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    exp_sai_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_route_,
+                set_route_entries_attribute(
+                    Eq(2),
+                    RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                        exp_sai_route_entry, exp_sai_route_entry}),
+                    AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_1,
+                                                             exp_sai_attr_2}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -2239,33 +2258,32 @@ TEST_F(RouteManagerTest, UpdateRouteFromTrapToNexthopIdAndMetadataRecoverFailure
                                             kNexthopId2, kMetadata1);
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(route_entry.nexthop_id),
                           kNexthopOid2);
-    std::vector<sai_status_t> exp_failure_status{SAI_STATUS_FAILURE};
-    std::vector<sai_status_t> exp_success_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status_1{
+        SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
+    std::vector<sai_status_t> exp_status_2{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_status_3{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_FAILURE};
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(3), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
 
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(3), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_3.begin(), exp_status_3.end()),
+                  Return(SAI_STATUS_FAILURE)));
     // TODO: Expect critical state.
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
@@ -2336,25 +2354,27 @@ TEST_F(RouteManagerTest, UpdateRouteFromNexthopIdAndMetadataToDropRecoverFailure
 
     auto route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix, p4orch::kDrop, "");
 
-    std::vector<sai_status_t> exp_failure_status{SAI_STATUS_FAILURE};
-    std::vector<sai_status_t> exp_success_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    std::vector<sai_status_t> exp_status_1{
+        SAI_STATUS_FAILURE, SAI_STATUS_NOT_EXECUTED, SAI_STATUS_NOT_EXECUTED};
+    std::vector<sai_status_t> exp_status_2{
+        SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
+    std::vector<sai_status_t> exp_status_3{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_FAILURE};
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(3), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_FAILURE)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
 
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(3), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_3.begin(), exp_status_3.end()),
+                  Return(SAI_STATUS_FAILURE)));
     // TODO: Expect critical state.
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
@@ -2372,21 +2392,26 @@ TEST_F(RouteManagerTest, UpdateRouteFromDifferentNexthopIdAndMetadataRecoverFail
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(route_entry.nexthop_id),
                           kNexthopOid2);
 
-    std::vector<sai_status_t> exp_failure_status{SAI_STATUS_FAILURE};
-    std::vector<sai_status_t> exp_success_status{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_FAILURE,
+                                           SAI_STATUS_NOT_EXECUTED};
+    std::vector<sai_status_t> exp_status_2{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_FAILURE};
+    std::vector<sai_status_t> exp_status_3{SAI_STATUS_FAILURE};
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_FAILURE)));
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
 
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_success_status.begin(), exp_success_status.end()),
-                        Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_failure_status.begin(), exp_failure_status.end()),
-                        Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(2), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(Eq(1), _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status_3.begin(), exp_status_3.end()),
+                  Return(SAI_STATUS_FAILURE)));
     // TODO: Expect critical state.
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
@@ -2477,7 +2502,7 @@ TEST_F(RouteManagerTest, RouteCreateAndUpdateInDrainSucceeds)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
                                     Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId2), kNexthopOid2);
     auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss_ipv4_route_prefix, SET_COMMAND,
@@ -2489,7 +2514,7 @@ TEST_F(RouteManagerTest, RouteCreateAndUpdateInDrainSucceeds)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
                                     Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     auto route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix, p4orch::kSetNexthopId, kNexthopId2);
     sai_ip_prefix_t sai_ipv4_route_prefix;
@@ -2512,7 +2537,7 @@ TEST_F(RouteManagerTest, RouteCreateAndUpdateInDrainSucceeds)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_3)),
                                     Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix, p4orch::kSetMetadataAndDrop, "", kMetadata1);
     VerifyRouteEntry(route_entry, sai_ipv4_route_prefix, gVrfOid);
@@ -2538,7 +2563,7 @@ TEST_F(RouteManagerTest, RouteCreateAndDeleteInDrainSucceeds)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
                                     Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss_ipv4_route_prefix, DEL_COMMAND, "", "");
     Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
@@ -2548,7 +2573,7 @@ TEST_F(RouteManagerTest, RouteCreateAndDeleteInDrainSucceeds)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
                                     Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     std::string key = KeyGenerator::generateRouteKey(gVrfName, swss_ipv4_route_prefix);
     auto *route_entry_ptr = GetRouteEntry(key);
@@ -2583,7 +2608,8 @@ TEST_F(RouteManagerTest, UpdateFailsWhenCreateAndUpdateTheSameRouteInDrain)
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
         .Times(1);
 
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
     sai_ip_prefix_t sai_ipv4_route_prefix;
     copy(sai_ipv4_route_prefix, swss_ipv4_route_prefix);
@@ -2618,7 +2644,8 @@ TEST_F(RouteManagerTest, DeleteFailsWhenCreateAndDeleteTheSameRouteInDrain)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
     sai_ip_prefix_t sai_ipv4_route_prefix;
     copy(sai_ipv4_route_prefix, swss_ipv4_route_prefix);
@@ -2662,7 +2689,7 @@ TEST_F(RouteManagerTest, RouteCreateInDrainSucceedsWhenVrfIsEmpty)
                         FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)), Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
         .Times(1);
 
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateRouteKey(kDefaultVrfName, swss::IpPrefix(kIpv4Prefix));
     auto *route_entry_ptr = GetRouteEntry(key);
     EXPECT_NE(nullptr, route_entry_ptr);
@@ -2683,7 +2710,8 @@ TEST_F(RouteManagerTest, DeserializeRouteEntryInDrainFails)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 }
 
 TEST_F(RouteManagerTest, ValidateRouteEntryInDrainFailsWhenVrfDoesNotExist)
@@ -2696,7 +2724,7 @@ TEST_F(RouteManagerTest, ValidateRouteEntryInDrainFailsWhenVrfDoesNotExist)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
 }
 
 TEST_F(RouteManagerTest, ValidateRouteEntryInDrainFailsWhenNexthopDoesNotExist)
@@ -2708,7 +2736,7 @@ TEST_F(RouteManagerTest, ValidateRouteEntryInDrainFailsWhenNexthopDoesNotExist)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
 }
 
 TEST_F(RouteManagerTest, InvalidateSetRouteEntryInDrainFails)
@@ -2722,7 +2750,8 @@ TEST_F(RouteManagerTest, InvalidateSetRouteEntryInDrainFails)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 }
 
 TEST_F(RouteManagerTest, InvalidateDelRouteEntryInDrainFails)
@@ -2735,7 +2764,7 @@ TEST_F(RouteManagerTest, InvalidateDelRouteEntryInDrainFails)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
 }
 
 TEST_F(RouteManagerTest, InvalidCommandInDrainFails)
@@ -2754,7 +2783,8 @@ TEST_F(RouteManagerTest, InvalidCommandInDrainFails)
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
         .Times(1);
-    Drain();
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 }
 
 TEST_F(RouteManagerTest, BatchedCreateSucceeds)
@@ -2913,25 +2943,26 @@ TEST_F(RouteManagerTest, BatchedUpdateSucceeds)
     exp_sai_attr_ipv6.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
     exp_sai_attr_ipv6.value.oid = kWcmpGroupOid2;
 
-    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(2),
-                                     RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv4,
-                                                                                      exp_sai_route_entry_ipv6}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv4, exp_sai_attr_ipv6}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()), Return(SAI_STATUS_SUCCESS)));
-
     sai_attribute_t exp_sai_attr_ipv6_2;
     exp_sai_attr_ipv6_2.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
     exp_sai_attr_ipv6_2.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-    std::vector<sai_status_t> exp_status_2{SAI_STATUS_SUCCESS};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(1), RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv6}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv6_2}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_SUCCESS};
+    EXPECT_CALL(
+        mock_sai_route_,
+        set_route_entries_attribute(
+            Eq(3),
+            RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6,
+                exp_sai_route_entry_ipv6}),
+            AttrArrayEq(std::vector<sai_attribute_t>{
+                exp_sai_attr_ipv4, exp_sai_attr_ipv6, exp_sai_attr_ipv6_2}),
+            Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+
     EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4, route_entry_ipv6}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS, StatusCode::SWSS_RC_SUCCESS}));
     VerifyRouteEntry(route_entry_ipv4, sai_ipv4_route_prefix, gVrfOid);
@@ -2986,29 +3017,142 @@ TEST_F(RouteManagerTest, BatchedUpdatePartiallySucceeds)
     exp_sai_attr_ipv6.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
     exp_sai_attr_ipv6.value.oid = kWcmpGroupOid2;
 
-    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
-    EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(
-                                     Eq(2),
-                                     RouteEntryArrayEq(std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv4,
-                                                                                      exp_sai_route_entry_ipv6}),
-                                     AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv4, exp_sai_attr_ipv6}),
-                                     Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
-        .WillOnce(DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()), Return(SAI_STATUS_FAILURE)));
-    EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4, route_entry_ipv6}),
-                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS, StatusCode::SWSS_RC_UNKNOWN}));
+    sai_attribute_t exp_sai_attr_ipv6_2;
+    exp_sai_attr_ipv6_2.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    exp_sai_attr_ipv6_2.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE,
+                                         SAI_STATUS_NOT_EXECUTED};
+    EXPECT_CALL(
+        mock_sai_route_,
+        set_route_entries_attribute(
+            Eq(3),
+            RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+                exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6,
+                exp_sai_route_entry_ipv6}),
+            AttrArrayEq(std::vector<sai_attribute_t>{
+                exp_sai_attr_ipv4, exp_sai_attr_ipv6, exp_sai_attr_ipv6_2}),
+            Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_FAILURE)));
+    EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4,
+                                                             route_entry_ipv6}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                                StatusCode::SWSS_RC_UNKNOWN}));
     VerifyRouteEntry(route_entry_ipv4, sai_ipv4_route_prefix, gVrfOid);
-    route_entry_ipv6 = GenerateP4RouteEntry(gVrfName, swss_ipv6_route_prefix, p4orch::kDrop, "");
+    route_entry_ipv6 = GenerateP4RouteEntry(gVrfName, swss_ipv6_route_prefix,
+                                            p4orch::kDrop, "");
     VerifyRouteEntry(route_entry_ipv6, sai_ipv6_route_prefix, gVrfOid);
     uint32_t ref_cnt;
-    EXPECT_TRUE(
-        p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), &ref_cnt));
+    EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+        SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1),
+        &ref_cnt));
     EXPECT_EQ(0, ref_cnt);
-    EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
-                                           KeyGenerator::generateWcmpGroupKey(kWcmpGroup1), &ref_cnt));
+    EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+        SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+        KeyGenerator::generateWcmpGroupKey(kWcmpGroup1), &ref_cnt));
     EXPECT_EQ(1, ref_cnt);
-    EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
-                                           KeyGenerator::generateWcmpGroupKey(kWcmpGroup2), &ref_cnt));
+    EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+        SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+        KeyGenerator::generateWcmpGroupKey(kWcmpGroup2), &ref_cnt));
     EXPECT_EQ(0, ref_cnt);
+}
+
+TEST_F(RouteManagerTest, BatchedUpdatePartiallySucceedsRecover) {
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
+  sai_ip_prefix_t sai_ipv4_route_prefix;
+  copy(sai_ipv4_route_prefix, swss_ipv4_route_prefix);
+  auto route_entry_ipv4 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv4_route_prefix, p4orch::kSetWcmpGroupId, kWcmpGroup1);
+  SetupNexthopIdRouteEntry(gVrfName, swss_ipv4_route_prefix, kNexthopId1,
+                           kNexthopOid1);
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                        KeyGenerator::generateWcmpGroupKey(kWcmpGroup1),
+                        kWcmpGroupOid1);
+
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix);
+  sai_ip_prefix_t sai_ipv6_route_prefix;
+  copy(sai_ipv6_route_prefix, swss_ipv6_route_prefix);
+  auto route_entry_ipv6 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv6_route_prefix, p4orch::kSetWcmpGroupId, kWcmpGroup2);
+  SetupDropRouteEntry(gVrfName, swss_ipv6_route_prefix);
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                        KeyGenerator::generateWcmpGroupKey(kWcmpGroup2),
+                        kWcmpGroupOid2);
+
+  sai_route_entry_t exp_sai_route_entry_ipv4;
+  exp_sai_route_entry_ipv4.switch_id = gSwitchId;
+  exp_sai_route_entry_ipv4.vr_id = gVrfOid;
+  exp_sai_route_entry_ipv4.destination = sai_ipv4_route_prefix;
+
+  sai_attribute_t exp_sai_attr_ipv4;
+  exp_sai_attr_ipv4.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+  exp_sai_attr_ipv4.value.oid = kWcmpGroupOid1;
+
+  sai_route_entry_t exp_sai_route_entry_ipv6;
+  exp_sai_route_entry_ipv6.switch_id = gSwitchId;
+  exp_sai_route_entry_ipv6.vr_id = gVrfOid;
+  exp_sai_route_entry_ipv6.destination = sai_ipv6_route_prefix;
+
+  sai_attribute_t exp_sai_attr_ipv6;
+  exp_sai_attr_ipv6.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+  exp_sai_attr_ipv6.value.oid = kWcmpGroupOid2;
+  sai_attribute_t exp_sai_attr_ipv6_2;
+  exp_sai_attr_ipv6_2.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+  exp_sai_attr_ipv6_2.value.s32 = SAI_PACKET_ACTION_FORWARD;
+  sai_attribute_t exp_sai_attr_ipv6_3;
+  exp_sai_attr_ipv6_3.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+  exp_sai_attr_ipv6_3.value.oid = SAI_NULL_OBJECT_ID;
+
+  std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,
+                                         SAI_STATUS_FAILURE};
+  std::vector<sai_status_t> exp_status_2{SAI_STATUS_SUCCESS};
+  EXPECT_CALL(
+      mock_sai_route_,
+      set_route_entries_attribute(
+          Eq(3),
+          RouteEntryArrayEq(std::vector<sai_route_entry_t>{
+              exp_sai_route_entry_ipv4, exp_sai_route_entry_ipv6,
+              exp_sai_route_entry_ipv6}),
+          AttrArrayEq(std::vector<sai_attribute_t>{
+              exp_sai_attr_ipv4, exp_sai_attr_ipv6, exp_sai_attr_ipv6_2}),
+          Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+      .WillOnce(
+          DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                Return(SAI_STATUS_FAILURE)));
+  EXPECT_CALL(
+      mock_sai_route_,
+      set_route_entries_attribute(
+          Eq(1),
+          RouteEntryArrayEq(
+              std::vector<sai_route_entry_t>{exp_sai_route_entry_ipv6}),
+          AttrArrayEq(std::vector<sai_attribute_t>{exp_sai_attr_ipv6_3}),
+          Eq(SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR), _))
+      .WillOnce(
+          DoAll(SetArrayArgument<4>(exp_status_2.begin(), exp_status_2.end()),
+                Return(SAI_STATUS_FAILURE)));
+  EXPECT_THAT(UpdateRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv4,
+                                                           route_entry_ipv6}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_UNKNOWN}));
+  VerifyRouteEntry(route_entry_ipv4, sai_ipv4_route_prefix, gVrfOid);
+  route_entry_ipv6 =
+      GenerateP4RouteEntry(gVrfName, swss_ipv6_route_prefix, p4orch::kDrop, "");
+  VerifyRouteEntry(route_entry_ipv6, sai_ipv6_route_prefix, gVrfOid);
+  uint32_t ref_cnt;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+      SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1),
+      &ref_cnt));
+  EXPECT_EQ(0, ref_cnt);
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+      SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+      KeyGenerator::generateWcmpGroupKey(kWcmpGroup1), &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+      SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+      KeyGenerator::generateWcmpGroupKey(kWcmpGroup2), &ref_cnt));
+  EXPECT_EQ(0, ref_cnt);
 }
 
 TEST_F(RouteManagerTest, BatchedDeleteSucceeds)
@@ -3095,6 +3239,184 @@ TEST_F(RouteManagerTest, BatchedDeletePartiallySucceeds)
     EXPECT_TRUE(
         p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), &ref_cnt));
     EXPECT_EQ(0, ref_cnt);
+}
+
+TEST_F(RouteManagerTest, DrainNotExecuted) {
+  auto prefix_1 = swss::IpPrefix(kIpv4Prefix);
+  auto prefix_2 = swss::IpPrefix(kIpv4Prefix2);
+  auto prefix_3 = swss::IpPrefix(kIpv6Prefix);
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                        KeyGenerator::generateNextHopKey(kNexthopId1),
+                        kNexthopOid1);
+  auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_1, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_2, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_3 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_3, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
+  Enqueue(APP_P4RT_IPV6_TABLE_NAME, key_op_fvs_3);
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_1)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_3)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+  EXPECT_EQ(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_1)));
+  EXPECT_EQ(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_2)));
+  EXPECT_EQ(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_3)));
+}
+
+TEST_F(RouteManagerTest, DrainStopOnFirstFailureCreate) {
+  auto prefix_1 = swss::IpPrefix(kIpv4Prefix);
+  auto prefix_2 = swss::IpPrefix(kIpv4Prefix2);
+  auto prefix_3 = swss::IpPrefix(kIpv6Prefix);
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                        KeyGenerator::generateNextHopKey(kNexthopId1),
+                        kNexthopOid1);
+  auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_1, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_2, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_3 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_3, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
+  Enqueue(APP_P4RT_IPV6_TABLE_NAME, key_op_fvs_3);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE,
+                                       SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_route_, create_route_entries(Eq(3), _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_1)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_3)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_1)));
+  EXPECT_EQ(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_2)));
+  EXPECT_EQ(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_3)));
+}
+
+TEST_F(RouteManagerTest, DrainStopOnFirstFailureCreateAndUpdate) {
+  auto prefix_1 = swss::IpPrefix(kIpv4Prefix);
+  auto prefix_2 = swss::IpPrefix(kIpv4Prefix2);
+  auto prefix_3 = swss::IpPrefix(kIpv6Prefix);
+  SetupDropRouteEntry(gVrfName, prefix_3);
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                        KeyGenerator::generateNextHopKey(kNexthopId1),
+                        kNexthopOid1);
+  auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_1, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_2, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_3 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_3, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
+  Enqueue(APP_P4RT_IPV6_TABLE_NAME, key_op_fvs_3);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
+  EXPECT_CALL(mock_sai_route_, create_route_entries(Eq(2), _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_1)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_3)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_1)));
+  EXPECT_EQ(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_2)));
+  EXPECT_NE(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_3)));
+}
+
+TEST_F(RouteManagerTest, DrainStopOnFirstFailureMultipleCreateAndUpdate) {
+  auto prefix_1 = swss::IpPrefix(kIpv4Prefix);
+  auto prefix_2 = swss::IpPrefix(kIpv4Prefix2);
+  auto prefix_3 = swss::IpPrefix(kIpv6Prefix);
+  auto prefix_4 = swss::IpPrefix(kIpv6Prefix2);
+  SetupDropRouteEntry(gVrfName, prefix_3);
+  SetupDropRouteEntry(gVrfName, prefix_4);
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                        KeyGenerator::generateNextHopKey(kNexthopId1),
+                        kNexthopOid1);
+  auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_1, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_2, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_3 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_3, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  auto key_op_fvs_4 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, prefix_4, SET_COMMAND, p4orch::kSetNexthopId, kNexthopId1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
+  Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
+  Enqueue(APP_P4RT_IPV6_TABLE_NAME, key_op_fvs_3);
+  Enqueue(APP_P4RT_IPV6_TABLE_NAME, key_op_fvs_4);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
+  EXPECT_CALL(mock_sai_route_, create_route_entries(Eq(2), _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_1)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_3)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_4)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_4)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_1)));
+  EXPECT_EQ(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_2)));
+  EXPECT_NE(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_3)));
+  EXPECT_NE(nullptr,
+            GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_4)));
 }
 
 TEST_F(RouteManagerTest, VerifyStateTest)
