@@ -110,74 +110,79 @@ void GreTunnelManager::enqueue(const std::string &table_name, const swss::KeyOpF
     m_entries.push_back(entry);
 }
 
-void GreTunnelManager::drain()
-{
-    SWSS_LOG_ENTER();
+void GreTunnelManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode GreTunnelManager::drain() {
+  SWSS_LOG_ENTER();
 
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
 
-        ReturnCode status;
-        auto app_db_entry_or = deserializeP4GreTunnelAppDbEntry(key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize  GRE Tunnel APP DB entry with key %s: %s",
-                           QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
-
-        const std::string tunnel_key = KeyGenerator::generateTunnelKey(app_db_entry.tunnel_id);
-
-        // Fulfill the operation.
-        if (operation == SET_COMMAND)
-        {
-            status = validateGreTunnelAppDbEntry(app_db_entry);
-            if (!status.ok())
-            {
-                SWSS_LOG_ERROR("Validation failed for GRE Tunnel APP DB entry with key %s: %s",
-                               QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(), status.message().c_str());
-                m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status,
-                                     /*replace=*/true);
-                continue;
-            }
-            auto *gre_tunnel_entry = getGreTunnelEntry(tunnel_key);
-            if (gre_tunnel_entry == nullptr)
-            {
-                // Create new GRE tunnel.
-                status = processAddRequest(app_db_entry);
-            }
-            else
-            {
-                // Modify existing GRE tunnel.
-                status = processUpdateRequest(app_db_entry, gre_tunnel_entry);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            // Delete GRE tunnel.
-            status = processDeleteRequest(tunnel_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    auto app_db_entry_or = deserializeP4GreTunnelAppDbEntry(key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR(
+          "Unable to deserialize  GRE Tunnel APP DB entry with key %s: %s",
+          QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(),
+          status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    auto& app_db_entry = *app_db_entry_or;
+
+    const std::string tunnel_key =
+        KeyGenerator::generateTunnelKey(app_db_entry.tunnel_id);
+
+    // Fulfill the operation.
+    if (operation == SET_COMMAND) {
+      status = validateGreTunnelAppDbEntry(app_db_entry);
+      if (!status.ok()) {
+        SWSS_LOG_ERROR(
+            "Validation failed for GRE Tunnel APP DB entry with key %s: %s",
+            QuotedVar(kfvKey(key_op_fvs_tuple)).c_str(),
+            status.message().c_str());
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
+        break;
+      }
+      auto* gre_tunnel_entry = getGreTunnelEntry(tunnel_key);
+      if (gre_tunnel_entry == nullptr) {
+        // Create new GRE tunnel.
+        status = processAddRequest(app_db_entry);
+      } else {
+        // Modify existing GRE tunnel.
+        status = processUpdateRequest(app_db_entry, gre_tunnel_entry);
+      }
+    } else if (operation == DEL_COMMAND) {
+      // Delete GRE tunnel.
+      status = processDeleteRequest(tunnel_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << QuotedVar(operation);
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 P4GreTunnelEntry *GreTunnelManager::getGreTunnelEntry(const std::string &tunnel_key)
