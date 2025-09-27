@@ -17,6 +17,7 @@
 #include <select.h>
 
 #include "macsecmgr.h"
+#include "schema.h"
 
 using namespace std;
 using namespace swss;
@@ -39,6 +40,82 @@ static void sig_handler(int signo)
 
     received_sigterm = true;
     return;
+}
+
+/* Check if FIPS mode is enabled */
+bool fipsEnabled(DBConnector *stateDb)
+{
+    try
+    {
+        // Check if FIPS was enabled via sonic-installer.
+        std::ifstream proc_cmdline_file("/proc/cmdline");
+        if (proc_cmdline_file.is_open())
+        {
+            std::string cmdline;
+            std::getline(proc_cmdline_file, cmdline);
+            if (cmdline.find("sonic_fips=1") != std::string::npos)
+            {
+                SWSS_LOG_NOTICE("FIPS enabled in /proc/cmdline");
+                return true;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_ERROR("failed to fetch FIPS mode: %s", e.what());
+    }
+    return false;
+}
+
+/**
+ * Get control plane crypto FIPS POST.
+ */
+bool getCpCryptoFipsPostStatus(DBConnector *stateDb)
+{
+    std::string res;
+    bool status = false;
+
+    /* wpa_supplicant argument -F returns the FIPS ready status */
+    int ret = swss::exec("/sbin/wpa_supplicant -F", res);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("'wpa_supplicant -F' returned error: %s", res.c_str());
+        return false;
+    }
+    SWSS_LOG_DEBUG("cmd: 'wpa_supplicant -F' returned: %s", res.c_str());
+    status = res.find("FIPS POST status: pass") != std::string::npos;
+
+
+    /* Publish the POST status */
+    std::ostringstream ostream;
+
+    try
+    {
+        Table postTable = Table(stateDb, STATE_FIPS_MACSEC_POST_TABLE_NAME);
+        vector<FieldValueTuple> fvts;
+        FieldValueTuple fvt("status", status ? "pass" : "fail");
+        fvts.push_back(fvt);
+
+        /* Add timestamp (UTC date in ISO 8601 format) for audit trail */
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+        ostream << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%S");
+        ostream << "." << std::setfill('0') << std::setw(3) << ms.count() << "Z";
+        FieldValueTuple timestamp_fvt("timestamp", ostream.str());
+        fvts.push_back(timestamp_fvt);
+
+        postTable.set("crypto", fvts);
+        SWSS_LOG_DEBUG("control plane crypto POST status recorded");
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_ERROR("failed to record control plane crypto POST status: %s",
+                       e.what());
+    }
+
+    return status;
+
 }
 
 int main(int argc, char **argv)
@@ -66,6 +143,28 @@ int main(int argc, char **argv)
             CFG_PORT_TABLE_NAME,
         };
 
+        /* Check POST status if FIPS mode is enabled */
+        bool isCpPostStateReady=false;
+        if (fipsEnabled(&stateDb))
+        {
+            SWSS_LOG_NOTICE("running in FIPS mode");
+
+            /* Check if the control plane is FIPS ready. */
+            if (!getCpCryptoFipsPostStatus(&stateDb))
+            {
+                SWSS_LOG_ERROR("control plane crypto not FIPS ready");
+                isCpPostStateReady = true;
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("control plane crypto is FIPS ready");
+            }
+        }
+        else {
+            /* Not running in FIPS mode */
+            isCpPostStateReady=true;
+        }
+
         MACsecMgr macsecmgr(&cfgDb, &stateDb, cfg_macsec_tables);
 
         std::vector<Orch *> cfgOrchList = {&macsecmgr};
@@ -79,6 +178,15 @@ int main(int argc, char **argv)
         SWSS_LOG_NOTICE("starting main loop");
         while (!received_sigterm)
         {
+
+            /* Don't process any config until POST state is ready */
+            if (!isCpPostStateReady)
+            {
+                 /* Continue in the infinite loop, making the service un-available. */
+                 sleep(1);
+                 continue;
+            }
+
             Selectable *sel;
             int ret;
 
