@@ -28,6 +28,22 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
     DEFAULT_SRC_MAC = "00:11:22:33:44:55"
     DEFAULT_ACTION = "set_port_and_src_mac"
 
+    def get_default_loopback_oid(self):
+        rif_entries = util.get_keys(self.asic_db, self.ASIC_DB_TBL_NAME)
+        for key in rif_entries:
+            (status, fvs) = util.get_key(self.asic_db, self.ASIC_DB_TBL_NAME, key)
+            assert status == True
+            is_loopback = False
+            is_gVR = False
+            for f,v in fvs:
+                if f == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                    is_gVR = True
+                if f == "SAI_ROUTER_INTERFACE_ATTR_TYPE" and v == "SAI_ROUTER_INTERFACE_TYPE_LOOPBACK":
+                    is_loopback = True
+                if is_gVR and is_loopback:
+                    return key
+        return 0
+
     # Fetch oid of the first newly created rif from created rif in ASIC
     # db. This API should only be used when only one oid is expected to be
     # created after the original entries.

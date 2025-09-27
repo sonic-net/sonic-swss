@@ -40,6 +40,10 @@ parameters:
   type: string
   default: ""
 
+- name: debian_version
+  type: string
+  default: bookworm
+
 jobs:
 - job:
   displayName: vstest
@@ -85,10 +89,10 @@ jobs:
       path: $(Build.ArtifactStagingDirectory)/download
       artifact: common-lib
       patterns: |
-        target/debs/bookworm/libyang-*_1.0*.deb
-        target/debs/bookworm/libyang_1.0*.deb
-        target/debs/bookworm/libyang-cpp_*.deb
-        target/debs/bookworm/python3-yang_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb
+        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb
+        target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
     displayName: "Download libyang from common lib"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -132,10 +136,10 @@ jobs:
       sudo .azure-pipelines/build_and_install_module.sh
 
       # Install libyang packages from downloaded artifacts
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/libyang-*_1.0*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/libyang_1.0*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/libyang-cpp_*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/bookworm/python3-yang_*.deb
+      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb \
+                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb \
+                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb \
+                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
 
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
