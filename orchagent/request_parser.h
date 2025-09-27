@@ -23,6 +23,7 @@ typedef enum _request_types_t
     REQ_T_IP_LIST,
     REQ_T_UINT_LIST,
     REQ_T_BOOL_LIST,
+    REQ_T_STRING_LIST,
 } request_types_t;
 
 typedef struct _request_description
@@ -175,6 +176,12 @@ public:
         return attr_item_bool_list_.at(attr_name);
     }
 
+    const std::vector<std::string>& getAttrStringList(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_string_list_.at(attr_name);
+    }
+
 protected:
     Request(const request_description_t& request_description, const char key_separator)
         : request_description_(request_description),
@@ -200,6 +207,7 @@ private:
     std::vector<swss::MacAddress> parseMacAddressList(const std::string& str);
     std::vector<uint64_t> parseUintList(const std::string& str);
     std::vector<bool> parseBoolList(const std::string& str);
+    std::vector<std::string> parseStringList(const std::string& str);
 
     sai_packet_action_t parsePacketAction(const std::string& str);
 
@@ -231,6 +239,7 @@ private:
     std::unordered_map<std::string, std::vector<swss::IpAddress>> attr_item_ip_list_;
     std::unordered_map<std::string, std::vector<swss::MacAddress>> attr_item_mac_addresses_list_;
     std::unordered_map<std::string, std::vector<uint64_t>> attr_item_uint_list_;
+    std::unordered_map<std::string, std::vector<std::string>> attr_item_string_list_;
 };
 
 #endif // __REQUEST_PARSER_H

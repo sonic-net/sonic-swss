@@ -35,6 +35,9 @@ namespace dashenifwdorch_ut
               unique_ptr<DBConnector> applDb;
               unique_ptr<DBConnector> chassisApplDb;
               unique_ptr<Table> dpuTable;
+              unique_ptr<Table> remoteDpuTable;
+              unique_ptr<Table> vdpuTable;
+
               unique_ptr<Table> eniFwdTable;
               unique_ptr<Table> aclRuleTable;
               unique_ptr<DashEniFwdOrch> eniOrch;
@@ -63,31 +66,59 @@ namespace dashenifwdorch_ut
               void populateDpuTable()
               {
                      /* Add 1 local and 1 cluster DPU */
-                     dpuTable->set("1", 
+                     dpuTable->set("local_dpu", 
                      {
-                            { DPU_TYPE, "local" },
-                            { DPU_PA_V4, local_pav4 },
-                            { DPU_NPU_V4, local_npuv4 },
+                            { DashEniFwd::PA_V4, local_pav4 },
+                            { DashEniFwd::STATE, "up" },
                      }, SET_COMMAND);
 
-                     dpuTable->set("2", 
+                     dpuTable->set("local_down_dpu",
                      {
-                            { DPU_TYPE, "cluster" },
-                            { DPU_PA_V4, remote_pav4 },
-                            { DPU_NPU_V4, remote_npuv4 },
+                            { DashEniFwd::PA_V4, local_pav4 },
+                            { DashEniFwd::STATE, "down" },
                      }, SET_COMMAND);
 
-                     dpuTable->set("3", 
+                     remoteDpuTable->set("remote_dpu", 
                      {
-                            { DPU_TYPE, "cluster" },
-                            { DPU_PA_V4, remote_2_pav4 },
-                            { DPU_NPU_V4, remote_2_npuv4 },
+                            { DashEniFwd::PA_V4, remote_pav4 },
+                            { DashEniFwd::NPU_V4, remote_npuv4 },
+                     }, SET_COMMAND);
+
+                     remoteDpuTable->set("remote_dpu2", 
+                     {
+                            { DashEniFwd::PA_V4, remote_2_pav4 },
+                            { DashEniFwd::NPU_V4, remote_2_npuv4 },
+                     }, SET_COMMAND);
+
+                     vdpuTable->set("vdpu0", 
+                     {
+                            { DashEniFwd::DPU_IDS, "local_dpu" },
+                     }, SET_COMMAND);
+
+                     vdpuTable->set("vdpu1", 
+                     {
+                            { DashEniFwd::DPU_IDS, "remote_dpu" },
+                     }, SET_COMMAND);
+
+                     vdpuTable->set("vdpu2", 
+                     {
+                            { DashEniFwd::DPU_IDS, "remote_dpu2" },
+                     }, SET_COMMAND);
+
+                     vdpuTable->set("vdpu3", 
+                     {
+                            { DashEniFwd::DPU_IDS, "invalid_dpu" },
+                     }, SET_COMMAND);
+
+                     vdpuTable->set("vdpu4", 
+                     {
+                            { DashEniFwd::DPU_IDS, "local_down_dpu" },
                      }, SET_COMMAND);
               }
 
               void populateVip()
               {
-                     Table vipTable(cfgDb.get(), CFG_VIP_TABLE_TMP);
+                     Table vipTable(cfgDb.get(), DashEniFwd::VIP_TABLE);
                      vipTable.set(test_vip, {{}});
               }
 
@@ -127,7 +158,10 @@ namespace dashenifwdorch_ut
                      applDb = make_unique<DBConnector>("APPL_DB", 0);
                      chassisApplDb = make_unique<DBConnector>("CHASSIS_APP_DB", 0);
                      /* Initialize tables */
-                     dpuTable = make_unique<Table>(cfgDb.get(), CFG_DPU_TABLE);
+                     dpuTable = make_unique<Table>(cfgDb.get(), DashEniFwd::DPU_TABLE);
+                     remoteDpuTable = make_unique<Table>(cfgDb.get(), DashEniFwd::REMOTE_DPU_TABLE);
+                     vdpuTable = make_unique<Table>(cfgDb.get(), DashEniFwd::VDPU_TABLE);
+                     
                      eniFwdTable = make_unique<Table>(applDb.get(), APP_DASH_ENI_FORWARD_TABLE);
                      aclRuleTable = make_unique<Table>(applDb.get(), APP_ACL_RULE_TABLE_NAME);
                      /* Populate DPU Configuration */
@@ -149,30 +183,42 @@ namespace dashenifwdorch_ut
        */
        TEST_F(DashEniFwdOrchTest, TestDpuRegistry) 
        {
-              dpu_type_t type = dpu_type_t::EXTERNAL;
+              dpu_type_t type;
               swss::IpAddress pa_v4;
               swss::IpAddress npu_v4;
               
               EniFwdCtx ctx(cfgDb.get(), applDb.get());
               ctx.populateDpuRegistry();
 
-              EXPECT_TRUE(ctx.dpu_info.getType(1, type));
+              EXPECT_TRUE(ctx.dpu_info.getType("vdpu0", type));
               EXPECT_EQ(type, dpu_type_t::LOCAL);
-              EXPECT_TRUE(ctx.dpu_info.getType(2, type));
-              EXPECT_EQ(type, dpu_type_t::CLUSTER);
-
-              EXPECT_TRUE(ctx.dpu_info.getPaV4(1, pa_v4));
+              EXPECT_TRUE(ctx.dpu_info.getPaV4("vdpu0", pa_v4));
               EXPECT_EQ(pa_v4.to_string(), local_pav4);
-              EXPECT_TRUE(ctx.dpu_info.getPaV4(2, pa_v4));
-              EXPECT_EQ(pa_v4.to_string(), remote_pav4);
-
-              EXPECT_TRUE(ctx.dpu_info.getNpuV4(1, npu_v4));
-              EXPECT_EQ(npu_v4.to_string(), local_npuv4);
-              EXPECT_TRUE(ctx.dpu_info.getNpuV4(2, npu_v4));
-              EXPECT_EQ(npu_v4.to_string(), remote_npuv4);
               
-              vector<uint64_t> ids = {1, 2, 3};
-              EXPECT_EQ(ctx.dpu_info.getIds(), ids);
+              EXPECT_TRUE(ctx.dpu_info.getType("vdpu1", type));
+              EXPECT_EQ(type, dpu_type_t::CLUSTER);
+              EXPECT_TRUE(ctx.dpu_info.getPaV4("vdpu1", pa_v4));
+              EXPECT_EQ(pa_v4.to_string(), remote_pav4);
+              EXPECT_TRUE(ctx.dpu_info.getNpuV4("vdpu1", npu_v4));
+              EXPECT_EQ(npu_v4.to_string(), remote_npuv4);
+       
+              EXPECT_TRUE(ctx.dpu_info.getNpuV4("vdpu2", npu_v4));
+              EXPECT_EQ(npu_v4.to_string(), remote_2_npuv4);
+              
+              /* Invalid DPU */
+              EXPECT_FALSE(ctx.dpu_info.getNpuV4("vdpu3", npu_v4));
+              EXPECT_FALSE(ctx.dpu_info.getType("vdpu3", type));
+              EXPECT_FALSE(ctx.dpu_info.getPaV4("vdpu3", pa_v4));
+              
+              /* Down DPU */
+              EXPECT_FALSE(ctx.dpu_info.getNpuV4("vdpu4", npu_v4));
+              EXPECT_FALSE(ctx.dpu_info.getType("vdpu4", type));
+              EXPECT_FALSE(ctx.dpu_info.getPaV4("vdpu4", pa_v4));
+
+              vector<std::string> exp_ids = {"vdpu0", "vdpu1", "vdpu2"};
+              auto ids = ctx.dpu_info.getIds();
+              std::sort(ids.begin(), ids.end());
+              EXPECT_EQ(ids, exp_ids);
        }
 
        /* 
@@ -195,9 +241,9 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "1" }, // Local endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni) }
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu0" }, // Local endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni) }
                                        } 
                                    }
                             }
@@ -253,8 +299,8 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac2,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "1" }, // Local endpoint is the primary
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu0" }, // Local endpoint is the primary
                                           // No Explicit VNI from the DB, should be inferred from the VNetOrch
                                        } 
                                    }
@@ -293,10 +339,10 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac2,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "1" }, // Local endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni2) },
-                                          { ENI_FWD_OUT_MAC_LOOKUP, "dst" }
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu0" }, // Local endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni2) },
+                                          { DashEniFwd::OUT_MAC_LOOKUP, "dst" }
                                        }
                                    }
                             }
@@ -337,18 +383,18 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "1" }, // Local endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni) }
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu0" }, // Local endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni) }
                                        } 
                                    },
                                    {
                                        vnet_name + ":" + test_mac2,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "1" }, // Local endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni2) }
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu0" }, // Local endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni2) }
                                        }
                                    }
                             }
@@ -409,18 +455,18 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "2" }, // Remote endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni) }
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu1" }, // Remote endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni) }
                                        } 
                                    },
                                    {
                                        vnet_name + ":" + test_mac2,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "2" }, // Remote endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni2) }
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu1" }, // Remote endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni2) }
                                        } 
                                    }
                             }
@@ -501,9 +547,9 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "1,2" },
-                                          { ENI_FWD_PRIMARY, "2" }, // Remote endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni) }
+                                          { DashEniFwd::VDPU_IDS, "vdpu0,vdpu1" },
+                                          { DashEniFwd::PRIMARY, "vdpu1" }, // Remote endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni) }
                                        } 
                                    }
                             }
@@ -531,7 +577,7 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_PRIMARY, "1" }, // Primary is Local now
+                                          { DashEniFwd::PRIMARY, "vdpu0" }, // Primary is Local now
                                        } 
                                    }
                             }
@@ -572,9 +618,9 @@ namespace dashenifwdorch_ut
                                        vnet_name + ":" + test_mac,
                                        SET_COMMAND,
                                        {
-                                          { ENI_FWD_VDPU_IDS, "2,3" },
-                                          { ENI_FWD_PRIMARY, "3" }, // Remote endpoint is the primary
-                                          { ENI_FWD_OUT_VNI, to_string(test_vni) }
+                                          { DashEniFwd::VDPU_IDS, "vdpu1,vdpu2" },
+                                          { DashEniFwd::PRIMARY, "vdpu2" }, // Remote endpoint is the primary
+                                          { DashEniFwd::OUT_VNI, to_string(test_vni) }
                                        } 
                                    }
                             }

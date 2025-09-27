@@ -78,7 +78,7 @@ string RemoteEniNH::getRedirectVal()
 
 void EniAclRule::setKey(EniInfo& eni)
 {
-    name_ = string(ENI_REDIRECT_TABLE) + ":" + eni.toKey() + "_" + EniAclRule::RULE_NAMES[type_];
+    name_ = string(DashEniFwd::TABLE) + ":" + eni.toKey() + "_" + EniAclRule::RULE_NAMES[type_];
 }
 
 update_type_t EniAclRule::processUpdate(EniInfo& eni)
@@ -88,7 +88,7 @@ update_type_t EniAclRule::processUpdate(EniInfo& eni)
     IpAddress primary_endp;
     dpu_type_t primary_type = LOCAL;
     update_type_t update_type = PRIMARY_UPDATE;
-    uint64_t primary_id;
+    std::string primary_id;
 
     if (type_ == rule_type_t::INBOUND_TERM || type_ == rule_type_t::OUTBOUND_TERM)
     {
@@ -106,7 +106,7 @@ update_type_t EniAclRule::processUpdate(EniInfo& eni)
 
     if (!ctx->dpu_info.getType(primary_id, primary_type))
     {
-        SWSS_LOG_ERROR("No primaryId in DPU Table %" PRIu64 "", primary_id);
+        SWSS_LOG_ERROR("No primary id %s in DPU Table", primary_id.c_str());
         return update_type_t::INVALID;
     }
 
@@ -292,10 +292,10 @@ bool EniInfo::create(const Request& db_request)
     SWSS_LOG_ENTER();
 
     auto updates = db_request.getAttrFieldNames();
-    auto itr_ep_list = updates.find(ENI_FWD_VDPU_IDS);
-    auto itr_primary_id = updates.find(ENI_FWD_PRIMARY);
-    auto itr_out_vni = updates.find(ENI_FWD_OUT_VNI);
-    auto itr_out_mac_dir = updates.find(ENI_FWD_OUT_MAC_LOOKUP);
+    auto itr_ep_list = updates.find(DashEniFwd::VDPU_IDS);
+    auto itr_primary_id = updates.find(DashEniFwd::PRIMARY);
+    auto itr_out_vni = updates.find(DashEniFwd::OUT_VNI);
+    auto itr_out_mac_dir = updates.find(DashEniFwd::OUT_MAC_LOOKUP);
 
     /* Validation Checks */
     if (itr_ep_list == updates.end() || itr_primary_id == updates.end())
@@ -304,10 +304,10 @@ bool EniInfo::create(const Request& db_request)
         return false;
     }
 
-    ep_list_ = db_request.getAttrUintList(ENI_FWD_VDPU_IDS);
-    primary_id_ = db_request.getAttrUint(ENI_FWD_PRIMARY);
+    ep_list_ = db_request.getAttrStringList(DashEniFwd::VDPU_IDS);
+    primary_id_ = db_request.getAttrString(DashEniFwd::PRIMARY);
 
-    uint64_t local_id;
+    std::string local_id;
     bool tunn_term_allow = findLocalEp(local_id);
     bool outbound_allow = false;
 
@@ -337,8 +337,8 @@ bool EniInfo::create(const Request& db_request)
     }
     else
     {
-        auto str = db_request.getAttrString(ENI_FWD_OUT_MAC_LOOKUP);
-        if (str == OUT_MAC_DIR)
+        auto str = db_request.getAttrString(DashEniFwd::OUT_MAC_LOOKUP);
+        if (str == DashEniFwd::OUT_MAC_DIR)
         {
             outbound_mac_lookup_ = MATCH_INNER_DST_MAC;
         }
@@ -362,7 +362,7 @@ bool EniInfo::create(const Request& db_request)
     }
     else
     {
-        outbound_vni_ = db_request.getAttrUint(ENI_FWD_OUT_VNI);
+        outbound_vni_ = db_request.getAttrUint(DashEniFwd::OUT_VNI);
         outbound_allow = true;
     }
 
@@ -408,7 +408,7 @@ bool EniInfo::update(const Request& db_request)
 
     /* Only primary_id is expected to change after ENI is created */
     auto updates = db_request.getAttrFieldNames();
-    auto itr_primary_id = updates.find(ENI_FWD_PRIMARY);
+    auto itr_primary_id = updates.find(DashEniFwd::PRIMARY);
 
     /* Validation Checks */
     if (itr_primary_id == updates.end())
@@ -416,26 +416,26 @@ bool EniInfo::update(const Request& db_request)
         throw logic_error("Invalid DASH_ENI_FORWARD_TABLE update: No primary idx");
     }
 
-    if (getPrimaryId() == db_request.getAttrUint(ENI_FWD_PRIMARY))
+    if (getPrimaryId() == db_request.getAttrString(DashEniFwd::PRIMARY))
     {
         /* No update in the primary id, return true */
         return true;
     }
 
     /* Update local primary id and fire the rules */
-    primary_id_ = db_request.getAttrUint(ENI_FWD_PRIMARY);
+    primary_id_ = db_request.getAttrString(DashEniFwd::PRIMARY);
     fireAllRules();
 
     return true;
 }
 
-bool EniInfo::findLocalEp(uint64_t& local_endpoint) const
+bool EniInfo::findLocalEp(std::string& local_endpoint) const
 {
     /* Check if atleast one of the endpoints is local */
     bool found = false;
     for (auto idx : ep_list_)
     {   
-        dpu_type_t val = dpu_type_t::EXTERNAL;
+        dpu_type_t val = dpu_type_t::CLUSTER;
         if (ctx->dpu_info.getType(idx, val) && val == dpu_type_t::LOCAL)
         {
             if (!found)
@@ -445,8 +445,8 @@ bool EniInfo::findLocalEp(uint64_t& local_endpoint) const
             }
             else
             {
-                SWSS_LOG_WARN("Multiple Local Endpoints for the ENI %s found, proceeding with %" PRIu64 ""  ,
-                                mac_.to_string().c_str(), local_endpoint);
+                SWSS_LOG_WARN("Multiple Local Endpoints for the ENI %s found, proceeding with %s",
+                                mac_.to_string().c_str(), local_endpoint.c_str());
             }
         }
     }

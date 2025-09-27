@@ -13,57 +13,10 @@
 #include <exception>
 #include <functional>
 
-// TODO: remove after the schema is finalized and added to swss-common
-#define CFG_VIP_TABLE_TMP          "VIP_TABLE"
-
-#define ENI_REDIRECT_TABLE_TYPE    "ENI_REDIRECT"
-#define ENI_REDIRECT_TABLE         "ENI"
-#define ENI_FWD_VDPU_IDS           "vdpu_ids"
-#define ENI_FWD_PRIMARY            "primary_vdpu"
-#define ENI_FWD_OUT_VNI            "outbound_vni"
-#define ENI_FWD_OUT_MAC_LOOKUP     "outbound_eni_mac_lookup"
-
-#define DPU_TYPE     "type"
-#define DPU_STATE    "state"
-#define DPU_PA_V4    "pa_ipv4"
-#define DPU_PA_V6    "pa_ipv6"
-#define DPU_NPU_V4   "npu_ipv4"
-#define DPU_NPU_V6   "npu_ipv6"
-
-#define DPU_LOCAL      "local"
-#define OUT_MAC_DIR    "dst"
-
-
-
-const request_description_t eni_dash_fwd_desc = {
-    { REQ_T_STRING, REQ_T_MAC_ADDRESS }, // VNET_NAME, ENI_ID
-    {
-        { ENI_FWD_VDPU_IDS,               REQ_T_UINT_LIST }, // DPU ID's
-        { ENI_FWD_PRIMARY,                REQ_T_UINT },
-        { ENI_FWD_OUT_VNI,                REQ_T_UINT },
-        { ENI_FWD_OUT_MAC_LOOKUP,         REQ_T_STRING },
-    },
-    {  }
-};
-
-const request_description_t dpu_table_desc = {
-    { REQ_T_UINT }, // DPU_ID
-    {
-        { DPU_TYPE,              REQ_T_STRING },
-        { DPU_STATE,             REQ_T_STRING },
-        { DPU_PA_V4,             REQ_T_IP },
-        { DPU_PA_V6,             REQ_T_IP },
-        { DPU_NPU_V4,            REQ_T_IP },
-        { DPU_NPU_V6,            REQ_T_IP },
-    },
-    { DPU_TYPE, DPU_PA_V4, DPU_NPU_V4 }
-};
-
 typedef enum
 {
     LOCAL,
-    CLUSTER,
-    EXTERNAL
+    CLUSTER
 } dpu_type_t;
 
 typedef enum
@@ -106,6 +59,42 @@ class EniInfo;
 class EniFwdCtxBase;
 class EniFwdCtx;
 
+namespace DashEniFwd
+{
+    /* TABLES; Until finalized and added to sonic-swss-common */
+    static constexpr const char* DPU_TABLE          = "DPU";
+    static constexpr const char* REMOTE_DPU_TABLE   = "REMOTE_DPU";
+    static constexpr const char* VDPU_TABLE         = "VDPU";
+    static constexpr const char* VIP_TABLE          = "VIP_TABLE";
+
+    /* ENI Registry Fields */
+    static constexpr const char* TABLE_TYPE         = "ENI_REDIRECT";
+    static constexpr const char* OUT_MAC_DIR        = "dst";
+    static constexpr const char* TABLE              = "ENI";
+    static constexpr const char* VDPU_IDS           = "vdpu_ids";
+    static constexpr const char* PRIMARY            = "primary_vdpu";
+    static constexpr const char* OUT_VNI            = "outbound_vni";
+    static constexpr const char* OUT_MAC_LOOKUP     = "outbound_eni_mac_lookup";
+
+    /* DPU Registry Fields */
+    static constexpr const char* STATE              = "state";
+    static constexpr const char* PA_V4              = "pa_ipv4";
+    static constexpr const char* PA_V6              = "pa_ipv6";
+    static constexpr const char* NPU_V4             = "npu_ipv4";
+    static constexpr const char* NPU_V6             = "npu_ipv6";
+    static constexpr const char* DPU_IDS            = "main_dpu_ids";
+};
+
+const request_description_t eni_dash_fwd_desc = {
+    { REQ_T_STRING, REQ_T_MAC_ADDRESS }, // VNET_NAME, ENI_ID
+    {
+        { DashEniFwd::VDPU_IDS,               REQ_T_STRING_LIST }, // VDPU ID's
+        { DashEniFwd::PRIMARY,                REQ_T_STRING },
+        { DashEniFwd::OUT_VNI,                REQ_T_UINT },
+        { DashEniFwd::OUT_MAC_LOOKUP,         REQ_T_STRING },
+    },
+    { DashEniFwd::PRIMARY }
+};
 
 class DashEniFwdOrch : public Orch2, public Observer
 {
@@ -131,12 +120,12 @@ private:
     void initAclTableCfg();
     void initLocalEndpoints();
     void handleNeighUpdate(const NeighborUpdate& update);
-    void handleEniDpuMapping(uint64_t id, MacAddress mac, bool add = true);
+    void handleEniDpuMapping(const std::string& id, MacAddress mac, bool add = true);
 
     /* multimap because Multiple ENIs can be mapped to the same DPU */
-    std::multimap<uint64_t, swss::MacAddress> dpu_eni_map_;
+    std::multimap<std::string, swss::MacAddress> dpu_eni_map_;
     /* Local Endpoint -> DPU mapping */
-    std::map<swss::IpAddress, uint64_t> neigh_dpu_map_;
+    std::map<swss::IpAddress, std::string> neigh_dpu_map_;
     std::map<swss::MacAddress, EniInfo> eni_container_;
 
     bool ctx_initialized_ = false;
@@ -146,6 +135,35 @@ private:
     NeighOrch* neighorch_;
 };
 
+
+const request_description_t dpu_table_desc = {
+    { REQ_T_STRING },
+    {
+        { DashEniFwd::STATE,    REQ_T_STRING },
+        { DashEniFwd::PA_V4,    REQ_T_IP },
+        { DashEniFwd::PA_V6,    REQ_T_IP },
+    },
+    { DashEniFwd::STATE, DashEniFwd::PA_V4 }
+};
+
+const request_description_t remote_dpu_table_desc = {
+    { REQ_T_STRING },
+    {
+        { DashEniFwd::PA_V4,    REQ_T_IP },
+        { DashEniFwd::PA_V6,    REQ_T_IP },
+        { DashEniFwd::NPU_V4,   REQ_T_IP },
+        { DashEniFwd::NPU_V6,   REQ_T_IP },
+    },
+    { DashEniFwd::PA_V4, DashEniFwd::NPU_V4 }
+};
+
+const request_description_t vdpu_table_desc = {
+    { REQ_T_STRING },
+    {
+        { DashEniFwd::DPU_IDS,   REQ_T_STRING_LIST },
+    },
+    { DashEniFwd::DPU_IDS }
+};
 
 class DpuRegistry
 {
@@ -159,21 +177,37 @@ public:
 
     struct DpuRequest : public Request
     {
-        DpuRequest() : Request(dpu_table_desc, '|' ) { }
+        DpuRequest() : Request(dpu_table_desc, '|') {}
+    };
+    struct RemoteDpuRequest : public Request
+    {
+        RemoteDpuRequest() : Request(remote_dpu_table_desc, '|') {}
+    };
+    struct VdpuRequest : public Request
+    {
+        VdpuRequest() : Request(vdpu_table_desc, '|') {}
     };
 
-    void populate(Table*);
-    std::vector<uint64_t> getIds();
-    bool getType(uint64_t id, dpu_type_t& val);
-    bool getPaV4(uint64_t id, swss::IpAddress& val);
-    bool getNpuV4(uint64_t id, swss::IpAddress& val);
+    void populate(const swss::DBConnector*);
+    std::vector<std::string> getIds();
+
+    bool getDpuId(const std::string& vdpu_id, std::string& dpu_id);
+    bool getType(const std::string& vdpu_id, dpu_type_t& val);
+    bool getPaV4(const std::string& vdpu_id, swss::IpAddress& val);
+    bool getNpuV4(const std::string& vdpu_id, swss::IpAddress& val);
 
 private:
-    void processDpuTable(const KeyOpFieldsValuesTuple& );
+    void processDpuTable(const swss::DBConnector*);
+    void processRemoteDpuTable(const swss::DBConnector*);
+    void processVdpuTable(const swss::DBConnector*);
 
-    std::vector<uint64_t> dpus_ids_;
     DpuRequest dpu_request_;
-    map<uint64_t, DpuData> dpus_;
+    RemoteDpuRequest remote_dpu_request_;
+    VdpuRequest vdpu_request_;
+    // DPU -> DpuData
+    unordered_map<std::string, DpuData> dpus_name_map_;
+    // VDPU Name -> [DPU2, DPU3, ...]
+    unordered_map<std::string, vector<std::string>> vdpus_map_; 
 };
 
 
@@ -272,10 +306,10 @@ public:
     
     string toKey() const;
     std::shared_ptr<EniFwdCtxBase>& getCtx() {return ctx;}
-    bool findLocalEp(uint64_t&) const;
+    bool findLocalEp(std::string&) const;
     swss::MacAddress getMac() const { return mac_; } // Can only be set during object creation
-    std::vector<uint64_t> getEpList() { return ep_list_; }
-    uint64_t getPrimaryId() const { return primary_id_; }
+    std::vector<std::string> getEpList() { return ep_list_; }
+    std::string getPrimaryId() const { return primary_id_; }
     uint64_t getOutVni() const { return outbound_vni_; }
     std::string getOutMacLookup() const { return outbound_mac_lookup_; }
     std::string getVnet() const { return vnet_name_; }
@@ -291,8 +325,8 @@ protected:
 
     std::shared_ptr<EniFwdCtxBase> ctx;
     std::map<rule_type_t, EniAclRule> rule_container_;
-    std::vector<uint64_t> ep_list_;
-    uint64_t primary_id_;
+    std::vector<std::string> ep_list_;
+    std::string primary_id_;
     uint64_t outbound_vni_;
     std::string outbound_mac_lookup_;
     std::string vnet_name_;
@@ -327,6 +361,7 @@ public:
 
     DpuRegistry dpu_info;
     unique_ptr<swss::ProducerStateTable> rule_table;
+
 protected:
     std::set<std::string> findInternalPorts();
 
@@ -337,9 +372,9 @@ protected:
 
     unique_ptr<swss::Table> port_tbl_;
     unique_ptr<swss::Table> vip_tbl_;
-    unique_ptr<swss::Table> dpu_tbl_;
+    unique_ptr<swss::DBConnector> cfg_db_;
 
-    /* Only one vip is expected per T1 */
+    /* Only one vip is expected per T1 cluster */
     swss::IpPrefix vip; 
     bool vip_inferred_;
 };
