@@ -379,7 +379,17 @@ void SflowOrch::doTask(Consumer &consumer)
         string op = kfvOp(tuple);
         string alias = kfvKey(tuple);
 
-        gPortsOrch->getPort(alias, port);
+        /* There are chances the the port has not been created in SAI and
+         * handling on the new created port for sflow goes the SAI port creation when dynamic port
+         * breakout command is executed. Needs to call getPort() here to ensure the port
+         * has been created by SAI.
+         */
+        if (!gPortsOrch->getPort(alias, port))
+        {
+            it++;
+            continue;
+        }
+
         if (op == SET_COMMAND)
         {
             bool      admin_state = m_sflowStatus;
