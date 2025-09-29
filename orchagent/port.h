@@ -250,7 +250,6 @@ public:
     bool m_adv_intf_cfg = false;  // Advertised interface type
     bool m_fec_cfg = false;       // Forward Error Correction (FEC)
     bool m_override_fec = false;  // Enable Override FEC
-    bool m_pfc_asym_cfg = false;  // Asymmetric Priority Flow Control (PFC)
     bool m_lm_cfg = false;        // Forwarding Database (FDB) Learning Mode (LM)
     bool m_lt_cfg = false;        // Link Training (LT)
 
