@@ -7,6 +7,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include <swss/redisutility.h>
+#include <climits>
 
 using namespace std;
 using namespace swss;
@@ -96,7 +97,12 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
     else
     {
         // Assuming dhcp_rate_limit is already validated and contains valid integer
-        int byte_rate = atoi(dhcp_rate_limit.c_str()) * PACKET_SIZE;
+        int byte_rate = stoi(dhcp_rate_limit.c_str()) * PACKET_SIZE;
+        if (byte_rate > INT_MAX / PACKET_SIZE)
+        {
+            SWSS_LOG_WARN("DHCP rate limit too high, would overflow INT_MAX: %s", dhcp_rate_limit.c_str());
+            return false;
+        }
         cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << byte_rate << "bps burst " << byte_rate << "b conform-exceed drop";
     }
     cmd_str = cmd.str();
