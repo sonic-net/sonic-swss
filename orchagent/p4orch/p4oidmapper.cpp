@@ -1,6 +1,7 @@
 #include "p4oidmapper.h"
 
 #include <limits>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 
@@ -11,6 +12,8 @@ extern "C"
 {
 #include "sai.h"
 }
+
+using ::nlohmann::json;
 
 P4OidMapper::P4OidMapper() : m_db("APPL_STATE_DB", 0) {}
 
@@ -187,4 +190,23 @@ std::string P4OidMapper::verifyOIDMapping(_In_ sai_object_type_t object_type, _I
     }
 
     return "";
+}
+
+std::string P4OidMapper::dumpStateCache() {
+  json cache = json({});
+  for (int i = 0; i < SAI_OBJECT_TYPE_MAX; i++) {
+    if (m_oidTables[i].empty()) {
+      continue;
+    }
+
+    json oid_mapper_j = json({});
+    for (const auto& kv_pair : m_oidTables[i]) {
+      MapperEntry m = kv_pair.second;
+      json mapper_entry_j = {{"sai_oid", sai_serialize_object_id(m.sai_oid)}, {"ref_count", m.ref_count}};
+      oid_mapper_j[kv_pair.first] = mapper_entry_j;
+    }
+    std::string sai_object_type = sai_serialize_object_type(static_cast<sai_object_type_t>(i));
+    cache[sai_object_type] = oid_mapper_j;
+  }
+  return cache.dump(4);
 }
