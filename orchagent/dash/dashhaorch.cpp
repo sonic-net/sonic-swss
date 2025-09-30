@@ -840,7 +840,8 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
                 m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
 
-            bool has_dpu_scope_ha_state_active = false;
+            // Per HLD, once the state is moved to Active/Standby/Standalone state, we will create the BFD responder on DPU.
+            bool has_dpu_scope_ha_state_activated = false;
             if (has_dpu_scope())
             {
                 for (const auto& ha_scope_entry : m_ha_scope_entries)
@@ -849,13 +850,13 @@ void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
                                                             SAI_DASH_HA_STATE_STANDBY,
                                                             SAI_DASH_HA_STATE_STANDALONE}))
                     {
-                        has_dpu_scope_ha_state_active = true;
+                        has_dpu_scope_ha_state_activated = true;
                         break;
                     }
                 }
             }
 
-            if (has_dpu_scope_ha_state_active)
+            if (has_dpu_scope_ha_state_activated)
             {
                 m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
             }
