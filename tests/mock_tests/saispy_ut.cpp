@@ -217,3 +217,38 @@ TEST(SaiSpy, create_switch_and_acl_table)
     switch_api->create_switch(&oid, 0, nullptr);
     ASSERT_EQ(oid, exp_oid_2);
 }
+
+TEST(SaiSpy, Destructor)
+{
+    auto acl_api = std::make_shared<sai_acl_api_t>();
+
+    acl_api->create_acl_table = [](sai_object_id_t *oid, sai_object_id_t, uint32_t,
+                                   const sai_attribute_t *) {
+        *oid = 1;
+        return (sai_status_t)SAI_STATUS_SUCCESS;
+    };
+
+    sai_object_id_t oid;
+
+    auto status = acl_api->create_acl_table(&oid, 1, 0, nullptr);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+    ASSERT_EQ(oid, 1);
+
+    // Setup SAI spy in a limited scope.
+    {
+        auto aclSpy = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_TABLE>(&acl_api.get()->create_acl_table);
+        aclSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t {
+            *oid = 2;
+            return SAI_STATUS_SUCCESS;
+        });
+
+        status = acl_api->create_acl_table(&oid, 1, 0, nullptr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+        ASSERT_EQ(oid, 2);
+    }
+
+    // Make sure original SAI API is restored.
+    status = acl_api->create_acl_table(&oid, 1, 0, nullptr);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+    ASSERT_EQ(oid, 1);
+}
