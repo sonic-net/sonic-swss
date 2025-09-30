@@ -28,6 +28,12 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     EXPECT_EQ("ipv6_dst=2001:db8:1::/32:vrf_id=b4-traffic", ipv6_route_key);
     ipv6_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("::/0"));
     EXPECT_EQ("ipv6_dst=::/0:vrf_id=b4-traffic", ipv6_route_key);
+    std::string ipv4_multicast_key = KeyGenerator::generateIpMulticastKey(
+        "b4-traffic", swss::IpAddress("127.0.0.1"));
+    EXPECT_EQ("ipv4_dst=127.0.0.1:vrf_id=b4-traffic", ipv4_multicast_key);
+    std::string ipv6_multicast_key = KeyGenerator::generateIpMulticastKey(
+        "b4-traffic", swss::IpAddress("::1"));
+    EXPECT_EQ("ipv6_dst=::1:vrf_id=b4-traffic", ipv6_multicast_key);
 
     // Test with special characters.
     neighbor_key = KeyGenerator::generateNeighborKey("::===::", swss::IpAddress("::1"));
