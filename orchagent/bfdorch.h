@@ -19,6 +19,14 @@ public:
     virtual ~BfdOrch(void);
     void handleTsaStateChange(bool tsaState);
 
+    /* APIs for HaOrch to create passive BFD sessions on DPU.*/
+    virtual void createSoftwareBfdSession(
+        const std::string& key,
+        const std::vector<swss::FieldValueTuple>& data);
+    virtual void removeSoftwareBfdSession(
+        const std::string& key);
+    virtual void removeAllSoftwareBfdSessions();
+
 private:
     bool create_bfd_session(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     bool remove_bfd_session(const std::string& key);
