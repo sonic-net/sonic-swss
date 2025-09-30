@@ -33,12 +33,25 @@ struct SaiSpyFunctor
     using original_fn_ptr_t = R (**)(arglist...);
 
     original_fn_t original_fn;
+    original_fn_ptr_t original_fn_ptr;
     static std::function<R(arglist...)> fake;
 
     SaiSpyFunctor(original_fn_ptr_t fn_ptr) :
-        original_fn(*fn_ptr)
+        original_fn(*fn_ptr),
+        original_fn_ptr(fn_ptr)
     {
         *fn_ptr = spy;
+    }
+
+    SaiSpyFunctor(const SaiSpyFunctor&) = delete;
+    SaiSpyFunctor &operator=(const SaiSpyFunctor&) = delete;
+
+    SaiSpyFunctor(SaiSpyFunctor&&) noexcept = delete;
+    SaiSpyFunctor &operator=(SaiSpyFunctor&&) noexcept = delete;
+
+    ~SaiSpyFunctor()
+    {
+        *original_fn_ptr = original_fn;
     }
 
     void callFake(std::function<sai_status_t(arglist...)> fn)
