@@ -310,14 +310,6 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_dashVnetOrch);
     ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
 
-    vector<string> dash_ha_tables = {
-        APP_DASH_HA_SET_TABLE_NAME,
-        APP_DASH_HA_SCOPE_TABLE_NAME
-    };
-    m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
-    gDirectory.set(m_dashHaOrch);
-    ut_orch_list.push_back((Orch **)&m_dashHaOrch);
-
     vector<string> dash_route_tables = {
         APP_DASH_ROUTE_TABLE_NAME,
         APP_DASH_ROUTE_RULE_TABLE_NAME,
