@@ -258,7 +258,7 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
     }
 
     auto arg_object_names = fvsGetValue(values, "object_names", true);
-    if (arg_object_names)
+    if (arg_object_names && !arg_object_names->empty())
     {
         vector<string> buffer;
         boost::split(buffer, *arg_object_names, boost::is_any_of(","));
@@ -267,7 +267,7 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
     }
 
     auto arg_object_counters = fvsGetValue(values, "object_counters", true);
-    if (arg_object_counters)
+    if (arg_object_counters && !arg_object_counters->empty())
     {
         vector<string> buffer;
         boost::split(buffer, *arg_object_counters, boost::is_any_of(","));
