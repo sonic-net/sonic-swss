@@ -27,6 +27,7 @@ extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_router_interface_api_t *sai_router_intfs_api;
 extern CrmOrch *gCrmOrch;
 extern sai_object_id_t gVirtualRouterId;
+extern sai_object_id_t gUnderlayIfId;
 
 namespace
 {
@@ -318,48 +319,21 @@ ReturnCode GreTunnelManager::createGreTunnel(P4GreTunnelEntry &gre_tunnel_entry)
                              << "Router intf " << QuotedVar(gre_tunnel_entry.router_interface_id) << " does not exist");
     }
 
-    std::vector<sai_attribute_t> overlay_intf_attrs;
-
-    sai_attribute_t overlay_intf_attr;
-    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    overlay_intf_attr.value.oid = gVirtualRouterId;
-    overlay_intf_attrs.push_back(overlay_intf_attr);
-
-    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    overlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
-    overlay_intf_attrs.push_back(overlay_intf_attr);
-
-    // Call SAI API.
-    CHECK_ERROR_AND_LOG_AND_RETURN(
-        sai_router_intfs_api->create_router_interface(&gre_tunnel_entry.overlay_if_oid, gSwitchId,
-                                                      (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data()),
-        "Failed to create the Loopback router interface for GRE tunnel "
-        "SAI_TUNNEL_ATTR_OVERLAY_INTERFACE attribute"
-            << QuotedVar(gre_tunnel_entry.tunnel_key));
-
     // Prepare attributes for the SAI creation call.
+    // TODO: Remove when SAI_TUNNEL_ATTR_OVERLAY_INTERFACE is not
+    // mandatory Use gUnderlayIfId, a shared global loopback rif, for encap
+    // tunnels
+    gre_tunnel_entry.overlay_if_oid = gUnderlayIfId;
     std::vector<sai_attribute_t> tunnel_attrs = getSaiAttrs(gre_tunnel_entry);
 
     // Call SAI API.
-    auto sai_status = sai_tunnel_api->create_tunnel(&gre_tunnel_entry.tunnel_oid, gSwitchId,
-                                                    (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
-    if (sai_status != SAI_STATUS_SUCCESS)
-    {
-        auto status = ReturnCode(sai_status) << "Failed to create GRE tunnel " << QuotedVar(gre_tunnel_entry.tunnel_key)
-                                             << " on rif " << QuotedVar(gre_tunnel_entry.router_interface_id);
-        SWSS_LOG_ERROR("%s", status.message().c_str());
-        auto recovery_status = sai_router_intfs_api->remove_router_interface(gre_tunnel_entry.overlay_if_oid);
-        if (recovery_status != SAI_STATUS_SUCCESS)
-        {
-            auto rc = ReturnCode(recovery_status) << "Failed to recover overlay router interface due to SAI call "
-                                                     "failure: Failed to remove loopback router interface "
-                                                  << QuotedVar(sai_serialize_object_id(gre_tunnel_entry.overlay_if_oid))
-                                                  << " while clean up dependencies.";
-            SWSS_LOG_ERROR("%s", rc.message().c_str());
-            SWSS_RAISE_CRITICAL_STATE(rc.message());
-        }
-        return status;
-    }
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_tunnel_api->create_tunnel(&gre_tunnel_entry.tunnel_oid, gSwitchId,
+                                      (uint32_t)tunnel_attrs.size(),
+                                      tunnel_attrs.data()),
+        "Failed to create GRE tunnel "
+            << QuotedVar(gre_tunnel_entry.tunnel_key) << " on rif "
+            << QuotedVar(gre_tunnel_entry.router_interface_id));
 
     // On successful creation, increment ref count.
     m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_interface_key);
@@ -429,32 +403,6 @@ ReturnCode GreTunnelManager::removeGreTunnel(const std::string &tunnel_key)
     // Call SAI API.
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_tunnel_api->remove_tunnel(gre_tunnel_entry->tunnel_oid),
                                    "Failed to remove GRE tunnel " << QuotedVar(gre_tunnel_entry->tunnel_key));
-
-    auto sai_status = sai_router_intfs_api->remove_router_interface(gre_tunnel_entry->overlay_if_oid);
-    if (sai_status != SAI_STATUS_SUCCESS)
-    {
-        auto status = ReturnCode(sai_status) << "Failed to remove loopback router interface "
-                                             << QuotedVar(sai_serialize_object_id(gre_tunnel_entry->overlay_if_oid))
-                                             << " when removing GRE tunnel " << QuotedVar(gre_tunnel_entry->tunnel_key);
-        SWSS_LOG_ERROR("%s", status.message().c_str());
-
-        // Try to recreate the GRE tunnel
-        std::vector<sai_attribute_t> tunnel_attrs = getSaiAttrs(*gre_tunnel_entry);
-
-        // Call SAI API.
-        auto recovery_status = sai_tunnel_api->create_tunnel(&gre_tunnel_entry->tunnel_oid, gSwitchId,
-                                                             (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
-        if (recovery_status != SAI_STATUS_SUCCESS)
-        {
-            auto rc = ReturnCode(recovery_status) << "Failed to recover the GRE tunnel due to SAI call failure : "
-                                                     "Failed to create GRE tunnel "
-                                                  << QuotedVar(gre_tunnel_entry->tunnel_key) << " on rif "
-                                                  << QuotedVar(gre_tunnel_entry->router_interface_id);
-            SWSS_LOG_ERROR("%s", rc.message().c_str());
-            SWSS_RAISE_CRITICAL_STATE(rc.message());
-        }
-        return status;
-    }
 
     // On successful deletion, decrement ref count.
     m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
@@ -595,36 +543,15 @@ std::string GreTunnelManager::verifyStateAsicDb(const P4GreTunnelEntry *gre_tunn
     swss::DBConnector db("ASIC_DB", 0);
     swss::Table table(&db, "ASIC_STATE");
 
-    // Verify Overlay router interface ASIC DB attributes
-    std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTER_INTERFACE) + ":" +
-                      sai_serialize_object_id(gre_tunnel_entry->overlay_if_oid);
-    std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
-    {
-        return std::string("ASIC DB key not found ") + key;
-    }
-
-    std::vector<sai_attribute_t> overlay_intf_attrs;
-    sai_attribute_t overlay_intf_attr;
-    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    overlay_intf_attr.value.oid = gVirtualRouterId;
-    overlay_intf_attrs.push_back(overlay_intf_attr);
-    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    overlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
-    overlay_intf_attrs.push_back(overlay_intf_attr);
-    std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
-        SAI_OBJECT_TYPE_ROUTER_INTERFACE, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data(),
-        /*countOnly=*/false);
-    verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
-                /*allow_unknown=*/false);
-
     // Verify Tunnel ASIC DB attributes
     std::vector<sai_attribute_t> attrs = getSaiAttrs(*gre_tunnel_entry);
-    exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_TUNNEL, (uint32_t)attrs.size(), attrs.data(),
-                                                         /*countOnly=*/false);
-    key =
-        sai_serialize_object_type(SAI_OBJECT_TYPE_TUNNEL) + ":" + sai_serialize_object_id(gre_tunnel_entry->tunnel_oid);
-    values.clear();
+    std::vector<swss::FieldValueTuple> exp =
+        saimeta::SaiAttributeList::serialize_attr_list(
+            SAI_OBJECT_TYPE_TUNNEL, (uint32_t)attrs.size(), attrs.data(),
+            /*countOnly=*/false);
+    std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_TUNNEL) + ":" +
+                      sai_serialize_object_id(gre_tunnel_entry->tunnel_oid);
+    std::vector<swss::FieldValueTuple> values;
     if (!table.get(key, values))
     {
         return std::string("ASIC DB key not found ") + key;
