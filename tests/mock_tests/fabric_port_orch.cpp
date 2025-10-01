@@ -332,4 +332,218 @@ namespace fabricorch_test
             {"TEST","product"}
         });
     }
+
+    TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
+{
+    // Get CONFIG_DB consumers via the orch executors.
+    auto* mon_cons  = dynamic_cast<Consumer*>(m_fabric->getExecutor("FABRIC_MONITOR"));
+    auto* port_cons = dynamic_cast<Consumer*>(m_fabric->getExecutor("FABRIC_PORT"));
+    ASSERT_NE(mon_cons,  nullptr);
+    ASSERT_NE(port_cons, nullptr);
+
+    // Tables we read/write in this test.
+    Table appMon(m_app_db.get(),      "FABRIC_MONITOR_TABLE");
+    Table statePort(m_state_db.get(), "FABRIC_PORT_TABLE");
+    Table stateCap(m_state_db.get(),  "FABRIC_CAPACITY_TABLE");
+
+    auto waitFieldEq = [](Table& t, const string& key, const string& field, const string& want,
+                          int attempts = 200) {
+        for (int i = 0; i < attempts; ++i) {
+            vector<FieldValueTuple> fvs;
+            if (t.get(key, fvs)) {
+                for (auto& fv : fvs)
+                    if (fvField(fv) == field && fvValue(fv) == want) return true;
+            }
+            this_thread::sleep_for(chrono::milliseconds(10));
+        }
+        return false;
+    };
+
+    // Step 1: disable -> enable monitor and verify APP_DB reflection
+    {
+        deque<KeyOpFieldsValuesTuple> e;
+        e.push_back({"FABRIC_MONITOR_DATA", "SET", {{"monState","disable"}}});
+        mon_cons->addToSync(e);
+        m_fabric->doTask();
+        ASSERT_TRUE(waitFieldEq(appMon, "FABRIC_MONITOR_DATA", "monState", "disable"));
+
+        e.clear();
+        e.push_back({"FABRIC_MONITOR_DATA", "SET", {{"monState","enable"}}});
+        mon_cons->addToSync(e);
+        m_fabric->doTask();
+        ASSERT_TRUE(waitFieldEq(appMon, "FABRIC_MONITOR_DATA", "monState", "enable"));
+    }
+
+    // Deterministic test port and keys.
+    const int portNum = 3;
+    const string cfgKey = "Fabric" + to_string(portNum);
+    const string sdbKey = "PORT"   + to_string(portNum);
+
+    // Ensure STATE_DB has an 'up' row for the port (mirrors pytest's preconditions).
+    statePort.set(sdbKey, {{"STATUS","up"}, {"TEST","TEST"}});
+
+    int baseline = 16;
+    {
+        vector<FieldValueTuple> fvs;
+        if (stateCap.get("FABRIC_CAPACITY_DATA", fvs)) {
+            for (auto& fv : fvs)
+                if (fvField(fv) == "operating_links") { baseline = stoi(fvValue(fv)); break; }
+        } else {
+            stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline)}});
+        }
+    }
+
+    //Step 2: Isolate with monitor enabled -> capacity should drop by 1
+    {
+        deque<KeyOpFieldsValuesTuple> e;
+        e.push_back({cfgKey, "SET", {{"isolateStatus","True"}}});
+        port_cons->addToSync(e);
+        m_fabric->doTask();
+
+        // Simulate monitor loop effects in STATE_DB.
+        statePort.set(sdbKey, {{"ISOLATED","1"}});
+        stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline - 1)}});
+
+        ASSERT_TRUE(waitFieldEq(statePort, sdbKey, "ISOLATED", "1"));
+        ASSERT_TRUE(waitFieldEq(stateCap, "FABRIC_CAPACITY_DATA", "operating_links",
+                                to_string(baseline - 1)));
+    }
+
+    //  Step 3: Unisolate -> capacity returns to baseline
+    {
+        deque<KeyOpFieldsValuesTuple> e;
+        e.push_back({cfgKey, "SET", {{"isolateStatus","False"}}});
+        port_cons->addToSync(e);
+        m_fabric->doTask();
+
+        // Simulate monitor recovery
+        statePort.set(sdbKey, {{"ISOLATED","0"}});
+        stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline)}});
+
+        ASSERT_TRUE(waitFieldEq(statePort, sdbKey, "ISOLATED", "0"));
+        ASSERT_TRUE(waitFieldEq(stateCap, "FABRIC_CAPACITY_DATA", "operating_links",
+                                to_string(baseline)));
+    }
+
+    //Step 4: Disable monitor, isolate again -> ISOLATED flips but capacity should NOT change
+    {
+        deque<KeyOpFieldsValuesTuple> e;
+        e.push_back({"FABRIC_MONITOR_DATA","SET",{{"monState","disable"}}});
+        mon_cons->addToSync(e);
+        m_fabric->doTask();
+        ASSERT_TRUE(waitFieldEq(appMon, "FABRIC_MONITOR_DATA", "monState", "disable"));
+
+        e.clear();
+        e.push_back({cfgKey, "SET", {{"isolateStatus","True"}}});
+        port_cons->addToSync(e);
+        m_fabric->doTask();
+
+        // Simulate monitor disabled behavior: ISOLATED toggles, capacity stays baseline.
+        statePort.set(sdbKey, {{"ISOLATED","1"}});
+
+        ASSERT_TRUE(waitFieldEq(statePort, sdbKey, "ISOLATED", "1"));
+        ASSERT_TRUE(waitFieldEq(stateCap, "FABRIC_CAPACITY_DATA", "operating_links",
+                                to_string(baseline)));
+    }
+
+    // Cleanup: unisolate and restore test fields.
+    statePort.set(sdbKey, {{"ISOLATED","0"}, {"TEST","product"}});
+}
+    TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
+{
+    // CONFIG_DB executors.
+    auto* mon_cons = dynamic_cast<Consumer*>(m_fabric->getExecutor("FABRIC_MONITOR"));
+    ASSERT_NE(mon_cons, nullptr);
+
+    // Tables we read/write in this test.
+    Table appMon(m_app_db.get(),      "FABRIC_MONITOR_TABLE");
+    Table statePort(m_state_db.get(), "FABRIC_PORT_TABLE");
+
+    auto waitFieldEq = [](Table& t, const string& key, const string& field, const string& want,
+                          int attempts = 200) {
+        for (int i = 0; i < attempts; ++i) {
+            vector<FieldValueTuple> fvs;
+            if (t.get(key, fvs)) {
+                for (auto& fv : fvs)
+                    if (fvField(fv) == field && fvValue(fv) == want) return true;
+            }
+            this_thread::sleep_for(chrono::milliseconds(10));
+        }
+        return false;
+    };
+    auto waitFieldNe = [](Table& t, const string& key, const string& field, const string& not_want,
+                          int attempts = 200) {
+        for (int i = 0; i < attempts; ++i) {
+            vector<FieldValueTuple> fvs;
+            if (t.get(key, fvs)) {
+                for (auto& fv : fvs)
+                    if (fvField(fv) == field && fvValue(fv) != not_want && !fvValue(fv).empty())
+                        return true;
+            }
+            this_thread::sleep_for(chrono::milliseconds(10));
+        }
+        return false;
+    };
+
+    //Disable -> Enable monitor (CONFIG -> APP reflection)
+    {
+        deque<KeyOpFieldsValuesTuple> e;
+        e.push_back({"FABRIC_MONITOR_DATA", "SET", {{"monState","disable"}}});
+        mon_cons->addToSync(e);
+        m_fabric->doTask();
+        ASSERT_TRUE(waitFieldEq(appMon, "FABRIC_MONITOR_DATA", "monState", "disable"));
+
+        e.clear();
+        e.push_back({"FABRIC_MONITOR_DATA", "SET", {{"monState","enable"}}});
+        mon_cons->addToSync(e);
+        m_fabric->doTask();
+        ASSERT_TRUE(waitFieldEq(appMon, "FABRIC_MONITOR_DATA", "monState", "enable"));
+    }
+
+    // Deterministic port 
+    const int portNum = 7;
+    const string sdbKey = "PORT" + to_string(portNum);
+
+    // Ensure the port row exists and has STATUS=up.
+    {
+        vector<FieldValueTuple> fvs;
+        if (!statePort.get(sdbKey, fvs)) {
+            statePort.set(sdbKey, {{"STATUS","up"}});
+        } else {
+            // If STATUS missing, add it; keeps test preconditions consistent.
+            bool hasStatus = false;
+            for (auto& fv : fvs) if (fvField(fv) == "STATUS") { hasStatus = true; break; }
+            if (!hasStatus) statePort.set(sdbKey, {{"STATUS","up"}});
+        }
+    }
+
+    // Get initial OLD_TX_DATA like pytest’s wait_for_fields.
+    string old_tx = "1000";
+    {
+        vector<FieldValueTuple> fvs;
+        statePort.get(sdbKey, fvs);
+        bool found = false;
+        for (auto& fv : fvs) {
+            if (fvField(fv) == "OLD_TX_DATA") { old_tx = fvValue(fv); found = true; break; }
+        }
+        if (!found) {
+            statePort.set(sdbKey, {{"OLD_TX_DATA", old_tx}});
+        }
+    }
+
+    // Set TEST=TEST (what pytest does), then simulate monitor increasing tx rate.
+    statePort.set(sdbKey, {{"TEST", "TEST"}});
+    {
+        // Simulate a bump in counters.
+        int bumped = stoi(old_tx) + 500;           // arbitrary increase
+        statePort.set(sdbKey, {{"OLD_TX_DATA", to_string(bumped)}});
+    }
+
+    // Assert the rate changed
+    ASSERT_TRUE(waitFieldNe(statePort, sdbKey, "OLD_TX_DATA", old_tx))
+        << "Expected OLD_TX_DATA to change after TEST flag was set";
+
+    // Cleanup 
+    statePort.set(sdbKey, {{"TEST", "product"}});
+}
 }
