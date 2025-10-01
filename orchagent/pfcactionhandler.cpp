@@ -265,7 +265,12 @@ PfcWdSaiDlrInitHandler::~PfcWdSaiDlrInitHandler(void)
 
 PfcWdDlrHandler::PfcWdDlrHandler(sai_object_id_t port, sai_object_id_t queue,
                                                uint8_t queueId, shared_ptr<Table> countersTable):
-    PfcWdLossyHandler(port, queue, queueId, countersTable)
+    PfcWdLossyHandler(port, queue, queueId, countersTable),
+    m_lastPortTxDrops(0),
+    m_lastPortTxPackets(0),
+    m_baselineTxDrops(0),
+    m_baselineTxPackets(0),
+    m_baselineSet(false)
 {
     SWSS_LOG_ENTER();
 
@@ -281,6 +286,19 @@ PfcWdDlrHandler::PfcWdDlrHandler(sai_object_id_t port, sai_object_id_t queue,
                        " queueId %d : %d",
                        port, queue, queueId, status);
         return;
+    }
+
+    // Set baseline counters
+    uint64_t txDrops, txPackets;
+    if (getPortTxDrops(txDrops) && getPortTxPackets(txPackets))
+    {
+        m_baselineTxDrops = txDrops;
+        m_baselineTxPackets = txPackets;
+        m_lastPortTxDrops = txDrops;
+        m_lastPortTxPackets = txPackets;
+        m_baselineSet = true;
+        SWSS_LOG_INFO("Set baseline TX drops: %" PRIu64 ", TX packets: %" PRIu64 " for port 0x%" PRIx64,
+                     txDrops, txPackets, port);
     }
 }
 
@@ -304,6 +322,112 @@ PfcWdDlrHandler::~PfcWdDlrHandler(void)
                        " queueId %d : %d", port, queue, queueId, status);
         return;
     }
+}
+
+bool PfcWdDlrHandler::getPortTxDrops(uint64_t& txDrops)
+{
+    SWSS_LOG_ENTER();
+
+    static const vector<sai_stat_id_t> portStatIds = {
+        SAI_PORT_STAT_IF_OUT_DISCARDS
+    };
+
+    vector<uint64_t> portStats;
+    portStats.resize(portStatIds.size());
+
+    sai_status_t status = sai_port_api->get_port_stats(
+            getPort(),
+            static_cast<uint32_t>(portStatIds.size()),
+            portStatIds.data(),
+            portStats.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to fetch port 0x%" PRIx64 " TX drop stats: %d", getPort(), status);
+        return false;
+    }
+
+    txDrops = portStats[0];
+    return true;
+}
+
+bool PfcWdDlrHandler::getPortTxPackets(uint64_t& txPackets)
+{
+    SWSS_LOG_ENTER();
+
+    static const vector<sai_stat_id_t> portStatIds = {
+        SAI_PORT_STAT_IF_OUT_UCAST_PKTS
+    };
+
+    vector<uint64_t> portStats;
+    portStats.resize(portStatIds.size());
+
+    sai_status_t status = sai_port_api->get_port_stats(
+            getPort(),
+            static_cast<uint32_t>(portStatIds.size()),
+            portStatIds.data(),
+            portStats.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to fetch port 0x%" PRIx64 " TX packet stats: %d", getPort(), status);
+        return false;
+    }
+
+    txPackets = portStats[0];
+    return true;
+}
+
+bool PfcWdDlrHandler::getHwCounters(PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    // First get the standard queue counters (for RX stats)
+    if (!PfcWdLossyHandler::getHwCounters(counters))
+    {
+        return false;
+    }
+
+    // Override TX counters with port-level statistics
+    // since hardware drops packets before they reach queues
+    uint64_t currentTxDrops, currentTxPackets;
+
+    if (!getPortTxDrops(currentTxDrops) || !getPortTxPackets(currentTxPackets))
+    {
+        SWSS_LOG_ERROR("Failed to get port TX statistics for PFC recovery");
+        return false;
+    }
+
+    if (m_baselineSet)
+    {
+        // Calculate delta from baseline (drops during PFC recovery)
+        uint64_t deltaTxDrops = (currentTxDrops >= m_baselineTxDrops) ?
+                               (currentTxDrops - m_baselineTxDrops) : 0;
+        uint64_t deltaTxPackets = (currentTxPackets >= m_baselineTxPackets) ?
+                                 (currentTxPackets - m_baselineTxPackets) : 0;
+
+        // Override queue TX counters with port-level deltas
+        counters.txPkt = deltaTxPackets;
+        counters.txDropPkt = deltaTxDrops;
+
+        SWSS_LOG_DEBUG("PFC recovery stats - Port TX drops: %" PRIu64 " (delta: %" PRIu64 "), "
+                      "TX packets: %" PRIu64 " (delta: %" PRIu64 ")",
+                      currentTxDrops, deltaTxDrops, currentTxPackets, deltaTxPackets);
+    }
+    else
+    {
+        // No baseline set, use current values
+        counters.txPkt = currentTxPackets;
+        counters.txDropPkt = currentTxDrops;
+
+        SWSS_LOG_WARN("PFC recovery baseline not set, using absolute values");
+    }
+
+    // Update last seen values
+    m_lastPortTxDrops = currentTxDrops;
+    m_lastPortTxPackets = currentTxPackets;
+
+    return true;
 }
 
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
