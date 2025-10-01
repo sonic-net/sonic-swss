@@ -3214,6 +3214,25 @@ namespace portsorch_test
             { "status", "turnoff" }
         } });
         DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set an unsupported attribute
+        entries.push_back({ "CONFIG", "SET", {
+            { "enable", "false" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Use an unsupported operation type
+        entries.push_back({ "CONFIG", "GET", {
+            { "status", "disable" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
         ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
         entries.clear();
 
