@@ -549,7 +549,7 @@ static bool isPathTracingSupported()
         SWSS_LOG_INFO("Querying OBJECT_TYPE_LIST is not supported on this platform");
         return false;
     }
-    else 
+    else
     {
         SWSS_LOG_ERROR(
             "Failed to get a list of supported switch capabilities. Error=%d", status
@@ -4371,6 +4371,46 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it = m_portListLaneMap.erase(it);
                         continue;
                     }
+                    else
+                    {
+                        /*
+                         * There could be cases where only port speed is changed as part of port breakout (no change in lane map)
+                         * In such cases, due to hardware limitation and the serial processing of speed change in SAI, there could
+                         * be a scenario where say speed is changed from 2x400G(PAM4) to say 2x100G (NRZ), the HW will then see one
+                         * subport is at 400G(x4 PAM4) and the other subport is at 100G(x4 NRZ) which is not supported by hardware
+                        */
+                        auto pCfg = m_lanesAliasSpeedMap[it->first];
+                        sai_uint32_t per_lane_cfg_speed = pCfg.speed.value / static_cast<sai_uint32_t>(pCfg.lanes.value.size());
+                        sai_uint32_t speed = 0;
+
+                        if (getPortSpeed(it->second, speed))
+                        {
+                            sai_uint32_t per_lane_speed = 0;
+                            if (speed > 0)
+                            {
+                                per_lane_speed = speed / static_cast<sai_uint32_t>(it->first.size());
+                            }
+                            // If speed is set in config DB, check if it matches with the HW speed
+                            if ((pCfg.speed.is_set && speed != pCfg.speed.value) &&
+                                    // PAM4 speed
+                                    (per_lane_speed >= 50000 || per_lane_cfg_speed >= 50000))
+                            {
+                                /*
+                                 * Speed mismatch, remove the port so that this port can be re-added later in
+                                 * port bulk add with configured speed
+                                 */
+                                SWSS_LOG_NOTICE("Port %" PRIx64 " speed mismatch: cfg speed %u, hw speed %u lane: %s",
+                                        it->second,
+                                        pCfg.speed.value,
+                                        speed,
+                                        swss::join(" ", it->first.cbegin(), it->first.cend()).c_str()
+                                );
+                                portsToRemoveList.push_back(it->second);
+                                it = m_portListLaneMap.erase(it);
+                                continue;
+                            }
+                        }
+                    }
 
                     it++;
                 }
@@ -4384,11 +4424,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                // Port add comparison logic
+                // Port add comparison logic, add the ports in config DB that are not yet created in HW
                 for (auto it = m_lanesAliasSpeedMap.begin(); it != m_lanesAliasSpeedMap.end();)
                 {
                     if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
                     {
+                        SWSS_LOG_NOTICE("Port %s with speed=%u is not in port list, adding it",
+                                    it->second.key.c_str(), it->second.speed.value);
                         portsToAddList.push_back(it->second);
                         it++;
                         continue;
@@ -4836,7 +4878,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             );
                         }
                         m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
-                } 
+                }
 
                 if (pCfg.adv_interface_types.is_set)
                 {
@@ -6902,7 +6944,7 @@ bool PortsOrch::removeBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
-    
+
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
@@ -8733,7 +8775,7 @@ void PortsOrch::generateWredPortCounterMap()
 
 /****
 *  Func Name  : addWredQueueFlexCounters
-*  Parameters : queueStateVector 
+*  Parameters : queueStateVector
 *  Returns    : void
 *  Description: Top level API to Set WRED flex counters for Queues
 **/
@@ -8803,9 +8845,9 @@ void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQue
 }
 /****
 *  Func Name  : addWredQueueFlexCountersPerPortPerQueueIndex
-*  Parameters : port, queueIndex, is_voq 
+*  Parameters : port, queueIndex, is_voq
 *  Returns    : void
-*  Description: Sets the Stats list to be polled by the flexcounter 
+*  Description: Sets the Stats list to be polled by the flexcounter
 **/
 
 void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex,  bool voq, sai_queue_type_t queueType)

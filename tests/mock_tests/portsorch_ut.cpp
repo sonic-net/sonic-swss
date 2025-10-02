@@ -551,7 +551,7 @@ namespace portsorch_test
 
             ASSERT_EQ(gMlagOrch, nullptr);
             gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
- 
+
         }
 
         virtual void TearDown() override
@@ -1319,7 +1319,7 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvBasic = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "speed",               "100000"            },
+                { "speed",               "1000"            },
                 { "fec",                 "rs"                },
                 { "mtu",                 "9100"              },
                 { "admin_status",        "up"                }
