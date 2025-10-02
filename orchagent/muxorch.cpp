@@ -1563,10 +1563,19 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         auto it = mux_nexthop_tb_.find(update.entry);
         if (it != mux_nexthop_tb_.end())
         {
+            SWSS_LOG_INFO("port %s, nexthop %s", port.c_str(), it->second.c_str());
             port = it->second;
             removeNexthop(update.entry);
         }
     }
+
+    SWSS_LOG_INFO("old port: %s, port %s, add %d, mac %s, alias %s, ip %s",
+                  old_port.c_str(),
+                  port.c_str(),
+                  update.add,
+                  update.mac.to_string().c_str(),
+                  update.entry.alias.c_str(),
+                  update.entry.ip_address.to_string().c_str());
 
     MuxCable* ptr;
     if (!old_port.empty() && old_port != port && isMuxExists(old_port))
@@ -1773,15 +1782,25 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         addSkipNeighbors(skip_neighbors);
 
         // Add neighbors that were learned before this mux port was configured.
-        std::vector<NextHopKey> neighbors;
-        gNeighOrch->getNeighborsForPort(port_name, neighbors);
-        auto it = neighbors.begin();
-        while (it !=  neighbors.end())
+        NeighborTable m_neighbors;
+        gNeighOrch->getMuxNeighborsForPort(port_name, m_neighbors);
+        for (const auto &entry : m_neighbors)
         {
-            if (!containsNextHop(*it) && !isSkipNeighbor(it->ip_address))
+            bool nexthop_found = containsNextHop(entry.first);
+            bool is_skip_neighbor = isSkipNeighbor(entry.first.ip_address);
+            if (!nexthop_found && !is_skip_neighbor)
             {
                 bool add = mux_cable_tb_[port_name]->isActive();
-                mux_cable_tb_[port_name]->updateNeighbor(*it, add);
+
+                SWSS_LOG_INFO("Neighbor %s on %s learned before mux port %s configured state: %d. updating...",
+                    entry.first.ip_address.to_string().c_str(),
+                    entry.second.mac.to_string().c_str(),
+                    port_name.c_str(),
+                    add
+                );
+
+                NeighborUpdate neighbor_update = {entry.first, entry.second.mac, 1};
+                updateNeighbor(neighbor_update);
             }
         }
 

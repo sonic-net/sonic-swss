@@ -1006,15 +1006,27 @@ void NeighOrch::doTask(Consumer &consumer)
     }
 }
 
-void NeighOrch::getNeighborsForPort(string port_name, std::vector<NextHopKey> neighbors)
+/* Gets all neighbor entries tied to a given mux port */
+void NeighOrch::getMuxNeighborsForPort(string port_name, NeighborTable& m_neighbors)
 {
+    SWSS_LOG_INFO("Getting mux neighbors on %s", port_name.c_str());
+
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    string mux_port_name;
     for (const auto &entry : m_syncdNeighbors)
     {
-        if (entry.first.alias == port_name)
+        // Check if mux port exists for given neighbor entry
+        mux_port_name = "";
+        if (!mux_orch->getMuxPort(entry.second.mac, entry.first.alias, mux_port_name) || mux_port_name.empty())
         {
-            SWSS_LOG_INFO("Neighbor %s found on port %s",
-                entry.first.ip_address.to_string().c_str(), entry.first.alias.c_str());
-            neighbors.push_back(entry.first);
+            continue;
+        }
+
+        // Add to m_neighbors if entry found
+        SWSS_LOG_INFO("mux_port: %s, port_name: %s", mux_port_name.c_str(), port_name.c_str());
+        if (mux_port_name == port_name)
+        {
+            m_neighbors.insert(entry);
         }
     }
 }
