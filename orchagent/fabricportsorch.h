@@ -77,7 +77,7 @@ private:
         const unique_ptr<Table>& stateTable,
         const string& key,
         const string& field,
-        int value);
+        uint64_t value);
     void isolateFabricLink(int lane, bool isolate);
 
     void doTask() override;
