@@ -1008,7 +1008,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                     }
                     catch (const std::out_of_range& e)
                     {
-                        SWSS_LOG_INFO("Next hop group %s does not exist", nhg_index.c_str());
+                        SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
                         ctx.retry_cst = make_constraint(RETRY_CST_NHG, nhg_index);
                         ++it;
                         continue;
@@ -1138,13 +1138,14 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             // - add it to retry cache before executing addRoutePost/removeRoutePost
             //      - since these functions could modify retrycache status
             // - delete it from m_toSync after addRoutePost/removeRoutePost to avoid duplicates
+            bool rc_inserted = false;
             if (ctx.retry_cst != DUMMY_CONSTRAINT)
-                consumer.addToRetry(it_prev->second, ctx.retry_cst);
+                rc_inserted = consumer.addToRetry(it_prev->second, ctx.retry_cst);
 
             const auto& object_statuses = ctx.object_statuses;
             if (object_statuses.empty())
             {
-                if (ctx.retry_cst != DUMMY_CONSTRAINT)
+                if (rc_inserted)
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
@@ -1167,7 +1168,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                     if (removeRoutePost(ctx) || ctx.retry_cst != DUMMY_CONSTRAINT)
+                     if (removeRoutePost(ctx) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1178,7 +1179,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
-                     if (addRoutePost(ctx, nhg) || ctx.retry_cst != DUMMY_CONSTRAINT)
+                     if (addRoutePost(ctx, nhg) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1189,7 +1190,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                          gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                          ctx.using_temp_nhg)
                 {
-                    if (addRoutePost(ctx, nhg) || ctx.retry_cst != DUMMY_CONSTRAINT)
+                    if (addRoutePost(ctx, nhg) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1212,7 +1213,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             else if (op == DEL_COMMAND)
             {
                 /* Cannot locate the route or remove succeed */
-                if (removeRoutePost(ctx) || ctx.retry_cst != DUMMY_CONSTRAINT)
+                if (removeRoutePost(ctx) || rc_inserted)
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
