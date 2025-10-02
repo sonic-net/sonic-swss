@@ -426,12 +426,12 @@ void FabricPortsOrch::updateFabricDebugCounters()
     }
     now = time_now.tv_sec;
 
-    int fecIsolatedPolls = FEC_ISOLATE_POLLS;            // monPollThreshIsolation
-    int fecUnisolatePolls = FEC_UNISOLATE_POLLS;         // monPollThreshRecovery
-    int isolationPollsCfg = ISOLATION_POLLS_CFG;         // monPollThreshIsolation
-    int recoveryPollsCfg = RECOVERY_POLLS_CFG;           // monPollThreshRecovery
-    int errorRateCrcCellsCfg = ERROR_RATE_CRC_CELLS_CFG; // monErrThreshCrcCells
-    int errorRateRxCellsCfg = ERROR_RATE_RX_CELLS_CFG;   // monErrThreshRxCells
+    uint64_t fecIsolatedPolls = FEC_ISOLATE_POLLS;            // monPollThreshIsolation
+    uint64_t fecUnisolatePolls = FEC_UNISOLATE_POLLS;         // monPollThreshRecovery
+    uint64_t isolationPollsCfg = ISOLATION_POLLS_CFG;         // monPollThreshIsolation
+    uint64_t recoveryPollsCfg = RECOVERY_POLLS_CFG;           // monPollThreshRecovery
+    uint64_t errorRateCrcCellsCfg = ERROR_RATE_CRC_CELLS_CFG; // monErrThreshCrcCells
+    uint64_t errorRateRxCellsCfg = ERROR_RATE_RX_CELLS_CFG;   // monErrThreshRxCells
     string applConstKey = FABRIC_MONITOR_DATA;
     std::vector<FieldValueTuple> constValues;
     SWSS_LOG_INFO("updateFabricDebugCounters");
@@ -547,13 +547,13 @@ void FabricPortsOrch::updateFabricDebugCounters()
         //
         //    cfgIsolated                     CONFIG_ISOLATED
 
-        int consecutivePollsWithErrors = 0;
-        int consecutivePollsWithNoErrors = 0;
-        int consecutivePollsWithFecErrs = 0;
-        int consecutivePollsWithNoFecErrs = 0;
+        uint64_t consecutivePollsWithErrors = 0;
+        uint64_t consecutivePollsWithNoErrors = 0;
+        uint64_t consecutivePollsWithFecErrs = 0;
+        uint64_t consecutivePollsWithNoFecErrs = 0;
 
-        int skipCrcErrorsOnLinkupCount = 0;
-        int skipFecErrorsOnLinkupCount = 0;
+        uint64_t skipCrcErrorsOnLinkupCount = 0;
+        uint64_t skipFecErrorsOnLinkupCount = 0;
         uint64_t prevRxCells = 0;
         uint64_t prevCrcErrors = 0;
         uint64_t prevCodeErrors = 0;
@@ -569,8 +569,8 @@ void FabricPortsOrch::updateFabricDebugCounters()
 
         // link status
         string lnkStatus = "down";
-        int lnkDownCnt = 0;
-        int preLnkDwnCnt = 0;
+        uint64_t lnkDownCnt = 0;
+        uint64_t preLnkDwnCnt = 0;
 
         // for testing
         string testState = "product";
@@ -624,57 +624,57 @@ void FabricPortsOrch::updateFabricDebugCounters()
             }
             if (fvField(val) == "PORT_DOWN_COUNT")
             {
-                lnkDownCnt = to_uint<uint8_t>(valuePt);
+                lnkDownCnt = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "PORT_DOWN_COUNT_handled")
             {
-                preLnkDwnCnt = to_uint<uint8_t>(valuePt);
+                preLnkDwnCnt = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "POLL_WITH_ERRORS")
             {
-                consecutivePollsWithErrors = to_uint<uint8_t>(valuePt);
+                consecutivePollsWithErrors = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "POLL_WITH_NO_ERRORS")
             {
-                consecutivePollsWithNoErrors = to_uint<uint8_t>(valuePt);
+                consecutivePollsWithNoErrors = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "POLL_WITH_FEC_ERRORS")
             {
-                consecutivePollsWithFecErrs = to_uint<uint8_t>(valuePt);
+                consecutivePollsWithFecErrs = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "POLL_WITH_NOFEC_ERRORS")
             {
-                consecutivePollsWithNoFecErrs = to_uint<uint8_t>(valuePt);
+                consecutivePollsWithNoFecErrs = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "SKIP_CRC_ERR_ON_LNKUP_CNT")
             {
-                skipCrcErrorsOnLinkupCount = to_uint<uint8_t>(valuePt);
+                skipCrcErrorsOnLinkupCount = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "SKIP_FEC_ERR_ON_LNKUP_CNT")
             {
-                skipFecErrorsOnLinkupCount = to_uint<uint8_t>(valuePt);
+                skipFecErrorsOnLinkupCount = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "RX_CELLS")
             {
-                prevRxCells = to_uint<uint64_t>(valuePt);
+                prevRxCells = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "CRC_ERRORS")
             {
-                prevCrcErrors = to_uint<uint64_t>(valuePt);
+                prevCrcErrors = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "CODE_ERRORS")
             {
-                prevCodeErrors = to_uint<uint64_t>(valuePt);
+                prevCodeErrors = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "AUTO_ISOLATED")
@@ -691,12 +691,12 @@ void FabricPortsOrch::updateFabricDebugCounters()
             }
             if (fvField(val) == "TEST_CRC_ERRORS")
             {
-                testCrcErrors = to_uint<uint64_t>(valuePt);
+                testCrcErrors = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "TEST_CODE_ERRORS")
             {
-                testCodeErrors = to_uint<uint64_t>(valuePt);
+                testCodeErrors = std::stoull(valuePt);
                 continue;
             }
             if (fvField(val) == "TEST")
@@ -721,7 +721,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         //        if MANUAL_ISOLATED:
         //              autoIsolated = 0
         //
-        SWSS_LOG_INFO("Port %d lnk down cnt %d  handled: %d", lane, lnkDownCnt, preLnkDwnCnt);
+        SWSS_LOG_INFO("Port %d lnk down cnt %lld  handled: %lld", lane, (long long)lnkDownCnt, (long long)preLnkDwnCnt);
         if (lnkDownCnt != preLnkDwnCnt)
         {
 
@@ -744,7 +744,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         // Now should be the event monitoring on an up link
 
         // checking crc errors
-        int maxSkipCrcCnt = MAX_SKIP_CRCERR_ON_LNKUP_POLLS;
+        uint64_t maxSkipCrcCnt = MAX_SKIP_CRCERR_ON_LNKUP_POLLS;
         if (testState == "TEST"){
             maxSkipCrcCnt = 2;
         }
@@ -790,12 +790,12 @@ void FabricPortsOrch::updateFabricDebugCounters()
                 }
             }
             SWSS_LOG_INFO("port %s diffCrcCells %lld", key.c_str(), (long long)diffCrcCells);
-            SWSS_LOG_INFO("consecutivePollsWithCRCErrs %d consecutivePollsWithNoCRCErrs %d",
-                           consecutivePollsWithErrors, consecutivePollsWithNoErrors);
+            SWSS_LOG_INFO("consecutivePollsWithCRCErrs %lld consecutivePollsWithNoCRCErrs %lld",
+                           (long long)consecutivePollsWithErrors, (long long)consecutivePollsWithNoErrors);
         }
 
         // checking FEC errors
-        int maxSkipFecCnt = MAX_SKIP_FECERR_ON_LNKUP_POLLS;
+        uint64_t maxSkipFecCnt = MAX_SKIP_FECERR_ON_LNKUP_POLLS;
         if (testState == "TEST"){
             maxSkipFecCnt = 2;
         }
@@ -837,9 +837,9 @@ void FabricPortsOrch::updateFabricDebugCounters()
                     consecutivePollsWithFecErrs = 0;
                 }
             }
-            SWSS_LOG_INFO("consecutivePollsWithFecErrs %d consecutivePollsWithNoFecErrs %d",
-                          consecutivePollsWithFecErrs,consecutivePollsWithNoFecErrs);
-            SWSS_LOG_INFO("fecUnisolatePolls %d", fecUnisolatePolls);
+            SWSS_LOG_INFO("consecutivePollsWithFecErrs %lld consecutivePollsWithNoFecErrs %lld",
+                          (long long)consecutivePollsWithFecErrs, (long long)consecutivePollsWithNoFecErrs);
+            SWSS_LOG_INFO("fecUnisolatePolls %lld", (long long)fecUnisolatePolls);
         }
 
         // take care serdes link shut state setting
@@ -848,10 +848,10 @@ void FabricPortsOrch::updateFabricDebugCounters()
             // debug information
             SWSS_LOG_INFO("port %s status up autoIsolated %d",
                           key.c_str(), autoIsolated);
-            SWSS_LOG_INFO("consecutivePollsWithErrors %d consecutivePollsWithFecErrs %d",
-                          consecutivePollsWithErrors, consecutivePollsWithFecErrs);
-            SWSS_LOG_INFO("consecutivePollsWithNoErrors %d consecutivePollsWithNoFecErrs %d",
-                          consecutivePollsWithNoErrors, consecutivePollsWithNoFecErrs);
+            SWSS_LOG_INFO("consecutivePollsWithErrors %lld consecutivePollsWithFecErrs %lld",
+                          (long long)consecutivePollsWithErrors, (long long)consecutivePollsWithFecErrs);
+            SWSS_LOG_INFO("consecutivePollsWithNoErrors %lld consecutivePollsWithNoFecErrs %lld",
+                          (long long)consecutivePollsWithNoErrors, (long long)consecutivePollsWithNoFecErrs);
             if (autoIsolated == 0 && (consecutivePollsWithErrors >= isolationPollsCfg
                                    || consecutivePollsWithFecErrs >= fecIsolatedPolls))
             {
@@ -941,7 +941,7 @@ void FabricPortsOrch::updateStateDbTable(
     const std::unique_ptr<Table>& stateTable,
     const std::string& key,
     const std::string& field,
-    int value)
+    uint64_t value)
 {
     // Convert the integer value to a string
     std::string valueStr = std::to_string(value);
@@ -950,8 +950,8 @@ void FabricPortsOrch::updateStateDbTable(
     stateTable->hset(key, field, valueStr.c_str());
 
     // Log the update
-    SWSS_LOG_INFO("%s updates %s to %s %d",
-                  key.c_str(), field.c_str(), valueStr.c_str(), value);
+    SWSS_LOG_INFO("%s updates %s to %s %lld",
+                  key.c_str(), field.c_str(), valueStr.c_str(), (long long)value);
 }
 
 // Isolate/Unisolate a fabric link

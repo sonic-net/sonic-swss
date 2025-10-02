@@ -61,6 +61,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       fake_notificationconsumer.cpp \
 		       fake_table.cpp \
 		       p4oidmapper_test.cpp \
+		       p4orch_test.cpp \
 		       p4orch_util_test.cpp \
 		       return_code_test.cpp \
 		       route_manager_test.cpp \
@@ -77,6 +78,9 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_hostif.cpp \
 		       mock_sai_serialize.cpp \
 		       mock_sai_router_interface.cpp \
+		       mock_sai_neighbor.cpp \
+		       mock_sai_next_hop.cpp \
+		       mock_sai_route.cpp \
 		       mock_sai_switch.cpp \
 		       mock_sai_udf.cpp
 
