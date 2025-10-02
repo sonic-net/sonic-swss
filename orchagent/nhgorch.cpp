@@ -416,9 +416,8 @@ void NhgOrch::doTask(Consumer& consumer)
             /* If the group does exist, but it's still referenced, skip. */
             else if (nhg_it->second.ref_count > 0)
             {
-                SWSS_LOG_INFO("Unable to remove group %s which is referenced, move task entry to RetryCache", index.c_str());
-                consumer.addToRetry(std::move(it->second), make_constraint(RETRY_CST_NHG_REF, index));
-                success = true;
+                SWSS_LOG_INFO("Unable to remove group %s which is referenced", index.c_str());
+                success = consumer.addToRetry(std::move(it->second), make_constraint(RETRY_CST_NHG_REF, index));
             }
             /* Else, if the group is no more referenced, remove it. */
             else

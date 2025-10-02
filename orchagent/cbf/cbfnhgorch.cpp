@@ -169,8 +169,7 @@ void CbfNhgOrch::doTask(Consumer& consumer)
             {
                 SWSS_LOG_WARN("Skipping removal of CBF next hop group %s which"
                               " is still referenced, move task entry to RetryCache", index.c_str());
-                consumer.addToRetry(std::move(it->second), make_constraint(RETRY_CST_NHG_REF, index));
-                success = true;
+                success = consumer.addToRetry(std::move(it->second), make_constraint(RETRY_CST_NHG_REF, index));
             }
             /* Otherwise, delete it. */
             else

@@ -49,7 +49,7 @@ namespace retrycache_test
                         if (dependent_call == 1) {
                             std::cout << "  Dependent Executor [Selected]: fails, move the task to retrycache." << std::endl;
                             auto it = consumer.m_toSync.begin();
-                            getRetryCache("Dependent")->cache_failed_task(it->second, cst);
+                            getRetryCache("Dependent")->insert(it->second, cst);
                             consumer.m_toSync.erase(it);
                         } else if (dependent_call == 2) {
                             std::cout << "  Dependent Executor [Retry phase]: skip due to empty m_toSync." << std::endl;
@@ -85,6 +85,31 @@ namespace retrycache_test
                 delete testOrch;
             }
     };
+
+    TEST_F(RetryCacheTest, MULTI_MAP)
+    {
+        // safe to evict non-existing key
+        ASSERT_EQ(cache->evict("non_exist_key"), nullptr);
+
+        // empty key is ignored
+        ASSERT_TRUE(testOrch->addToRetry("Dependent", {"", "SET", {{"field", "value"}}}, cst));
+        ASSERT_TRUE(cache->getRetryMap().empty());
+
+        cache->insert({"key", "DEL", {}}, cst);
+        cache->insert({"key", "SET", {{"field", "value"}}}, cst);
+
+        auto tasks = cache->resolve(cst);
+        ASSERT_EQ(tasks->size(), 2);
+        ASSERT_TRUE(cache->getRetryMap().empty());
+
+        cache->insert({"key", "DEL", {}}, cst);
+        Constraint _cst = make_constraint(RETRY_CST_NHG, "3");
+        cache->insert({"key", "SET", {{"nexthop_index", "3"}}}, _cst);
+        tasks = cache->resolve(cst);
+        ASSERT_EQ(tasks->size(), 1);
+        ASSERT_EQ((*tasks)[0], (KeyOpFieldsValuesTuple{"key", "DEL", {}}));
+        ASSERT_EQ(cache->getRetryMap().size(), 1);
+    }
 
     TEST_F(RetryCacheTest, Basics)
     {
@@ -161,7 +186,7 @@ namespace retrycache_test
 
         Task setTask{"test_key", "SET", {{"test_field", "test_value"}}};
         // assume there is already a failed task in the cache
-        cache->cache_failed_task(setTask, cst);
+        cache->insert(setTask, cst);
         ASSERT_EQ(cache->getRetryMap().size(), 1);
 
         // Now add the same task to the sync queue
@@ -180,7 +205,7 @@ namespace retrycache_test
 
         // Assume there is a SET task in the retry cache
         Task setTask{"test_key", "SET", {{"test_field", "test_value"}}};
-        cache->cache_failed_task(setTask, cst);
+        cache->insert(setTask, cst);
 
         // Assume there is a new DEL task received by the consumer
         Task delTask{"test_key", "DEL", {{"", ""}}};
@@ -195,9 +220,9 @@ namespace retrycache_test
         oftenFail->m_toSync.erase("test_key");
 
         // Assume there are a SET and a DEL task in the retry cache
-        cache->cache_failed_task(setTask, cst);
+        cache->insert(setTask, cst);
         Constraint del_cst = make_constraint(RETRY_CST_NHG_REF, "");
-        cache->cache_failed_task(delTask, del_cst);
+        cache->insert(delTask, del_cst);
         ASSERT_EQ(cache->getRetryMap().size(), 2);
 
         // Assume there is a new DEL task received by the consumer
@@ -216,7 +241,7 @@ namespace retrycache_test
         // Assume there is an old SET task in the retry cache
         Task setTask{"TEST_ROUTE", "SET", {{"NHG", "1"}}};
         Constraint cst_nhg_1 = make_constraint(RETRY_CST_NHG, "1");
-        cache->cache_failed_task(setTask, cst_nhg_1);
+        cache->insert(setTask, cst_nhg_1);
 
         // Assume there is a new task with same field, received by the consumer
         Task setTask2{"TEST_ROUTE", "SET", {{"NHG", "2"}}};
@@ -231,7 +256,7 @@ namespace retrycache_test
         // Assume NHG 2 also doesn't exist, the new task fails too
         oftenFail->m_toSync.erase(iter);
         Constraint cst_nhg2 = make_constraint(RETRY_CST_NHG, "2");
-        cache->cache_failed_task(setTask2, cst_nhg2);
+        cache->insert(setTask2, cst_nhg2);
 
         // Assume there is a new SET task with a new field, received by the consumer
         Task setTask3{"TEST_ROUTE", "SET", {{"VRF", "1"}}};
@@ -261,10 +286,10 @@ namespace retrycache_test
         // Assume there are a SET and a DEL task in the retry cache
         // simulate by firstly adding a DEL, then adding a SET into the retry cache
         Task delTask{"TEST_ROUTE", "DEL", {{"", ""}}};
-        cache->cache_failed_task(delTask, DUMMY_CONSTRAINT);
+        cache->insert(delTask, DUMMY_CONSTRAINT);
         Task setTask{"TEST_ROUTE", "SET", {{"NHG", "1"}}};
         Constraint cst = make_constraint(RETRY_CST_NHG, "1");
-        cache->cache_failed_task(setTask, cst);
+        cache->insert(setTask, cst);
 
         ASSERT_EQ(cache->getRetryMap().size(), 2);
         ASSERT_EQ(cache->m_retryKeys.size(), 2);

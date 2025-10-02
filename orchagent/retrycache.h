@@ -4,11 +4,11 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <sys/time.h>
-#include "timestamp.h"
 #include <fstream>
-#include <sstream> 
-#include "recorder.h"
+#include <sstream>
 #include <map>
+#include "timestamp.h"
+#include "recorder.h"
 #include "rediscommand.h"
 
 using namespace swss;
@@ -91,25 +91,24 @@ public:
      * Then when the executor performs retry, it only retries those with cst recorded as resolved.
      * @param cst a constraint that's already been resolved
      */
-    void add_resolution(const Constraint &cst) {
+    void mark_resolved(const Constraint &cst)
+    {
         if (m_retryKeys.find(cst) == m_retryKeys.end())
-        {
             return;
-        }
-        else
-        {
-            m_resolvedConstraints.emplace(cst.first, cst.second);
-            std::stringstream ss;
-            ss << cst << " resolution notified -> " << m_retryKeys[cst].size() << " task(s)";
-            Recorder::Instance().retry.record(ss.str());
-        }
+
+        m_resolvedConstraints.emplace(cst.first, cst.second);
+
+        std::stringstream ss;
+        ss << cst << " resolution notified -> " << m_retryKeys[cst].size() << " task(s)";
+        Recorder::Instance().retry.record(ss.str());
     }
 
     /** Insert a failed task with its constraint to m_toRetry and m_retryKeys
      * @param task the task that has failed
      * @param cst constraint needs to be resolved for the task to succeed
      */
-    void cache_failed_task(const Task &task, const Constraint &cst) {
+    void insert(const Task &task, const Constraint &cst)
+    {
         const auto& key = kfvKey(task);
         if (key.empty())
             return;
@@ -125,7 +124,7 @@ public:
      * @param key key of swss::KeyOpFieldsValuesTuple task
      * @return the task that has failed before and stored in retry cache
      */
-    std::shared_ptr<Task> erase_set_task(const std::string &key)
+    std::shared_ptr<Task> evict(const std::string &key)
     {
         // m_toRetry is multimap, hence there are at most 2 tasks mapped from key.
         auto range = m_toRetry.equal_range(key);
@@ -140,7 +139,7 @@ public:
 
         if (it == range.second)
         {
-            return std::make_shared<Task>();
+            return nullptr;
         }
 
         // parse the corresponding task and its constraint
@@ -171,22 +170,26 @@ public:
         std::unordered_set<std::string>& keys = m_retryKeys[cst];
 
         size_t count = 0;
-
-        for (auto it = keys.begin(); it != keys.end() && count < threshold; it = keys.erase(it), count++)
+        auto it = keys.begin();
+        while (it != keys.end() && count < threshold)
         {
-            auto failed_task_it = m_toRetry.find(*it);
-            if (failed_task_it != m_toRetry.end())
+            auto range = m_toRetry.equal_range(*it);
+            // key may map to multiple tasks, e.g. a SET and a DEL
+            // but they may have different constraints
+            auto failed_task_it = range.first;
+            while (failed_task_it != range.second)
             {
-                tasks->push_back(std::move(failed_task_it->second.second));
-                m_toRetry.erase(failed_task_it);
+                auto failed_task = failed_task_it->second;
+                if (failed_task.first == cst)
+                {
+                    tasks->push_back(std::move(failed_task.second));
+                    failed_task_it = m_toRetry.erase(failed_task_it);
+                    count++;
+                } else {
+                    ++failed_task_it;
+                }
             }
-            // check twice, since a key can have <= 2 values
-            failed_task_it = m_toRetry.find(*it);
-            if (failed_task_it != m_toRetry.end())
-            {
-                tasks->push_back(std::move(failed_task_it->second.second));
-                m_toRetry.erase(failed_task_it);
-            }
+            it = keys.erase(it);
         }
 
         std::stringstream ss;
