@@ -172,7 +172,7 @@ bool ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
     if (retryCache)
     {
         Recorder::Instance().retry.record(dumpTuple(task).append(CACHE));
-        retryCache->cache_failed_task(task, cst);
+        retryCache->insert(task, cst);
         return true;
     }
     return false;
@@ -183,7 +183,7 @@ bool Orch::addToRetry(const std::string &executorName, const Task &task, const C
     if (retryCache)
     {
         Recorder::Instance().retry.record(getConsumerBase(executorName)->dumpTuple(task).append(CACHE));
-        retryCache->cache_failed_task(task, cst);
+        retryCache->insert(task, cst);
         return true;
     }
     return false;
@@ -223,7 +223,7 @@ void Orch::notifyRetry(Orch *retryOrch, const std::string &executorName, const C
     }
     else
     {
-        retryCache->add_resolution(cst);
+        retryCache->mark_resolved(cst);
     }
 }
 
@@ -270,7 +270,7 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
             {
                 if (kfvOp(it->second.second) == SET_COMMAND)
                 {
-                    auto old_task = retryCache->erase_set_task(key);
+                    auto old_task = retryCache->evict(key);
                     Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
                 }
             }
@@ -279,7 +279,7 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
                 if (kfvOp(it->second.second) == SET_COMMAND)
                 {
                     // move the old SET back to m_toSync for later merge
-                    auto old_task = retryCache->erase_set_task(key);
+                    auto old_task = retryCache->evict(key);
                     m_toSync.emplace(key, *old_task);
                     Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
                 }
@@ -292,14 +292,14 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
             if (op == DEL_COMMAND)
             {
                 // remove the SET task from the cache, reuse the DEL task
-                auto old_task = retryCache->erase_set_task(key);
+                auto old_task = retryCache->evict(key);
                 Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
                 return;
             }
             else if (op == SET_COMMAND)
             {
                 // Keep the DEL task, move the old SET back to m_toSync for later merge
-                auto old_task = retryCache->erase_set_task(key);
+                auto old_task = retryCache->evict(key);
                 Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
                 m_toSync.emplace(key, *old_task);
             }

@@ -2320,8 +2320,12 @@ task_process_status Srv6Orch::doTaskPicContextTable(const KeyOpFieldsValuesTuple
         }
         else if (it->second.ref_count != 0)
         {
-            addToRetry(APP_PIC_CONTEXT_TABLE_NAME, Task(tuple), make_constraint(RETRY_CST_PIC_REF, key));
-            return task_ignore;
+            if (addToRetry(APP_PIC_CONTEXT_TABLE_NAME, Task(tuple), make_constraint(RETRY_CST_PIC_REF, key)))
+            {
+                return task_ignore;
+            }
+            SWSS_LOG_INFO("Unable to delete context id %s, because it is referenced %u times", key.c_str(), it->second.ref_count);
+            return task_need_retry;
         }
         else if (!deleteSrv6Vpns(key))
         {
