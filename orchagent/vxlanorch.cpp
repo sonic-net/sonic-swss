@@ -1166,6 +1166,29 @@ bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t us
     return true;
 }
 
+void VxlanTunnel::cleanupDynamicDIPTunnel(const std::string remote_vtep)
+{
+    Port tunnelPort;
+    string port_tunnel_name;
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    int ref_cnt = this->getRemoteEndPointRefCnt(remote_vtep);
+
+    SWSS_LOG_DEBUG("DIP:%s diprefcnt = %d",
+                  remote_vtep.c_str(), ref_cnt);
+    if (ref_cnt == 0) {
+        port_tunnel_name =
+            vxlan_orch->getTunnelPortName(remote_vtep);
+        if (gPortsOrch->getPort(port_tunnel_name,tunnelPort) &&
+            tunnelPort.m_fdb_count == 0 &&
+            tunnelPort.m_type == Port::TUNNEL) {
+            vxlan_orch->deleteTunnelPort(tunnelPort);
+        } else {
+            this->deleteDynamicDIPTunnel(remote_vtep,
+                                         TUNNEL_USER_IMR, false);
+        }
+    }
+}
+
 //------------------- VxlanTunnelOrch Implementation --------------------------//
 
 VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName) :
@@ -1601,8 +1624,11 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
     getTunnelNameFromDIP(remote_vtep, tunnel_name);
     dip_tunnel = getVxlanTunnel(tunnel_name);
 
-    SWSS_LOG_NOTICE("diprefcnt for remote %s = %d",
-                     remote_vtep.c_str(), vtep_ptr->getRemoteEndPointRefCnt(remote_vtep));
+    SWSS_LOG_NOTICE("diprefcnt for remote %s = %d [imr:%d ip:%d]",
+                     remote_vtep.c_str(),
+                     vtep_ptr->getRemoteEndPointRefCnt(remote_vtep),
+                     vtep_ptr->getRemoteEndPointIMRRefCnt(remote_vtep),
+                     vtep_ptr->getRemoteEndPointIPRefCnt(remote_vtep));
 
     if (!getTunnelPort(remote_vtep, tunport))
     {
@@ -1657,9 +1683,9 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
     }
 
     port_tunnel_name = getTunnelPortName(remote_vtep);
-    gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-    if ((vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 1) &&
-       tunnelPort.m_fdb_count == 0)
+    if (gPortsOrch->getPort(port_tunnel_name,tunnelPort) &&
+        (vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 1) &&
+        tunnelPort.m_fdb_count == 0)
     {
         ret = gPortsOrch->removeBridgePort(tunnelPort);
         if (!ret) 
