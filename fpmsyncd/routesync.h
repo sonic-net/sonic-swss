@@ -51,6 +51,13 @@ class FieldValueTupleWrapperBase {
     virtual vector<FieldValueTuple> fieldValueTupleVector() = 0;
 
     vector<KeyOpFieldsValuesTuple> KeyOpFieldsValuesTupleVector() {
+        // The following code calls the batched version of set() for the table.
+        // The reason for the DEL followed by a SET is that redis only overwrites
+        // hashset fields that are explicitly set against a given key. It does leaves
+        // previously set fields as is. If a route changes in such a way that earlier
+        // fields are not valid any more (Ex: from using nexthop to nexthop-group),
+        // then we would like to atomically cleanup earlier fields and set the new
+        // fields in the hash-set in redis.
         vector<KeyOpFieldsValuesTuple> kfvVector;
         kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}});
         auto fvVector = fieldValueTupleVector();
@@ -187,49 +194,17 @@ public:
 
     /* Helper method to set route table with warm restart support */
     void setRouteWithWarmRestart(
-        const std::string& key,
-        const std::vector<FieldValueTuple>& fvVector,
-        ProducerStateTable & table,
-        const std::string& cmd = SET_COMMAND);
-
-    void setRouteWithWarmRestart(
-        RouteTableFieldValueTupleWrapper & fvw,
-        ProducerStateTable & table);
-
-    void setRouteWithWarmRestart(
-        LabelRouteTableFieldValueTupleWrapper & fvw,
+        FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
 
     void setTable(
-        VnetRouteTableFieldValueTupleWrapper & fvw,
-        ProducerStateTable & table);
-
-    void setTable(
-        VnetTunnelTableFieldValueTupleWrapper & fvw,
-        ProducerStateTable & table);
-
-    void setTable(
-        NextHopGroupTableFieldValueTupleWrapper & fvw,
-        ProducerStateTable & table);
-
-    void setTable(
-        Srv6MySidTableFieldValueTupleWrapper & fvw,
-        ProducerStateTable & table);
-
-    void setTable(
-        Srv6SidListTableFieldValueTupleWrapper & fvw,
+        FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
 
     // Generic method for DEL operations with warm restart support
-    template<typename WrapperType>
-    void delWithWarmRestart(WrapperType && fvw, ProducerStateTable & table) {
-        bool warmRestartInProgress = m_warmStartHelper.inProgress();
-        if (!warmRestartInProgress) {
-            table.del(fvw.key);
-        } else {
-            m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel());
-        }
-    }
+    void delWithWarmRestart(
+        FieldValueTupleWrapperBase && fvw,
+        ProducerStateTable & table);
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 

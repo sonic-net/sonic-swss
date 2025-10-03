@@ -163,7 +163,7 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
-void RouteSync::setRouteWithWarmRestart(RouteTableFieldValueTupleWrapper & fvw,
+void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
@@ -178,54 +178,21 @@ void RouteSync::setRouteWithWarmRestart(RouteTableFieldValueTupleWrapper & fvw,
     }
 }
 
-void RouteSync::setRouteWithWarmRestart(LabelRouteTableFieldValueTupleWrapper & fvw,
-                                        ProducerStateTable & table )
+void RouteSync::setTable(FieldValueTupleWrapperBase & fvw,
+                         ProducerStateTable & table )
 {
+    // Note: VNET tables don't use warm restart helper, so we directly set
+    table.set(fvw.KeyOpFieldsValuesTupleVector());
+}
+
+void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
+				   ProducerStateTable & table) {
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
-    if (!warmRestartInProgress)
-    {
-        table.set(fvw.KeyOpFieldsValuesTupleVector());
+    if (!warmRestartInProgress) {
+        table.del(fvw.key);
+    } else {
+        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel());
     }
-    else
-    {
-        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[1]);
-    }
-}
-
-void RouteSync::setTable(VnetRouteTableFieldValueTupleWrapper & fvw,
-                         ProducerStateTable & table )
-{
-    // Note: VNET tables don't use warm restart helper, so we directly set
-    table.set(fvw.KeyOpFieldsValuesTupleVector());
-}
-
-void RouteSync::setTable(VnetTunnelTableFieldValueTupleWrapper & fvw,
-                         ProducerStateTable & table )
-{
-    // Note: VNET tables don't use warm restart helper, so we directly set
-    table.set(fvw.KeyOpFieldsValuesTupleVector());
-}
-
-void RouteSync::setTable(NextHopGroupTableFieldValueTupleWrapper & fvw,
-                         ProducerStateTable & table )
-{
-    // Note: NextHop group table doesn't use warm restart helper, so we directly set
-    table.set(fvw.KeyOpFieldsValuesTupleVector());
-}
-
-void RouteSync::setTable(Srv6MySidTableFieldValueTupleWrapper & fvw,
-                         ProducerStateTable & table )
-{
-    // Note: SRv6 tables don't use warm restart helper, so we directly set
-    table.set(fvw.KeyOpFieldsValuesTupleVector());
-}
-
-void RouteSync::setTable(Srv6SidListTableFieldValueTupleWrapper & fvw,
-                         ProducerStateTable & table )
-{
-    // Note: SRv6 tables don't use warm restart helper, so we directly set
-    table.set(fvw.KeyOpFieldsValuesTupleVector());
 }
 
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
@@ -2031,8 +1998,9 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     if (nlmsg_type == RTM_DELROUTE)
     {
         SWSS_LOG_INFO("LabelRouteTable del msg: %s", destaddr);
-        LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::string()};
-        delWithWarmRestart(fvw, *m_label_routeTable);
+        delWithWarmRestart(
+	    LabelRouteTableFieldValueTupleWrapper{std::move(destaddr), std::string()},
+	    *m_label_routeTable);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
