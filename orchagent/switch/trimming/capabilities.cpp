@@ -324,7 +324,15 @@ void SwitchTrimmingCapabilities::queryTrimDscpModeEnumCapabilities()
     auto status = queryEnumCapabilitiesSai(
         mList, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE
     );
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_NOTICE(
+            "Attribute not supported(%s) to query enum value capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str()
+        );
+        return;
+    }
+    else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR(
             "Failed to get attribute(%s) enum value capabilities",
@@ -369,7 +377,15 @@ void SwitchTrimmingCapabilities::queryTrimDscpModeAttrCapabilities()
     auto status = queryAttrCapabilitiesSai(
         attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE
     );
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_NOTICE(
+            "Attribute not supported(%s) to query attr vapabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str()
+        );
+        return;
+    }
+    else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR(
             "Failed to get attribute(%s) capabilities",
@@ -458,7 +474,15 @@ void SwitchTrimmingCapabilities::queryTrimQueueModeEnumCapabilities()
     auto status = queryEnumCapabilitiesSai(
         mList, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE
     );
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_NOTICE(
+            "Attribute not supported(%s) to query enum value capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str()
+        );
+        return;
+    }
+    else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR(
             "Failed to get attribute(%s) enum value capabilities",
@@ -490,7 +514,15 @@ void SwitchTrimmingCapabilities::queryTrimQueueModeAttrCapabilities()
     auto status = queryAttrCapabilitiesSai(
         attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE
     );
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_NOTICE(
+            "Attribute not supported(%s) to query attr capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str()
+        );
+        return;
+    }
+    else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR(
             "Failed to get attribute(%s) capabilities",

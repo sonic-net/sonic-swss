@@ -67,6 +67,7 @@ TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
+HFTelOrch *gHFTOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -822,6 +823,21 @@ bool OrchDaemon::init()
     TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
     m_orchList.push_back(twamp_orch);
 
+    if (HFTelOrch::isSupportedHFTel(gSwitchId))
+    {
+        const vector<string> stel_tables = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
+        };
+        gHFTOrch = new HFTelOrch(m_configDb, m_stateDb, stel_tables);
+        m_orchList.push_back(gHFTOrch);
+        SWSS_LOG_NOTICE("High Frequency Telemetry is supported on this platform");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("High Frequency Telemetry is not supported on this platform");
+    }
+
     if (WarmStart::isWarmStart())
     {
         bool suc = warmRestoreAndSyncUp();
@@ -1006,6 +1022,8 @@ void OrchDaemon::start(long heartBeatInterval)
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
+    SWSS_LOG_ENTER();
+
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
 
     for (Orch *o : m_orchList)
@@ -1262,10 +1280,11 @@ bool DpuOrchDaemon::init()
 
     vector<string> dash_ha_tables = {
         APP_DASH_HA_SET_TABLE_NAME,
-        APP_DASH_HA_SCOPE_TABLE_NAME
+        APP_DASH_HA_SCOPE_TABLE_NAME,
+        APP_BFD_SESSION_TABLE_NAME
     };
 
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, gBfdOrch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {

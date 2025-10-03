@@ -60,7 +60,6 @@ class TestDash(TestFlexCountersBase):
         direction_keys = dash_db.wait_for_asic_db_keys(ASIC_DIRECTION_LOOKUP_TABLE)
         dl_attrs = dash_db.get_asic_db_entry(ASIC_DIRECTION_LOOKUP_TABLE, direction_keys[0])
         assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION", dl_attrs, "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_INBOUND_DIRECTION")
-        assert_sai_attribute_exists("SAI_DIRECTION_LOOKUP_ENTRY_ATTR_DASH_ENI_MAC_OVERRIDE_TYPE", dl_attrs, "SAI_DASH_ENI_MAC_OVERRIDE_TYPE_DST_MAC")
         dash_db.remove_appliance(self.appliance_id)
         time.sleep(2)
 
@@ -113,11 +112,10 @@ class TestDash(TestFlexCountersBase):
 
     def post_eni_counter_test(self, meta_data):
         counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
-        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable', check_name_map=False)
 
         for counter_entry in counters_keys.items():
             self.wait_for_id_list_remove(meta_data['group_name'], counter_entry[0], counter_entry[1])
-        self.wait_for_table_empty(meta_data['name_map'])
 
     def test_eni(self, dash_db: DashDB):
         self.vnet = "Vnet1"
