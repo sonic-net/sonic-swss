@@ -14,6 +14,7 @@
 #include "p4orch/gre_tunnel_manager.h"
 #include "p4orch/ip_multicast_manager.h"
 #include "p4orch/l3_admit_manager.h"
+#include "p4orch/l3_multicast_manager.h"
 #include "p4orch/neighbor_manager.h"
 #include "p4orch/next_hop_manager.h"
 #include "p4orch/p4orch_util.h"
@@ -41,6 +42,8 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_neighborManager = std::make_unique<NeighborManager>(&m_p4OidMapper, &m_publisher);
     m_greTunnelManager = std::make_unique<GreTunnelManager>(&m_p4OidMapper, &m_publisher);
     m_nextHopManager = std::make_unique<NextHopManager>(&m_p4OidMapper, &m_publisher);
+    m_l3MulticastManager = std::make_unique<p4orch::L3MulticastManager>(
+        &m_p4OidMapper, vrfOrch, &m_publisher);
     m_ipMulticastManager = std::make_unique<p4orch::IpMulticastManager>(
         &m_p4OidMapper, vrfOrch, &m_publisher);
     m_routeManager = std::make_unique<RouteManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
@@ -62,6 +65,10 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
         m_ipMulticastManager.get();
     m_p4TableToManagerMap[APP_P4RT_IPV6_MULTICAST_TABLE_NAME] =
         m_ipMulticastManager.get();
+    m_p4TableToManagerMap[APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME] =
+        m_l3MulticastManager.get();
+    m_p4TableToManagerMap[APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME] =
+        m_l3MulticastManager.get();
     m_p4TableToManagerMap[APP_P4RT_MIRROR_SESSION_TABLE_NAME] = m_mirrorSessionManager.get();
     m_p4TableToManagerMap[APP_P4RT_ACL_TABLE_DEFINITION_NAME] = m_aclTableManager.get();
     m_p4TableToManagerMap[APP_P4RT_WCMP_GROUP_TABLE_NAME] = m_wcmpManager.get();
@@ -75,6 +82,7 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4ManagerAddPrecedence.push_back(m_nextHopManager.get());
     m_p4ManagerAddPrecedence.push_back(m_wcmpManager.get());
     m_p4ManagerAddPrecedence.push_back(m_routeManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_l3MulticastManager.get());
     m_p4ManagerAddPrecedence.push_back(m_ipMulticastManager.get());
     m_p4ManagerAddPrecedence.push_back(m_mirrorSessionManager.get());
     m_p4ManagerAddPrecedence.push_back(m_aclTableManager.get());
