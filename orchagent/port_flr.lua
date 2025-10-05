@@ -29,6 +29,8 @@ local rates_table_name = "RATES"
 local bookmark_table_name = "RATES:GLOBAL"
 local BIN_FILTER_VALUE = 10
 
+local MFC = 8
+
 local function get_port_name_from_oid(port)
     redis.call('SELECT', COUNTERS_DB)
     local port_name_hash = redis.call('HGETALL', 'COUNTERS_PORT_NAME_MAP')
@@ -333,7 +335,7 @@ local function compute_predicted_flr(port)
 
     local sum_window = {16,20}
     local x_interleaving = get_interleaving_factor_for_port(port)
-    cer, flr = extrapolate_flr_from_regression(slope, intercept, {16, 20}, x_interleaving, 8)
+    cer, flr = extrapolate_flr_from_regression(slope, intercept, {16, 20}, x_interleaving, MFC)
     logit("CER : " .. cer)
     logit("FLR : " .. flr)
     return flr
