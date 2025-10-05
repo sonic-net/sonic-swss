@@ -92,7 +92,6 @@ local function get_interleaving_factor_for_port(port_oid)
     redis.call('SELECT', COUNTERS_DB)
 
     -- Look up the factor.
-    -- REVIEW : what should be default ?
     return interleaving_map[key] or 1
 end
 
