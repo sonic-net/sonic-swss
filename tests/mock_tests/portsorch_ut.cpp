@@ -551,7 +551,15 @@ namespace portsorch_test
 
             ASSERT_EQ(gMlagOrch, nullptr);
             gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
- 
+
+            vector<string> debug_counter_tables = {
+                CFG_DEBUG_COUNTER_TABLE_NAME,
+                CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
+                CFG_DEBUG_DROP_MONITOR_TABLE_NAME
+            };
+
+           ASSERT_EQ(gDebugCounterOrch, nullptr);
+           gDebugCounterOrch = new DebugCounterOrch(m_config_db.get(), debug_counter_tables, 1000);
         }
 
         virtual void TearDown() override
@@ -570,6 +578,8 @@ namespace portsorch_test
             gFdbOrch = nullptr;
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
+            delete gDebugCounterOrch;
+            gDebugCounterOrch = nullptr;
             delete gPortsOrch;
             gPortsOrch = nullptr;
             delete gBufferOrch;
@@ -3155,6 +3165,85 @@ namespace portsorch_test
         ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 0);
 
 	_unhook_sai_switch_api();
+    }
+
+    TEST_F(PortsOrchTest, DebugDropMonitorToggle)
+    {
+        // setup the tables with data
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        // Apply configuration again
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+
+        // Check if default status is disabled
+        ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
+
+        // Set status to enabled
+        entries.clear();
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "enabled" }
+        } });
+        auto DebugCounterConsumer = dynamic_cast<Consumer *>(gDebugCounterOrch->getExecutor("DEBUG_DROP_MONITOR"));
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set status with an invalid value
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "turnoff" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set an unsupported attribute
+        entries.push_back({ "CONFIG", "SET", {
+            { "enable", "false" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Use an unsupported operation type
+        entries.push_back({ "CONFIG", "GET", {
+            { "status", "disable" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set status back to disabled
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "disabled" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
     }
 
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)
