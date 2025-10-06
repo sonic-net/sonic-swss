@@ -110,7 +110,7 @@ public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
     const DashBfdSessionTable& getBfdSessionPendingCreation() const { return m_bfd_session_pending_creation; };
-    HaScopeEntry getHaScopeForEni(const std::string& eni);
+    virtual HaScopeEntry getHaScopeForEni(const std::string& eni);
 };
 
 #endif // DASHHAORCH_H
