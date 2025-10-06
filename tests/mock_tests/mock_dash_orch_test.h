@@ -22,7 +22,8 @@ namespace mock_orch_test
             void SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set = true, bool expect_empty = true);
             dash::appliance::Appliance BuildApplianceEntry();
             void CreateApplianceEntry();
-            void AddRoutingType(dash::route_type::EncapType encap_type);
+            void AddVnetEncapRoutingType(dash::route_type::EncapType encap_type);
+            void AddPLRoutingType();
             void CreateVnet();
             void RemoveVnet(bool expect_empty = true);
             void AddVnetMap(bool expect_empty = true, std::string vnet_ip = vnet_map_ip1);
@@ -30,6 +31,9 @@ namespace mock_orch_test
             void AddOutboundRoutingGroup();
             void AddOutboundRoutingEntry(bool expect_empty = true);
             void AddTunnel();
+            void AddVnetMapPL(bool expect_empty = true);
+            void RemoveVnetMapPL(bool expect_empty = true);
+            void AddPortMap();
             dash::eni::Eni BuildEniEntry();
 
             static std::string vnet1;
@@ -40,5 +44,6 @@ namespace mock_orch_test
             static std::string route_group1;
             static std::string tunnel1;
             static std::string eni1;
+            static std::string portmap1;
     };
 }

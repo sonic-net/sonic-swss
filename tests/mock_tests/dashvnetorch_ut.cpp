@@ -91,26 +91,32 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, AddRemoveVnet)
     {
-        expected_ca_to_pa = orig_ca_to_pa + 1;
-        expected_pa_validation = orig_pa_validation + 1;
-
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
-
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_SUCCESS};
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddPLRoutingType();
         {
             InSequence seq;
             EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(1);
             EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
             EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(1);
-            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(1);
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(2);
             EXPECT_CALL(*mock_sai_dash_pa_validation_api, remove_pa_validation_entries).Times(1);
             EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(1);
         }
+
         CreateVnet();
         AddVnetMap();
+        AddPortMap();
+        AddVnetMapPL();
+
+        expected_ca_to_pa = orig_ca_to_pa + 2;
+        expected_pa_validation = orig_pa_validation + 1;
 
         EXPECT_TRUE(CheckExpectedCrmMatch(expected_ca_to_pa, expected_pa_validation));
 
         RemoveVnetMap();
+        RemoveVnetMapPL();
 
         // Removing all VNET maps using a specific PA validation entry should also result in the removal
         // of the PA validation entry, even if the VNET still exists
@@ -123,7 +129,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, AddVnetMapMissingVnetFails)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
             .Times(0);
         EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries)
@@ -134,7 +140,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, AddExistingOutboundCaToPaSuccessful)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
 
         EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
@@ -156,7 +162,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, InvalidEncapVnetMapFails)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_UNSPECIFIED);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_UNSPECIFIED);
         CreateVnet();
         EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
             .Times(0);
@@ -167,7 +173,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, AddExistPaValidationSuccessful)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
 
         // First add operation will propogate to SAI normally
@@ -182,7 +188,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, RemovePaValidationInUseFails)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
         AddVnetMap();
 
@@ -199,7 +205,7 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, AddRemoveMultipleVnetMapsWithSameUnderlayIp)
     {
-        AddRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
         CreateVnet();
         EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(2);
         EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(1); 
