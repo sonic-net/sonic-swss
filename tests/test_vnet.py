@@ -2691,8 +2691,8 @@ class TestVnetOrch(object):
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
         }
-        intf_id = dvs.asic_db.port_name_map["Ethernet8"]
-        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, intf_id, priority="9998")
+        nh_id = dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)[0]
+        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, nh_id, priority="9998")
 
         # default monitor session status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
