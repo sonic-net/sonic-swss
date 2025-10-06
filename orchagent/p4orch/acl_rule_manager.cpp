@@ -988,6 +988,7 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
         }
         case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
         case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
+	case SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META:
         case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_FLOW_LABEL: {
             const std::vector<std::string> &value_and_mask = tokenize(attr_value, kDataMaskDelimiter);
             value->aclfield.data.u32 = to_uint<uint32_t>(trim(value_and_mask[0]));
