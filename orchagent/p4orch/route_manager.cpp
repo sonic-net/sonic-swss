@@ -103,7 +103,7 @@ sai_object_id_t getNexthopOid(const P4RouteEntry &route_entry, const P4OidMapper
 }
 
 // Returns the SAI action of the given entry.
-sai_packet_action_t getSaiAction(const P4RouteEntry &route_entry)
+sai_packet_action_t prepareSaiAction(const P4RouteEntry &route_entry)
 {
     if (route_entry.action == p4orch::kDrop || route_entry.action == p4orch::kSetMetadataAndDrop)
     {
@@ -127,7 +127,7 @@ uint32_t getMetadata(const P4RouteEntry &route_entry)
 }
 
 // Returns a list of SAI actions for route update.
-std::vector<sai_route_entry_attr_t> getSaiActions(const std::string action)
+std::vector<sai_route_entry_attr_t> prepareSaiActions(const std::string action)
 {
     static const auto *const kRouteActionToSaiActions =
         new std::unordered_map<std::string, std::vector<sai_route_entry_attr_t>>({
@@ -164,7 +164,7 @@ std::vector<sai_route_entry_attr_t> getSaiActions(const std::string action)
 } // namespace
 
 RouteUpdater::RouteUpdater(const P4RouteEntry &old_route, const P4RouteEntry &new_route, P4OidMapper *mapper)
-    : m_oldRoute(old_route), m_newRoute(new_route), m_p4OidMapper(mapper), m_actions(getSaiActions(new_route.action))
+    : m_oldRoute(old_route), m_newRoute(new_route), m_p4OidMapper(mapper), m_actions(prepareSaiActions(new_route.action))
 {
     updateIdx();
 }
@@ -179,27 +179,32 @@ P4RouteEntry RouteUpdater::getNewEntry() const
     return m_newRoute;
 }
 
-sai_route_entry_t RouteUpdater::getSaiEntry() const
+sai_route_entry_t RouteUpdater::prepareSaiEntry() const
 {
     return m_newRoute.sai_route_entry;
 }
 
-sai_attribute_t RouteUpdater::getSaiAttr() const
+sai_attribute_t RouteUpdater::prepareSaiAttr() const
 {
+    return prepareSaiAttr(m_idx);
+}
+
+sai_attribute_t RouteUpdater::prepareSaiAttr(int idx) const {
     sai_attribute_t route_attr = {};
-    if (m_idx < 0 || m_idx >= static_cast<int>(m_actions.size()))
+    if (idx < 0 || idx >= static_cast<int>(m_actions.size()))
     {
         return route_attr;
     }
-    route_attr.id = m_actions[m_idx];
-    switch (m_actions[m_idx])
+    route_attr.id = m_actions[idx];
+    switch (m_actions[idx])
     {
     case SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID:
         route_attr.value.oid =
             (m_revert) ? getNexthopOid(m_oldRoute, *m_p4OidMapper) : getNexthopOid(m_newRoute, *m_p4OidMapper);
         break;
     case SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION:
-        route_attr.value.s32 = (m_revert) ? getSaiAction(m_oldRoute) : getSaiAction(m_newRoute);
+        route_attr.value.s32 = (m_revert) ? prepareSaiAction(m_oldRoute)
+                                          : prepareSaiAction(m_newRoute);
         break;
     default:
         route_attr.value.u32 = (m_revert) ? getMetadata(m_oldRoute) : getMetadata(m_newRoute);
@@ -233,37 +238,42 @@ ReturnCode RouteUpdater::getStatus() const
     return m_status;
 }
 
-bool RouteUpdater::updateIdx()
-{
-    if (m_revert)
-    {
-        for (--m_idx; m_idx >= 0; --m_idx)
-        {
-            if (checkAction())
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-    for (++m_idx; m_idx < static_cast<int>(m_actions.size()); ++m_idx)
-    {
-        if (checkAction())
-        {
-            return false;
-        }
-    }
-    return true;
+std::vector<sai_attribute_t> RouteUpdater::GetSaiAttrList() const {
+  std::vector<sai_attribute_t> attrs;
+  for (int idx = m_idx; idx >= 0 && idx < static_cast<int>(m_actions.size());) {
+    attrs.push_back(prepareSaiAttr(idx));
+    updateIdx(idx);
+  }
+  return attrs;
 }
 
-bool RouteUpdater::checkAction() const
+bool RouteUpdater::updateIdx() { return updateIdx(m_idx); }
+
+bool RouteUpdater::updateIdx(int& idx) const
 {
-    if (m_idx < 0 || m_idx >= static_cast<int>(m_actions.size()))
-    {
+  if (m_revert)
+  {
+    for (--idx; idx >= 0; --idx) {
+      if (checkAction(idx)) {
         return false;
+      }
     }
-    switch (m_actions[m_idx])
-    {
+    return true;
+  }
+  for (++idx; idx < static_cast<int>(m_actions.size()); ++idx) {
+    if (checkAction(idx)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool RouteUpdater::checkAction(int idx) const {
+  if (idx < 0 || idx >= static_cast<int>(m_actions.size())) {
+    return false;
+  }
+  switch (m_actions[idx])
+  {
     case SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID:
         if (getNexthopOid(m_oldRoute, *m_p4OidMapper) == getNexthopOid(m_newRoute, *m_p4OidMapper))
         {
@@ -271,7 +281,7 @@ bool RouteUpdater::checkAction() const
         }
         return true;
     case SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION:
-        if (getSaiAction(m_oldRoute) == getSaiAction(m_newRoute))
+        if (prepareSaiAction(m_oldRoute) == prepareSaiAction(m_newRoute))
         {
             return false;
         }
@@ -297,7 +307,8 @@ RouteManager::RouteManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, ResponseP
     m_publisher = publisher;
 }
 
-sai_route_entry_t RouteManager::getSaiEntry(const P4RouteEntry &route_entry)
+sai_route_entry_t RouteManager::prepareSaiEntry(
+    const P4RouteEntry& route_entry)
 {
     sai_route_entry_t sai_entry;
     sai_entry.vr_id = m_vrfOrch->getVRFid(route_entry.vrf_id);
@@ -565,6 +576,36 @@ ReturnCode RouteManager::validateDelRouteEntry(const P4RouteEntry &route_entry)
     return ReturnCode();
 }
 
+ReturnCode RouteManager::processRouteEntries(
+    const std::vector<P4RouteEntry>& route_entries,
+    const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+    const std::string& op, bool update) {
+  SWSS_LOG_ENTER();
+
+  ReturnCode status;
+  std::vector<ReturnCode> statuses;
+  // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
+  if (op == SET_COMMAND) {
+    if (!update) {
+	statuses = createRouteEntries(route_entries);
+    } else {
+      statuses = updateRouteEntries(route_entries);
+    }
+  } else {
+    statuses = deleteRouteEntries(route_entries);
+  }
+  for (size_t i = 0; i < route_entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
+    }
+  }
+
+  return status;
+}
+
 std::vector<ReturnCode> RouteManager::createRouteEntries(const std::vector<P4RouteEntry> &route_entries)
 {
     SWSS_LOG_ENTER();
@@ -584,7 +625,7 @@ std::vector<ReturnCode> RouteManager::createRouteEntries(const std::vector<P4Rou
     for (size_t i = 0; i < route_entries.size(); ++i)
     {
         const auto &route_entry = route_entries[i];
-        sai_route_entries[i] = getSaiEntry(route_entry);
+        sai_route_entries[i] = prepareSaiEntry(route_entry);
         uint32_t num_attrs = 1;
         if (route_entry.action == p4orch::kDrop)
         {
@@ -696,52 +737,64 @@ void RouteManager::updateRouteEntriesMeta(const P4RouteEntry &old_entry, const P
 void RouteManager::updateRouteAttrs(int size, const std::vector<std::unique_ptr<RouteUpdater>> &updaters,
                                     std::vector<size_t> &indice, std::vector<ReturnCode> &statuses)
 {
-    std::vector<sai_route_entry_t> sai_route_entries(size);
-    std::vector<sai_attribute_t> sai_attrs(size);
-    std::vector<sai_status_t> object_statuses(size);
-    // We will perform route update in multiple SAI calls.
-    // If error is encountered, the previous SAI calls will be reverted.
-    // Raise critical state if the revert fails.
-    // We avoid changing multiple attributes of the same entry in a single bulk
-    // call.
-    constexpr int kMaxAttrUpdate = 20;
-    int i;
-    for (i = 0; i < kMaxAttrUpdate; ++i)
-    {
-        for (int j = 0; j < size; ++j)
-        {
-            sai_route_entries[j] = updaters[indice[j]]->getSaiEntry();
-            sai_attrs[j] = updaters[indice[j]]->getSaiAttr();
-            m_routerBulker.set_entry_attribute(&object_statuses[j], &sai_route_entries[j], &sai_attrs[j]);
+  std::vector<sai_route_entry_t> sai_route_entries;
+  std::vector<sai_attribute_t> sai_attrs;
+  std::vector<size_t> updator_idx;
+  // All SAI attribute update will be performed in a single bulk SAI call.
+  // Syncd will stop on the first error.
+  // If error occures, successful update will be reverted for that particular
+  // request.
+  for (int i = 0; i < size; ++i) {
+    for (const auto& att : updaters[indice[i]]->GetSaiAttrList()) {
+      sai_route_entries.push_back(updaters[indice[i]]->prepareSaiEntry());
+      sai_attrs.push_back(att);
+      updator_idx.push_back(indice[i]);
+    }
+    statuses[indice[i]] = ReturnCode();
+  }
+  std::vector<sai_status_t> object_statuses(updator_idx.size());
+  for (size_t i = 0; i < updator_idx.size(); ++i) {
+    m_routerBulker.set_entry_attribute(&object_statuses[i],
+                                       &sai_route_entries[i], &sai_attrs[i]);
+  }
+  m_routerBulker.flush();
+
+  for (size_t i = 0; i < updator_idx.size(); ++i) {
+    updaters[updator_idx[i]]->updateResult(object_statuses[i]);
+    if (object_statuses[i] != SAI_STATUS_SUCCESS) {
+      auto revert_attrs = updaters[updator_idx[i]]->GetSaiAttrList();
+      if (!revert_attrs.empty()) {
+        std::vector<sai_route_entry_t> revert_entries(revert_attrs.size());
+        std::vector<sai_status_t> revert_statuses(revert_attrs.size());
+        for (size_t j = 0; j < revert_attrs.size(); ++j) {
+          revert_entries[j] = updaters[updator_idx[i]]->prepareSaiEntry();
+          m_routerBulker.set_entry_attribute(
+              &revert_statuses[j], &revert_entries[j], &revert_attrs[j]);
         }
         m_routerBulker.flush();
-        int new_size = 0;
-        for (int j = 0; j < size; j++)
-        {
-            if (updaters[indice[j]]->updateResult(object_statuses[j]))
-            {
-                statuses[indice[j]] = updaters[indice[j]]->getStatus();
-                if (statuses[indice[j]].ok())
-                {
-                    updateRouteEntriesMeta(updaters[indice[j]]->getOldEntry(), updaters[indice[j]]->getNewEntry());
-                }
-            }
-            else
-            {
-                indice[new_size++] = indice[j];
-            }
+        for (size_t j = 0; j < revert_attrs.size(); ++j) {
+          updaters[updator_idx[i]]->updateResult(revert_statuses[j]);
         }
-        if (new_size == 0)
-        {
-            break;
-        }
-        size = new_size;
+
+      }
+      statuses[updator_idx[i]] = updaters[updator_idx[i]]->getStatus();
+      for (size_t j = updator_idx[i] + 1; j < statuses.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
     }
-    // Just a safety check to prevent infinite loop. Should not happen.
-    if (i == kMaxAttrUpdate)
-    {
-        SWSS_RAISE_CRITICAL_STATE("Route update operation did not terminate.");
+
+  }
+
+  for (int i = 0; i < size; ++i) {
+    if (statuses[indice[i]].ok()) {
+      updateRouteEntriesMeta(updaters[indice[i]]->getOldEntry(),
+                             updaters[indice[i]]->getNewEntry());
+    } else {
+      break;
     }
+  }
+
     return;
 }
 
@@ -848,26 +901,28 @@ void RouteManager::enqueue(const std::string &table_name, const swss::KeyOpField
     m_entries.push_back(entry);
 }
 
-void RouteManager::drain()
-{
+void RouteManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode RouteManager::drain() {
     SWSS_LOG_ENTER();
 
-    std::vector<P4RouteEntry> create_route_list;
-    std::vector<P4RouteEntry> update_route_list;
-    std::vector<P4RouteEntry> delete_route_list;
-    std::vector<swss::KeyOpFieldsValuesTuple> create_tuple_list;
-    std::vector<swss::KeyOpFieldsValuesTuple> update_tuple_list;
-    std::vector<swss::KeyOpFieldsValuesTuple> delete_tuple_list;
+    std::vector<P4RouteEntry> route_list;
+    std::vector<swss::KeyOpFieldsValuesTuple> tuple_list;
     std::unordered_set<std::string> route_entry_list;
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+    ReturnCode status;
+    std::string prev_op;
+    bool prev_update = false;
+    while (!m_entries.empty()) {
+      auto key_op_fvs_tuple = m_entries.front();
+      m_entries.pop_front();
+      std::string table_name;
+      std::string key;
+      parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+      const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
         auto route_entry_or = deserializeRouteEntry(key, attributes, table_name);
         if (!route_entry_or.ok())
         {
@@ -877,7 +932,7 @@ void RouteManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         auto &route_entry = *route_entry_or;
 
@@ -889,7 +944,7 @@ void RouteManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
 
         const std::string &operation = kfvOp(key_op_fvs_tuple);
@@ -901,61 +956,46 @@ void RouteManager::drain()
             m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
                                  status,
                                  /*replace=*/true);
-            continue;
+            break;
         }
         route_entry_list.insert(route_entry.route_entry_key);
 
-        if (operation == SET_COMMAND)
-        {
-            if (getRouteEntry(route_entry.route_entry_key) == nullptr)
-            {
-                create_route_list.push_back(route_entry);
-                create_tuple_list.push_back(key_op_fvs_tuple);
-            }
-            else
-            {
-                update_route_list.push_back(route_entry);
-                update_tuple_list.push_back(key_op_fvs_tuple);
-            }
-        }
-        else
-        {
-            delete_route_list.push_back(route_entry);
-            delete_tuple_list.push_back(key_op_fvs_tuple);
-        }
+    bool update = (getRouteEntry(route_entry.route_entry_key) != nullptr);
+    if (prev_op == "") {
+      prev_op = operation;
+      prev_update = update;
+    }
+    // Process the entries if the operation type changes.
+    if (operation != prev_op || update != prev_update) {
+      status =
+          processRouteEntries(route_list, tuple_list, prev_op, prev_update);
+      route_list.clear();
+      tuple_list.clear();
+      prev_op = operation;
+      prev_update = update;
     }
 
-    if (!create_route_list.empty())
-    {
-        auto statuses = createRouteEntries(create_route_list);
-        for (size_t i = 0; i < create_route_list.size(); ++i)
-        {
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(create_tuple_list[i]),
-                                 kfvFieldsValues(create_tuple_list[i]), statuses[i],
-                                 /*replace=*/true);
-        }
+    if (!status.ok()) {
+      // Return SWSS_RC_NOT_EXECUTED if failure has occured.
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple),
+                           ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                           /*replace=*/true);
+      break;
+    } else {
+      route_list.push_back(route_entry);
+      tuple_list.push_back(key_op_fvs_tuple);
     }
-    if (!update_route_list.empty())
-    {
-        auto statuses = updateRouteEntries(update_route_list);
-        for (size_t i = 0; i < update_route_list.size(); ++i)
-        {
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(update_tuple_list[i]),
-                                 kfvFieldsValues(update_tuple_list[i]), statuses[i],
-                                 /*replace=*/true);
-        }
+  }
+
+  if (!route_list.empty()) {
+    auto rc = processRouteEntries(route_list, tuple_list, prev_op, prev_update);
+    if (!rc.ok()) {
+      status = rc;
     }
-    if (!delete_route_list.empty())
-    {
-        auto statuses = deleteRouteEntries(delete_route_list);
-        for (size_t i = 0; i < delete_route_list.size(); ++i)
-        {
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(delete_tuple_list[i]),
-                                 kfvFieldsValues(delete_tuple_list[i]), statuses[i],
-                                 /*replace=*/true);
-        }
-    }
-    m_entries.clear();
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 std::string RouteManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -1161,7 +1201,7 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
     swss::DBConnector db("ASIC_DB", 0);
     swss::Table table(&db, "ASIC_STATE");
     std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) + ":" +
-                      sai_serialize_route_entry(getSaiEntry(*route_entry));
+                      sai_serialize_route_entry(prepareSaiEntry(*route_entry));
     std::vector<swss::FieldValueTuple> values;
     if (!table.get(key, values))
     {
