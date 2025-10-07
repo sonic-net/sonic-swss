@@ -75,6 +75,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mirror_session_manager_test.cpp \
 		       test_main.cpp \
 		       mock_sai_acl.cpp \
+		       mock_sai_bridge.cpp \
 		       mock_sai_hostif.cpp \
 		       mock_sai_serialize.cpp \
 		       mock_sai_router_interface.cpp \
