@@ -1933,7 +1933,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                         {
                             //neigh successfully deleted from SAI. Set STATE DB to signal to remove entries from kernel
                             if (!m_singleVoq)
-			    {
+                            {
                                 m_stateSystemNeighTable->del(state_key);
                             }
                         }
@@ -1986,7 +1986,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     FieldValueTuple mac("neigh", mac_address.to_string());
                     fvVector.push_back(mac);
                     if (!m_singleVoq)
-		    {
+                    {
                         m_stateSystemNeighTable->set(state_key, fvVector);
                     }
 
@@ -2026,7 +2026,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 {
                     //neigh successfully deleted from SAI. Set STATE DB to signal to remove entries from kernel
                     if (!m_singleVoq)
-		    {
+                    {
                         m_stateSystemNeighTable->del(state_key);
                     }
 
