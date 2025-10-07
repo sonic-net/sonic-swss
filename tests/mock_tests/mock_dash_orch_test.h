@@ -26,8 +26,8 @@ namespace mock_orch_test
             void AddPLRoutingType();
             void CreateVnet();
             void RemoveVnet(bool expect_empty = true);
-            void AddVnetMap(bool expect_empty = true);
-            void RemoveVnetMap();
+            void AddVnetMap(bool expect_empty = true, std::string vnet_ip = vnet_map_ip1);
+            void RemoveVnetMap(bool expect_empty = true, std::string vnet_ip = vnet_map_ip1);
             void AddOutboundRoutingGroup();
             void AddOutboundRoutingEntry(bool expect_empty = true);
             void AddTunnel();
@@ -36,13 +36,14 @@ namespace mock_orch_test
             void AddPortMap();
             dash::eni::Eni BuildEniEntry();
 
-            std::string vnet1 = "VNET_1";
-            std::string vnet_map_ip1 = "2.2.2.2";
-            std::string vnet_map_ip2 = "2.3.3.3";
-            std::string appliance1 = "APPLIANCE_1";
-            std::string route_group1 = "ROUTE_GROUP_1";
-            std::string tunnel1 = "TUNNEL_1";
-            std::string eni1 = "ENI_1";
-            std::string portmap1 = "PORTMAP_1";
+            static std::string vnet1;
+            static std::string vnet_map_ip1;
+            static std::string vnet_map_ip2;
+            static std::string vnet_map_underlay_ip;
+            static std::string appliance1;
+            static std::string route_group1;
+            static std::string tunnel1;
+            static std::string eni1;
+            static std::string portmap1;
     };
 }
