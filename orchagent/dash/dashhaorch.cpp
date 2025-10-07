@@ -3,6 +3,7 @@
 #include "orch.h"
 #include "sai.h"
 #include "saiextensions.h"
+#include "bfdorch.h"
 #include "dashorch.h"
 #include "crmorch.h"
 #include "saihelper.h"
@@ -58,9 +59,10 @@ static const map<sai_ha_scope_event_t, string> sai_ha_scope_event_type_name =
     { SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED, "split_brain_detected" }
 };
 
-DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
+DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, BfdOrch *bfd_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tables, zmqServer),
-    m_dash_orch(dash_orch)
+    m_dash_orch(dash_orch),
+    m_bfd_orch(bfd_orch)
 {
     SWSS_LOG_ENTER();
 
@@ -390,6 +392,12 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             repeated_message = false;
         }
 
+        if (ha_scope_it->second.metadata.disabled() != entry.disabled())
+        {
+            success = success && setHaScopeDisabled(key, entry.disabled());
+            repeated_message = false;
+        }
+
         if (repeated_message)
         {
             SWSS_LOG_WARN("HA Scope entry already exists for %s", key.c_str());
@@ -434,6 +442,11 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     ha_role_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
     ha_role_attr.value.u16 = to_sai(entry.ha_role());
     ha_scope_attrs.push_back(ha_role_attr);
+
+    sai_attribute_t disabled_attr = {};
+    disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    disabled_attr.value.booldata = !entry.disabled();
+    ha_scope_attrs.push_back(disabled_attr);
 
     if (entry.has_vip_v4() && entry.vip_v4().has_ipv4())
     {
@@ -513,7 +526,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    m_ha_scope_entries[key] = HaScopeEntry {sai_ha_scope_oid, entry, getNowTime()};
+    m_ha_scope_entries[key] = HaScopeEntry {sai_ha_scope_oid, entry, getNowTime(), SAI_DASH_HA_STATE_DEAD, getNowTime()};
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
 
     // set HA Scope ID to ENI
@@ -562,6 +575,18 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
     SWSS_LOG_ENTER();
 
     sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    /*
+        Remove bfd passive sessions in planned shutdown (scope == DPU)
+    */
+    if (entry.ha_role() == dash::types::HA_ROLE_DEAD
+        && !m_ha_set_entries.empty())
+    {
+        if (has_dpu_scope())
+        {
+            m_bfd_orch->removeAllSoftwareBfdSessions();
+        }
+    }
 
     sai_attribute_t ha_scope_attr;
     ha_scope_attr.id = SAI_HA_SCOPE_ATTR_DASH_HA_ROLE;
@@ -638,6 +663,35 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
     return true;
 }
 
+bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
+
+    sai_attribute_t ha_scope_attr;
+    ha_scope_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+    ha_scope_attr.value.booldata = !disabled;
+
+    sai_status_t status = sai_dash_ha_api->set_ha_scope_attribute(ha_scope_id,
+                                                                &ha_scope_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set HA Scope admin state to %d in SAI for %s", disabled, key.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    m_ha_scope_entries[key].metadata.set_disabled(disabled);
+    SWSS_LOG_NOTICE("Set HA Scope admin state for %s to %d", key.c_str(), !disabled);
+
+    return true;
+}
+
 bool DashHaOrch::setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id)
 {
     SWSS_LOG_ENTER();
@@ -708,6 +762,12 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         {
             dash::ha_scope::HaScope entry;
 
+            auto existing_it = m_ha_scope_entries.find(key);
+            if (existing_it != m_ha_scope_entries.end())
+            {
+                // Start with existing entry to preserve unmodified fields
+                entry.CopyFrom(existing_it->second.metadata);
+            }
 
             /*
             * For HA internal tables, kfv format was used instead of serialized pb objects in the end.
@@ -760,6 +820,68 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
     }
 }
 
+void DashHaOrch::doTaskBfdSessionTable(ConsumerBase &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple tuple = it->second;
+        const auto& key = kfvKey(tuple);
+        const auto& op = kfvOp(tuple);
+
+        SWSS_LOG_DEBUG("Processing BFD Session table");
+
+        if (op == SET_COMMAND)
+        {
+            if (has_eni_scope())
+            {
+                m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+            }
+
+            // Per HLD, once the state is moved to Active/Standby/Standalone state, we will create the BFD responder on DPU.
+            bool has_dpu_scope_ha_state_activated = false;
+            if (has_dpu_scope())
+            {
+                for (const auto& ha_scope_entry : m_ha_scope_entries)
+                {
+                    if (in(ha_scope_entry.second.ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                            SAI_DASH_HA_STATE_STANDBY,
+                                                            SAI_DASH_HA_STATE_STANDALONE}))
+                    {
+                        has_dpu_scope_ha_state_activated = true;
+                        break;
+                    }
+                }
+            }
+
+            if (has_dpu_scope_ha_state_activated)
+            {
+                m_bfd_orch->createSoftwareBfdSession(key, kfvFieldsValues(tuple));
+            }
+
+            /*
+                Caching BFD sessions for planned ha_role up->down->up.
+            */
+            if ((!has_eni_scope()))
+            {
+                SWSS_LOG_INFO("Caching BFD session %s as there is no non-dead DPU HA Scope", key.c_str());
+
+                m_bfd_session_pending_creation[key] = kfvFieldsValues(tuple);
+            }
+
+            it = consumer.m_toSync.erase(it);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_bfd_orch->removeSoftwareBfdSession(key);
+            it = consumer.m_toSync.erase(it);
+            m_bfd_session_pending_creation.erase(key);
+        }
+    }
+}
+
 void DashHaOrch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
@@ -771,7 +893,12 @@ void DashHaOrch::doTask(ConsumerBase &consumer)
     else if (consumer.getTableName() == APP_DASH_HA_SCOPE_TABLE_NAME)
     {
         doTaskHaScopeTable(consumer);
-    } else
+    }
+    else if (consumer.getTableName() ==  APP_BFD_SESSION_TABLE_NAME)
+    {
+        doTaskBfdSessionTable(consumer);
+    }
+    else
     {
         SWSS_LOG_ERROR("Unknown table: %s", consumer.getTableName().c_str());
     }
@@ -845,7 +972,8 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 std::vector<FieldValueTuple> fvs = {
-                    {"last_updated_time", to_string(now_time)}
+                    {"last_updated_time", to_string(now_time)},
+                    {"ha_term", to_string(ha_scope_event[i].flow_version)}
                 };
 
                 auto ha_role = to_pb(ha_scope_event[i].ha_role);
@@ -862,7 +990,7 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                 }
 
                 fvs.push_back({"ha_role", sai_ha_role_name.at(ha_scope_event[i].ha_role)});
-                fvs.push_back({"ha_role_start_time ", to_string(role_start_time)});
+                fvs.push_back({"ha_role_start_time", to_string(role_start_time)});
 
                 switch (event_type)
                 {
@@ -882,6 +1010,17 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                         }
 
                         fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
+                        fvs.push_back({"ha_state_start_time", to_string(now_time)});
+
+                        m_ha_scope_entries[key].ha_state = ha_scope_event[i].ha_state;
+                        m_ha_scope_entries[key].last_state_start_time = now_time;
+
+                        if (has_dpu_scope() && in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                            SAI_DASH_HA_STATE_STANDBY,
+                                                            SAI_DASH_HA_STATE_STANDALONE}))
+                        {
+                            processCachedBfdSessions();
+                        }
                         break;
                     default:
                         SWSS_LOG_ERROR("Unknown HA Scope event type %d for %s", event_type, key.c_str());
@@ -1066,4 +1205,42 @@ bool DashHaOrch::convertKfvToHaScopePb(const std::vector<FieldValueTuple> &kfv, 
         }
     }
     return true;
+}
+
+bool DashHaOrch::has_dpu_scope()
+{
+    for (const auto& ha_set_entry : m_ha_set_entries)
+    {
+        if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_DPU)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DashHaOrch::has_eni_scope()
+{
+    for (const auto& ha_set_entry : m_ha_set_entries)
+    {
+        if (ha_set_entry.second.metadata.scope() == dash::types::HA_SCOPE_ENI)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DashHaOrch::processCachedBfdSessions()
+{
+    /*
+        Create bfd passive sessions cached when moving out of DEAD role (scope == DPU)
+    */
+    if (has_dpu_scope() && !m_bfd_session_pending_creation.empty())
+    {
+        for (const auto& bfd_entry : m_bfd_session_pending_creation)
+        {
+            m_bfd_orch->createSoftwareBfdSession(bfd_entry.first, bfd_entry.second);
+        }
+    }
 }
