@@ -62,7 +62,7 @@ P4NeighborEntry::P4NeighborEntry(const std::string &router_interface_id, const s
     neighbor_key = KeyGenerator::generateNeighborKey(router_intf_id, neighbor_id);
 }
 
-ReturnCodeOr<sai_neighbor_entry_t> NeighborManager::prepareSaiEntry(const P4NeighborEntry &neighbor_entry)
+sai_neighbor_entry_t NeighborManager::prepareSaiEntry(const P4NeighborEntry &neighbor_entry)
 {
     const std::string &router_intf_key = neighbor_entry.router_intf_key;
     sai_object_id_t router_intf_oid;
@@ -192,40 +192,6 @@ ReturnCode NeighborManager::validateNeighborEntryOperation(
              << "Neighbor with key " << QuotedVar(neighbor_key)
              << " does not exist";
     }
-
-    ASSIGN_OR_RETURN(neighbor_entry.neigh_entry, prepareSaiEntry(neighbor_entry));
-    auto attrs = prepareSaiAttrs(neighbor_entry);
-
-    CHECK_ERROR_AND_LOG_AND_RETURN(sai_neighbor_api->create_neighbor_entry(
-                                       &neighbor_entry.neigh_entry, static_cast<uint32_t>(attrs.size()), attrs.data()),
-                                   "Failed to create neighbor with key " << QuotedVar(neighbor_key));
-
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE, neighbor_entry.router_intf_key);
-    if (neighbor_entry.neighbor_id.isV4())
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-    }
-    else
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-    }
-
-    m_neighborTable[neighbor_key] = neighbor_entry;
-    m_p4OidMapper->setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key);
-    return ReturnCode();
-}
-
-ReturnCode NeighborManager::removeNeighbor(const std::string &neighbor_key)
-{
-    SWSS_LOG_ENTER();
-
-    auto *neighbor_entry = getNeighborEntry(neighbor_key);
-    if (neighbor_entry == nullptr)
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Neighbor with key " << QuotedVar(neighbor_key) << " does not exist");
-    }
-
     uint32_t ref_count;
     if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
                                     neighbor_key, &ref_count)) {
@@ -728,12 +694,7 @@ std::string NeighborManager::verifyStateCache(const P4NeighborAppDbEntry &app_db
 
 std::string NeighborManager::verifyStateAsicDb(const P4NeighborEntry *neighbor_entry)
 {
-    auto sai_entry_or = prepareSaiEntry(*neighbor_entry);
-    if (!sai_entry_or.ok())
-    {
-        return std::string("Failed to get SAI entry: ") + sai_entry_or.status().message();
-    }
-    sai_neighbor_entry_t sai_entry = *sai_entry_or;
+    sai_neighbor_entry_t sai_entry = prepareSaiEntry(*neighbor_entry);
     auto attrs = prepareSaiAttrs(*neighbor_entry);
     std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
         SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, (uint32_t)attrs.size(), attrs.data(),
