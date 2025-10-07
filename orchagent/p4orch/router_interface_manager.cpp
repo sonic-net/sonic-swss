@@ -104,7 +104,16 @@ ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4RouterInterfaceEn
         attr.id = SAI_ROUTER_INTERFACE_ATTR_VLAN_ID;
         attr.value.oid = port.m_vlan_info.vlan_oid;
         break;
-    // TODO: add support for PORT::SUBPORT
+    case Port::SUBPORT:
+        attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
+        attrs.push_back(attr);
+        attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
+        attr.value.oid = port.m_port_id;
+        attrs.push_back(attr);
+        attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
+        attr.value.oid = port.m_vlan_info.vlan_oid;
+        break;
+
     default:
         LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unsupported port type: " << port.m_type);
     }
