@@ -113,6 +113,7 @@ public:
     void clearBulkers();
 
 private:
+    bool m_singleVoq =  false;
     PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
     FdbOrch *m_fdbOrch;
