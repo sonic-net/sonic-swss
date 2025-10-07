@@ -621,7 +621,7 @@ int main(int argc, char **argv)
 
         //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
         //connection info in database_config.json
-	chassis_app_db = nullptr;
+        chassis_app_db = nullptr;
         if (isChassisAppDbPresent())
        	{
             try {
@@ -631,7 +631,7 @@ int main(int argc, char **argv)
 	    {
                 SWSS_LOG_NOTICE("CHASSIS_APP_DB not available, operating in standalone VOQ mode");
             }
-	}
+        }
     }
     else if (gMySwitchType == "fabric")
     {
