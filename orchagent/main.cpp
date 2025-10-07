@@ -622,11 +622,13 @@ int main(int argc, char **argv)
         //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
         //connection info in database_config.json
 	chassis_app_db = nullptr;
-        if (isChassisAppDbPresent()) {
+        if (isChassisAppDbPresent())
+       	{
             try {
                 chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
             }
-            catch (const std::exception& e) {
+            catch (const std::exception& e)
+	    {
                 SWSS_LOG_NOTICE("CHASSIS_APP_DB not available, operating in standalone VOQ mode");
             }
 	}
@@ -827,7 +829,8 @@ int main(int argc, char **argv)
 
     shared_ptr<OrchDaemon> orchDaemon;
     DBConnector *chassis_db = nullptr;
-    if (chassis_app_db != nullptr) {
+    if (chassis_app_db != nullptr)
+    {
         chassis_db = chassis_app_db.get();
     }
 

@@ -99,7 +99,8 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
                                  rifRateSha);
 
     /* check if this is a single asic voq */
-    if (chassisAppDb == nullptr) {
+    if (chassisAppDb == nullptr)
+    {
         m_singleVoq = true;
     }
 
@@ -1675,7 +1676,8 @@ bool IntfsOrch::isLocalSystemPortIntf(string alias)
 
 void IntfsOrch::voqSyncAddIntf(string &alias)
 {
-    if (m_singleVoq) {
+    if (m_singleVoq)
+    {
         return;
     }
 
@@ -1719,7 +1721,8 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
 
 void IntfsOrch::voqSyncDelIntf(string &alias)
 {
-    if (m_singleVoq) {
+    if (m_singleVoq)
+    {
         return;
     }
 
@@ -1756,7 +1759,8 @@ void IntfsOrch::voqSyncDelIntf(string &alias)
 
 void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
 {
-    if (m_singleVoq) {
+    if (m_singleVoq)
+    {
         return;
     }
 

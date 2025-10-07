@@ -47,7 +47,8 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     }
 
     /* check if this is a single asic voq */
-    if (chassisAppDb == nullptr) {
+    if (chassisAppDb == nullptr)
+    {
         m_singleVoq = true;
     }
 
@@ -1931,7 +1932,8 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                         if (removeNeighbor(ctx))
                         {
                             //neigh successfully deleted from SAI. Set STATE DB to signal to remove entries from kernel
-                            if (!m_singleVoq) {
+                            if (!m_singleVoq)
+			    {
                                 m_stateSystemNeighTable->del(state_key);
                             }
                         }
@@ -1983,7 +1985,8 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     vector<FieldValueTuple> fvVector;
                     FieldValueTuple mac("neigh", mac_address.to_string());
                     fvVector.push_back(mac);
-                    if (!m_singleVoq) {
+                    if (!m_singleVoq)
+		    {
                         m_stateSystemNeighTable->set(state_key, fvVector);
                     }
 
@@ -2022,7 +2025,8 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 if (removeNeighbor(ctx))
                 {
                     //neigh successfully deleted from SAI. Set STATE DB to signal to remove entries from kernel
-                    if (!m_singleVoq) {
+                    if (!m_singleVoq)
+		    {
                         m_stateSystemNeighTable->del(state_key);
                     }
 
@@ -2173,7 +2177,8 @@ bool NeighOrch::delInbandNeighbor(string alias, IpAddress ip_address)
 
 bool NeighOrch::getSystemPortNeighEncapIndex(string &alias, IpAddress &ip, uint32_t &encap_index)
 {
-    if (m_singleVoq) {
+    if (m_singleVoq)
+    {
         return true;
     }
 
@@ -2218,7 +2223,8 @@ bool NeighOrch::addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attrib
 
 void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry)
 {
-    if (m_singleVoq) {
+    if (m_singleVoq)
+    {
         return;
     }
 
@@ -2292,7 +2298,8 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
 
 void NeighOrch::voqSyncDelNeigh(string &alias, IpAddress &ip_address)
 {
-    if (m_singleVoq) {
+    if (m_singleVoq)
+    {
         return;
     }
 

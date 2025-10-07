@@ -931,8 +931,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     }
 
     /* check if this is a single asic voq */
-    if (chassisAppDb == nullptr) {
-	m_singleVoq = true;
+    if (chassisAppDb == nullptr)
+    {
+        m_singleVoq = true;
     }
 
     if (gMySwitchType == "voq" && !m_singleVoq)
@@ -7288,7 +7289,8 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
             switch_id = gVoqMySwitchId;
             system_lag_alias = gMyHostName + "|" + gMyAsicName + "|" + lag_alias;
 
-	    if (!m_singleVoq) {
+	    if (!m_singleVoq)
+	    {
                 // Allocate unique lag id
                 spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
 
