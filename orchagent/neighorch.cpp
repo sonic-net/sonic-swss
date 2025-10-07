@@ -46,7 +46,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         gBfdOrch->attach(this);
     }
 
-    /* check if this is a single asic voq */
+    // check if this is a single asic voq
     if (chassisAppDb == nullptr)
     {
         m_singleVoq = true;

@@ -930,7 +930,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch::addExecutor(portHostTxReadyNotificatier);
     }
 
-    /* check if this is a single asic voq */
+    // check if this is a single asic voq
     if (chassisAppDb == nullptr)
     {
         m_singleVoq = true;

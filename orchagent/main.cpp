@@ -628,7 +628,7 @@ int main(int argc, char **argv)
                 chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
             }
             catch (const std::exception& e)
-	    {
+            {
                 SWSS_LOG_NOTICE("CHASSIS_APP_DB not available, operating in standalone VOQ mode");
             }
         }

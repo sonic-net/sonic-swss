@@ -98,7 +98,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
                                  RIF_PLUGIN_FIELD,
                                  rifRateSha);
 
-    /* check if this is a single asic voq */
+    // check if this is a single asic voq
     if (chassisAppDb == nullptr)
     {
         m_singleVoq = true;
