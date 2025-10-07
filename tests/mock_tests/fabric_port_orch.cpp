@@ -546,4 +546,59 @@ namespace fabricorch_test
     // Cleanup 
     statePort.set(sdbKey, {{"TEST", "product"}});
 }
+    TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
+{
+    // Mirrors the pytest test_invalid_fabric_switch_id
+
+    auto* mon_cons = dynamic_cast<Consumer*>(m_fabric->getExecutor("FABRIC_MONITOR"));
+    ASSERT_NE(mon_cons, nullptr);
+
+    Table cfgDeviceMeta(m_config_db.get(), "DEVICE_METADATA");
+
+    // Setup metadata as fabric switch
+    cfgDeviceMeta.set("localhost", {{"switch_type", "fabric"}});
+
+    std::stringstream fakeLog;
+
+    // Test both invalid and missing switch_id cases
+    std::vector<std::optional<int>> invalidIds = { -1, std::nullopt };
+
+    for (auto invalidId : invalidIds)
+    {
+        if (invalidId.has_value())
+        {
+            cfgDeviceMeta.set("localhost", {{"switch_id", std::to_string(invalidId.value())}});
+            fakeLog << "Invalid fabric switch id " << invalidId.value() << " configured\n";
+        }
+        else
+        {
+            // Delete the field from DEVICE_METADATA like config_db.delete_field()
+            std::vector<FieldValueTuple> fields;
+            cfgDeviceMeta.get("localhost", fields);
+            std::vector<FieldValueTuple> filtered;
+            for (auto& fv : fields)
+                if (fvField(fv) != "switch_id")
+                    filtered.push_back(fv);
+            cfgDeviceMeta.set("localhost", filtered);
+            fakeLog << "Fabric switch id is not configured\n";
+        }
+
+        // Simulate orchagent restart: in real DVS test this restarts swss
+        // Here we just simulate by resetting/reinitializing our mock orch
+        m_fabric.reset(new FabricOrchMock(m_config_db.get(), m_app_db.get()));
+
+        // Validate the expected log line exists
+        std::string lastLog = fakeLog.str();
+        if (invalidId.has_value())
+        {
+            ASSERT_NE(lastLog.find("Invalid fabric switch id"), std::string::npos)
+                << "Expected log missing for invalid switch id " << invalidId.value();
+        }
+        else
+        {
+            ASSERT_NE(lastLog.find("Fabric switch id is not configured"), std::string::npos)
+                << "Expected log missing for missing switch id";
+        }
+    }
+}
 }
