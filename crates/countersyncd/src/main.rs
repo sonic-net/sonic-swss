@@ -17,6 +17,7 @@ use crate::actor::{
     ipfix::IpfixActor,
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
     swss::SwssActor,
+    otel::{OtelActor, OtelActorConfig},
 };
 
 /// Initialize logging based on command line arguments
@@ -157,6 +158,34 @@ struct Args {
         help = "Set the channel capacity for counter_db actor"
     )]
     counter_db_capacity: usize,
+
+    /// Enable OpenTelemetry metrics export
+    #[arg(short = 'o', long, default_value = "false")]
+    enable_otel: bool,
+
+    /// OpenTelemetry collector endpoint
+    #[arg(
+        long,
+        default_value = "http://localhost:4317",
+        help = "OpenTelemetry collector endpoint URL"
+    )]
+    otel_endpoint: String,
+
+    /// Enable OpenTelemetry console output
+    #[arg(
+        long,
+        default_value = "true",
+        help = "Print OpenTelemetry metrics to console"
+    )]
+    otel_console: bool,
+
+    /// Channel capacity for otel communication
+    #[arg(
+        long,
+        default_value = "1024",
+        help = "Set the channel capacity for otel actor"
+    )]
+    otel_capacity: usize,
 }
 
 #[tokio::main]
@@ -181,9 +210,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.counter_db_frequency
         );
     }
+    info!("OpenTelemetry export enabled: {}", args.enable_otel);
+    if args.enable_otel {
+        info!("OpenTelemetry endpoint: {}", args.otel_endpoint);
+        info!("OpenTelemetry console output: {}", args.otel_console);
+    }
     info!(
-        "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}",
-        args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity
+        "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
+        args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity, args.otel_capacity
     );
 
     // Create communication channels between actors with configurable capacities
@@ -192,6 +226,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (ipfix_template_sender, ipfix_template_receiver) = channel(10); // Fixed capacity for templates
     let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
+    let (otel_sender, otel_receiver) = channel(args.otel_capacity);
+    let (otel_shutdown_sender, otel_shutdown_receiver) = tokio::sync::oneshot::channel();
 
     // Get netlink family and group configuration from SONiC constants
     let (family, group) = get_genl_family_group();
@@ -260,6 +296,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Configure OpenTelemetry export with settings from command line arguments
+    let otel_actor = if args.enable_otel {
+        let otel_config = OtelActorConfig {
+            print_to_console: args.otel_console,
+            collector_endpoint: args.otel_endpoint.clone(),
+        };
+
+        // Add OTEL to ipfix recipients only when enabled
+        ipfix.add_recipient(otel_sender.clone());
+        match OtelActor::new(otel_receiver, otel_config, otel_shutdown_sender).await {
+            Ok(actor) => Some(actor),
+            Err(e) => {
+                error!("Failed to initialize OtelActor: {}", e);
+                return Err(e.into());
+            }
+        }
+    } else {
+        // Drop the receiver if OTEL export is disabled
+        drop(otel_receiver);
+        drop(otel_shutdown_sender);
+        None
+    };
+
     info!("Starting actor tasks...");
 
     // Spawn actor tasks
@@ -317,6 +376,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Only spawn OpenTelemetry actor if enabled
+    let otel_handle = if let Some(otel_actor) = otel_actor {
+        Some(spawn(async move {
+            info!("OpenTelemetry actor started");
+            OtelActor::run(otel_actor).await;
+            info!("OpenTelemetry actor terminated");
+        }))
+    } else {
+        info!("OpenTelemetry export disabled - not starting OpenTelemetry actor");
+        None
+    };
+
     // Wait for all actors to complete and handle any errors
     let data_netlink_result = data_netlink_handle.await;
     let control_netlink_result = control_netlink_handle.await;
@@ -335,11 +406,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let otel_result = if let Some(handle) = otel_handle {
+        Some(handle.await)
+    } else {
+        None
+    };
 
     // Handle results based on what actors were enabled
-    let all_successful = match (reporter_result.is_some(), counter_db_result.is_some()) {
-        (true, true) => {
-            // Both stats reporter and counter DB enabled
+    let all_successful = match (reporter_result.is_some(), counter_db_result.is_some(), otel_result.is_some()) {
+        (true, true, true) => {
+            // All optional actors enabled
+            matches!(
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result,
+                    reporter_result.as_ref().unwrap(),
+                    counter_db_result.as_ref().unwrap(),
+                    otel_result.as_ref().unwrap()
+                ),
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
+        (true, true, false) => {
+            // Stats reporter and counter DB enabled, OTEL disabled
             matches!(
                 (
                     &data_netlink_result,
@@ -352,7 +443,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
             )
         }
-        (true, false) => {
+        (true, false, true) => {
+            // Stats reporter and OTEL enabled, counter DB disabled
+            matches!(
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result,
+                    reporter_result.as_ref().unwrap(),
+                    otel_result.as_ref().unwrap()
+                ),
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
+        (false, true, true) => {
+            // Counter DB and OTEL enabled, stats reporter disabled
+            matches!(
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result,
+                    counter_db_result.as_ref().unwrap(),
+                    otel_result.as_ref().unwrap()
+                ),
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
+        (true, false, false) => {
             // Only stats reporter enabled
             matches!(
                 (
@@ -365,7 +484,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
             )
         }
-        (false, true) => {
+        (false, true, false) => {
             // Only counter DB enabled
             matches!(
                 (
@@ -378,8 +497,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
             )
         }
-        (false, false) => {
-            // Neither enabled
+        (false, false, true) => {
+            // Only OTEL enabled
+            matches!(
+                (
+                    &data_netlink_result,
+                    &control_netlink_result,
+                    &ipfix_result,
+                    &swss_result,
+                    otel_result.as_ref().unwrap()
+                ),
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+            )
+        }
+        (false, false, false) => {
+            // None of the optional actors enabled
             matches!(
                 (
                     &data_netlink_result,
@@ -393,12 +525,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if all_successful {
-        let status_msg = match (reporter_result.is_some(), counter_db_result.is_some()) {
-            (true, true) => "All actors completed successfully",
-            (true, false) => "All actors completed successfully (counter DB disabled)",
-            (false, true) => "All actors completed successfully (stats reporting disabled)",
-            (false, false) => {
-                "All actors completed successfully (stats reporting and counter DB disabled)"
+        let status_msg = match (reporter_result.is_some(), counter_db_result.is_some(), otel_result.is_some()) {
+            (true, true, true) => "All actors completed successfully",
+            (true, true, false) => "All actors completed successfully (OpenTelemetry disabled)",
+            (true, false, true) => "All actors completed successfully (counter DB disabled)",
+            (false, true, true) => "All actors completed successfully (stats reporting disabled)",
+            (true, false, false) => "All actors completed successfully (counter DB and OpenTelemetry disabled)",
+            (false, true, false) => "All actors completed successfully (stats reporting and OpenTelemetry disabled)",
+            (false, false, true) => "All actors completed successfully (stats reporting and counter DB disabled)",
+            (false, false, false) => {
+                "All actors completed successfully (stats reporting, counter DB, and OpenTelemetry disabled)"
             }
         };
         info!("{}", status_msg);
@@ -422,6 +558,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e.into())
         } else if let Some(Err(e)) = counter_db_result {
             error!("Counter DB actor failed: {:?}", e);
+            Err(e.into())
+        } else if let Some(Err(e)) = otel_result {
+            error!("OpenTelemetry actor failed: {:?}", e);
             Err(e.into())
         } else {
             error!("Unknown actor failure");
