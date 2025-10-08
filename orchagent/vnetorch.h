@@ -24,6 +24,9 @@
 #define VXLAN_ENCAP_TTL 128
 #define VNET_BITMAP_RIF_MTU 9100
 
+#define VNET_MONITORING_TYPE_CUSTOM "custom"
+#define VNET_MONITORING_TYPE_CUSTOM_BFD "custom_bfd"
+
 extern sai_object_id_t gVirtualRouterId;
 
 
@@ -332,7 +335,7 @@ public:
 class MonitorOrch : public Orch2
 {
 public:
-    MonitorOrch(swss::DBConnector *db, std::string tableName);
+    MonitorOrch(swss::DBConnector *db, vector<string> &tableNames);
     virtual ~MonitorOrch(void);
 
 private:
@@ -384,6 +387,8 @@ struct BfdSessionInfo
 
 struct MonitorSessionInfo
 {
+    std::string monitoring_type = VNET_MONITORING_TYPE_CUSTOM;
+    sai_bfd_session_state_t custom_bfd_state;
     monitor_session_state_t state;
     NextHopKey endpoint;
     int ref_count;
@@ -391,6 +396,8 @@ struct MonitorSessionInfo
 
 struct MonitorUpdate
 {
+    std::string monitoring_type = VNET_MONITORING_TYPE_CUSTOM;
+    sai_bfd_session_state_t custom_bfd_state;
     monitor_session_state_t state;
     IpAddress monitor;
     IpPrefix prefix;
@@ -458,6 +465,7 @@ public:
 
     void update(SubjectType, void *);
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
+    void updateCustomBfdState(const IpAddress& monitoring_ip, const string& state);
     void updateAllMonitoringSession(const string& vnet);
 
 private:

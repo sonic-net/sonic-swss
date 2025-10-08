@@ -247,6 +247,11 @@ bool OrchDaemon::init()
             CFG_VNET_RT_TABLE_NAME,
             CFG_VNET_RT_TUNNEL_TABLE_NAME
     };
+    
+    vector<string> monitor_orch_tables = {
+            STATE_VNET_MONITOR_TABLE_NAME,
+            STATE_BFD_SESSION_TABLE_NAME
+        }
 
     VNetOrch *vnet_orch;
     vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
@@ -258,7 +263,7 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
-    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
+    gMonitorOrch = new MonitorOrch(m_stateDb, monitor_orch_tables);
     gDirectory.set(gMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
