@@ -877,7 +877,9 @@ void OrchDaemon::flush()
     {
         gRingBuffer->notify();
         SWSS_LOG_WARN("Skip Flush waiting for RingBuffer empty");
-    } else {
+    }
+    else
+    {
         for (auto* orch: m_orchList)
         {
             orch->flushResponses();
