@@ -954,7 +954,7 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
             next_hop_group_entry.ref_count = 0;
         }
 
-        if (monitoring == VNET_MONITORING_TYPE_CUSTOM || nexthop_info_[vnet].find(nexthop.ip_address) == nexthop_info_[vnet].end() || nexthop_info_[vnet][nexthop.ip_address].bfd_state == SAI_BFD_SESSION_STATE_UP)
+        if (monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD || nexthop_info_[vnet].find(nexthop.ip_address) == nexthop_info_[vnet].end() || nexthop_info_[vnet][nexthop.ip_address].bfd_state == SAI_BFD_SESSION_STATE_UP)
         {
             SWSS_LOG_INFO("Adding nexthop: %s to the active group", nexthop.ip_address.to_string().c_str());
             next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
@@ -1028,7 +1028,8 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     // depending on the endpoint monitor state. If no NHG from primary is created, we attempt
     // the same for secondary.
 
-    if(nexthops_secondary.getSize() != 0 && monitoring == VNET_MONITORING_TYPE_CUSTOM)
+    if(nexthops_secondary.getSize() != 0 &&
+        (monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD))
     {
         auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
         if (it_route == syncd_tunnel_routes_[vnet].end())
@@ -2011,6 +2012,42 @@ void VNetRouteOrch::createMonitoringSession(const string& vnet, const NextHopKey
 
 }
 
+void VNetRouteOrch::createCustomBFDMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    if (bfd_sessions_.find(monitor_addr) == bfd_sessions_.end())
+    {
+        vector<FieldValueTuple> data;
+        string key = "default:default:" + monitor_addr.to_string();
+
+        auto tun_name = vnet_orch_->getTunnelName(vnet);
+        VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+        auto tunnel_obj = vxlan_orch->getVxlanTunnel(tun_name);
+        /*
+            Even for local endpoints, we will use tunnel source IP as local_addr of BFD session.
+        */
+        IpAddress src_ip = tunnel_obj->getSrcIP();
+
+        FieldValueTuple fvTuple("local_addr", src_ip.to_string());
+        data.push_back(fvTuple);
+        data.emplace_back("multihop", "true");
+        // The BFD sessions established by the Vnet routes with monitoring need to be brought down
+        // when the device goes into TSA.  The following parameter ensures that these session are
+        // brought down while transitioning to TSA and brought back up when transitioning to TSB.
+        data.emplace_back("shutdown_bfd_during_tsa", "true");
+        bfd_session_producer_.set(key, data);
+        bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
+    }
+
+    MonitorSessionInfo info = monitor_info_[vnet][ipPrefix][monitor_addr];
+    info.endpoint = endpoint;
+    info.ref_count = 1;
+    info.monitoring = VNET_MONITORING_TYPE_CUSTOM_BFD;
+    info.custom_bfd_state = BFD_SESSION_STATE_DOWN;
+    monitor_info_[vnet][ipPrefix][monitor_addr] = info;
+}
+
 void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix)
 {
     SWSS_LOG_ENTER();
@@ -2059,19 +2096,16 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
                 * To avoid the complexity/regression, we temporarily introduce custom_bfd monitoring type.
                 * It will be same behavior as custom monitoring type, except that it will create BFD session.
                 */
-
-                if (custom_bfd_info_[vnet].find(ipPrefix) == custom_bfd_info_[vnet].end() ||
-                    custom_bfd_info_[vnet][ipPrefix].find(monitor_ip) == custom_bfd_info_[vnet][ipPrefix].end())
+                if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
+                    monitor_info_[vnet][ipPrefix].find(monitor_ip) == monitor_info_[vnet][ipPrefix].end())
                 {
-                    createBfdSession(vnet, nh, monitor_ip);
-                    custom_bfd_info_[vnet][ipPrefix][monitor_ip].ref_count++;
+                    createCustomBFDMonitoringSession(vnet, nh, monitor_ip, ipPrefix);
                 }
                 else
                 {
-                    SWSS_LOG_INFO("Custom BFD Monitoring session for prefix %s endpoint %s, monitor %s already exists", ipPrefix.to_string().c_str(),
+                    SWSS_LOG_INFO("Custom BFD monitoring session for prefix %s endpoint %s, monitor %s already exists", ipPrefix.to_string().c_str(),
                         nh.to_string().c_str(), monitor_ip.to_string().c_str());
                     monitor_info_[vnet][ipPrefix][monitor_ip].ref_count += 1;
-                    nexthop_info_[vnet][nh.ip_address].ref_count += 1;
                 }
             }
             else
