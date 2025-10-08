@@ -48,6 +48,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(P4ORCH_DIR)/wcmp_manager.cpp \
 		       $(P4ORCH_DIR)/mirror_session_manager.cpp \
 		       $(P4ORCH_DIR)/l3_admit_manager.cpp \
+		       $(P4ORCH_DIR)/ip_multicast_manager.cpp \
 		       $(P4ORCH_DIR)/ext_tables_manager.cpp \
 		       $(top_srcdir)/tests/mock_tests/fake_response_publisher.cpp \
 		       fake_portorch.cpp \
@@ -65,6 +66,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       p4orch_util_test.cpp \
 		       return_code_test.cpp \
 		       route_manager_test.cpp \
+		       ip_multicast_manager_test.cpp \
 		       gre_tunnel_manager_test.cpp \
 		       next_hop_manager_test.cpp \
 		       wcmp_manager_test.cpp \
@@ -77,8 +79,10 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_acl.cpp \
 		       mock_sai_bridge.cpp \
 		       mock_sai_hostif.cpp \
+		       mock_sai_ipmc.cpp \
 		       mock_sai_serialize.cpp \
 		       mock_sai_router_interface.cpp \
+		       mock_sai_rpf_group.cpp \
 		       mock_sai_neighbor.cpp \
 		       mock_sai_next_hop.cpp \
 		       mock_sai_route.cpp \
