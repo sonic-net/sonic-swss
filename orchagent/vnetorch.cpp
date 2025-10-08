@@ -3322,8 +3322,8 @@ bool VNetCfgRouteOrch::doVnetRouteTask(const KeyOpFieldsValuesTuple & t, const s
     return true;
 }
 
-MonitorOrch::MonitorOrch(DBConnector *db, vector<string> &tableNames):
-    Orch2(db, tableNames, request_)
+MonitorOrch::MonitorOrch(DBConnector *db, string tableName):
+    Orch2(db, tableName, request_)
 {
     SWSS_LOG_ENTER();
 }
@@ -3365,12 +3365,6 @@ bool MonitorOrch::addOperation(const Request& request)
 
 bool MonitorOrch::delOperation(const Request& request)
 {
-    auto& tn = request.getTableName();
-    if (tn != STATE_VNET_MONITOR_TABLE_NAME)
-    {
-        return true;
-    }
-
     SWSS_LOG_ENTER();
     auto monitor = request.getKeyIpAddress(0);
     auto ip_Prefix = request.getKeyIpPrefix(1);
@@ -3378,8 +3372,37 @@ bool MonitorOrch::delOperation(const Request& request)
     SWSS_LOG_INFO("Deleting state table entry for monitor %s|%s", ip_Prefix.to_string().c_str(),monitor.to_string().c_str());
     VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
     string op = DEL_COMMAND;
-    vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, "");
+    vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, "" );
 
+    return true;
+}
+
+CustomBfdMonitorOrch::CustomBfdMonitorOrch(DBConnector *db, std::string tableName):
+    Orch2(db, tableName, request_)
+{
+    SWSS_LOG_ENTER();
+}
+
+CustomBfdMonitorOrch::~CustomBfdMonitorOrch(void)
+{
+    SWSS_LOG_ENTER();
+}
+
+bool CustomBfdMonitorOrch::addOperation(const Request& request)
+{
+    SWSS_LOG_ENTER();
+
+    auto monitor = request.getKeyIpAddress(2);
+    auto session_state = request.getAttrString("state");
+
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    vnet_route_orch->updateCustomBfdState(monitor, session_state);
+
+    return true;
+}
+
+bool CustomBfdMonitorOrch::delOperation(const Request& request)
+{
     return true;
 }
 

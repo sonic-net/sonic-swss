@@ -328,6 +328,22 @@ const request_description_t monitor_state_request_description = {
             { "state" }
 };
 
+const request_description_t custom_bfd_request_description = {
+            { REQ_T_STRING, REQ_T_STRING, REQ_T_IP, },
+            {
+                { "type",               REQ_T_STRING },
+                { "async_active",       REQ_T_STRING },
+                { "local_discriminator", REQ_T_STRING },
+                { "local_addr",         REQ_T_IP },
+                { "tx_interval",        REQ_T_UINT },
+                { "rx_interval",        REQ_T_UINT },
+                { "multiplier",         REQ_T_UINT },
+                { "multihop",           REQ_T_BOOL },
+                { "state",              REQ_T_STRING },
+            },
+            { }
+};
+
 class MonitorStateRequest : public Request
 {
 public:
@@ -337,7 +353,7 @@ public:
 class MonitorOrch : public Orch2
 {
 public:
-    MonitorOrch(swss::DBConnector *db, vector<string> &tableNames);
+    MonitorOrch(swss::DBConnector *db, std::string tableName);
     virtual ~MonitorOrch(void);
 
 private:
@@ -345,6 +361,25 @@ private:
     virtual bool delOperation(const Request& request);
 
     MonitorStateRequest request_;
+};
+
+class CustomBfdRequest : public Request
+{
+public:
+    CustomBfdRequest() : Request(custom_bfd_request_description, '|') { }
+};
+
+class CustomBfdMonitorOrch : public Orch2
+{
+public:
+    CustomBfdMonitorOrch(swss::DBConnector *db, std::string tableName);
+    virtual ~CustomBfdMonitorOrch(void);
+
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
+
+    CustomBfdRequest request_;
 };
 
 class VNetRouteRequest : public Request

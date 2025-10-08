@@ -63,6 +63,7 @@ Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
+CustomBfdMonitorOrch *gCustomBfdMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
@@ -247,11 +248,6 @@ bool OrchDaemon::init()
             CFG_VNET_RT_TABLE_NAME,
             CFG_VNET_RT_TUNNEL_TABLE_NAME
     };
-    
-    vector<string> monitor_orch_tables = {
-            STATE_VNET_MONITOR_TABLE_NAME,
-            STATE_BFD_SESSION_TABLE_NAME
-    };
 
     VNetOrch *vnet_orch;
     vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
@@ -263,8 +259,10 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
-    gMonitorOrch = new MonitorOrch(m_stateDb, monitor_orch_tables);
+    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
     gDirectory.set(gMonitorOrch);
+    gCustomBfdMonitorOrch = new CustomBfdMonitorOrch(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
+    gDirectory.set(gCustomBfdMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
@@ -476,7 +474,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gCustomBfdMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
