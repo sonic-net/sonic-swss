@@ -772,7 +772,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     for (auto it : next_hop_set)
     {
         nh_seq_id_in_nhgrp[it] = ++seq_id;
-        if (monitoring != VNET_MONITORING_TYPE_CUSTOM && nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
+        if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD && nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
         {
             continue;
         }
@@ -2043,8 +2043,8 @@ void VNetRouteOrch::createCustomBFDMonitoringSession(const string& vnet, const N
     MonitorSessionInfo info = monitor_info_[vnet][ipPrefix][monitor_addr];
     info.endpoint = endpoint;
     info.ref_count = 1;
-    info.monitoring = VNET_MONITORING_TYPE_CUSTOM_BFD;
-    info.custom_bfd_state = BFD_SESSION_STATE_DOWN;
+    info.monitoring_type = VNET_MONITORING_TYPE_CUSTOM_BFD;
+    info.custom_bfd_state = SAI_BFD_SESSION_STATE_DOWN;
     monitor_info_[vnet][ipPrefix][monitor_addr] = info;
 }
 
@@ -2063,6 +2063,8 @@ void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey
         string key = "default:default:" + monitor_addr.to_string();
 
         bfd_session_producer_.del(key);
+
+        bfd_sessions_.erase(monitor_addr);
     }
     else
     {
@@ -2181,8 +2183,23 @@ void VNetRouteOrch::updateCustomBfdState(const IpAddress& monitoring_ip, const s
         return;
     }
 
+    sai_bfd_session_state_t sai_state;
+    if (state == "Up")
+    {
+        sai_state = SAI_BFD_SESSION_STATE_UP;
+    }
+    else if (state == "Down")
+    {
+        sai_state = SAI_BFD_SESSION_STATE_DOWN;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unknown BFD state: %s", state.c_str());
+        return;
+    }
+
     BfdSessionInfo& bfd_info = it_peer->second;
-    bfd_info.bfd_state = state;
+    bfd_info.bfd_state = sai_state;
     string vnet = bfd_info.vnet;
     NextHopKey endpoint = bfd_info.endpoint;
 
@@ -2198,8 +2215,8 @@ void VNetRouteOrch::updateCustomBfdState(const IpAddress& monitoring_ip, const s
         if (monitor_info_[vnet][prefix].find(monitoring_ip) != monitor_info_[vnet][prefix].end() &&
             monitor_info_[vnet][prefix][monitoring_ip].endpoint == endpoint)
         {
-            if (state == SAI_BFD_SESSION_STATE_UP &&
-                monitor_info_[vnet][prefix][monitoring_ip].custom_bfd_state != state)
+            if (sai_state == SAI_BFD_SESSION_STATE_UP &&
+                monitor_info_[vnet][prefix][monitoring_ip].custom_bfd_state != sai_state)
             {
                 SWSS_LOG_NOTICE("Custom BFD Monitor session state for %s:%s, endpoint:%s, monitoring_ip:%s changed from down to up",
                     vnet.c_str(),
@@ -2216,8 +2233,8 @@ void VNetRouteOrch::updateCustomBfdState(const IpAddress& monitoring_ip, const s
                 updateVnetTunnelCustomMonitor(status_update);
             }
             
-            if (state == SAI_BFD_SESSION_STATE_DOWN &&
-                monitor_info_[vnet][prefix][monitoring_ip].custom_bfd_state != state)
+            if (sai_state == SAI_BFD_SESSION_STATE_DOWN &&
+                monitor_info_[vnet][prefix][monitoring_ip].custom_bfd_state != sai_state)
             {
                 SWSS_LOG_NOTICE("Custom BFD Monitor session state for %s:%s, endpoint:%s, monitoring_ip:%s changed from up to down",
                     vnet.c_str(),
@@ -3304,7 +3321,7 @@ bool MonitorOrch::addOperation(const Request& request)
     
         string op = SET_COMMAND;
         VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
-        vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, session_state, VNET_MONITORING_TYPE_CUSTOM);
+        vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, session_state);
     }
     else if (tn == STATE_BFD_SESSION_TABLE_NAME)
     {
@@ -3333,7 +3350,7 @@ bool MonitorOrch::delOperation(const Request& request)
     SWSS_LOG_INFO("Deleting state table entry for monitor %s|%s", ip_Prefix.to_string().c_str(),monitor.to_string().c_str());
     VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
     string op = DEL_COMMAND;
-    vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, "", VNET_MONITORING_TYPE_CUSTOM);
+    vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, "");
 
     return true;
 }
@@ -3482,3 +3499,4 @@ bool VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix&
 
     return false;
 }
+

@@ -251,7 +251,7 @@ bool OrchDaemon::init()
     vector<string> monitor_orch_tables = {
             STATE_VNET_MONITOR_TABLE_NAME,
             STATE_BFD_SESSION_TABLE_NAME
-        }
+    };
 
     VNetOrch *vnet_orch;
     vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
