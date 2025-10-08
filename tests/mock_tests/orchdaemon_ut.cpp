@@ -177,8 +177,12 @@ namespace orchdaemon_test
         orchd->flush();
     }
 
-    TEST_F(OrchDaemonTest, TestFLushWithRingBufferEntry)
+    TEST_F(OrchDaemonTest, TestFlushWithRingBufferEntry)
     {
+        // Allow one or more calls to set_switch_attribute
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(testing::_, testing::_))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
         orchd->enableRingBuffer();
 
         auto gRingBuffer = orchd->gRingBuffer;
