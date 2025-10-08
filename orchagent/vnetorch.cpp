@@ -1236,11 +1236,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         bool priority_route_updated = false;
         if (it_route != syncd_tunnel_routes_[vnet].end() &&
             ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
-            (monitoring == VNET_MONITORING_TYPE_CUSTOM && (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary))))
+            ((monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD) && (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary))))
         {
             route_updated = true;
             NextHopGroupKey nhg = it_route->second.nhg_key;
-            if (monitoring == VNET_MONITORING_TYPE_CUSTOM)
+            if (monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD)
             {
                 // if the previously active NHG is same as the newly created active NHG.case of primary secondary swap or
                 //when primary is active and secondary is changed or vice versa. In these cases we dont remove the NHG
@@ -1280,7 +1280,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                             }
                         }
                     }
-                    if (monitoring != VNET_MONITORING_TYPE_CUSTOM)
+                    if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD)
                     {
                         delEndpointMonitor(vnet, nhg, ipPrefix);
                     }
@@ -2660,7 +2660,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
     bool updateRoute = false;
     bool config_update = false;
 
-    if (monitoring_type == VNET_MONITORING_TYPE_CUSTOM && )
+    if (monitoring_type == VNET_MONITORING_TYPE_CUSTOM)
     {
         if (state != MONITOR_SESSION_STATE_UNKNOWN)
         {
@@ -2672,6 +2672,11 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
             updateRoute = true;
             config_update = true;
         }
+    }
+
+    if(monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD)
+    {
+        monitor_info_[vnet][prefix][monitor].custom_bfd_state = custom_bfd_state;
     }
 
     auto route = syncd_tunnel_routes_[vnet].find(prefix);
@@ -3315,6 +3320,12 @@ bool MonitorOrch::addOperation(const Request& request)
 
 bool MonitorOrch::delOperation(const Request& request)
 {
+    auto& tn = request.getTableName();
+    if (tn != STATE_VNET_MONITOR_TABLE_NAME)
+    {
+        return true;
+    }
+
     SWSS_LOG_ENTER();
     auto monitor = request.getKeyIpAddress(0);
     auto ip_Prefix = request.getKeyIpPrefix(1);
