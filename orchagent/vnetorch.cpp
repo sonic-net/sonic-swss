@@ -2058,9 +2058,19 @@ void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey
         SWSS_LOG_NOTICE("Monitor session for prefix %s endpoint %s does not exist", ipPrefix.to_string().c_str(), endpoint.to_string().c_str());
     }
 
-    string key = monitor_addr.to_string() + ":" + ipPrefix.to_string();
+    if (monitor_info_[vnet][ipPrefix][monitor_addr].monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD)
+    {
+        string key = "default:default:" + monitor_addr.to_string();
 
-    monitor_session_producer_->del(key);
+        bfd_session_producer_.del(key);
+    }
+    else
+    {
+        string key = monitor_addr.to_string() + ":" + ipPrefix.to_string();
+
+        monitor_session_producer_->del(key);
+    }
+
     monitor_info_[vnet][ipPrefix].erase(monitor_addr);
 }
 
