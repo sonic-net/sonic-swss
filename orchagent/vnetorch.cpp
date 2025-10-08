@@ -3325,7 +3325,7 @@ bool MonitorOrch::addOperation(const Request& request)
     }
     else if (tn == STATE_BFD_SESSION_TABLE_NAME)
     {
-        auto monitor = request.getKeyIpAddress(3);
+        auto monitor = request.getKeyIpAddress(2);
         auto session_state = request.getAttrString("state");
 
         VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
