@@ -396,7 +396,7 @@ fn test_realistic_sai_to_otel_conversion() {
     let otel_metrics = OtelMetrics::from_sai_stats(&sai_stats);
 
     // Print the conversion for debugging
-    println!("🔄 [Test] SAI to OpenTelemetry Conversion Debug Output");
+    println!(" [Test] SAI to OpenTelemetry Conversion Debug Output");
     println!("   Input: {} SAI statistics", sai_stats.stats.len());
     println!("   Output: {} OpenTelemetry gauges", otel_metrics.len());
     println!();
