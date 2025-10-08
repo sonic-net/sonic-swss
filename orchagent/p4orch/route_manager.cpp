@@ -580,39 +580,24 @@ ReturnCode RouteManager::processRouteEntries(
   SWSS_LOG_ENTER();
 
   ReturnCode status;
+  std::vector<ReturnCode> statuses;
+
   // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
   if (op == SET_COMMAND) {
     if (!update) {
-      auto statuses = createRouteEntries(route_entries);
-      for (size_t i = 0; i < route_entries.size(); ++i) {
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
-                             kfvFieldsValues(tuple_list[i]), statuses[i],
-                             /*replace=*/true);
-        if (status.ok() && !statuses[i].ok()) {
-          status = statuses[i];
-        }
-      }
+      statuses = createRouteEntries(route_entries);
     } else {
-      // TODO: Stop on first failure for batch update.
-      auto statuses = updateRouteEntries(route_entries);
-      for (size_t i = 0; i < route_entries.size(); ++i) {
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
-                             kfvFieldsValues(tuple_list[i]), statuses[i],
-                             /*replace=*/true);
-        if (status.ok() && !statuses[i].ok()) {
-          status = statuses[i];
-        }
-      }
+      statuses = updateRouteEntries(route_entries);
     }
   } else {
-    auto statuses = deleteRouteEntries(route_entries);
-    for (size_t i = 0; i < route_entries.size(); ++i) {
-      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
-                           kfvFieldsValues(tuple_list[i]), statuses[i],
-                           /*replace=*/true);
-      if (status.ok() && !statuses[i].ok()) {
-        status = statuses[i];
-      }
+    statuses = deleteRouteEntries(route_entries);
+  }
+  for (size_t i = 0; i < route_entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
     }
   }
 
