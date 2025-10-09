@@ -85,7 +85,7 @@ int main(int argc, char **argv)
             /* Don't process any config until POST state is ready */
             if (!isPostStateReady)
             {
-                std::string state = getMacsecPostState(stateDb);
+                std::string state = getMacsecPostState(&stateDb);
                 if (state == "pass" || state == "disabled")
                 {
                     SWSS_LOG_NOTICE("FIPS MACSec POST ready: state %s", state.c_str());
