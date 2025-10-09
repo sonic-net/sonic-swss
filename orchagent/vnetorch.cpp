@@ -245,7 +245,7 @@ void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
     }
 }
 
-bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
+bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh, bool increaseRefCount)
 {
     if (hasRoute(ipPrefix))
     {
@@ -253,12 +253,15 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
         return false;
     }
 
-    increaseNextHopRefCount(nh);
+    if (increaseRefCount)
+    {
+        increaseNextHopRefCount(nh);
+    }
     routes_[ipPrefix] = nh;
     return true;
 }
 
-bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
+bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix, bool decreaseRefCount)
 {
     if (!hasRoute(ipPrefix))
     {
@@ -276,7 +279,10 @@ bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
     else
     {
         nextHop nh = routes_[ipPrefix];
-        decreaseNextHopRefCount(nh);
+        if (decreaseRefCount)
+        {
+            decreaseNextHopRefCount(nh);
+        }
         routes_.erase(ipPrefix);
     }
     return true;
@@ -1595,30 +1601,27 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
     sai_object_id_t nh_id=SAI_NULL_OBJECT_ID;
+    string nhg_str;
 
     if (is_subnet)
     {
         nh_id = port.m_rif_id;
     }
-    else if (nh.ips.getSize() == 1)
-    {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
-        if (gNeighOrch->hasNextHop(nexthop))
-        {
-            nh_id = gNeighOrch->getNextHopId(nexthop);
-        }
-        else
-        {
-            SWSS_LOG_INFO("Failed to get next hop %s for %s",
-                           nexthop.to_string().c_str(), ipPrefix.to_string().c_str());
-            return false;
-        }
-    }
     else
     {
-        // FIXME - Handle ECMP routes
-        SWSS_LOG_WARN("VNET ECMP NHs not implemented for '%s'", ipPrefix.to_string().c_str());
-        return true;
+        // Populate next hop group string
+        auto ifnames = tokenize(nh.ifname, ',');
+        int idx = 0;
+        for (auto it : nh.ips.getIpAddresses())
+        {
+            if (!nhg_str.empty())
+            {
+                nhg_str += ",";
+            }
+
+            nhg_str += it.to_string() + "@" + ifnames[idx];
+            idx++;
+        }
     }
 
     for (auto vr_id : vr_set)
@@ -1627,25 +1630,76 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             continue;
         }
-        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
+
+        if (is_subnet)
         {
-            SWSS_LOG_INFO("Route add failed for %s", ipPrefix.to_string().c_str());
-            break;
+            if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
+            {
+                SWSS_LOG_INFO("Route add failed for %s", ipPrefix.to_string().c_str());
+                break;
+            }
+            else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
+            {
+                SWSS_LOG_INFO("Route del failed for %s", ipPrefix.to_string().c_str());
+                break;
+            }
         }
-        else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
+        else
         {
-            SWSS_LOG_INFO("Route del failed for %s", ipPrefix.to_string().c_str());
-            break;
+            auto& bulkNhgReducedRefCnt = gRouteOrch->getBulkNhgReducedRefCnt();
+
+            std::string vnet_name;
+            if (!vnet_orch_->getVnetNameByVrfId(vr_id, vnet_name))
+            {
+                SWSS_LOG_INFO("Failed to get VNET name for vrf id %ld", vr_id);
+                continue;
+            }
+
+            NextHopGroupKey nhg(nhg_str);
+            string key = vnet_name + ":" + ipPrefix.to_string();
+            RouteBulkContext ctx(key, (op == SET_COMMAND));
+            ctx.vrf_id = vr_id;
+            ctx.ip_prefix = ipPrefix;
+            ctx.nhg = nhg;
+
+            if (op == SET_COMMAND)
+            {
+                gRouteOrch->addRoute(ctx, nhg);
+                gRouteOrch->flushRouteBulker();
+                bulkNhgReducedRefCnt.clear();
+                gRouteOrch->addRoutePost(ctx, nhg);
+
+                SWSS_LOG_INFO("Route added via routeorch for %s", ipPrefix.to_string().c_str());
+            }
+            else if (op == DEL_COMMAND)
+            {
+                gRouteOrch->removeRoute(ctx);
+                gRouteOrch->flushRouteBulker();
+                bulkNhgReducedRefCnt.clear();
+                gRouteOrch->removeRoutePost(ctx);
+
+                SWSS_LOG_INFO("Route removed via routeorch for %s", ipPrefix.to_string().c_str());
+            }
+
+            // Remove next hop groups with 0 ref count
+            for (auto& it : bulkNhgReducedRefCnt)
+            {
+                if (gRouteOrch->getNextHopGroupRefCount(it.first) == 0)
+                {
+                    gRouteOrch->removeNextHopGroup(it.first);
+                    SWSS_LOG_INFO("Next hop group %s has 0 references, removed via routeorch", it.first.to_string().c_str());
+                }
+            }
         }
     }
 
     if (op == SET_COMMAND)
     {
-        vrf_obj->addRoute(ipPrefix, nh);
+        vrf_obj->addRoute(ipPrefix, nh, is_subnet);
     }
     else
     {
-        vrf_obj->removeRoute(ipPrefix);
+        vrf_obj->removeRoute(ipPrefix, is_subnet);
     }
 
     return true;
