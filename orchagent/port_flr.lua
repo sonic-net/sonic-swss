@@ -339,7 +339,7 @@ local function compute_predicted_flr(port)
     cer, flr = extrapolate_flr_from_regression(slope, intercept, {16, 20}, x_interleaving, MFC)
     logit("CER : " .. cer)
     logit("FLR : " .. flr)
-    return flr
+    return flr, r_squared
 end
 
 -- Calculate observed FEC FLR based on uncorrectable codeword ratio
@@ -444,8 +444,13 @@ local function compute_flr_for_port(port)
         redis.call('HSET', rates_table_name ..':' .. port, 'FEC_FLR', fec_flr)
 
         -- Calculate predicted FLR using linear regression on codeword error distribution
-        local predicted_flr = compute_predicted_flr(port)
+        local predicted_flr
+        local r_squared
+        predicted_flr, r_squared = compute_predicted_flr(port)
+        predicted_flr = predicted_flr or 0
+        r_squared = r_squared or 0
         redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_FLR_PREDICTED', tostring(predicted_flr))
+        redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_FLR_R_SQUARED', tostring(r_squared))
     end
 end
 
