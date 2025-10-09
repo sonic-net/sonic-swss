@@ -368,74 +368,78 @@ void NeighborManager::enqueue(const std::string &table_name, const swss::KeyOpFi
     m_entries.push_back(entry);
 }
 
-void NeighborManager::drain()
-{
-    SWSS_LOG_ENTER();
+void NeighborManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string db_key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode NeighborManager::drain() {
+  SWSS_LOG_ENTER();
 
-        ReturnCode status;
-        auto app_db_entry_or = deserializeNeighborEntry(db_key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string db_key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
 
-        status = validateNeighborAppDbEntry(app_db_entry);
-        if (!status.ok())
-        {
-            SWSS_LOG_ERROR("Validation failed for Neighbor APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-
-        const std::string neighbor_key =
-            KeyGenerator::generateNeighborKey(app_db_entry.router_intf_id, app_db_entry.neighbor_id);
-
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto *neighbor_entry = getNeighborEntry(neighbor_key);
-            if (neighbor_entry == nullptr)
-            {
-                // Create neighbor
-                status = processAddRequest(app_db_entry, neighbor_key);
-            }
-            else
-            {
-                // Modify existing neighbor
-                status = processUpdateRequest(app_db_entry, neighbor_entry);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            // Delete neighbor
-            status = processDeleteRequest(neighbor_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    auto app_db_entry_or = deserializeNeighborEntry(db_key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + db_key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    auto& app_db_entry = *app_db_entry_or;
+
+    status = validateNeighborAppDbEntry(app_db_entry);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR(
+          "Validation failed for Neighbor APP DB entry with key %s: %s",
+          QuotedVar(table_name + ":" + db_key).c_str(),
+          status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+
+    const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+        app_db_entry.router_intf_id, app_db_entry.neighbor_id);
+
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto* neighbor_entry = getNeighborEntry(neighbor_key);
+      if (neighbor_entry == nullptr) {
+        // Create neighbor
+        status = processAddRequest(app_db_entry, neighbor_key);
+      } else {
+        // Modify existing neighbor
+        status = processUpdateRequest(app_db_entry, neighbor_entry);
+      }
+    } else if (operation == DEL_COMMAND) {
+      // Delete neighbor
+      status = processDeleteRequest(neighbor_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << QuotedVar(operation);
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 std::string NeighborManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
