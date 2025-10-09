@@ -548,6 +548,7 @@ public:
             return *object_status;
         }
 
+        create_order.push_back(it->first);
         auto& attrs = it->second.first;
         attrs.insert(attrs.end(), attr_list, attr_list + attr_count);
         it->second.second = object_status;
@@ -593,6 +594,7 @@ public:
         auto rc = removing_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple(object_status));
+        remove_order.push_back(rc.first->first);
         bool inserted = rc.second;
         SWSS_LOG_INFO("EntityBulker.remove_entry %zu, %d\n", removing_entries.size(), inserted);
 
@@ -612,11 +614,14 @@ public:
         assert(attr);
         if (!attr) throw std::invalid_argument("attr is null");
 
-        // Insert or find the key (entry)
-        auto& attrs = setting_entries.emplace(std::piecewise_construct,
+        auto rc = setting_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
-                std::forward_as_tuple()
-        ).first->second;
+                std::forward_as_tuple());
+        auto it = rc.first;
+        set_order.push_back(it->first);
+
+        // Insert or find the key (entry)
+        auto& attrs = it->second;
 
         // Insert attr
         attrs.emplace_back(std::piecewise_construct,
@@ -632,10 +637,14 @@ public:
         {
             std::vector<Te> rs;
 
-            for (auto& i: removing_entries)
+            for (auto const& entry : remove_order)
             {
-                auto const& entry = i.first;
-                sai_status_t *object_status = i.second;
+                auto i = removing_entries.find(entry);
+                if (i == removing_entries.end())
+                {
+                    continue;
+                }
+                sai_status_t *object_status = i->second;
                 if (*object_status == SAI_STATUS_NOT_EXECUTED)
                 {
                     rs.push_back(entry);
@@ -649,6 +658,7 @@ public:
             flush_removing_entries(rs);
 
             removing_entries.clear();
+            remove_order.clear();
         }
 
         // Creating
@@ -658,11 +668,15 @@ public:
             std::vector<sai_attribute_t const*> tss;
             std::vector<uint32_t> cs;
 
-            for (auto const& i: creating_entries)
+            for (auto const& entry : create_order)
             {
-                auto const& entry = i.first;
-                auto const& attrs = i.second.first;
-                sai_status_t *object_status = i.second.second;
+                auto i = creating_entries.find(entry);
+                if (i == creating_entries.end())
+                {
+                    continue;
+                }
+                auto const& attrs = i->second.first;
+                sai_status_t *object_status = i->second.second;
                 if (*object_status == SAI_STATUS_NOT_EXECUTED)
                 {
                     rs.push_back(entry);
@@ -678,6 +692,7 @@ public:
             flush_creating_entries(rs, tss, cs);
 
             creating_entries.clear();
+            create_order.clear();
         }
 
         // Setting
@@ -686,11 +701,24 @@ public:
             std::vector<Te> rs;
             std::vector<sai_attribute_t> ts;
             std::vector<sai_status_t*> status_vector;
+            // Use a set to keep track of the entries that have been processed.
+            std::unordered_set<Te> entries;
 
-            for (auto const& i: setting_entries)
+            for (auto const& entry : set_order)
             {
-                auto const& entry = i.first;
-                auto const& attrs = i.second;
+                // Skip the entry if it is alreay processed.
+                // All attributes of an entry are processed in the first run.
+                if (entries.count(entry) != 0)
+                {
+                    continue;
+                }
+                auto i = setting_entries.find(entry);
+                if (i == setting_entries.end())
+                {
+                    continue;
+                }
+                entries.insert(entry);
+                auto const& attrs = i->second;
                 for (auto const& ia: attrs)
                 {
                     auto const& attr = ia.first;
@@ -711,6 +739,7 @@ public:
             flush_setting_entries(rs, ts, status_vector);
 
             setting_entries.clear();
+            set_order.clear();
         }
     }
 
@@ -719,6 +748,9 @@ public:
         removing_entries.clear();
         creating_entries.clear();
         setting_entries.clear();
+        remove_order.clear();
+        create_order.clear();
+        set_order.clear();
     }
 
     size_t creating_entries_count() const
@@ -769,6 +801,10 @@ private:
             Te,                                             // entry ->
             sai_status_t *                                  // OUT object_status
     >                                                       removing_entries;
+
+    std::vector<Te>                                         create_order;
+    std::vector<Te>                                         set_order;
+    std::vector<Te>                                         remove_order;
 
     size_t max_bulk_size;
 
