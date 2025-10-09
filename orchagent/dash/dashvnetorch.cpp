@@ -438,7 +438,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     string underlay_ip_str = to_string(ctxt.metadata.underlay_ip());
     string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip_str;
 
-    auto vnet_underlay_ips = vnet_table_[ctxt.vnet_name].underlay_ips;
+    auto& vnet_underlay_ips = vnet_table_[ctxt.vnet_name].underlay_ips;
     std::string underlay_sip_str = to_string(ctxt.metadata.underlay_ip());
     if (vnet_underlay_ips.find(underlay_sip_str) != vnet_underlay_ips.end())
     {
