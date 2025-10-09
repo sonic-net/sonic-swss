@@ -2895,7 +2895,6 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                         removeNextHopRoute(*nh, routekey);
                     }
                 }
-                mux_orch->updateRoute(ipPrefix);
             }
         }
         else if (ol_nextHops.is_overlay_nexthop())
