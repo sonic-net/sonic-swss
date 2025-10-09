@@ -756,7 +756,20 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
     }
 
-    std::string portStatPlugins = portRateSha + "," + portFlrSha;
+    // Build portStatPlugins string, only adding non-empty plugin SHAs
+    std::string portStatPlugins;
+    if (!portRateSha.empty())
+    {
+        portStatPlugins = portRateSha;
+    }
+    if (!portFlrSha.empty())
+    {
+        if (!portStatPlugins.empty())
+        {
+            portStatPlugins += ",";
+        }
+        portStatPlugins += portFlrSha;
+    }
 
     // Nvidia custom trim stat calculation
     if (isMlnxPlatform() && \
