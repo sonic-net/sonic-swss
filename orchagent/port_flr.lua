@@ -28,6 +28,7 @@ local APPL_DB_PORT_TABLE_PREFIX  = 'PORT_TABLE:'
 local rates_table_name = "RATES"
 local bookmark_table_name = "RATES:GLOBAL"
 local BIN_FILTER_VALUE = 10
+local MIN_SIGNIFICANT_BINS = 2
 
 local MFC = 8
 
@@ -316,7 +317,7 @@ local function compute_predicted_flr(port)
 
     local significant_bins = count_significant_bins(bins)
     logit("Significant Bins : " .. significant_bins)
-    if significant_bins < 2 then
+    if significant_bins < MIN_SIGNIFICANT_BINS then
         logit("Not enough significant bins to compute slope and intercept.")
         return 0
     end
