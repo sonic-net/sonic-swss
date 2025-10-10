@@ -1648,6 +1648,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         vrf_obj->removeRoute(ipPrefix);
     }
 
+    SWSS_LOG_INFO("testing branch");
+
     return true;
 }
 
