@@ -42,6 +42,138 @@ struct NextHopGroup {
 /* Path to protocol name database provided by iproute2 */
 constexpr auto DefaultRtProtoPath = "/etc/iproute2/rt_protos";
 
+class FieldValueTupleWrapperBase {
+    public:
+    FieldValueTupleWrapperBase(const string & _key) : key(_key) {}
+    FieldValueTupleWrapperBase(const string && _key) : key(std::move(_key)) {}
+    virtual ~FieldValueTupleWrapperBase() = default;
+
+    virtual vector<FieldValueTuple> fieldValueTupleVector() = 0;
+
+    vector<KeyOpFieldsValuesTuple> KeyOpFieldsValuesTupleVector() {
+        // The following code calls the batched version of set() for the table.
+        // The reason for the DEL followed by a SET is that redis only overwrites
+        // hashset fields that are explicitly set against a given key. It does leaves
+        // previously set fields as is. If a route changes in such a way that earlier
+        // fields are not valid any more (Ex: from using nexthop to nexthop-group),
+        // then we would like to atomically cleanup earlier fields and set the new
+        // fields in the hash-set in redis.
+        vector<KeyOpFieldsValuesTuple> kfvVector;
+        kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}});
+        auto fvVector = fieldValueTupleVector();
+        kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "SET", fvVector});
+        return kfvVector;
+    }
+
+    // For DEL-only operations with warm restart support
+    KeyOpFieldsValuesTuple KeyOpFieldsValuesTupleVectorForDel() {
+        return KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}};
+    }
+
+    string key = string();
+};
+
+class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    RouteTableFieldValueTupleWrapper(const string & _key, string && _protocol) :
+          FieldValueTupleWrapperBase(_key), protocol(std::move(_protocol)) {}
+    RouteTableFieldValueTupleWrapper(const string && _key, string && _protocol) :
+          FieldValueTupleWrapperBase(std::move(_key)), protocol(std::move(_protocol)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string protocol = string();
+    string blackhole = string();
+    string nexthop = string();
+    string ifname = string();
+    string nexthop_group = string();
+    string mpls_nh = string();
+    string weight = string();
+    string vni_label = string();
+    string router_mac = string();
+    string segment = string();
+    string seg_src = string();
+};
+
+class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    LabelRouteTableFieldValueTupleWrapper(const string & _key, string && _protocol) :
+        FieldValueTupleWrapperBase(_key),
+        protocol(std::move(_protocol)) {}
+    LabelRouteTableFieldValueTupleWrapper(const string && _key, string && _protocol) :
+        FieldValueTupleWrapperBase(std::move(_key)),
+        protocol(std::move(_protocol)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string protocol = string();
+    string blackhole = string();
+    string nexthop = string();
+    string ifname = string();
+    string mpls_nh = string();
+    string mpls_pop = string();
+};
+
+class VnetRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    VnetRouteTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    VnetRouteTableFieldValueTupleWrapper(const string && _key)
+        : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string nexthop = string();
+    string ifname = string();
+};
+
+class VnetTunnelTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    VnetTunnelTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    VnetTunnelTableFieldValueTupleWrapper(const string && _key)
+        : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string endpoint = string();
+};
+
+class NextHopGroupTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    NextHopGroupTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    NextHopGroupTableFieldValueTupleWrapper(const string && _key)
+        : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string nexthop = string();
+    string ifname = string();
+    string weight = string();
+};
+
+class Srv6MySidTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    Srv6MySidTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    Srv6MySidTableFieldValueTupleWrapper(const string && _key)
+       : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string action = string();
+    string vrf = string();
+    string adj = string();
+};
+
+class Srv6SidListTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
+    public:
+    Srv6SidListTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
+    Srv6SidListTableFieldValueTupleWrapper(const string && _key)
+       : FieldValueTupleWrapperBase(std::move(_key)) {}
+
+    vector<FieldValueTuple> fieldValueTupleVector() override;
+
+    string path = string();
+};
+
 class RouteSync : public NetMsg
 {
 public:
@@ -61,8 +193,18 @@ public:
     }
 
     /* Helper method to set route table with warm restart support */
-    void setRouteWithWarmRestart(const std::string& key, const std::vector<FieldValueTuple>& fvVector,
-                                 shared_ptr<ProducerStateTable> table, const std::string& cmd = SET_COMMAND);
+    void setRouteWithWarmRestart(
+        FieldValueTupleWrapperBase & fvw,
+        ProducerStateTable & table);
+
+    void setTable(
+        FieldValueTupleWrapperBase & fvw,
+        ProducerStateTable & table);
+
+    // Generic method for DEL operations with warm restart support
+    void delWithWarmRestart(
+        FieldValueTupleWrapperBase && fvw,
+        ProducerStateTable & table);
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
