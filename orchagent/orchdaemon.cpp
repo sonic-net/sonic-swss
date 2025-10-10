@@ -595,7 +595,8 @@ bool OrchDaemon::init()
     }
 
     vector<string> flex_counter_tables = {
-        CFG_FLEX_COUNTER_TABLE_NAME
+        CFG_FLEX_COUNTER_TABLE_NAME,
+        CFG_DEVICE_METADATA_TABLE_NAME
     };
 
     auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
