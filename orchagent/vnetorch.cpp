@@ -196,55 +196,6 @@ string VNetVrfObject::getProfile(IpPrefix& ipPrefix)
     return string();
 }
 
-void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
-{
-    /* Return when there is no next hop (dropped) */
-    if (nh.ips.getSize() == 0)
-    {
-        return;
-    }
-    else if (nh.ips.getSize() == 1)
-    {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
-        if (nexthop.ip_address.isZero())
-        {
-            gIntfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
-        }
-        else
-        {
-            gNeighOrch->increaseNextHopRefCount(nexthop);
-        }
-    }
-    else
-    {
-        /* Handle ECMP routes */
-    }
-}
-void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
-{
-    /* Return when there is no next hop (dropped) */
-    if (nh.ips.getSize() == 0)
-    {
-        return;
-    }
-    else if (nh.ips.getSize() == 1)
-    {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
-        if (nexthop.ip_address.isZero())
-        {
-            gIntfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
-        }
-        else
-        {
-            gNeighOrch->decreaseNextHopRefCount(nexthop);
-        }
-    }
-    else
-    {
-        /* Handle ECMP routes */
-    }
-}
-
 bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
 {
     if (hasRoute(ipPrefix))
@@ -253,7 +204,6 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
         return false;
     }
 
-    increaseNextHopRefCount(nh);
     routes_[ipPrefix] = nh;
     return true;
 }
@@ -276,7 +226,6 @@ bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
     else
     {
         nextHop nh = routes_[ipPrefix];
-        decreaseNextHopRefCount(nh);
         routes_.erase(ipPrefix);
     }
     return true;
@@ -1592,51 +1541,34 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         l_fn(peer);
     }
 
-    sai_ip_prefix_t pfx;
-    copy(pfx, ipPrefix);
-    sai_object_id_t nh_id=SAI_NULL_OBJECT_ID;
-
-    if (is_subnet)
-    {
-        nh_id = port.m_rif_id;
-    }
-    else if (nh.ips.getSize() == 1)
-    {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
-        if (gNeighOrch->hasNextHop(nexthop))
-        {
-            nh_id = gNeighOrch->getNextHopId(nexthop);
-        }
-        else
-        {
-            SWSS_LOG_INFO("Failed to get next hop %s for %s",
-                           nexthop.to_string().c_str(), ipPrefix.to_string().c_str());
-            return false;
-        }
-    }
-    else
-    {
-        // FIXME - Handle ECMP routes
-        SWSS_LOG_WARN("VNET ECMP NHs not implemented for '%s'", ipPrefix.to_string().c_str());
-        return true;
-    }
-
     for (auto vr_id : vr_set)
     {
         if (vr_id == SAI_NULL_OBJECT_ID)
         {
             continue;
         }
-        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
+
+        std::string vnet_name;
+        if (!vnet_orch_->getVnetNameByVrfId(vr_id, vnet_name))
         {
-            SWSS_LOG_INFO("Route add failed for %s", ipPrefix.to_string().c_str());
-            break;
+            SWSS_LOG_INFO("Failed to get VNET name for vrf id %ld", vr_id);
+            continue;
         }
-        else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
-        {
-            SWSS_LOG_INFO("Route del failed for %s", ipPrefix.to_string().c_str());
-            break;
-        }
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({vnet_name + ":" + ipPrefix.to_string(), op, { {"ifname", nh.ifname},
+                                                  {"nexthop", nh.ips.to_string()} } });
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        SWSS_LOG_INFO("Called routeorch to %s %s route for %s:%s",
+                        (op == SET_COMMAND) ? "add" : "del",
+                        (is_subnet) ? "subnet" : "non-subnet",
+                        vnet_name.c_str(),
+                        ipPrefix.to_string().c_str());
     }
 
     if (op == SET_COMMAND)

@@ -311,6 +311,9 @@ public:
      * @brief Flush pending responses
      */
     void flushResponses();
+
+    Executor *getExecutor(std::string executorName);
+    
 protected:
     ConsumerMap m_consumerMap;
 
@@ -331,7 +334,6 @@ protected:
 
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
-    Executor *getExecutor(std::string executorName);
 
     ResponsePublisher m_publisher{"APPL_STATE_DB"};
 private:
