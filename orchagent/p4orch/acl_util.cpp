@@ -5,11 +5,24 @@
 #include "converter.h"
 #include "logger.h"
 #include "sai_serialize.h"
+#include "saihelper.h"
 #include "table.h"
 #include "tokenize.h"
 
 namespace p4orch
 {
+
+static sai_acl_action_type_t AclEntryActionToAclAction(
+    sai_acl_entry_attr_t attr) {
+  if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, ACTION)) {
+    SWSS_LOG_THROW(
+        "ACL entry attribute is not a in a range of "
+        "SAI_ACL_ENTRY_ATTR_ACTION_* attribute: %d",
+        attr);
+  }
+  return static_cast<sai_acl_action_type_t>(attr -
+                                            SAI_ACL_ENTRY_ATTR_ACTION_START);
+}
 
 bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vector<P4ActionParamName> *action_list,
                                    std::vector<P4PacketActionWithColor> *action_color_list)
@@ -68,7 +81,7 @@ ReturnCode validateAndSetSaiMatchFieldJson(const nlohmann::json &match_json, con
                                            std::map<std::string, SaiMatchField> *sai_match_field_lookup,
                                            std::map<std::string, std::string> *ip_type_bit_type_lookup)
 {
-    SaiMatchField sai_match_field;
+    SaiMatchField sai_match_field{};
     auto format_str_it = match_json.find(kAclMatchFieldFormat);
     if (format_str_it == match_json.end() || format_str_it.value().is_null() || !format_str_it.value().is_string())
     {
@@ -523,7 +536,8 @@ ReturnCode buildAclTableDefinitionMatchFieldValues(const std::map<std::string, s
 
 ReturnCode buildAclTableDefinitionActionFieldValues(
     const std::map<std::string, std::vector<P4ActionParamName>> &action_field_lookup,
-    std::map<std::string, std::vector<SaiActionWithParam>> *aggr_sai_actions_lookup)
+    std::map<std::string, std::vector<SaiActionWithParam>> *aggr_sai_actions_lookup,
+    std::set<sai_acl_action_type_t>* acl_action_type_set)
 {
     SaiActionWithParam action_with_param;
     for (const auto &aggr_action_field : action_field_lookup)
@@ -540,6 +554,8 @@ ReturnCode buildAclTableDefinitionActionFieldValues(
             action_with_param.action = rule_action_it->second;
             action_with_param.param_name = single_action.p4_param_name;
             aggr_sai_actions.push_back(action_with_param);
+            acl_action_type_set->insert(
+                AclEntryActionToAclAction(rule_action_it->second));
         }
     }
     return ReturnCode();
@@ -548,7 +564,8 @@ ReturnCode buildAclTableDefinitionActionFieldValues(
 ReturnCode buildAclTableDefinitionActionColorFieldValues(
     const std::map<std::string, std::vector<P4PacketActionWithColor>> &action_color_lookup,
     std::map<std::string, std::vector<SaiActionWithParam>> *aggr_sai_actions_lookup,
-    std::map<std::string, std::map<sai_policer_attr_t, sai_packet_action_t>> *aggr_sai_action_color_lookup)
+    std::map<std::string, std::map<sai_policer_attr_t, sai_packet_action_t>> *aggr_sai_action_color_lookup,
+    std::set<sai_acl_action_type_t>* acl_action_type_set)
 {
     for (const auto &aggr_action_color : action_color_lookup)
     {
@@ -571,6 +588,7 @@ ReturnCode buildAclTableDefinitionActionColorFieldValues(
                 action_with_param.param_name = EMPTY_STRING;
                 action_with_param.param_value = action_color.packet_action;
                 aggr_sai_actions.push_back(action_with_param);
+                acl_action_type_set->insert(SAI_ACL_ACTION_TYPE_PACKET_ACTION);
                 continue;
             }
 
@@ -582,6 +600,7 @@ ReturnCode buildAclTableDefinitionActionColorFieldValues(
                        << "ACL table packet color is invalid: " << action_color.packet_color;
             }
             aggr_sai_action_color[packet_color_it->second] = packet_action_it->second;
+            acl_action_type_set->insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
         }
     }
     return ReturnCode();
@@ -674,7 +693,7 @@ bool setMatchFieldIpType(const std::string &attr_value, sai_attribute_value_t *v
     return true;
 }
 
-ReturnCode setCompositeSaiMatchValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
+ReturnCode setCompositeSaiMatchValue(const sai_acl_entry_attr_t attr_name, const std::string &attr_value,
                                      sai_attribute_value_t *value)
 {
     try
@@ -802,7 +821,7 @@ ReturnCode setUdfMatchValue(const P4UdfField &udf_field, const std::string &attr
     return ReturnCode();
 }
 
-bool isDiffActionFieldValue(const acl_entry_attr_union_t attr_name, const sai_attribute_value_t &value,
+bool isDiffActionFieldValue(const sai_acl_entry_attr_t attr_name, const sai_attribute_value_t &value,
                             const sai_attribute_value_t &old_value, const P4AclRule &acl_rule,
                             const P4AclRule &old_acl_rule)
 {
@@ -865,7 +884,7 @@ bool isDiffActionFieldValue(const acl_entry_attr_union_t attr_name, const sai_at
     }
 }
 
-bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_attribute_value_t &value,
+bool isDiffMatchFieldValue(const sai_acl_entry_attr_t attr_name, const sai_attribute_value_t &value,
                            const sai_attribute_value_t &old_value, const P4AclRule &acl_rule,
                            const P4AclRule &old_acl_rule)
 {
@@ -929,7 +948,6 @@ bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_att
     case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
     case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
-    case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
@@ -954,6 +972,9 @@ bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_att
     case SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC: {
         return memcmp(value.aclfield.data.mac, old_value.aclfield.data.mac, sizeof(sai_mac_t)) ||
                memcmp(value.aclfield.mask.mac, old_value.aclfield.mask.mac, sizeof(sai_mac_t));
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID: {
+        return value.aclfield.data.oid != old_value.aclfield.data.oid;
     }
     case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
     {
