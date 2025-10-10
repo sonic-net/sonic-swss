@@ -388,7 +388,7 @@ class TestP4RTAcl(object):
             ),
             (
                 self._p4rt_acl_table_definition_obj.SAI_ATTR_ACTION_TYPE_LIST,
-                "1:SAI_ACL_ACTION_TYPE_COUNTER",
+                "5:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_COUNTER,SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC,SAI_ACL_ACTION_TYPE_SET_USER_TRAP_ID",
             ),
         ]
         util.verify_attr(fvs, attr_list)

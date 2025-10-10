@@ -7,18 +7,19 @@ extern "C"
 
 #include <vector>
 
+#include "aclorch.h"
 #include "copporch.h"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "directory.h"
 #include "flowcounterrouteorch.h"
+#include "gtest/gtest.h"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
 #include "vrforch.h"
-#include "gtest/gtest.h"
 
 using ::testing::StrictMock;
 
@@ -53,6 +54,7 @@ bool gIsNatSupported = false;
 bool gTraditionalFlexCounter = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 
+AclOrch* gAclOrch;
 PortsOrch *gPortsOrch;
 CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
@@ -250,6 +252,11 @@ int main(int argc, char *argv[])
     FlowCounterRouteOrch flow_counter_route_orch(gConfigDb, std::vector<std::string>{});
     gFlowCounterRouteOrch = &flow_counter_route_orch;
     gDirectory.set(static_cast<FlowCounterRouteOrch *>(&flow_counter_route_orch));
+
+    std::vector<TableConnector> acl_tables;
+    AclOrch aclOrch(acl_tables, gStateDb, gSwitchOrch, gPortsOrch, NULL, NULL,
+                    NULL, NULL);
+    gAclOrch = &aclOrch;
 
     // Setup ports for all tests.
     SetupPorts();

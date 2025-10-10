@@ -5,11 +5,24 @@
 #include "converter.h"
 #include "logger.h"
 #include "sai_serialize.h"
+#include "saihelper.h"
 #include "table.h"
 #include "tokenize.h"
 
 namespace p4orch
 {
+
+static sai_acl_action_type_t AclEntryActionToAclAction(
+    sai_acl_entry_attr_t attr) {
+  if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, ACTION)) {
+    SWSS_LOG_THROW(
+        "ACL entry attribute is not a in a range of "
+        "SAI_ACL_ENTRY_ATTR_ACTION_* attribute: %d",
+        attr);
+  }
+  return static_cast<sai_acl_action_type_t>(attr -
+                                            SAI_ACL_ENTRY_ATTR_ACTION_START);
+}
 
 bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vector<P4ActionParamName> *action_list,
                                    std::vector<P4PacketActionWithColor> *action_color_list)
@@ -68,15 +81,15 @@ ReturnCode validateAndSetSaiMatchFieldJson(const nlohmann::json &match_json, con
                                            std::map<std::string, SaiMatchField> *sai_match_field_lookup,
                                            std::map<std::string, std::string> *ip_type_bit_type_lookup)
 {
-    SaiMatchField sai_match_field;
-    auto format_str_it = match_json.find(kAclMatchFieldFormat);
-    if (format_str_it == match_json.end() || format_str_it.value().is_null() || !format_str_it.value().is_string())
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "ACL table match field {" << p4_match << ": " << aggr_match_str
-               << "} is an invalid ACL table attribute: " << kAclMatchFieldFormat
-               << " value is required and should be a string";
-    }
+  SaiMatchField sai_match_field{};
+  auto format_str_it = match_json.find(kAclMatchFieldFormat);
+  if (format_str_it == match_json.end() || format_str_it.value().is_null() ||
+      !format_str_it.value().is_string()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "ACL table match field {" << p4_match << ": " << aggr_match_str
+           << "} is an invalid ACL table attribute: " << kAclMatchFieldFormat
+           << " value is required and should be a string";
+  }
     auto format_it = formatLookup.find(format_str_it.value());
     if (format_it == formatLookup.end())
     {
@@ -522,69 +535,77 @@ ReturnCode buildAclTableDefinitionMatchFieldValues(const std::map<std::string, s
 }
 
 ReturnCode buildAclTableDefinitionActionFieldValues(
-    const std::map<std::string, std::vector<P4ActionParamName>> &action_field_lookup,
-    std::map<std::string, std::vector<SaiActionWithParam>> *aggr_sai_actions_lookup)
-{
-    SaiActionWithParam action_with_param;
-    for (const auto &aggr_action_field : action_field_lookup)
-    {
-        auto &aggr_sai_actions = (*aggr_sai_actions_lookup)[fvField(aggr_action_field)];
-        for (const auto &single_action : fvValue(aggr_action_field))
-        {
-            auto rule_action_it = aclActionLookup.find(single_action.sai_action);
-            if (rule_action_it == aclActionLookup.end())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "ACL table action is invalid: " << single_action.sai_action;
-            }
-            action_with_param.action = rule_action_it->second;
-            action_with_param.param_name = single_action.p4_param_name;
-            aggr_sai_actions.push_back(action_with_param);
-        }
+    const std::map<std::string, std::vector<P4ActionParamName>>&
+        action_field_lookup,
+    std::map<std::string, std::vector<SaiActionWithParam>>*
+        aggr_sai_actions_lookup,
+    std::set<sai_acl_action_type_t>* acl_action_type_set) {
+  SaiActionWithParam action_with_param;
+  for (const auto& aggr_action_field : action_field_lookup) {
+    auto& aggr_sai_actions =
+        (*aggr_sai_actions_lookup)[fvField(aggr_action_field)];
+    for (const auto& single_action : fvValue(aggr_action_field)) {
+      auto rule_action_it = aclActionLookup.find(single_action.sai_action);
+      if (rule_action_it == aclActionLookup.end()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "ACL table action is invalid: " << single_action.sai_action;
+      }
+      action_with_param.action = rule_action_it->second;
+      action_with_param.param_name = single_action.p4_param_name;
+      aggr_sai_actions.push_back(action_with_param);
+      acl_action_type_set->insert(
+          AclEntryActionToAclAction(rule_action_it->second));
     }
-    return ReturnCode();
+  }
+  return ReturnCode();
 }
 
 ReturnCode buildAclTableDefinitionActionColorFieldValues(
-    const std::map<std::string, std::vector<P4PacketActionWithColor>> &action_color_lookup,
-    std::map<std::string, std::vector<SaiActionWithParam>> *aggr_sai_actions_lookup,
-    std::map<std::string, std::map<sai_policer_attr_t, sai_packet_action_t>> *aggr_sai_action_color_lookup)
-{
-    for (const auto &aggr_action_color : action_color_lookup)
-    {
-        auto &aggr_sai_actions = (*aggr_sai_actions_lookup)[fvField(aggr_action_color)];
-        auto &aggr_sai_action_color = (*aggr_sai_action_color_lookup)[fvField(aggr_action_color)];
-        for (const auto &action_color : fvValue(aggr_action_color))
-        {
-            auto packet_action_it = aclPacketActionLookup.find(action_color.packet_action);
-            if (packet_action_it == aclPacketActionLookup.end())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "ACL table packet action is invalid: " << action_color.packet_action;
-            }
+    const std::map<std::string, std::vector<P4PacketActionWithColor>>&
+        action_color_lookup,
+    std::map<std::string, std::vector<SaiActionWithParam>>*
+        aggr_sai_actions_lookup,
+    std::map<std::string, std::map<sai_policer_attr_t, sai_packet_action_t>>*
+        aggr_sai_action_color_lookup,
+    std::set<sai_acl_action_type_t>* acl_action_type_set) {
+  for (const auto& aggr_action_color : action_color_lookup) {
+    auto& aggr_sai_actions =
+        (*aggr_sai_actions_lookup)[fvField(aggr_action_color)];
+    auto& aggr_sai_action_color =
+        (*aggr_sai_action_color_lookup)[fvField(aggr_action_color)];
+    for (const auto& action_color : fvValue(aggr_action_color)) {
+      auto packet_action_it =
+          aclPacketActionLookup.find(action_color.packet_action);
+      if (packet_action_it == aclPacketActionLookup.end()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "ACL table packet action is invalid: "
+               << action_color.packet_action;
+      }
 
-            if (action_color.packet_color.empty())
-            {
-                // Handle packet action without packet color, set ACL entry attribute
-                SaiActionWithParam action_with_param;
-                action_with_param.action = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
-                action_with_param.param_name = EMPTY_STRING;
-                action_with_param.param_value = action_color.packet_action;
-                aggr_sai_actions.push_back(action_with_param);
-                continue;
-            }
+      if (action_color.packet_color.empty()) {
+        // Handle packet action without packet color, set ACL entry attribute
+        SaiActionWithParam action_with_param;
+        action_with_param.action = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+        action_with_param.param_name = EMPTY_STRING;
+        action_with_param.param_value = action_color.packet_action;
+        aggr_sai_actions.push_back(action_with_param);
+        acl_action_type_set->insert(SAI_ACL_ACTION_TYPE_PACKET_ACTION);
+        continue;
+      }
 
-            // Handle packet action with packet color, set ACL policer attribute
-            auto packet_color_it = aclPacketColorPolicerAttrLookup.find(action_color.packet_color);
-            if (packet_color_it == aclPacketColorPolicerAttrLookup.end())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "ACL table packet color is invalid: " << action_color.packet_color;
-            }
-            aggr_sai_action_color[packet_color_it->second] = packet_action_it->second;
-        }
+      // Handle packet action with packet color, set ACL policer attribute
+      auto packet_color_it =
+          aclPacketColorPolicerAttrLookup.find(action_color.packet_color);
+      if (packet_color_it == aclPacketColorPolicerAttrLookup.end()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "ACL table packet color is invalid: "
+               << action_color.packet_color;
+      }
+      aggr_sai_action_color[packet_color_it->second] = packet_action_it->second;
+      acl_action_type_set->insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
     }
-    return ReturnCode();
+  }
+  return ReturnCode();
 }
 
 bool isSetUserTrapActionInAclTableDefinition(
@@ -674,72 +695,69 @@ bool setMatchFieldIpType(const std::string &attr_value, sai_attribute_value_t *v
     return true;
 }
 
-ReturnCode setCompositeSaiMatchValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
-                                     sai_attribute_value_t *value)
-{
-    try
-    {
-        const auto &tokenized_ip = swss::tokenize(attr_value, kDataMaskDelimiter);
-        swss::IpAddress ip_data;
-        swss::IpAddress ip_mask;
-        if (tokenized_ip.size() == 2)
-        {
-            // data & mask
-            ip_data = swss::IpAddress(trim(tokenized_ip[0]));
-            if (ip_data.isV4())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "IP data type should be v6 type: " << attr_value;
-            }
-            ip_mask = swss::IpAddress(trim(tokenized_ip[1]));
-            if (ip_mask.isV4())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "IP mask type should be v6 type: " << attr_value;
-            }
-        }
-        else
-        {
-            // LPM annotated value
-            swss::IpPrefix ip_prefix(trim(attr_value));
-            if (ip_prefix.isV4())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "IP type should be v6 type: " << attr_value;
-            }
-            ip_data = ip_prefix.getIp();
-            ip_mask = ip_prefix.getMask();
-        }
-        switch (attr_name)
-        {
-        case SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD3:
-        case SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD3: {
-            // IPv6 Address 127:96 32 bits
-            memcpy(&value->aclfield.data.ip6[0], &ip_data.getV6Addr()[0], IPV6_SINGLE_WORD_BYTES_LENGTH);
-            memcpy(&value->aclfield.mask.ip6[0], &ip_mask.getV6Addr()[0], IPV6_SINGLE_WORD_BYTES_LENGTH);
-            break;
-        }
-        case SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD2:
-        case SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD2: {
-            // IPv6 Address 95:64 32 bits
-            memcpy(&value->aclfield.data.ip6[IPV6_SINGLE_WORD_BYTES_LENGTH],
-                   &ip_data.getV6Addr()[IPV6_SINGLE_WORD_BYTES_LENGTH], IPV6_SINGLE_WORD_BYTES_LENGTH);
-            memcpy(&value->aclfield.mask.ip6[IPV6_SINGLE_WORD_BYTES_LENGTH],
-                   &ip_mask.getV6Addr()[IPV6_SINGLE_WORD_BYTES_LENGTH], IPV6_SINGLE_WORD_BYTES_LENGTH);
-            break;
-        }
-        default: {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "ACL match field " << attr_name << " is not supported in composite match field sai_field type.";
-        }
-        }
+ReturnCode setCompositeSaiMatchValue(const sai_acl_entry_attr_t attr_name,
+                                     const std::string& attr_value,
+                                     sai_attribute_value_t* value) {
+  try {
+    const auto& tokenized_ip = swss::tokenize(attr_value, kDataMaskDelimiter);
+    swss::IpAddress ip_data;
+    swss::IpAddress ip_mask;
+    if (tokenized_ip.size() == 2) {
+      // data & mask
+      ip_data = swss::IpAddress(trim(tokenized_ip[0]));
+      if (ip_data.isV4()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "IP data type should be v6 type: " << attr_value;
+      }
+      ip_mask = swss::IpAddress(trim(tokenized_ip[1]));
+      if (ip_mask.isV4()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "IP mask type should be v6 type: " << attr_value;
+      }
+    } else {
+      // LPM annotated value
+      swss::IpPrefix ip_prefix(trim(attr_value));
+      if (ip_prefix.isV4()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "IP type should be v6 type: " << attr_value;
+      }
+      ip_data = ip_prefix.getIp();
+      ip_mask = ip_prefix.getMask();
     }
-    catch (std::exception &e)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Failed to parse match attribute " << attr_name
-                                                             << " (value: " << attr_value << "). Error:" << e.what();
+    switch (attr_name) {
+      case SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD3:
+      case SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD3: {
+        // IPv6 Address 127:96 32 bits
+        memcpy(&value->aclfield.data.ip6[0], &ip_data.getV6Addr()[0],
+               IPV6_SINGLE_WORD_BYTES_LENGTH);
+        memcpy(&value->aclfield.mask.ip6[0], &ip_mask.getV6Addr()[0],
+               IPV6_SINGLE_WORD_BYTES_LENGTH);
+        break;
+      }
+      case SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD2:
+      case SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD2: {
+        // IPv6 Address 95:64 32 bits
+        memcpy(&value->aclfield.data.ip6[IPV6_SINGLE_WORD_BYTES_LENGTH],
+               &ip_data.getV6Addr()[IPV6_SINGLE_WORD_BYTES_LENGTH],
+               IPV6_SINGLE_WORD_BYTES_LENGTH);
+        memcpy(&value->aclfield.mask.ip6[IPV6_SINGLE_WORD_BYTES_LENGTH],
+               &ip_mask.getV6Addr()[IPV6_SINGLE_WORD_BYTES_LENGTH],
+               IPV6_SINGLE_WORD_BYTES_LENGTH);
+        break;
+      }
+      default: {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "ACL match field " << attr_name
+               << " is not supported in composite match field sai_field type.";
+      }
     }
-    value->aclfield.enable = true;
-    return ReturnCode();
+  } catch (std::exception& e) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Failed to parse match attribute " << attr_name
+           << " (value: " << attr_value << "). Error:" << e.what();
+  }
+  value->aclfield.enable = true;
+  return ReturnCode();
 }
 
 ReturnCode setUdfMatchValue(const P4UdfField &udf_field, const std::string &attr_value, sai_attribute_value_t *value,
@@ -802,12 +820,12 @@ ReturnCode setUdfMatchValue(const P4UdfField &udf_field, const std::string &attr
     return ReturnCode();
 }
 
-bool isDiffActionFieldValue(const acl_entry_attr_union_t attr_name, const sai_attribute_value_t &value,
-                            const sai_attribute_value_t &old_value, const P4AclRule &acl_rule,
-                            const P4AclRule &old_acl_rule)
-{
-    switch (attr_name)
-    {
+bool isDiffActionFieldValue(const sai_acl_entry_attr_t attr_name,
+                            const sai_attribute_value_t& value,
+                            const sai_attribute_value_t& old_value,
+                            const P4AclRule& acl_rule,
+                            const P4AclRule& old_acl_rule) {
+  switch (attr_name) {
     case SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR: {
         return value.aclaction.parameter.s32 != old_value.aclaction.parameter.s32;
@@ -865,19 +883,19 @@ bool isDiffActionFieldValue(const acl_entry_attr_union_t attr_name, const sai_at
     }
 }
 
-bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_attribute_value_t &value,
-                           const sai_attribute_value_t &old_value, const P4AclRule &acl_rule,
-                           const P4AclRule &old_acl_rule)
-{
-    if (attr_name >= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN &&
-        attr_name <= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MAX)
-    {
-        // We compare the size here only. The list is explicitly verified in the
-        // ACL rule.
-        return value.aclfield.data.u8list.count != old_value.aclfield.data.u8list.count;
-    }
-    switch (attr_name)
-    {
+bool isDiffMatchFieldValue(const sai_acl_entry_attr_t attr_name,
+                           const sai_attribute_value_t& value,
+                           const sai_attribute_value_t& old_value,
+                           const P4AclRule& acl_rule,
+                           const P4AclRule& old_acl_rule) {
+  if (attr_name >= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN &&
+      attr_name <= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MAX) {
+    // We compare the size here only. The list is explicitly verified in the
+    // ACL rule.
+    return value.aclfield.data.u8list.count !=
+           old_value.aclfield.data.u8list.count;
+  }
+  switch (attr_name) {
     case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
         // We compare the size here only. The list is explicitly verified in the
         // ACL rule.
