@@ -2030,13 +2030,13 @@ void VNetRouteOrch::createMonitoringSession(const string& vnet, const NextHopKey
 
 }
 
-void VNetRouteOrch::createCustomBFDMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix)
+void VNetRouteOrch::createCustomBFDMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix,  const int32_t rx_monitor_timer, const int32_t tx_monitor_timer)
 {
     SWSS_LOG_ENTER();
 
     if (bfd_sessions_.find(monitor_addr) == bfd_sessions_.end())
     {
-        vector<FieldValueTuple> data;
+        vector<FieldValueTuple>    data;
         string key = "default:default:" + monitor_addr.to_string();
 
         auto tun_name = vnet_orch_->getTunnelName(vnet);
@@ -2054,8 +2054,24 @@ void VNetRouteOrch::createCustomBFDMonitoringSession(const string& vnet, const N
         // when the device goes into TSA.  The following parameter ensures that these session are
         // brought down while transitioning to TSA and brought back up when transitioning to TSB.
         data.emplace_back("shutdown_bfd_during_tsa", "true");
+
+        if (rx_monitor_timer >= 0)
+        {
+            FieldValueTuple fv_rx("rx_interval", to_string(rx_monitor_timer));
+            data.push_back(fv_rx);
+        }
+
+        if (tx_monitor_timer >= 0)
+        {
+            FieldValueTuple fv_tx("tx_interval", to_string(tx_monitor_timer));
+            data.push_back(fv_tx);
+        }
+
         bfd_session_producer_.set(key, data);
         bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
+        bfd_sessions_[monitor_addr].vnet = vnet;
+        bfd_sessions_[monitor_addr].endpoint = endpoint;
+        bfd_sessions_[monitor_addr].custom_bfd = true;
     }
 
     MonitorSessionInfo info = monitor_info_[vnet][ipPrefix][monitor_addr];
@@ -2129,7 +2145,7 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
                 if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
                     monitor_info_[vnet][ipPrefix].find(monitor_ip) == monitor_info_[vnet][ipPrefix].end())
                 {
-                    createCustomBFDMonitoringSession(vnet, nh, monitor_ip, ipPrefix);
+                    createCustomBFDMonitoringSession(vnet, nh, monitor_ip, ipPrefix, rx_monitor_timer, tx_monitor_timer);
                 }
                 else
                 {
@@ -2146,6 +2162,11 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
                 }
                 nexthop_info_[vnet][nh.ip_address].ref_count++;
             }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Next hop %s not in nexthop group for prefix %s, skipping monitoring",
+                nh.to_string().c_str(), ipPrefix.to_string().c_str());
         }
     }
 }
@@ -2475,6 +2496,13 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
     }
 
     BfdSessionInfo& bfd_info = it_peer->second;
+
+    if (bfd_info.custom_bfd)
+    {
+        SWSS_LOG_DEBUG("Skip single NHG BFD state update for custom BFD session %s", peer_address.to_string().c_str());
+        return;
+    }
+
     bfd_info.bfd_state = state;
 
     string vnet = bfd_info.vnet;
@@ -3014,6 +3042,9 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             continue;
         }
     }
+
+    /******************hard code it before hamgrd change is ready*******************/
+    monitoring = "custom_bfd";
 
     if (vni_list.size() > 1 && vni_list.size() != ip_list.size())
     {

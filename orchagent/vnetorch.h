@@ -420,6 +420,8 @@ struct BfdSessionInfo
     sai_bfd_session_state_t bfd_state;
     std::string vnet;
     NextHopKey endpoint;
+
+    bool custom_bfd = false;
 };
 
 struct MonitorSessionInfo
@@ -530,7 +532,7 @@ private:
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
-    void createCustomBFDMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix);
+    void createCustomBFDMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops,
