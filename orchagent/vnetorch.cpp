@@ -1651,7 +1651,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             std::string vnet_name;
             if (!vnet_orch_->getVnetNameByVrfId(vr_id, vnet_name))
             {
-                SWSS_LOG_INFO("Failed to get VNET name for vrf id %ld", vr_id);
+                SWSS_LOG_INFO("Failed to get VNET name for vrf id '0x%" PRIx64, vr_id);
                 continue;
             }
 
@@ -1669,7 +1669,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 bulkNhgReducedRefCnt.clear();
                 gRouteOrch->addRoutePost(ctx, nhg);
 
-                SWSS_LOG_INFO("Route added via routeorch for %s", ipPrefix.to_string().c_str());
+                SWSS_LOG_NOTICE("Route %s added via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
             }
             else if (op == DEL_COMMAND)
             {
@@ -1678,7 +1678,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 bulkNhgReducedRefCnt.clear();
                 gRouteOrch->removeRoutePost(ctx);
 
-                SWSS_LOG_INFO("Route removed via routeorch for %s", ipPrefix.to_string().c_str());
+                SWSS_LOG_NOTICE("Route %s removed via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
             }
 
             // Remove next hop groups with 0 ref count
