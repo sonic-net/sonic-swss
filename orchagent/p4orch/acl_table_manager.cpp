@@ -6,11 +6,13 @@
 #include <vector>
 
 #include "SaiAttributeList.h"
+#include "aclorch.h"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "logger.h"
 #include "orch.h"
 #include "p4orch.h"
+#include "p4orch/acl_util.h"
 #include "p4orch/p4orch_util.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
@@ -26,10 +28,10 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_acl_api_t *sai_acl_api;
 extern sai_udf_api_t *sai_udf_api;
-extern sai_switch_api_t *sai_switch_api;
 extern CrmOrch *gCrmOrch;
 extern P4Orch *gP4Orch;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch* gAclOrch;
 extern int gBatchSize;
 
 namespace p4orch
@@ -96,7 +98,7 @@ AclTableManager::~AclTableManager()
     }
 }
 
-ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getTableSaiAttrs(const P4AclTableDefinition &acl_table)
+ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getTableSaiAttrs(P4AclTableDefinition &acl_table)
 {
     std::vector<sai_attribute_t> acl_attr_list;
     sai_attribute_t acl_attr;
@@ -111,7 +113,7 @@ ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getTableSaiAttrs(con
         acl_attr_list.push_back(acl_attr);
     }
 
-    std::set<acl_table_attr_union_t> table_match_fields_to_add;
+    std::set<sai_acl_table_attr_t> table_match_fields_to_add;
     if (!acl_table.ip_type_bit_type_lookup.empty())
     {
         acl_attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE;
@@ -159,11 +161,15 @@ ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getTableSaiAttrs(con
         acl_attr_list.push_back(acl_attr);
     }
 
-    m_acl_action_list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
-    acl_attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
-    acl_attr.value.s32list.count = 1;
-    acl_attr.value.s32list.list = m_acl_action_list;
-    acl_attr_list.push_back(acl_attr);
+    if (gAclOrch->isAclActionListMandatoryOnTableCreation(
+            aclSaiStageAttrToEnumLookup.at(acl_table.stage))) {
+      acl_attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
+      acl_attr.value.s32list.count =
+          (uint32_t)acl_table.acl_action_type_list.size();
+      acl_attr.value.s32list.list =
+          (int32_t*)acl_table.acl_action_type_list.data();
+      acl_attr_list.push_back(acl_attr);
+    }
 
     return acl_attr_list;
 }
@@ -452,8 +458,10 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
         build_match_rc.prepend("Failed to build ACL table definition match fields with table name " +
                                QuotedVar(app_db_entry.acl_table_name) + ": "));
 
+    std::set<sai_acl_action_type_t> acl_action_type_set;
     auto build_action_rc = buildAclTableDefinitionActionFieldValues(app_db_entry.action_field_lookup,
-                                                                    &acl_table_definition.rule_action_field_lookup);
+                                                                    &acl_table_definition.rule_action_field_lookup,
+                                                                    &acl_action_type_set);
 
     LOG_AND_RETURN_IF_ERROR(
         build_action_rc.prepend("Failed to build ACL table definition action fields with table name " +
@@ -473,10 +481,34 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
 
     auto build_action_color_rc = buildAclTableDefinitionActionColorFieldValues(
         app_db_entry.packet_action_color_lookup, &acl_table_definition.rule_action_field_lookup,
-        &acl_table_definition.rule_packet_action_color_lookup);
+        &acl_table_definition.rule_packet_action_color_lookup, &acl_action_type_set);
+
     LOG_AND_RETURN_IF_ERROR(build_action_color_rc.prepend("Failed to build ACL table definition "
                                                           "action color fields with table name " +
                                                           QuotedVar(app_db_entry.acl_table_name) + ": "));
+
+  if (!acl_table_definition.meter_unit.empty()) {
+    acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
+  }
+  if (!acl_table_definition.counter_unit.empty()) {
+    acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_COUNTER);
+  }
+  for (sai_acl_action_type_t action_type : acl_action_type_set) {
+    if (gAclOrch->isAclActionListMandatoryOnTableCreation(
+            aclSaiStageAttrToEnumLookup.at(acl_table_definition.stage)) &&
+        !gAclOrch->isAclActionSupported(
+            aclSaiStageAttrToEnumLookup.at(acl_table_definition.stage),
+            action_type)) {
+      LOG_AND_RETURN_IF_ERROR(
+          ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+          << "Failed to add ACL action " << action_type
+          << " to ACL table "
+             "with table name "
+          << QuotedVar(app_db_entry.acl_table_name)
+          << ": the ACL action type is not supported by HW.");
+    }
+    acl_table_definition.acl_action_type_list.push_back(action_type);
+  }
 
     if (!acl_table_definition.udf_fields_lookup.empty())
     {
@@ -1100,8 +1132,10 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
         msg << "Failed to build ACL table match field values for table " << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
     }
+    std::set<sai_acl_action_type_t> acl_action_type_set;
     status = buildAclTableDefinitionActionFieldValues(app_db_entry.action_field_lookup,
-                                                      &acl_table_definition_entry.rule_action_field_lookup);
+                                                      &acl_table_definition_entry.rule_action_field_lookup,
+                                                      &acl_action_type_set);
     if (!status.ok())
     {
         std::stringstream msg;
@@ -1110,7 +1144,8 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
     }
     status = buildAclTableDefinitionActionColorFieldValues(app_db_entry.packet_action_color_lookup,
                                                            &acl_table_definition_entry.rule_action_field_lookup,
-                                                           &acl_table_definition_entry.rule_packet_action_color_lookup);
+                                                           &acl_table_definition_entry.rule_packet_action_color_lookup,
+                                                           &acl_action_type_set);
     if (!status.ok())
     {
         std::stringstream msg;
@@ -1118,6 +1153,23 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
             << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
     }
+
+  if (!acl_table_definition_entry.meter_unit.empty()) {
+    acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
+  }
+  if (!acl_table_definition_entry.counter_unit.empty()) {
+    acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_COUNTER);
+  }
+
+  std::set<sai_acl_action_type_t> table_actions(
+      acl_table->acl_action_type_list.begin(),
+      acl_table->acl_action_type_list.end());
+  if (table_actions != acl_action_type_set) {
+    std::stringstream msg;
+    msg << "ACL table action type list mismatch on table "
+        << QuotedVar(app_db_entry.acl_table_name);
+    return msg.str();
+  }
 
     if (acl_table->composite_sai_match_fields_lookup != acl_table_definition_entry.composite_sai_match_fields_lookup)
     {
@@ -1178,7 +1230,7 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
     return "";
 }
 
-std::string AclTableManager::verifyStateAsicDb(const P4AclTableDefinition *acl_table)
+std::string AclTableManager::verifyStateAsicDb(P4AclTableDefinition *acl_table)
 {
     swss::DBConnector db("ASIC_DB", 0);
     swss::Table table(&db, "ASIC_STATE");
