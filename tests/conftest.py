@@ -446,6 +446,7 @@ class DockerVirtualSwitch:
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
+        self.dpu_app_db = None
         self.asic_db = None
         self.counters_db = None
         self.config_db = None
@@ -1256,7 +1257,7 @@ class DockerVirtualSwitch:
     # policer, port_dpb_vlan, vlan
     def setup_db(self):
         self.pdb = swsscommon.DBConnector(swsscommon.APPL_DB, self.redis_sock, 0)
-        self.pdb = swsscommon.DBConnector(swsscommon.DPU_APPL_DB, self.redis_sock, 0)
+        self.ddb = swsscommon.DBConnector(swsscommon.DPU_APPL_DB, self.redis_sock, 0)
         self.adb = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, self.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(swsscommon.STATE_DB, self.redis_sock, 0)
