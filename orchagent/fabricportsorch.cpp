@@ -1010,8 +1010,8 @@ void FabricPortsOrch::clearFabricCnt(int lane, bool clearIsolation)
     SWSS_LOG_INFO("clearing port %s", key.c_str());
 
     // clear counters
-    int skipCrcErrorsOnLinkupCount = 10;
-    int skipFecErrorsOnLinkupCount = 10;
+    int skipCrcErrorsOnLinkupCount = 0;
+    int skipFecErrorsOnLinkupCount = 0;
 
     int consecutivePollsWithErrors = 0;
     int consecutivePollsWithNoErrors = 0;
