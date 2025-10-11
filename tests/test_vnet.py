@@ -2969,6 +2969,112 @@ class TestVnetOrch(object):
         self.remove_ip_address("Ethernet12", "9.1.0.4/32")
         self.set_admin_status("Ethernet12", "down")
 
+
+    '''
+    Test 30 - Test vnet local route with single nexthop
+    '''
+    def test_vnet_local_route_single(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_30'
+
+        vnet_obj.fetch_exist_entries(dvs)
+        vnet_name = "Vnet5000"
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '30.30.30.30')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5000', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5000')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '30.30.30.30')
+
+        # setup interface under vnet
+        create_phy_interface(dvs, "Ethernet20", vnet_name, "10.10.0.9")
+        vnet_obj.check_router_interface(dvs, "Ethernet20", vnet_name)
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet20", "10.10.0.9", "00:01:02:03:04:05")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
+        vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name)
+
+        delete_phy_interface(dvs, "Ethernet20", "10.10.0.9")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet20")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+        self.remove_neighbor("Ethernet20", "10.10.0.9")
+
+    '''
+    Test 31 - Test ecmp vnet local route with multiple nexthops
+    '''
+    def test_vnet_local_route_ecmp(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_31'
+        vnet_name = "Vnet5001"
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '31.31.31.31')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5001', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5001')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '31.31.31.31')
+
+        # setup interfaces under vnet
+        create_phy_interface(dvs, "Ethernet20", vnet_name, "10.10.0.9")
+        create_phy_interface(dvs, "Ethernet16", vnet_name, "10.10.0.11")
+
+        vnet_obj.check_router_interface(dvs, "Ethernet20", vnet_name)
+        vnet_obj.check_router_interface(dvs, "Ethernet16", vnet_name)
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet20", "10.10.0.9", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet16", "10.10.0.11", "00:01:02:03:04:06")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
+        vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name)
+
+        delete_phy_interface(dvs, "Ethernet20", "10.10.0.9")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet20")
+        delete_phy_interface(dvs, "Ethernet16", "10.10.0.11")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet16")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+        self.remove_neighbor("Ethernet20", "10.10.0.9")
+        self.remove_neighbor("Ethernet16", "10.10.0.11")
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
