@@ -854,10 +854,13 @@ void BufferMgrDynamic::checkSharedBufferPoolSize(bool force_update_during_initia
         }
     }
 
-    // Execute recalculateSharedBufferPool when MMU size is available, and avoid extra recalculation in startup:
-    // 1. Buffer is completely initialized (normal case)
-    // 2. Buffer pools are not ready yet (bootstrap case to generate once buffer pools for buffer profile dependencies)
-    if (!m_mmuSize.empty() && (m_bufferCompletelyInitialized || !m_bufferPoolReady))
+    // Execute recalculateSharedBufferPool when MMU size is available, and avoid extra recalculation in startup.
+    // Logic:
+    // - Non-warm start: execute as soon as MMU size is available.
+    // - Warm start: execute only if both buffer is completely initialized AND buffer pools are ready.
+    if (!m_mmuSize.empty() &&
+        (!WarmStart::isWarmStart() ||
+         (m_bufferCompletelyInitialized || !m_bufferPoolReady)))
     {
         recalculateSharedBufferPool();
     }
@@ -1053,7 +1056,10 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
     // profile: the profile referenced by the new_pg (if provided) or all PGs
     // new_pg: which pg is newly added?
 
-    if (!m_bufferCompletelyInitialized)
+    // Skip headroom validation only during warm start while initialization is incomplete.
+    // - Non-warm start: never skip.
+    // - Warm start: skip only if initialization has not completed.
+    if (WarmStart::isWarmStart() && !m_bufferCompletelyInitialized)
     {
         return true;
     }
