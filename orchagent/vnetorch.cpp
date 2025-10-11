@@ -1651,7 +1651,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             std::string vnet_name;
             if (!vnet_orch_->getVnetNameByVrfId(vr_id, vnet_name))
             {
-                SWSS_LOG_INFO("Failed to get VNET name for vrf id %ld", vr_id);
+                SWSS_LOG_INFO("Failed to get VNET name for vrf id '0x%" PRIx64, vr_id);
                 continue;
             }
 
