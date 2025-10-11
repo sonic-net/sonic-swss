@@ -1670,11 +1670,13 @@ bool FabricPortsOrch::addErrorTime(const std::string& link, TimePoint now)
     auto ptTime = std::chrono::duration_cast<std::chrono::minutes>(diff).count();
     if (permIsolate)
     {
-       SWSS_LOG_INFO("Event queue size %lu isolation within %lld, so perm isolated: %d",
-             timestamps.size(), static_cast<long long>(ptTime), permIsolate);
+       SWSS_LOG_INFO("Event queue size %u isolation within %lld, so perm isolated: %d",
+             static_cast<unsigned int>(timestamps.size()),
+             static_cast<long long>(ptTime), permIsolate);
     }
-    SWSS_LOG_INFO("Add isolation event: check period diff %lld size %lu perm: %d",
-          static_cast<long long>(ptTime), timestamps.size(), permIsolate);
+    SWSS_LOG_INFO("Add isolation event: check period diff %lld size %u perm: %d",
+          static_cast<long long>(ptTime),
+          static_cast<unsigned int>(timestamps.size()), permIsolate);
     return permIsolate;
 }
 
