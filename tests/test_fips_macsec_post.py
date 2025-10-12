@@ -21,9 +21,12 @@ VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_NOTIFY = "switch-macsec-post-status-notify
 VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY = "switch-macsec-post-status-query"
 VS_SAI_POST_CONFIG_INGRESS_MACSEC_POST_STATUS_NOTIFY = "ingress-macsec-post-status-notify"
 VS_SAI_POST_CONFIG_EGRESS_MACSEC_POST_STATUS_NOTIFY = "egress-macsec-post-status-notify"
-SAI_MACSEC_POST_STATUS_PASS = "pass"
-SAI_MACSEC_POST_STATUS_FAIL = "fail"
-SAI_MACSEC_POST_STATUS_IN_PROGRESS = "in-progress"
+SAI_SWITCH_MACSEC_POST_STATUS_PASS = "SAI_SWITCH_MACSEC_POST_STATUS_PASS"
+SAI_SWITCH_MACSEC_POST_STATUS_FAIL = "SAI_SWITCH_MACSEC_POST_STATUS_FAIL"
+SAI_SWITCH_MACSEC_POST_STATUS_IN_PROGRESS = "SAI_SWITCH_MACSEC_POST_STATUS_IN_PROGRESS"
+SAI_MACSEC_POST_STATUS_PASS = "SAI_MACSEC_POST_STATUS_PASS"
+SAI_MACSEC_POST_STATUS_FAIL = "SAI_MACSEC_POST_STATUS_FAIL"
+SAI_MACSEC_POST_STATUS_IN_PROGRESS = "SAI_MACSEC_POST_STATUS_IN_PROGRESS"
 
 # POST syslogs
 SWITCH_MACSEC_POST_PASS_SYSYLOG = "Switch MACSec POST passed"
@@ -114,7 +117,7 @@ class TestMacsecPost(object):
         self.check_asic_db_post_state(dvs, sonic_fips_enabled=False)
  
     def test_PostEnabled_InitialState(self, dvs):
-        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_MACSEC_POST_STATUS_IN_PROGRESS}
+        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_SWITCH_MACSEC_POST_STATUS_IN_PROGRESS}
         self.restart_dvs_with_post_config(dvs, sai_post_notification_status_config=sai_post_notification_status_config)
         self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_SWITCH_LEVEL_POST_IN_PROGRESS)
         self.check_asic_db_post_state(dvs)
@@ -126,30 +129,30 @@ class TestMacsecPost(object):
         self.check_asic_db_post_state(dvs)
         
     def test_PostEnabled_SwitchLevelPost_NotificationPass(self, dvs):
-        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_NOTIFY : SAI_MACSEC_POST_STATUS_PASS,
-                                               VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_MACSEC_POST_STATUS_IN_PROGRESS}
+        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_NOTIFY : SAI_SWITCH_MACSEC_POST_STATUS_PASS,
+                                               VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_SWITCH_MACSEC_POST_STATUS_IN_PROGRESS}
         marker = self.restart_dvs_with_post_config(dvs, sai_post_notification_status_config=sai_post_notification_status_config)
         self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_PASS)
         self.check_syslog(dvs, marker, SWITCH_MACSEC_POST_PASS_SYSYLOG)
         self.check_asic_db_post_state(dvs)
  
     def test_PostEnabled_SwitchLevelPost_NotificationFail(self, dvs):
-        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_NOTIFY : SAI_MACSEC_POST_STATUS_FAIL,
-                                               VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_MACSEC_POST_STATUS_IN_PROGRESS}
+        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_NOTIFY : SAI_SWITCH_MACSEC_POST_STATUS_FAIL,
+                                               VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_SWITCH_MACSEC_POST_STATUS_IN_PROGRESS}
         marker = self.restart_dvs_with_post_config(dvs, sai_post_notification_status_config=sai_post_notification_status_config)
         self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_FAIL)
         self.check_syslog(dvs, marker, SWITCH_MACSEC_POST_FAIL_SYSYLOG)
         self.check_asic_db_post_state(dvs)
  
     def test_PostEnabled_SwitchLevelPost_QueryPass(self, dvs):
-        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_MACSEC_POST_STATUS_PASS}
+        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_SWITCH_MACSEC_POST_STATUS_PASS}
         marker =self.restart_dvs_with_post_config(dvs, sai_post_notification_status_config=sai_post_notification_status_config)
         self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_PASS)
         self.check_syslog(dvs, marker, SWITCH_MACSEC_POST_PASS_SYSYLOG)
         self.check_asic_db_post_state(dvs)
  
     def test_PostEnabled_SwitchLevelPost_QueryFail(self, dvs):
-        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_MACSEC_POST_STATUS_FAIL}
+        sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_SWITCH_MACSEC_POST_STATUS_FAIL}
         marker =self.restart_dvs_with_post_config(dvs, sai_post_notification_status_config=sai_post_notification_status_config)
         self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_FAIL)
         self.check_syslog(dvs, marker, SWITCH_MACSEC_POST_FAIL_SYSYLOG)
