@@ -1754,7 +1754,7 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                 SWSS_LOG_NOTICE("Neighbor %s on %s learned before mux port %s configured. updating...",
                     entry.first.ip_address.to_string().c_str(),
                     entry.second.mac.to_string().c_str(),
-                    port_name.c_str(),
+                    port_name.c_str()
                 );
 
                 NeighborUpdate neighbor_update = {entry.first, entry.second.mac, 1};
