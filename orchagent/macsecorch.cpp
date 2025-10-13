@@ -810,14 +810,23 @@ void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsV
                 if (macsec_obj->second.m_ingress_post_passed && macsec_obj->second.m_egress_post_passed)
                 {
                     setMacsecPostState(m_state_db, "pass");
-                    SWSS_LOG_NOTICE("MACSec POST passed: oid %" PRIu64 ", direction %s", macsec_id, direction.c_str());
+                    SWSS_LOG_NOTICE("Ingress and egress MACSec POST passed");
                 }
             }
             else if(macsec_post_status == SAI_MACSEC_POST_STATUS_FAIL)
             {
+                if (direction == "ingress")
+                {
+                    SWSS_LOG_ERROR("Ingress MACSec POST failed");
+                }
+                else if (direction == "egress")
+                {
+                    SWSS_LOG_ERROR("Egress MACSec POST failed");
+                }
+
                 // Consider POST failed since it failed on one MACSec object.
                 setMacsecPostState(m_state_db, "fail");
-                SWSS_LOG_ERROR("MACSec POST failed: oid %" PRIu64 ", direction %s", macsec_id, direction.c_str());
+                SWSS_LOG_ERROR("MACSec POST failed");
             }
         }
     }
