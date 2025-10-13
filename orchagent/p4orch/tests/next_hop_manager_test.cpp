@@ -258,6 +258,8 @@ class NextHopManagerTest : public ::testing::Test
         sai_next_hop_api->remove_next_hop = mock_remove_next_hop;
         sai_next_hop_api->set_next_hop_attribute = mock_set_next_hop_attribute;
         sai_next_hop_api->get_next_hop_attribute = mock_get_next_hop_attribute;
+        sai_next_hop_api->create_next_hops = mock_create_next_hops;
+        sai_next_hop_api->remove_next_hops = mock_remove_next_hops;
     }
 
     void TearDown() override
@@ -270,9 +272,12 @@ class NextHopManagerTest : public ::testing::Test
         next_hop_manager_.enqueue(APP_P4RT_NEXTHOP_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        next_hop_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        next_hop_manager_.drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return next_hop_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -338,7 +343,7 @@ class NextHopManagerTest : public ::testing::Test
     }
 
     StrictMock<MockSaiNextHop> mock_sai_next_hop_;
-    MockResponsePublisher publisher_;
+    StrictMock<MockResponsePublisher> publisher_;
     P4OidMapper p4_oid_mapper_;
     NextHopManager next_hop_manager_;
     StrictMock<MockSaiHostif> mock_sai_hostif_;
@@ -812,8 +817,11 @@ TEST_F(NextHopManagerTest, DrainValidAppEntryShouldSucceed)
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2, kRouterInterfaceOid2));
     EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 }
@@ -834,8 +842,11 @@ TEST_F(NextHopManagerTest, DrainValidTunnelNexthopAppEntryShouldSucceed)
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4TunnelNextHopAppDbEntry2, kTunnelOid2));
     EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kTunnelNextHopOid), Return(SAI_STATUS_SUCCESS)));
-
-    Drain();
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                    Eq(kfvKey(tunnel_app_db_entry)),
+                                    Eq(kfvFieldsValues(tunnel_app_db_entry)),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     EXPECT_TRUE(ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry2, kTunnelNextHopOid));
 
@@ -847,7 +858,11 @@ TEST_F(NextHopManagerTest, DrainValidTunnelNexthopAppEntryShouldSucceed)
     EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(Eq(kTunnelNextHopOid))).WillOnce(Return(SAI_STATUS_SUCCESS));
 
     Enqueue(app_db_entry);
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Validate the next hop entry has been deleted in both P4 next hop manager
     // and centralized mapper.
@@ -878,8 +893,12 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidOpShouldBeNoOp)
     Enqueue(app_db_entry);
 
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2, kRouterInterfaceOid2));
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 }
@@ -897,8 +916,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
                                               SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     // Missing action field
@@ -907,18 +931,26 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     // Missing neighbor field
     fvs = {{p4orch::kAction, p4orch::kSetIpNexthop},
            {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     // set_ip_nexthop + missing router_interface_id
@@ -926,8 +958,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     //  set_ip_nexthop + invalid param/tunnel_id
@@ -937,8 +974,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     // set_p2p_tunnel_encap_nexthop + invalid router_interface_id
@@ -948,8 +990,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry2, kNextHopOid));
 
     // set_p2p_tunnel_encap_nexthop + missing tunnel_id
@@ -957,8 +1004,12 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry2, kNextHopOid));
 }
 
@@ -969,14 +1020,21 @@ TEST_F(NextHopManagerTest, DrainUpdateRequestShouldBeUnsupported)
 
     nlohmann::json j;
     j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
-    std::vector<swss::FieldValueTuple> fvs{{prependParamField(p4orch::kNeighborId), kNeighborId2},
-                                           {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
+    std::vector<swss::FieldValueTuple> fvs{
+        {p4orch::kAction, p4orch::kSetIpNexthop},
+        {prependParamField(p4orch::kNeighborId), kNeighborId2},
+        {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
     swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
                                               SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2, kRouterInterfaceOid2));
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_UNIMPLEMENTED), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED,
+              Drain(/*failure_before=*/false));
 
     // Expect that the update call will fail, so next hop entry's fields stay the
     // same.
@@ -1004,7 +1062,11 @@ TEST_F(NextHopManagerTest, DrainDeleteRequestShouldSucceedForExistingNextHop)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
     Enqueue(app_db_entry);
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Validate the next hop entry has been deleted in both P4 next hop manager
     // and centralized mapper.
@@ -1088,6 +1150,96 @@ TEST_F(NextHopManagerTest, VerifyIpNextHopStateTest)
     p4_next_hop_entry->gre_tunnel_id = "invalid";
     EXPECT_FALSE(VerifyState(db_key, attributes).empty());
     p4_next_hop_entry->gre_tunnel_id = saved_gre_tunnel_id;
+}
+
+TEST_F(NextHopManagerTest, DrainNotExecuted) {
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kSetIpNexthop},
+      {prependParamField(p4orch::kNeighborId), kNeighborId2},
+      {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
+  EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2,
+                                            kRouterInterfaceOid2));
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = "1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "3";
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("1")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("2")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("3")));
+}
+
+TEST_F(NextHopManagerTest, DrainStopOnFirstFailure) {
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kSetIpNexthop},
+      {prependParamField(p4orch::kNeighborId), kNeighborId2},
+      {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
+  EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2,
+                                            kRouterInterfaceOid2));
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = "1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "3";
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("1")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("2")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("3")));
 }
 
 TEST_F(NextHopManagerTest, VerifyTunnelNextHopStateTest)

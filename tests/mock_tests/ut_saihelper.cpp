@@ -94,7 +94,18 @@ namespace ut_helper
         sai_api_query((sai_api_t)SAI_API_DASH_VIP, (void**)&sai_dash_vip_api);
         sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP, (void**)&sai_dash_direction_lookup_api);
         sai_api_query((sai_api_t)SAI_API_DASH_ENI, (void**)&sai_dash_eni_api);
-
+        sai_api_query((sai_api_t)SAI_API_DASH_HA, (void**)&sai_dash_ha_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_CA_TO_PA, (void**)&sai_dash_outbound_ca_to_pa_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION, (void**)&sai_dash_pa_validation_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_VNET, (void**)&sai_dash_vnet_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_APPLIANCE, (void**)&sai_dash_appliance_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_ROUTING, (void**)&sai_dash_outbound_routing_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_INBOUND_ROUTING, (void**)&sai_dash_inbound_routing_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL, (void**)&sai_dash_tunnel_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, (void**)&sai_dash_outbound_port_map_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI, (void**)&sai_dash_trusted_vni_api);
+        sai_api_query(SAI_API_STP, (void**)&sai_stp_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_METER, (void**)&sai_dash_meter_api);
         return SAI_STATUS_SUCCESS;
     }
 
@@ -128,6 +139,9 @@ namespace ut_helper
         sai_dash_vip_api = nullptr;
         sai_dash_direction_lookup_api = nullptr;
         sai_dash_eni_api = nullptr;
+        sai_dash_ha_api = nullptr;
+        sai_stp_api = nullptr;
+        sai_dash_meter_api = nullptr;
 
         return SAI_STATUS_SUCCESS;
     }

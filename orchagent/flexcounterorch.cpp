@@ -1,19 +1,29 @@
 #include <unordered_map>
-#include "portsorch.h"
-#include "fabricportsorch.h"
-#include "select.h"
+
+#include <select.h>
+#include <tokenize.h>
+#include <warm_restart.h>
+#include <sai_serialize.h>
+
 #include "notifier.h"
-#include "sai_serialize.h"
-#include "pfcwdorch.h"
-#include "bufferorch.h"
-#include "flexcounterorch.h"
-#include "debugcounterorch.h"
 #include "directory.h"
+
+#include "bufferorch.h"
 #include "copporch.h"
-#include <swss/tokenize.h>
-#include "routeorch.h"
 #include "macsecorch.h"
-#include "flowcounterrouteorch.h"
+#include "portsorch.h"
+#include "pfcwdorch.h"
+#include "routeorch.h"
+#include "srv6orch.h"
+#include "switchorch.h"
+#include "debugcounterorch.h"
+#include "fabricportsorch.h"
+
+#include "dash/dashorch.h"
+#include "dash/dashmeterorch.h"
+#include "flex_counter/flowcounterrouteorch.h"
+
+#include "flexcounterorch.h"
 
 extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
@@ -25,7 +35,11 @@ extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+extern Srv6Orch *gSrv6Orch;
+extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
+
+#define FLEX_COUNTER_DELAY_SEC 60
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -39,11 +53,18 @@ extern sai_object_id_t gSwitchId;
 #define TUNNEL_KEY                  "TUNNEL"
 #define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
 #define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
+#define ENI_KEY                     "ENI"
+#define DASH_METER_KEY              "DASH_METER"
+#define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
+#define WRED_PORT_KEY               "WRED_ECN_PORT"
+#define SRV6_KEY                    "SRV6"
+#define SWITCH_KEY                  "SWITCH"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
+    {"DEBUG_MONITOR_COUNTER", DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP},
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
@@ -61,17 +82,51 @@ unordered_map<string, string> flexCounterGroupMap =
     {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
     {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
     {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
+    {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"DASH_METER", METER_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME),
     m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
     m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+
+    // Read create_only_config_db_buffers configuration once during initialization
+    std::string createOnlyConfigDbBuffersValue;
+    try
+    {
+        if (m_deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
+        {
+            if (createOnlyConfigDbBuffersValue == "true")
+            {
+                m_createOnlyConfigDbBuffers = true;
+            }
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error reading create_only_config_db_buffers: %s", e.what());
+    }
+
+    m_delayTimer = std::make_unique<SelectableTimer>(timespec{.tv_sec = FLEX_COUNTER_DELAY_SEC, .tv_nsec = 0});
+    if (WarmStart::isWarmStart())
+    {
+        m_delayExecutor = std::make_unique<ExecutableTimer>(m_delayTimer.get(), this, "FLEX_COUNTER_DELAY");
+        Orch::addExecutor(m_delayExecutor.get());
+        m_delayTimer->start();
+    }
+    else
+    {
+        m_delayTimerExpired = true;
+    }
 }
 
 FlexCounterOrch::~FlexCounterOrch(void)
@@ -83,7 +138,21 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // Handle DEVICE_METADATA table changes for create_only_config_db_buffers
+    if (consumer.getTableName() == CFG_DEVICE_METADATA_TABLE_NAME)
+    {
+        handleDeviceMetadataTable(consumer);
+        return;
+    }
+
+    if (!m_delayTimerExpired)
+    {
+        return;
+    }
+
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    DashMeterOrch* dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -112,14 +181,9 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            auto itDelay = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
-            string poll_interval;
+            string bulk_chunk_size;
+            string bulk_chunk_size_per_counter;
 
-            if (itDelay != data.end())
-            {
-                consumer.m_toSync.erase(it++);
-                continue;
-            }
             for (auto valuePair:data)
             {
                 const auto &field = fvField(valuePair);
@@ -136,6 +200,14 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
                         }
                     }
+                }
+                else if (field == BULK_CHUNK_SIZE_FIELD)
+                {
+                    bulk_chunk_size = value;
+                }
+                else if (field == BULK_CHUNK_SIZE_PER_PREFIX_FIELD)
+                {
+                    bulk_chunk_size_per_counter = value;
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
@@ -183,6 +255,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_pg_watermark_enabled = true;
                             gPortsOrch->addPriorityGroupWatermarkFlexCounters(getPgConfigurations());
                         }
+                        else if(key == WRED_PORT_KEY)
+                        {
+                            gPortsOrch->generateWredPortCounterMap();
+                            m_wred_port_counter_enabled = true;
+                        }
+                        else if(key == WRED_QUEUE_KEY)
+                        {
+                            gPortsOrch->generateQueueMap(getQueueConfigurations());
+                            m_wred_queue_counter_enabled = true;
+                            gPortsOrch->addWredQueueFlexCounters(getQueueConfigurations());
+                        }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
                     {
@@ -199,6 +282,14 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
                     {
                         vxlan_tunnel_orch->generateTunnelCounterMap();
+                    }
+                    if (dash_orch && (key == ENI_KEY))
+                    {
+                        dash_orch->handleFCStatusUpdate((value == "enable"));
+                    }
+                    if (dash_meter_orch && (key == DASH_METER_KEY))
+                    {
+                        dash_meter_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
@@ -226,6 +317,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_route_flow_counter_enabled = false;
                         }
                     }
+                    if (gSrv6Orch && (key == SRV6_KEY))
+                    {
+                        gSrv6Orch->setCountersState((value == "enable"));
+                    }
+                    if (gSwitchOrch && (key == SWITCH_KEY) && (value == "enable"))
+                    {
+                        gSwitchOrch->generateSwitchCounterIdList();
+                    }
+
+                    if (gPortsOrch)
+                    {
+                        gPortsOrch->flushCounters();
+                    }
 
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
@@ -237,21 +341,42 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                     }
                 }
-                else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
-                {
-                    // This field is ignored since it is being used before getting into this loop.
-                    // If it is exist and the value is 'true' we need to skip the iteration in order to delay the counter creation.
-                    // The field will clear out and counter will be created when enable_counters script is called.
-                }
                 else
                 {
                     SWSS_LOG_NOTICE("Unsupported field %s", field.c_str());
                 }
             }
+
+            if (!bulk_chunk_size.empty() || !bulk_chunk_size_per_counter.empty())
+            {
+                m_groupsWithBulkChunkSize.insert(key);
+                setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key],
+                                                 bulk_chunk_size.empty() ? "NULL" : bulk_chunk_size,
+                                                 bulk_chunk_size_per_counter.empty() ? "NULL" : bulk_chunk_size_per_counter);
+            }
+            else if (m_groupsWithBulkChunkSize.find(key) != m_groupsWithBulkChunkSize.end())
+            {
+                setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key], "NULL", "NULL");
+                m_groupsWithBulkChunkSize.erase(key);
+            }
         }
 
         consumer.m_toSync.erase(it++);
     }
+}
+
+void FlexCounterOrch::doTask(SelectableTimer&)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_delayTimerExpired)
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Processing counters");
+    m_delayTimer->stop();
+    m_delayTimerExpired = true;
 }
 
 bool FlexCounterOrch::getPortCountersState() const
@@ -284,6 +409,58 @@ bool FlexCounterOrch::getPgWatermarkCountersState() const
     return m_pg_watermark_enabled;
 }
 
+bool FlexCounterOrch::getWredQueueCountersState() const
+{
+    return m_wred_queue_counter_enabled;
+}
+
+bool FlexCounterOrch::getWredPortCountersState() const
+{
+    return m_wred_port_counter_enabled;
+}
+
+bool FlexCounterOrch::isCreateOnlyConfigDbBuffers() const
+{
+    return m_createOnlyConfigDbBuffers;
+}
+
+void FlexCounterOrch::handleDeviceMetadataTable(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        auto data = kfvFieldsValues(t);
+
+        // Only process localhost entries
+        if (key == "localhost" && op == SET_COMMAND)
+        {
+            for (auto valuePair : data)
+            {
+                const auto &field = fvField(valuePair);
+                const auto &value = fvValue(valuePair);
+
+                if (field == "create_only_config_db_buffers")
+                {
+                    bool newValue = (value == "true");
+                    if (m_createOnlyConfigDbBuffers != newValue)
+                    {
+                        SWSS_LOG_NOTICE("Updating create_only_config_db_buffers from %s to %s",
+                                       m_createOnlyConfigDbBuffers ? "true" : "false",
+                                       value.c_str());
+                        m_createOnlyConfigDbBuffers = newValue;
+                    }
+                }
+            }
+        }
+        consumer.m_toSync.erase(it++);
+    }
+}
+
 bool FlexCounterOrch::bake()
 {
     /*
@@ -291,61 +468,10 @@ bool FlexCounterOrch::bake()
      * By default, it should fetch items from the tables the sub agents listen to,
      * and then push them into m_toSync of each sub agent.
      * The motivation is to make sub agents handle the saved entries first and then handle the upcoming entries.
+     * The FCs are not data plane configuration required during reconciling process, hence don't do anything in bake.
      */
 
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    vector<string> keys;
-    m_flexCounterConfigTable.getKeys(keys);
-    for (const auto &key: keys)
-    {
-        if (!flexCounterGroupMap.count(key))
-        {
-            SWSS_LOG_NOTICE("FlexCounterOrch: Invalid flex counter group intput %s is skipped during reconciling", key.c_str());
-            continue;
-        }
-
-        if (key == BUFFER_POOL_WATERMARK_KEY)
-        {
-            SWSS_LOG_NOTICE("FlexCounterOrch: Do not handle any FLEX_COUNTER table for %s update during reconciling",
-                            BUFFER_POOL_WATERMARK_KEY);
-            continue;
-        }
-
-        KeyOpFieldsValuesTuple kco;
-
-        kfvKey(kco) = key;
-        kfvOp(kco) = SET_COMMAND;
-
-        if (!m_flexCounterConfigTable.get(key, kfvFieldsValues(kco)))
-        {
-            continue;
-        }
-        entries.push_back(kco);
-    }
-    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
-    return consumer->addToSync(entries);
-}
-
-static bool isCreateOnlyConfigDbBuffers(Table& deviceMetadataConfigTable)
-{
-    std::string createOnlyConfigDbBuffersValue;
-
-    try
-    {
-        if (deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
-        {
-            if (createOnlyConfigDbBuffersValue == "true")
-            {
-                return true;
-            }
-        }
-    }
-    catch(const std::system_error& e)
-    {
-        SWSS_LOG_ERROR("System error: %s", e.what());
-    }
-
-    return false;
+    return true;
 }
 
 map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
@@ -354,7 +480,7 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 
     map<string, FlexCounterQueueStates> queuesStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    if (!isCreateOnlyConfigDbBuffers())
     {
         FlexCounterQueueStates flexCounterQueueState(0);
         queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));
@@ -362,11 +488,11 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
     }
 
     std::vector<std::string> portQueueKeys;
-    m_bufferQueueConfigTable.getKeys(portQueueKeys);
+    gBufferOrch->getBufferObjectsWithNonZeroProfile(portQueueKeys, APP_BUFFER_QUEUE_TABLE_NAME);
 
     for (const auto& portQueueKey : portQueueKeys)
     {
-        auto toks = tokenize(portQueueKey, '|');
+        auto toks = tokenize(portQueueKey, ':');
         if (toks.size() != 2)
         {
             SWSS_LOG_ERROR("Invalid BUFFER_QUEUE key: [%s]", portQueueKey.c_str());
@@ -400,6 +526,13 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
                 {
                     queuesStateVector.at(configPortName).enableQueueCounter(startIndex);
                 }
+
+                Port port;
+                gPortsOrch->getPort(configPortName, port);
+                if (port.m_host_tx_queue_configured && port.m_host_tx_queue <= maxQueueIndex)
+                {
+                    queuesStateVector.at(configPortName).enableQueueCounter(port.m_host_tx_queue);
+                }
             } catch (std::invalid_argument const& e) {
                     SWSS_LOG_ERROR("Invalid queue index [%s] for port [%s]", configPortQueues.c_str(), configPortName.c_str());
                     continue;
@@ -416,7 +549,7 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
 
     map<string, FlexCounterPgStates> pgsStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    if (!isCreateOnlyConfigDbBuffers())
     {
         FlexCounterPgStates flexCounterPgState(0);
         pgsStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterPgState));
@@ -424,11 +557,11 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
     }
 
     std::vector<std::string> portPgKeys;
-    m_bufferPgConfigTable.getKeys(portPgKeys);
+    gBufferOrch->getBufferObjectsWithNonZeroProfile(portPgKeys, APP_BUFFER_PG_TABLE_NAME);
 
     for (const auto& portPgKey : portPgKeys)
     {
-        auto toks = tokenize(portPgKey, '|');
+        auto toks = tokenize(portPgKey, ':');
         if (toks.size() != 2)
         {
             SWSS_LOG_ERROR("Invalid BUFFER_PG key: [%s]", portPgKey.c_str());

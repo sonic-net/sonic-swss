@@ -27,6 +27,7 @@ using ::p4orch::kTableKeyDelimiter;
 
 extern P4Orch *gP4Orch;
 extern VRFOrch *gVrfOrch;
+extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 extern swss::DBConnector *gAppDb;
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
@@ -54,6 +55,7 @@ namespace
 
 constexpr char *kWcmpGroupId1 = "group-1";
 constexpr char *kWcmpGroupId2 = "group-2";
+constexpr char* kWcmpGroupId3 = "group-3";
 constexpr sai_object_id_t kWcmpGroupOid1 = 10;
 constexpr char *kNexthopId1 = "ju1u32m1.atl11:qe-3/7";
 constexpr sai_object_id_t kNexthopOid1 = 1;
@@ -231,6 +233,7 @@ class WcmpManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_acl_, remove_acl_table_group(_)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         delete gP4Orch;
         delete copp_orch_;
+        gMockResponsePublisher.reset();
     }
 
     void setUpMockApi()
@@ -266,9 +269,9 @@ class WcmpManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
 
-        // init P4 orch
-        std::vector<std::string> p4_tables;
+        std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
         gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
     }
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
@@ -276,9 +279,12 @@ class WcmpManagerTest : public ::testing::Test
         wcmp_group_manager_->enqueue(APP_P4RT_WCMP_GROUP_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        wcmp_group_manager_->drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        wcmp_group_manager_->drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return wcmp_group_manager_->drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -1324,7 +1330,11 @@ TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryFailsWhenNextHopDoesNotExist)
     actions.push_back(action);
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
-    Drain();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                Eq(attributes), Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
@@ -1352,7 +1362,12 @@ TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryFailsWhenWeightLessThanOne)
     actions.push_back(action);
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
-    Drain();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                        Eq(attributes), Eq(StatusCode::SWSS_RC_INVALID_PARAM),
+                        Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
@@ -1384,7 +1399,12 @@ TEST_F(WcmpManagerTest, WcmpGroupInvalidOperationInDrainFails)
 
     // Invalid Operation string. Only SET and DEL are allowed
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), "Update", attributes));
-    Drain();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                        Eq(attributes), Eq(StatusCode::SWSS_RC_INVALID_PARAM),
+                        Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
@@ -1404,7 +1424,12 @@ TEST_F(WcmpManagerTest, WcmpGroupUndefinedAttributesInDrainFails)
     std::vector<swss::FieldValueTuple> attributes;
     attributes.push_back(swss::FieldValueTuple{"Undefined", "Invalid"});
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
-    Drain();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                        Eq(attributes), Eq(StatusCode::SWSS_RC_INVALID_PARAM),
+                        Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
@@ -1445,7 +1470,11 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndDeleteInDrainSucceeds)
         .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
                         SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
                         Return(SAI_STATUS_SUCCESS)));
-    Drain();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                Eq(attributes), Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
@@ -1467,7 +1496,11 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndDeleteInDrainSucceeds)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     attributes.clear();
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), DEL_COMMAND, attributes));
-    Drain();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                Eq(attributes), Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
     wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
     EXPECT_FALSE(p4_oid_mapper_->existsOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, key));
@@ -1506,7 +1539,11 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
         .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
                         SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
                         Return(SAI_STATUS_SUCCESS)));
-    Drain();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                Eq(attributes), Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
@@ -1537,7 +1574,11 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
                                               Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
         .WillOnce(
             DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                Eq(attributes), Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
     wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
     EXPECT_EQ(1, wcmp_group_entry_ptr->wcmp_group_members.size());
@@ -1570,7 +1611,11 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
                                               Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
         .WillOnce(
             DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                Eq(attributes), Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
     wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
     EXPECT_EQ(1, wcmp_group_entry_ptr->wcmp_group_members.size());
@@ -1604,7 +1649,11 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
                                               Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
         .WillOnce(
             DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
-    Drain();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                Eq(attributes), Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
     wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
     EXPECT_EQ(1, wcmp_group_entry_ptr->wcmp_group_members.size());
@@ -1748,7 +1797,12 @@ TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryWithInvalidWatchportAttributeFails
     actions.push_back(action);
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
-    Drain();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
+                        Eq(attributes), Eq(StatusCode::SWSS_RC_INVALID_PARAM),
+                        Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
@@ -2291,7 +2345,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
     // Verify that the next hop member associated with the port is pruned.
     std::string op = "port_state_change";
     std::string data = "[{\"port_id\":\"oid:0x56789abcdff\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_DOWN\"}]";
+                       "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     HandlePortStatusChangeNotification(op, data);
@@ -2314,7 +2368,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
     // restored.
     std::string op = "port_state_change";
     std::string data = "[{\"port_id\":\"oid:0x112233\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_UP\"}]";
+                       "STATUS_UP\",\"port_error_status\":\"0\"}]";
     EXPECT_CALL(mock_sai_next_hop_group_,
                 create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
@@ -2339,7 +2393,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeFromOperUnknownToDownPrunesMemberOnl
     // Verify that the pruned next hop member is not pruned again.
     std::string op = "port_state_change";
     std::string data = "[{\"port_id\":\"oid:0x56789abcfff\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_DOWN\"}]";
+                       "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
     HandlePortStatusChangeNotification(op, data);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);

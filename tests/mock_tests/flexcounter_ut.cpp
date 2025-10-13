@@ -5,6 +5,9 @@
 #include "json.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "mock_orch_test.h"
+#include "dashorch.h"
+#include "dashmeterorch.h"
 #include "mock_table.h"
 #include "notifier.h"
 #define private public
@@ -41,6 +44,7 @@ namespace flexcounter_test
         mockOldSaiSetSwitchAttribute = old;
     }
 
+    uint32_t mockFlexCounterOperationCallCount;
     sai_status_t mockFlexCounterOperation(sai_object_id_t objectId, const sai_attribute_t *attr)
     {
         if (objectId != gSwitchId)
@@ -51,22 +55,41 @@ namespace flexcounter_test
         auto *param = reinterpret_cast<sai_redis_flex_counter_parameter_t*>(attr->value.ptr);
         std::vector<swss::FieldValueTuple> entries;
         auto serializedObjectId = sai_serialize_object_id(objectId);
-        std::string key((const char*)param->counter_key.list);
+        auto keys = tokenize(string((const char*)param->counter_key.list), ',');
+        bool first = true;
+        string groupName;
+        string key;
 
-        if (param->stats_mode.list != nullptr)
+        for(auto key : keys)
         {
-            entries.push_back({STATS_MODE_FIELD, (const char*)param->stats_mode.list});
+            if (first)
+            {
+                groupName = tokenize(key, ':')[0];
+                first = false;
+            }
+            else
+            {
+                key = groupName + ":" + key;
+            }
+
+            if (param->stats_mode.list != nullptr)
+            {
+                entries.push_back({STATS_MODE_FIELD, (const char*)param->stats_mode.list});
+            }
+
+            if (param->counter_ids.list != nullptr)
+            {
+                entries.push_back({(const char*)param->counter_field_name.list, (const char*)param->counter_ids.list});
+                mockFlexCounterTable->set(key, entries);
+                entries.clear();
+            }
+            else
+            {
+                mockFlexCounterTable->del(key);
+            }
         }
 
-        if (param->counter_ids.list != nullptr)
-        {
-            entries.push_back({(const char*)param->counter_field_name.list, (const char*)param->counter_ids.list});
-            mockFlexCounterTable->set(key, entries);
-        }
-        else
-        {
-            mockFlexCounterTable->del(key);
-        }
+        mockFlexCounterOperationCallCount++;
 
         return SAI_STATUS_SUCCESS;
     }
@@ -109,6 +132,10 @@ namespace flexcounter_test
         }
         else
         {
+            if (flexCounterGroupParam->bulk_chunk_size.list != nullptr || flexCounterGroupParam->bulk_chunk_size_per_prefix.list != nullptr)
+            {
+                return SAI_STATUS_SUCCESS;
+            }
             mockFlexCounterGroupTable->del(key);
         }
 
@@ -121,6 +148,14 @@ namespace flexcounter_test
 
         if (table->get(key, fieldValues))
         {
+            if (entries.size() == 1 && fieldValues.size() == 1 && fvField(entries[0]).find("COUNTER_ID_LIST") != std::string::npos)
+            {
+                auto counterIds = tokenize(fvValue(entries[0]), ',');
+                auto expectedCounterIds = tokenize(fvValue(fieldValues[0]), ',');
+                set<string> counterIdSet(counterIds.begin(), counterIds.end());
+                set<string> expectedCounterSet(expectedCounterIds.begin(), expectedCounterIds.end());
+                return (counterIdSet == expectedCounterSet);
+            }
             set<FieldValueTuple> fvSet(fieldValues.begin(), fieldValues.end());
             set<FieldValueTuple> expectedSet(entries.begin(), entries.end());
 
@@ -182,6 +217,31 @@ namespace flexcounter_test
         return _checkFlexCounterTableContent(mockFlexCounterTable, group + ":" + sai_serialize_object_id(oid), entries);
     }
 
+    void isNoPendingCounterObjects()
+    {
+        std::vector<FlexCounterTaggedCachedManager<sai_queue_type_t>*> queueCounterManagers({
+                &gPortsOrch->queue_stat_manager,
+                &gPortsOrch->queue_watermark_manager
+            });
+        std::vector<FlexCounterTaggedCachedManager<void>*> pgCounterManagers({
+                &gPortsOrch->pg_drop_stat_manager,
+                &gPortsOrch->pg_watermark_manager
+            });
+
+        for (auto pgCounterManager : pgCounterManagers)
+        {
+            ASSERT_TRUE(pgCounterManager->cached_objects.pending_sai_objects.empty());
+        }
+
+        for (auto queueCounterManager : queueCounterManagers)
+        {
+            for (auto it : queueCounterManager->cached_objects)
+            {
+                ASSERT_TRUE(it.second.pending_sai_objects.empty());
+            }
+        }
+    }
+
     sai_switch_api_t ut_sai_switch_api;
     sai_switch_api_t *pold_sai_switch_api;
 
@@ -214,7 +274,13 @@ namespace flexcounter_test
         sai_switch_api = pold_sai_switch_api;
     }
 
-    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool>>
+    enum class StartType
+    {
+        Cold,
+        Warm,
+    };
+
+    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, StartType>>
     {
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
@@ -224,6 +290,7 @@ namespace flexcounter_test
         shared_ptr<swss::DBConnector> m_asic_db;
         shared_ptr<swss::DBConnector> m_flex_counter_db;
         bool create_only_config_db_buffers;
+        StartType m_start_type;
 
         FlexCounterTest()
         {
@@ -250,6 +317,8 @@ namespace flexcounter_test
 
             gTraditionalFlexCounter = get<0>(GetParam());
             create_only_config_db_buffers = get<1>(GetParam());
+            m_start_type = get<2>(GetParam());
+
             if (gTraditionalFlexCounter)
             {
                 initFlexCounterTables();
@@ -294,7 +363,19 @@ namespace flexcounter_test
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
+
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = true;
+            }
+
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = false;
+            }
+
             gDirectory.set(flexCounterOrch);
 
             vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
@@ -417,16 +498,24 @@ namespace flexcounter_test
     TEST_P(FlexCounterTest, CounterTest)
     {
         // Check flex counter database after system initialization
+        ASSERT_TRUE(checkFlexCounterGroup(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"}
+                                          }));
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {POLL_INTERVAL_FIELD, QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {QUEUE_PLUGIN_FIELD, ""}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {POLL_INTERVAL_FIELD, PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {PG_PLUGIN_FIELD, ""}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
@@ -440,6 +529,7 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
@@ -536,8 +626,8 @@ namespace flexcounter_test
         ASSERT_TRUE(gPortsOrch->allPortsReady());
 
         // Enable and check counters
-        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_DELAY_STATUS_FIELD, "false"},
-                                                    {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        flexCounterCfg.set("SWITCH", values);
         flexCounterCfg.set("PG_WATERMARK", values);
         flexCounterCfg.set("QUEUE_WATERMARK", values);
         flexCounterCfg.set("QUEUE", values);
@@ -551,6 +641,21 @@ namespace flexcounter_test
         flexCounterOrch->addExistingData(&flexCounterCfg);
         static_cast<Orch *>(flexCounterOrch)->doTask();
 
+        if (m_start_type == StartType::Warm)
+        {
+            // Expire timer
+            flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
+            static_cast<Orch *>(flexCounterOrch)->doTask();
+        }
+
+        isNoPendingCounterObjects();
+
+        ASSERT_TRUE(checkFlexCounterGroup(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"}
+                                          }));
         ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
@@ -604,6 +709,13 @@ namespace flexcounter_test
         Port firstPort;
         gPortsOrch->getPort(firstPortName, firstPort);
         auto pgOid = firstPort.m_priority_group_ids[3];
+        ASSERT_TRUE(checkFlexCounter(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP, gSwitchId,
+                                     {
+                                         {SWITCH_COUNTER_ID_LIST,
+                                          "SAI_SWITCH_STAT_TX_TRIM_PACKETS,"
+                                          "SAI_SWITCH_STAT_DROPPED_TRIM_PACKETS"
+                                         }
+                                     }));
         ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid,
                                      {
                                          {PG_COUNTER_ID_LIST,
@@ -627,6 +739,9 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid,
                                      {
                                          {QUEUE_COUNTER_ID_LIST,
+                                          "SAI_QUEUE_STAT_TX_TRIM_PACKETS,"
+                                          "SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS,"
+                                          "SAI_QUEUE_STAT_TRIM_PACKETS,"
                                           "SAI_QUEUE_STAT_DROPPED_BYTES,SAI_QUEUE_STAT_DROPPED_PACKETS,"
                                           "SAI_QUEUE_STAT_BYTES,SAI_QUEUE_STAT_PACKETS"
                                          }
@@ -783,7 +898,7 @@ namespace flexcounter_test
 
         ASSERT_TRUE(checkFlexCounter(PFC_WD_FLEX_COUNTER_GROUP, firstPort.m_queue_ids[3],
                                      {
-                                         {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_PACKETS,SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES"},
+                                         {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,SAI_QUEUE_STAT_PACKETS"},
                                          {QUEUE_ATTR_ID_LIST, "SAI_QUEUE_ATTR_PAUSE_STATUS"}
                                      }));
 
@@ -811,10 +926,24 @@ namespace flexcounter_test
             entries.clear();
             static_cast<Orch *>(gBufferOrch)->doTask();
 
+            isNoPendingCounterObjects();
+
             ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid));
             ASSERT_TRUE(checkFlexCounter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid));
             ASSERT_TRUE(checkFlexCounter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid));
             ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid));
+
+            if (!gTraditionalFlexCounter)
+            {
+                // Create and remove without flushing counters
+                auto oldMockFlexCounterCallCount = mockFlexCounterOperationCallCount;
+                gPortsOrch->createPortBufferQueueCounters(firstPort, "3");
+                gPortsOrch->removePortBufferQueueCounters(firstPort, "3");
+                gPortsOrch->createPortBufferPgCounters(firstPort, "3");
+                gPortsOrch->removePortBufferPgCounters(firstPort, "3");
+                ASSERT_EQ(oldMockFlexCounterCallCount, mockFlexCounterOperationCallCount);
+                isNoPendingCounterObjects();
+            }
 
             // Remove buffer profiles
             entries.push_back({"ingress_lossless_profile", "DEL", { {} }});
@@ -822,6 +951,47 @@ namespace flexcounter_test
             consumer->addToSync(entries);
             entries.clear();
             static_cast<Orch *>(gBufferOrch)->doTask();
+
+            if (!gTraditionalFlexCounter)
+            {
+                // Verify bulk chunk size fields which can be verified in any combination of parameters.
+                // We verify it here just for convenience.
+                consumer = dynamic_cast<Consumer *>(flexCounterOrch->getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"},
+                            {"BULK_CHUNK_SIZE", "64"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_TRUE(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT") != flexCounterOrch->m_groupsWithBulkChunkSize.end());
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_EQ(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT"), flexCounterOrch->m_groupsWithBulkChunkSize.end());
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"},
+                            {"BULK_CHUNK_SIZE_PER_PREFIX", "SAI_PORT_STAT_IF_OUT_QLEN:0;SAI_PORT_STAT_IF_IN_FEC:32"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_TRUE(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT") != flexCounterOrch->m_groupsWithBulkChunkSize.end());
+
+                entries.push_back({"PORT", "SET", {
+                            {"FLEX_COUNTER_STATUS", "enable"}
+                        }});
+                consumer->addToSync(entries);
+                entries.clear();
+                static_cast<Orch *>(flexCounterOrch)->doTask();
+                ASSERT_EQ(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT"), flexCounterOrch->m_groupsWithBulkChunkSize.end());
+            }
         }
 
         // Remove buffer pools
@@ -831,15 +1001,152 @@ namespace flexcounter_test
         entries.clear();
         static_cast<Orch *>(gBufferOrch)->doTask();
         ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pool_oid));
+
+        // Warm/fast-boot case - no FC processing done before APPLY_VIEW
+        std::vector<std::string> ts;
+
+        gDirectory.get<FlexCounterOrch*>()->bake();
+        gDirectory.get<FlexCounterOrch*>()->dumpPendingTasks(ts);
+
+        ASSERT_TRUE(ts.empty());
     }
 
     INSTANTIATE_TEST_CASE_P(
         FlexCounterTests,
         FlexCounterTest,
         ::testing::Values(
-            std::make_tuple(false, true),
-            std::make_tuple(false, false),
-            std::make_tuple(true, true),
-            std::make_tuple(true, false))
+            std::make_tuple(false, true, StartType::Cold),
+            std::make_tuple(false, false, StartType::Cold),
+            std::make_tuple(true, true, StartType::Cold),
+            std::make_tuple(true, false, StartType::Cold),
+            std::make_tuple(false, true, StartType::Warm),
+            std::make_tuple(false, false, StartType::Warm),
+            std::make_tuple(true, true, StartType::Warm),
+            std::make_tuple(true, false, StartType::Warm))
     );
+
+    using namespace mock_orch_test;
+    class StandaloneFCTest : public MockOrchTest
+    {
+        virtual void PostSetUp() {
+            _hook_sai_switch_api();
+        }
+
+        virtual void PreTearDown() {
+           _unhook_sai_switch_api();
+        }
+    };
+
+    TEST_F(StandaloneFCTest, TestEniStatusUpdate)
+    {
+        /* Add a mock ENI */
+        EniEntry tmp_entry;
+        tmp_entry.eni_id = 0x7008000000020;
+        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7b"] = tmp_entry;
+
+        /* Should create ENI Counter stats for existing ENI's */
+        m_DashOrch->handleFCStatusUpdate(true);
+        m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
+        ASSERT_TRUE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+
+        /* This should delete the STATS */
+        m_DashOrch->handleFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestCaching)
+    {
+        mockFlexCounterOperationCallCount = 0;
+
+        /* Disable traditional FC since caching is only used for FC config through SAIREDIS channel */
+        gTraditionalFlexCounter = false;
+        FlexCounterTaggedCachedManager<void> port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, 1000, false);
+
+        // Create two port OIDs
+        sai_object_id_t port1_oid = 0x100000000000d;
+        sai_object_id_t port2_oid = 0x100000000000e;
+        sai_object_id_t port3_oid = 0x100000000000f;
+        sai_object_id_t port4_oid = 0x1000000000010;
+        // Different counter stats for each port
+        std::unordered_set<string> type1_stats = {
+            "SAI_PORT_STAT_IF_IN_OCTETS",
+            "SAI_PORT_STAT_IF_IN_ERRORS"
+        };
+        std::unordered_set<string> type2_stats = {
+            "SAI_PORT_STAT_IF_OUT_OCTETS",
+            "SAI_PORT_STAT_IF_OUT_ERRORS"
+        };
+
+        // Set counter IDs for both ports
+        port_stat_manager.setCounterIdList(port1_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port2_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port3_oid, CounterType::PORT, type2_stats);
+        port_stat_manager.setCounterIdList(port4_oid, CounterType::PORT, type1_stats);
+
+        // Flush the counters
+        port_stat_manager.flush();
+
+        /* SAIREDIS channel should have been called thrice, once for port1&port2,port3,port4 */
+        ASSERT_EQ(mockFlexCounterOperationCallCount, 3);
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port1_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port2_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port3_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_OUT_OCTETS,"
+                                          "SAI_PORT_STAT_IF_OUT_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port4_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+    }
+
+    class MeterStatFlexCounterTest : public MockOrchTest
+    {
+        virtual void PostSetUp() {
+            _hook_sai_switch_api();
+        }
+
+        virtual void PreTearDown() {
+           _unhook_sai_switch_api();
+        }
+    };
+
+    TEST_F(MeterStatFlexCounterTest, TestStatusUpdate)
+    {
+        /* Add a mock ENI */
+        EniEntry tmp_entry;
+        tmp_entry.eni_id = 0x7008000000021;
+        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
+
+        /* Should create Meter Counter stats for existing ENI's */
+        m_DashMeterOrch->handleMeterFCStatusUpdate(true);
+        m_DashMeterOrch->doTask(*(m_DashMeterOrch->m_meter_fc_update_timer));
+        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+
+        /* This should delete the STATS */
+        m_DashMeterOrch->handleMeterFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+    }
 }

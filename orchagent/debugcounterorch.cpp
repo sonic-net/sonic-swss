@@ -37,6 +37,26 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_
     publishDropCounterCapabilities();
 
     gPortsOrch->attach(this);
+
+    // Add drop monitor lua script
+    string dropMonitorPluginName = "drop_monitor.lua";
+    string dropMonitorSha;
+
+    try
+    {
+        string dropMonitorLuaScript = swss::loadLuaScript(dropMonitorPluginName);
+        dropMonitorSha = swss::loadRedisScript(m_countersDb.get(), dropMonitorLuaScript);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Drop monitor flex counter group was not set successfully: %s", e.what());
+    }
+
+    setFlexCounterGroupParameter(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP,
+                             DEBUG_DROP_MONITOR_FLEX_COUNTER_POLLING_INTERVAL_MS,
+                             STATS_MODE_READ,
+                             PORT_PLUGIN_FIELD,
+                             dropMonitorSha);
 }
 
 DebugCounterOrch::~DebugCounterOrch(void)
@@ -193,6 +213,70 @@ void DebugCounterOrch::doTask(Consumer& consumer)
                 SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
             }
         }
+        else if (table_name == "DEBUG_DROP_MONITOR")
+        {
+            if (op == SET_COMMAND)
+            {
+                if (key == "CONFIG")
+                {
+                    for (const auto& value : values)
+                    {
+                        string config_name = value.first;
+                        string config_value = value.second;
+
+                        // Check the status of the drop counter monitor feature
+                        try
+                        {
+                            if (config_name == "status")
+                            {
+                                if (config_value == "enabled")
+                                {
+                                    debug_monitor_enabled = true;
+                                    string monitored_debug_counter_stat = counterIdsToStr(portDebugMonitorStatIds);
+                                    SWSS_LOG_DEBUG("Enabling debug drop monitor: %s", monitored_debug_counter_stat.c_str());
+                                    setFlexCounterGroupOperation(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP, "enable");
+                                    for (auto const &curr : gPortsOrch->getAllPorts())
+                                    {
+                                        string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
+                                        startFlexCounterPolling(gSwitchId, key, monitored_debug_counter_stat, PORT_COUNTER_ID_LIST);
+                                    }
+                                }
+                                else if (config_value == "disabled")
+                                {
+                                    debug_monitor_enabled = false;
+                                    SWSS_LOG_DEBUG("Disabling debug drop monitor");
+                                    setFlexCounterGroupOperation(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP, "disable");
+                                    for (auto const &curr : gPortsOrch->getAllPorts())
+                                    {
+                                        string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
+                                        stopFlexCounterPolling(gSwitchId, key);
+                                    }
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("The status of drop counter monitor was not recognized: %s. Accepted values are enabled/disabled.", config_value.c_str());
+                                    task_status = task_process_status::task_failed;
+                                }
+                            }
+                            else
+                            {
+                                SWSS_LOG_ERROR("Config for drop counter monitor was not recognized: %s. Accepted values are status.", config_value.c_str());
+                                task_status = task_process_status::task_failed;
+                            }
+                        }
+                        catch(const std::runtime_error& e)
+                        {
+                            SWSS_LOG_ERROR("Encountered an error when updating DEBUG_DROP_MONITOR. config_name: %s, config_value: %s", config_name.c_str(), config_value.c_str());
+                            task_status = task_process_status::task_failed;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            }
+        }
         else
         {
             SWSS_LOG_ERROR("Received update from unknown table '%s'", table_name.c_str());
@@ -227,7 +311,7 @@ void DebugCounterOrch::doTask(Consumer& consumer)
 
 // publishDropCounterCapabilities queries the SAI for available drop counter
 // capabilities on this device and publishes the information to the
-// DROP_COUNTER_CAPABILITIES table in STATE_DB.
+// DEBUG_COUNTER_CAPABILITIES table in STATE_DB.
 void DebugCounterOrch::publishDropCounterCapabilities()
 {
     supported_ingress_drop_reasons = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST);
@@ -336,7 +420,7 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
     string counter_type = counter->getCounterType();
     string counter_stat = counter->getDebugCounterSAIStat();
 
-    uninstallDebugFlexCounters(counter_type, counter_stat);
+    uninstallDebugFlexCounters(counter_type, counter_stat, SAI_NULL_OBJECT_ID, counter_name);
 
     if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
     {
@@ -531,6 +615,11 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
 
+    // Track the new counter_stat in debug drop monitor
+    portDebugMonitorStatIds.insert(counter_stat);
+    string monitored_debug_counter_stat = counterIdsToStr(portDebugMonitorStatIds);
+    SWSS_LOG_DEBUG("Added %s to: %s", counter_stat.c_str(), monitored_debug_counter_stat.c_str());
+
     if (flex_counter_type == CounterType::SWITCH_DEBUG)
     {
         flex_counter_manager.addFlexCounterStat(gSwitchId, flex_counter_type, counter_stat);
@@ -556,16 +645,33 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
                     curr.second.m_port_id,
                     flex_counter_type,
                     counter_stat);
+
+            if (debug_monitor_enabled)
+            {
+                string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
+                stopFlexCounterPolling(gSwitchId, key);
+                startFlexCounterPolling(gSwitchId, key, monitored_debug_counter_stat, PORT_COUNTER_ID_LIST);
+            }
         }
     }
 }
 
 void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
                                                   const string& counter_stat,
-                                                  sai_object_id_t port_id)
+                                                  sai_object_id_t port_id,
+                                                  const string& counter_name)
 {
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
+
+    // Remove the counter_stat from being tracked in debug drop monitor
+    auto counter_stat_iter = portDebugMonitorStatIds.find(counter_stat);
+    portDebugMonitorStatIds.erase(counter_stat_iter);
+    string monitored_debug_counter_stat = counterIdsToStr(portDebugMonitorStatIds);
+    SWSS_LOG_DEBUG("Removed %s from: %s", counter_stat.c_str(), monitored_debug_counter_stat.c_str());
+
+    // Make a vector of keys to delete from COUNTERS_DB, these keys are used by drop counter monitor
+    std::vector<std::string> debug_drop_monitor_stats_fields;
 
     if (flex_counter_type == CounterType::SWITCH_DEBUG)
     {
@@ -575,6 +681,10 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
     {
         for (auto const &curr : gPortsOrch->getAllPorts())
         {
+            // Remove debug counter stat from being tracked by drop counter monitor
+            string key = string(DEBUG_COUNTER_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
+            stopFlexCounterPolling(gSwitchId, key);
+
             if (port_id != SAI_NULL_OBJECT_ID)
             {
                 if (curr.second.m_port_id != port_id)
@@ -592,8 +702,20 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
                 curr.second.m_port_id,
                 flex_counter_type,
                 counter_stat);
+
+            debug_drop_monitor_stats_fields.push_back("DEBUG_DROP_MONITOR_STATS|" + counter_name + "|" + curr.first);
+
+            if (debug_monitor_enabled)
+            {
+                string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
+                stopFlexCounterPolling(gSwitchId, key);
+                startFlexCounterPolling(gSwitchId, key, monitored_debug_counter_stat, PORT_COUNTER_ID_LIST);
+            }
         }
     }
+
+    // Delete DEBUG_DROP_MONITOR_STATS for this debug counter
+    m_countersDb->del(debug_drop_monitor_stats_fields);
 }
 
 // Debug Counter Initialization Helper Functions START HERE ----------------------------------------
@@ -657,6 +779,11 @@ void DebugCounterOrch::createDropCounter(const string& counter_name, const strin
     }
 }
 
+bool DebugCounterOrch::getDebugMonitorStatus()
+{
+    return debug_monitor_enabled;
+}
+
 // Debug Counter Configuration Helper Functions START HERE -----------------------------------------
 
 // parseDropReasonUpdate takes a key from CONFIG_DB and returns the 1) the counter name being targeted and
@@ -684,5 +811,21 @@ bool DebugCounterOrch::isDropReasonValid(const string& drop_reason) const
     return true;
 }
 
+string DebugCounterOrch::counterIdsToStr(const std::unordered_set<string>& ids) const
+{
+    SWSS_LOG_ENTER();
+    string str;
 
+    for (const auto& i: ids)
+    {
+        str += i + ",";
+    }
 
+    // Remove trailing ','
+    if (!str.empty())
+    {
+        str.pop_back();
+    }
+
+    return str;
+}

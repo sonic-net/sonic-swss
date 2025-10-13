@@ -1,5 +1,6 @@
 """Utilities for interacting with HASH objects when writing VS tests."""
 from typing import Dict, List
+import time
 
 
 class DVSHash:
@@ -21,6 +22,7 @@ class DVSHash:
     ) -> None:
         """Update switch hash global in Config DB."""
         self.config_db.update_entry(self.CDB_SWITCH_HASH, self.KEY_SWITCH_HASH_GLOBAL, qualifiers)
+        time.sleep(1)
 
     def get_hash_ids(
         self,

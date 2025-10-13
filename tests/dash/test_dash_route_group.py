@@ -15,7 +15,10 @@ from swsscommon.swsscommon import (
     APP_DASH_ROUTE_GROUP_TABLE_NAME,
 )
 
-@pytest.fixture(scope='module', autouse=True)
+DVS_ENV = ["HWSKU=DPU-2P"]
+NUM_PORTS = 2
+
+@pytest.fixture(autouse=True)
 def common_setup_teardown(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID, APPLIANCE_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK, ROUTING_TYPE_PL_CONFIG)
@@ -37,6 +40,7 @@ def common_setup_teardown(dash_db: DashDB):
     dash_db.remove_app_db_entry(APP_DASH_ROUTING_TYPE_TABLE_NAME, PRIVATELINK)
     dash_db.remove_app_db_entry(APP_DASH_APPLIANCE_TABLE_NAME, APPLIANCE_ID)
 
+
 def test_rebind_eni_route_group(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP1_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP1, OUTBOUND_ROUTE_PREFIX1, ROUTE_VNET_CONFIG)
@@ -44,7 +48,11 @@ def test_rebind_eni_route_group(dash_db: DashDB):
 
     dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP2, ROUTE_GROUP2_CONFIG)
     dash_db.set_app_db_entry(APP_DASH_ROUTE_TABLE_NAME, ROUTE_GROUP2, OUTBOUND_ROUTE_PREFIX1, ROUTE_VNET_CONFIG_UNDERLAY_SIP)
-    rg2_oid = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP", min_keys=2)[1]
+    oids = dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP", min_keys=2)
+    for oid in oids:
+        if oid != rg1_oid:
+            rg2_oid = oid
+            break
 
     dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
 
@@ -53,6 +61,7 @@ def test_rebind_eni_route_group(dash_db: DashDB):
 
     dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP2_CONFIG)
     dash_db.wait_for_asic_db_field("ASIC_STATE:SAI_OBJECT_TYPE_ENI", eni_key, SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID, rg2_oid)
+
 
 def test_duplicate_eni_route_group(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP1_CONFIG)
@@ -67,6 +76,8 @@ def test_duplicate_eni_route_group(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ENI_ROUTE_TABLE_NAME, ENI_ID, ENI_ROUTE_GROUP1_CONFIG)
     dash_db.wait_for_asic_db_field("ASIC_STATE:SAI_OBJECT_TYPE_ENI", eni_key, SAI_ENI_ATTR_OUTBOUND_ROUTING_GROUP_ID, rg1_oid)
 
+
+@pytest.mark.skip(reason="Test will crash orchagent until VS SAI is updated with implicit deletion for DASH objects")
 def test_bound_route_group_immutable(dash_db: DashDB):
     dash_db.set_app_db_entry(APP_DASH_ROUTE_GROUP_TABLE_NAME, ROUTE_GROUP1, ROUTE_GROUP1_CONFIG)
     num_route_groups = len(dash_db.wait_for_asic_db_keys("ASIC_STATE:SAI_OBJECT_TYPE_OUTBOUND_ROUTING_GROUP"))

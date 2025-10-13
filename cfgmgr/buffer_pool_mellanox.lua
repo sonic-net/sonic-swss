@@ -69,7 +69,9 @@ local function iterate_all_items(all_items, check_lossless)
             if string.len(range) == 1 then
                 size = 1
             else
-                size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
+                -- Extract start and end numbers from the range (e.g., "8-15")
+                local start_num, end_num = string.match(range, "(%d+)-(%d+)")
+                size = tonumber(end_num) - tonumber(start_num) + 1
             end
             profiles[profile_name] = profile_ref_count + size
             if port_set_8lanes[port] and ingress_profile_is_lossless[profile_name] == false then
@@ -166,7 +168,11 @@ local function fetch_buffer_pool_size_from_appldb(shp_enabled)
                 -- In case the orchagent starts handling buffer configuration between 2 and 3,
                 -- It is inconsistent between buffer pools and profiles, which fails Mellanox SAI sanity check
                 -- To avoid it, it indicates the shared headroom pool is enabled by setting a very small buffer pool and shared headroom pool sizes
-                table.insert(result, buffer_pools[i] .. ':2048:1024')
+                if size == "0" then
+                    table.insert(result, buffer_pools[i] .. ':2048:1024')
+                else
+                    table.insert(result, buffer_pools[i] .. ":" .. size .. ':1024')
+                end
             else
                 table.insert(result, buffer_pools[i] .. ':' .. size)
             end

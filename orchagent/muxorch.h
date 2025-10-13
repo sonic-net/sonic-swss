@@ -94,6 +94,7 @@ public:
     sai_object_id_t getNextHopId(const NextHopKey);
     MuxNeighbor getNeighbors() const { return neighbors_; };
     string getAlias() const { return alias_; };
+    void clearBulkers() { gRouteBulker.clear(); };
 
 private:
     bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
@@ -130,6 +131,7 @@ public:
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
     void updateRoutes();
+    void updateRoutesForNextHop(NextHopKey nh);
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
@@ -173,6 +175,7 @@ const request_description_t mux_cfg_request_description = {
                 { "soc_ipv4", REQ_T_IP_PREFIX },
                 { "soc_ipv6", REQ_T_IP_PREFIX },
                 { "cable_type", REQ_T_STRING },
+                { "prober_type", REQ_T_STRING },
             },
             { }
 };
@@ -233,9 +236,20 @@ public:
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
+    sai_object_id_t getTunnelNextHopId();
 
-    void updateRoute(const IpPrefix &pfx, bool add);
+    void updateRoute(const IpPrefix &pfx);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
+
+    void enableCachingNeighborUpdate()
+    {
+        enable_cache_neigh_updates_ = true;
+    }
+    void disableCachingNeighborUpdate()
+    {
+        enable_cache_neigh_updates_ = false;
+    }
+    void updateCachedNeighbors();
 
 private:
     virtual bool addOperation(const Request& request);
@@ -285,6 +299,9 @@ private:
     MuxCfgRequest request_;
     std::set<IpAddress> standalone_tunnel_neighbors_;
     std::set<IpAddress> skip_neighbors_;
+
+    bool enable_cache_neigh_updates_ = false;
+    std::vector<NeighborUpdate> cached_neigh_updates_;
 };
 
 const request_description_t mux_cable_request_description = {

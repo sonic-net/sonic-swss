@@ -43,6 +43,11 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
 
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
+    if (h->nlmsg_type == RTM_NEWSRV6LOCALSID || h->nlmsg_type == RTM_DELSRV6LOCALSID)
+    {
+        return true;
+    }
+
     if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
     {
         return false;
@@ -274,6 +279,11 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
         if (isRaw)
         {
             /* EVPN Type5 Add route processing */
+            processRawMsg(nl_hdr);
+        }
+	else if(nl_hdr->nlmsg_type == RTM_NEWNEXTHOP || nl_hdr->nlmsg_type == RTM_DELNEXTHOP)
+        {
+            /* rtnl api dont support RTM_NEWNEXTHOP/RTM_DELNEXTHOP yet. Processing as raw message*/
             processRawMsg(nl_hdr);
         }
         else

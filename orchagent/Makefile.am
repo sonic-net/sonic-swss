@@ -8,21 +8,20 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I pbh \
            -I nhg
 
-if GCOV_ENABLED
 SUBDIRS = p4orch/tests
-endif
 
 CFLAGS_SAI = -I /usr/include/sai
 
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 nvda_port_trim_drop.lua \
 		 eliminate_events.lua \
 		 rif_rates.lua \
-		 pfc_detect_innovium.lua  \
+		 pfc_detect_marvell_teralynx.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
-		 pfc_detect_marvell.lua \
+		 pfc_detect_marvell_prestera.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
@@ -30,6 +29,7 @@ dist_swss_DATA = \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
 		 port_rates.lua \
+		 drop_monitor.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
 		 watermark_bufferpool.lua \
@@ -50,6 +50,7 @@ orchagent_SOURCES = \
             $(top_srcdir)/lib/gearboxutils.cpp \
             $(top_srcdir)/lib/subintf.cpp \
             $(top_srcdir)/lib/recorder.cpp \
+            $(top_srcdir)/lib/orch_zmq_config.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
@@ -69,6 +70,7 @@ orchagent_SOURCES = \
             copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
+            buffer/bufferhelper.cpp \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
@@ -82,6 +84,8 @@ orchagent_SOURCES = \
             saiattr.cpp \
             switch/switch_capabilities.cpp \
             switch/switch_helper.cpp \
+            switch/trimming/capabilities.cpp \
+            switch/trimming/helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
             pfcactionhandler.cpp \
@@ -90,6 +94,7 @@ orchagent_SOURCES = \
             vrforch.cpp \
             countercheckorch.cpp \
             vxlanorch.cpp \
+            tunneltermhelper.cpp \
             vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
@@ -105,18 +110,32 @@ orchagent_SOURCES = \
             macsecorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
+            icmporch.cpp \
             srv6orch.cpp \
             response_publisher.cpp \
             nvgreorch.cpp \
             zmqorch.cpp \
+            dash/dashenifwdorch.cpp \
+            dash/dashenifwdinfo.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
             dash/dashaclorch.cpp \
             dash/dashaclgroupmgr.cpp \
+            dash/dashmeterorch.cpp \
             dash/dashtagmgr.cpp \
+            dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
-            twamporch.cpp
+            dash/dashhaorch.cpp \
+            dash/dashportmaporch.cpp \
+            twamporch.cpp \
+            stporch.cpp \
+            nexthopkey.cpp \
+            high_frequency_telemetry/hftelorch.cpp \
+            high_frequency_telemetry/hftelprofile.cpp \
+            high_frequency_telemetry/counternameupdater.cpp \
+            high_frequency_telemetry/hftelutils.cpp \
+            high_frequency_telemetry/hftelgroup.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
@@ -139,9 +158,10 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi
+orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
 
-routeresync_SOURCES = routeresync.cpp
+routeresync_SOURCES = routeresync.cpp \
+             $(top_srcdir)/lib/orch_zmq_config.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 routeresync_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 routeresync_LDADD = $(LDFLAGS_ASAN) -lswsscommon

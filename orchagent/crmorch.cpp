@@ -16,14 +16,14 @@
 #define CRM_EXCEEDED_MSG_MAX 10
 #define CRM_ACL_RESOURCE_COUNT 256
 
+using namespace std;
+using namespace swss;
+
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
 extern event_handle_t g_events_handle;
-
-using namespace std;
-using namespace swss;
-
+extern string gMySwitchType;
 
 const map<CrmResourceType, string> crmResTypeNameMap =
 {
@@ -64,6 +64,10 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, "DASH_IPV6_ACL_GROUP" },
     { CrmResourceType::CRM_DASH_IPV4_ACL_RULE, "DASH_IPV4_ACL_RULE" },
     { CrmResourceType::CRM_DASH_IPV6_ACL_RULE, "DASH_IPV6_ACL_RULE" },
+    { CrmResourceType::CRM_DASH_IPV4_METER_POLICY, "DASH_IPV4_METER_POLICY" },
+    { CrmResourceType::CRM_DASH_IPV4_METER_RULE, "DASH_IPV4_METER_RULE" },
+    { CrmResourceType::CRM_DASH_IPV6_METER_POLICY, "DASH_IPV6_METER_POLICY" },
+    { CrmResourceType::CRM_DASH_IPV6_METER_RULE, "DASH_IPV6_METER_RULE" },
     { CrmResourceType::CRM_TWAMP_ENTRY, "TWAMP_ENTRY" }
 };
 
@@ -127,6 +131,10 @@ const map<CrmResourceType, sai_object_type_t> crmResSaiObjAttrMap =
     { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_GROUP },
     { CrmResourceType::CRM_DASH_IPV4_ACL_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_RULE },
     { CrmResourceType::CRM_DASH_IPV6_ACL_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_RULE },
+    { CrmResourceType::CRM_DASH_IPV4_METER_POLICY, (sai_object_type_t)SAI_OBJECT_TYPE_METER_POLICY },
+    { CrmResourceType::CRM_DASH_IPV6_METER_POLICY, (sai_object_type_t)SAI_OBJECT_TYPE_METER_POLICY },
+    { CrmResourceType::CRM_DASH_IPV4_METER_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_METER_RULE },
+    { CrmResourceType::CRM_DASH_IPV6_METER_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_METER_RULE },
     { CrmResourceType::CRM_TWAMP_ENTRY, SAI_OBJECT_TYPE_NULL }
 };
 
@@ -189,6 +197,10 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "dash_ipv6_acl_group_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "dash_ipv6_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "dash_ipv4_meter_policy_threshold_type", CrmResourceType::CRM_DASH_IPV4_METER_POLICY },
+    { "dash_ipv6_meter_policy_threshold_type", CrmResourceType::CRM_DASH_IPV6_METER_POLICY },
+    { "dash_ipv4_meter_rule_threshold_type", CrmResourceType::CRM_DASH_IPV4_METER_RULE },
+    { "dash_ipv6_meter_rule_threshold_type", CrmResourceType::CRM_DASH_IPV6_METER_RULE },
     { "twamp_entry_threshold_type", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
@@ -231,6 +243,10 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     { "dash_ipv6_acl_group_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "dash_ipv6_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "dash_ipv4_meter_policy_low_threshold", CrmResourceType::CRM_DASH_IPV4_METER_POLICY },
+    { "dash_ipv6_meter_policy_low_threshold", CrmResourceType::CRM_DASH_IPV6_METER_POLICY },
+    { "dash_ipv4_meter_rule_low_threshold", CrmResourceType::CRM_DASH_IPV4_METER_RULE },
+    { "dash_ipv6_meter_rule_low_threshold", CrmResourceType::CRM_DASH_IPV6_METER_RULE },
     { "twamp_entry_low_threshold", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
@@ -273,6 +289,10 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     { "dash_ipv6_acl_group_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "dash_ipv4_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "dash_ipv6_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "dash_ipv4_meter_policy_high_threshold", CrmResourceType::CRM_DASH_IPV4_METER_POLICY },
+    { "dash_ipv6_meter_policy_high_threshold", CrmResourceType::CRM_DASH_IPV6_METER_POLICY },
+    { "dash_ipv4_meter_rule_high_threshold", CrmResourceType::CRM_DASH_IPV4_METER_RULE },
+    { "dash_ipv6_meter_rule_high_threshold", CrmResourceType::CRM_DASH_IPV6_METER_RULE },
     { "twamp_entry_high_threshold", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
@@ -322,6 +342,10 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_dash_ipv6_acl_group_available", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "crm_stats_dash_ipv4_acl_rule_available", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "crm_stats_dash_ipv6_acl_rule_available", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "crm_stats_dash_ipv4_meter_policy_available", CrmResourceType::CRM_DASH_IPV4_METER_POLICY },
+    { "crm_stats_dash_ipv6_meter_policy_available", CrmResourceType::CRM_DASH_IPV6_METER_POLICY },
+    { "crm_stats_dash_ipv4_meter_rule_available", CrmResourceType::CRM_DASH_IPV4_METER_RULE },
+    { "crm_stats_dash_ipv6_meter_rule_available", CrmResourceType::CRM_DASH_IPV6_METER_RULE },
     { "crm_stats_twamp_entry_available", CrmResourceType::CRM_TWAMP_ENTRY }
 };
 
@@ -364,6 +388,10 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_dash_ipv6_acl_group_used", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
     { "crm_stats_dash_ipv4_acl_rule_used", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
     { "crm_stats_dash_ipv6_acl_rule_used", CrmResourceType::CRM_DASH_IPV6_ACL_RULE },
+    { "crm_stats_dash_ipv4_meter_policy_used", CrmResourceType::CRM_DASH_IPV4_METER_POLICY },
+    { "crm_stats_dash_ipv6_meter_policy_used", CrmResourceType::CRM_DASH_IPV6_METER_POLICY },
+    { "crm_stats_dash_ipv4_meter_rule_used", CrmResourceType::CRM_DASH_IPV4_METER_RULE },
+    { "crm_stats_dash_ipv6_meter_rule_used", CrmResourceType::CRM_DASH_IPV6_METER_RULE },
     { "crm_stats_twamp_entry_used", CrmResourceType::CRM_TWAMP_ENTRY },
 };
 
@@ -808,6 +836,12 @@ bool CrmOrch::getResAvailability(CrmResourceType type, CrmResourceEntry &res)
 
 bool CrmOrch::getDashAclGroupResAvailability(CrmResourceType type, CrmResourceEntry &res)
 {
+    if (gMySwitchType != "dpu")
+    {
+        res.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+        return false;
+    }
+
     sai_object_type_t objType = crmResSaiObjAttrMap.at(type);
 
     for (auto &cnt : res.countersMap)
@@ -872,6 +906,12 @@ void CrmOrch::getResAvailableCounters()
             case CrmResourceType::CRM_SRV6_MY_SID_ENTRY:
             case CrmResourceType::CRM_MPLS_NEXTHOP:
             case CrmResourceType::CRM_SRV6_NEXTHOP:
+            case CrmResourceType::CRM_TWAMP_ENTRY:
+            {
+                getResAvailability(res.first, res.second);
+                break;
+            }
+
             case CrmResourceType::CRM_DASH_VNET:
             case CrmResourceType::CRM_DASH_ENI:
             case CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP:
@@ -879,14 +919,23 @@ void CrmOrch::getResAvailableCounters()
             case CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING:
             case CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING:
             case CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING:
+            case CrmResourceType::CRM_DASH_IPV4_METER_POLICY:
+            case CrmResourceType::CRM_DASH_IPV6_METER_POLICY:
+            case CrmResourceType::CRM_DASH_IPV4_METER_RULE:
+            case CrmResourceType::CRM_DASH_IPV6_METER_RULE:
             case CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION:
             case CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION:
             case CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA:
             case CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA:
             case CrmResourceType::CRM_DASH_IPV4_ACL_GROUP:
             case CrmResourceType::CRM_DASH_IPV6_ACL_GROUP:
-            case CrmResourceType::CRM_TWAMP_ENTRY:
             {
+                if (gMySwitchType != "dpu")
+                {
+                    res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                    break;
+                }
+
                 getResAvailability(res.first, res.second);
                 break;
             }

@@ -8,1222 +8,7 @@ import pytest
 from swsscommon import swsscommon
 from pprint import pprint
 from dvslib.dvs_common import wait_for_result
-
-
-def create_entry(tbl, key, pairs):
-    fvs = swsscommon.FieldValuePairs(pairs)
-    tbl.set(key, fvs)
-    time.sleep(1)
-
-
-def create_entry_tbl(db, table, separator, key, pairs):
-    tbl = swsscommon.Table(db, table)
-    create_entry(tbl, key, pairs)
-
-
-def create_entry_pst(db, table, separator, key, pairs):
-    tbl = swsscommon.ProducerStateTable(db, table)
-    create_entry(tbl, key, pairs)
-
-
-def delete_entry_tbl(db, table, key):
-    tbl = swsscommon.Table(db, table)
-    tbl._del(key)
-    time.sleep(1)
-
-
-def delete_entry_pst(db, table, key):
-    tbl = swsscommon.ProducerStateTable(db, table)
-    tbl._del(key)
-    time.sleep(1)
-
-
-def how_many_entries_exist(db, table):
-    tbl =  swsscommon.Table(db, table)
-    return len(tbl.getKeys())
-
-
-def entries(db, table):
-    tbl =  swsscommon.Table(db, table)
-    return set(tbl.getKeys())
-
-
-def get_exist_entries(dvs, table):
-    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    tbl =  swsscommon.Table(db, table)
-    return set(tbl.getKeys())
-
-
-def get_created_entry(db, table, existed_entries):
-    tbl =  swsscommon.Table(db, table)
-    entries = set(tbl.getKeys())
-    new_entries = list(entries - existed_entries)
-    assert len(new_entries) == 1, "Wrong number of created entries."
-    return new_entries[0]
-
-
-def get_all_created_entries(db, table, existed_entries):
-    tbl =  swsscommon.Table(db, table)
-    entries = set(tbl.getKeys())
-    new_entries = list(entries - set(existed_entries))
-    assert len(new_entries) >= 0, "Get all could be no new created entries."
-    new_entries.sort()
-    return new_entries
-
-
-def get_created_entries(db, table, existed_entries, count):
-    new_entries = get_all_created_entries(db, table, existed_entries)
-    assert len(new_entries) == count, "Wrong number of created entries."
-    return new_entries
-
-
-def get_deleted_entries(db, table, existed_entries, count):
-    tbl =  swsscommon.Table(db, table)
-    entries = set(tbl.getKeys())
-    old_entries = list(existed_entries - entries)
-    assert len(old_entries) == count, "Wrong number of deleted entries."
-    old_entries.sort()
-    return old_entries
-
-
-def get_default_vr_id(dvs):
-    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    table = 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER'
-    tbl =  swsscommon.Table(db, table)
-    keys = tbl.getKeys()
-    assert len(keys) == 1, "Wrong number of virtual routers found"
-
-    return keys[0]
-
-
-def check_object(db, table, key, expected_attributes):
-    tbl =  swsscommon.Table(db, table)
-    keys = tbl.getKeys()
-    assert key in keys, "The desired key is not presented"
-
-    status, fvs = tbl.get(key)
-    assert status, "Got an error when get a key"
-
-    assert len(fvs) >= len(expected_attributes), "Incorrect attributes"
-
-    attr_keys = {entry[0] for entry in fvs}
-
-    for name, value in fvs:
-        if name in expected_attributes:
-            assert expected_attributes[name] == value, "Wrong value %s for the attribute %s = %s" % \
-                                               (value, name, expected_attributes[name])
-
-def check_deleted_object(db, table, key):
-    tbl =  swsscommon.Table(db, table)
-    keys = tbl.getKeys()
-    assert key not in keys, "The desired key is not removed"
-
-
-def create_vnet_local_routes(dvs, prefix, vnet_name, ifname):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    create_entry_tbl(
-        conf_db,
-        "VNET_ROUTE", '|', "%s|%s" % (vnet_name, prefix),
-        [
-            ("ifname", ifname),
-        ]
-    )
-
-    time.sleep(2)
-
-
-def delete_vnet_local_routes(dvs, prefix, vnet_name):
-    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-
-    delete_entry_pst(app_db, "VNET_ROUTE_TABLE", "%s:%s" % (vnet_name, prefix))
-
-    time.sleep(2)
-
-
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix=""):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, adv_prefix=adv_prefix)
-
-
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix=""):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    attrs = [
-            ("endpoint", endpoint),
-    ]
-
-    if vni:
-        attrs.append(('vni', vni))
-
-    if mac:
-        attrs.append(('mac_address', mac))
-
-    if ep_monitor:
-        attrs.append(('endpoint_monitor', ep_monitor))
-
-    if profile:
-        attrs.append(('profile', profile))
-
-    if primary:
-        attrs.append(('primary', primary))
-
-    if monitoring:
-        attrs.append(('monitoring', monitoring))
-
-    if adv_prefix:
-        attrs.append(('adv_prefix', adv_prefix))
-
-    tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
-    fvs = swsscommon.FieldValuePairs(attrs)
-    tbl.set("%s|%s" % (vnet_name, prefix), fvs)
-
-    time.sleep(2)
-
-
-def delete_vnet_routes(dvs, prefix, vnet_name):
-    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-
-    delete_entry_pst(app_db, "VNET_ROUTE_TUNNEL_TABLE", "%s:%s" % (vnet_name, prefix))
-
-    time.sleep(2)
-
-
-def create_vlan(dvs, vlan_name, vlan_ids):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    vlan_id = vlan_name[4:]
-
-    # create vlan
-    create_entry_tbl(
-        conf_db,
-        "VLAN", '|', vlan_name,
-        [
-          ("vlanid", vlan_id),
-        ],
-    )
-
-    time.sleep(1)
-
-    vlan_oid = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_ids)
-
-    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid,
-                    {
-                        "SAI_VLAN_ATTR_VLAN_ID": vlan_id,
-                    }
-                )
-
-    return vlan_oid
-
-
-def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    vlan_ids = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
-
-    vlan_oid = create_vlan (dvs, vlan_name, vlan_ids)
-
-   # create a vlan member in config db
-    create_entry_tbl(
-        conf_db,
-        "VLAN_MEMBER", '|', "%s|%s" % (vlan_name, ifname),
-        [
-          ("tagging_mode", "untagged"),
-        ],
-    )
-
-    time.sleep(1)
-
-    # create vlan interface in config db
-    create_entry_tbl(
-        conf_db,
-        "VLAN_INTERFACE", '|', vlan_name,
-        [
-          ("vnet_name", vnet_name),
-          ("proxy_arp", "enabled"),
-        ],
-    )
-
-    #FIXME - This is created by IntfMgr
-    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    create_entry_pst(
-        app_db,
-        "INTF_TABLE", ':', vlan_name,
-        [
-            ("vnet_name", vnet_name),
-            ("proxy_arp", "enabled"),
-        ],
-    )
-    time.sleep(2)
-
-    create_entry_tbl(
-        conf_db,
-        "VLAN_INTERFACE", '|', "%s|%s" % (vlan_name, ipaddr),
-        [
-          ("family", "IPv4"),
-        ],
-    )
-
-    time.sleep(2)
-
-    return vlan_oid
-
-
-def delete_vlan_interface(dvs, ifname, ipaddr):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    delete_entry_tbl(conf_db, "VLAN_INTERFACE", "%s|%s" % (ifname, ipaddr))
-
-    time.sleep(2)
-
-    delete_entry_tbl(conf_db, "VLAN_INTERFACE", ifname)
-
-    time.sleep(2)
-
-
-def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    exist_rifs = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
-
-    # create vlan interface in config db
-    create_entry_tbl(
-        conf_db,
-        "INTERFACE", '|', ifname,
-        [
-          ("vnet_name", vnet_name),
-        ],
-    )
-
-    #FIXME - This is created by IntfMgr
-    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    create_entry_pst(
-        app_db,
-        "INTF_TABLE", ':', ifname,
-        [
-            ("vnet_name", vnet_name),
-        ],
-    )
-    time.sleep(2)
-
-    create_entry_tbl(
-        conf_db,
-        "INTERFACE", '|', "%s|%s" % (ifname, ipaddr),
-        [
-          ("family", "IPv4"),
-        ],
-    )
-
-
-def delete_phy_interface(dvs, ifname, ipaddr):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    delete_entry_tbl(conf_db, "INTERFACE", "%s|%s" % (ifname, ipaddr))
-
-    time.sleep(2)
-
-    delete_entry_tbl(conf_db, "INTERFACE", ifname)
-
-    time.sleep(2)
-
-
-def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope="", advertise_prefix=False, overlay_dmac=""):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-    attrs = [
-            ("vxlan_tunnel", tunnel),
-            ("vni", vni),
-            ("peer_list", peer_list),
-    ]
-
-    if scope:
-        attrs.append(('scope', scope))
-
-    if advertise_prefix:
-        attrs.append(('advertise_prefix', 'true'))
-
-    if overlay_dmac:
-        attrs.append(('overlay_dmac', overlay_dmac))
-
-    # create the VXLAN tunnel Term entry in Config DB
-    create_entry_tbl(
-        conf_db,
-        "VNET", '|', name,
-        attrs,
-    )
-
-    time.sleep(2)
-
-
-def delete_vnet_entry(dvs, name):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    delete_entry_tbl(conf_db, "VNET", "%s" % (name))
-
-    time.sleep(2)
-
-
-def create_vxlan_tunnel(dvs, name, src_ip):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    attrs = [
-            ("src_ip", src_ip),
-    ]
-
-    # create the VXLAN tunnel Term entry in Config DB
-    create_entry_tbl(
-        conf_db,
-        "VXLAN_TUNNEL", '|', name,
-        attrs,
-    )
-
-def delete_vxlan_tunnel(dvs, name):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    delete_entry_tbl(conf_db, "VXLAN_TUNNEL", name)
-
-def create_vxlan_tunnel_map(dvs, tunnel_name, tunnel_map_entry_name, vlan, vni_id):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    # create the VXLAN tunnel map entry in Config DB
-    create_entry_tbl(
-        conf_db,
-        "VXLAN_TUNNEL_MAP", '|', "%s|%s" % (tunnel_name, tunnel_map_entry_name),
-        [
-            ("vni",  vni_id),
-            ("vlan", vlan),
-        ],
-    )
-
-
-def get_lo(dvs):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    vr_id = get_default_vr_id(dvs)
-
-    tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
-
-    entries = tbl.getKeys()
-    lo_id = None
-    for entry in entries:
-        status, fvs = tbl.get(entry)
-        assert status, "Got an error when get a key"
-        for key, value in fvs:
-            if key == 'SAI_ROUTER_INTERFACE_ATTR_TYPE' and value == 'SAI_ROUTER_INTERFACE_TYPE_LOOPBACK':
-                lo_id = entry
-                break
-        else:
-            assert False, 'Don\'t found loopback id'
-
-    return lo_id
-
-
-def get_switch_mac(dvs):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-    tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_SWITCH')
-
-    entries = tbl.getKeys()
-    mac = None
-    for entry in entries:
-        status, fvs = tbl.get(entry)
-        assert status, "Got an error when get a key"
-        for key, value in fvs:
-            if key == 'SAI_SWITCH_ATTR_SRC_MAC_ADDRESS':
-                mac = value
-                break
-        else:
-            assert False, 'Don\'t found switch mac'
-
-    return mac
-
-
-def check_linux_intf_arp_proxy(dvs, ifname):
-    (exitcode, out) = dvs.runcmd("cat /proc/sys/net/ipv4/conf/{0}/proxy_arp_pvlan".format(ifname))
-    assert out != "1", "ARP proxy is not enabled for VNET interface in Linux kernel"
-
-
-def update_bfd_session_state(dvs, addr, state):
-    bfd_id = get_bfd_session_id(dvs, addr)
-    assert bfd_id is not None
-
-    bfd_sai_state = {"Admin_Down":  "SAI_BFD_SESSION_STATE_ADMIN_DOWN",
-                     "Down":        "SAI_BFD_SESSION_STATE_DOWN",
-                     "Init":        "SAI_BFD_SESSION_STATE_INIT",
-                     "Up":          "SAI_BFD_SESSION_STATE_UP"}
-
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    ntf = swsscommon.NotificationProducer(asic_db, "NOTIFICATIONS")
-    fvp = swsscommon.FieldValuePairs()
-    ntf_data = "[{\"bfd_session_id\":\""+bfd_id+"\",\"session_state\":\""+bfd_sai_state[state]+"\"}]"
-    ntf.send("bfd_session_state_change", ntf_data, fvp)
-
-def update_monitor_session_state(dvs, addr, monitor, state):
-    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    create_entry_tbl(
-        state_db,
-        "VNET_MONITOR_TABLE", '|', "%s|%s" % (monitor,addr),
-        [
-            ("state", state),
-        ]
-    )
-
-def get_bfd_session_id(dvs, addr):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    tbl =  swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION")
-    entries = set(tbl.getKeys())
-    for entry in entries:
-        status, fvs = tbl.get(entry)
-        fvs = dict(fvs)
-        assert status, "Got an error when get a key"
-        if fvs["SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS"] == addr and fvs["SAI_BFD_SESSION_ATTR_MULTIHOP"] == "true":
-            return entry
-
-    return None
-
-
-def check_del_bfd_session(dvs, addrs):
-    for addr in addrs:
-        assert get_bfd_session_id(dvs, addr) is None
-
-
-def check_bfd_session(dvs, addrs):
-    for addr in addrs:
-        assert get_bfd_session_id(dvs, addr) is not None
-
-
-def check_state_db_routes(dvs, vnet, prefix, endpoints):
-    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    tbl =  swsscommon.Table(state_db, "VNET_ROUTE_TUNNEL_TABLE")
-
-    status, fvs = tbl.get(vnet + '|' + prefix)
-    assert status, "Got an error when get a key"
-
-    fvs = dict(fvs)
-    assert fvs['active_endpoints'] == ','.join(endpoints)
-
-    if endpoints:
-        assert fvs['state'] == 'active'
-    else:
-        assert fvs['state'] == 'inactive'
-
-
-def check_remove_state_db_routes(dvs, vnet, prefix):
-    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    tbl =  swsscommon.Table(state_db, "VNET_ROUTE_TUNNEL_TABLE")
-    keys = tbl.getKeys()
-
-    assert vnet + '|' + prefix not in keys
-
-
-def check_routes_advertisement(dvs, prefix, profile=""):
-    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    tbl =  swsscommon.Table(state_db, "ADVERTISE_NETWORK_TABLE")
-    keys = tbl.getKeys()
-
-    assert prefix in keys
-
-    if profile:
-        status, fvs = tbl.get(prefix)
-        assert status, "Got an error when get a key"
-        fvs = dict(fvs)
-        assert fvs['profile'] == profile
-
-
-def check_remove_routes_advertisement(dvs, prefix):
-    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    tbl =  swsscommon.Table(state_db, "ADVERTISE_NETWORK_TABLE")
-    keys = tbl.getKeys()
-
-    assert prefix not in keys
-
-
-def check_syslog(dvs, marker, err_log):
-    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
-    assert num.strip() == "0"
-
-
-def create_fvs(**kwargs):
-    return swsscommon.FieldValuePairs(list(kwargs.items()))
-
-
-def create_subnet_decap_tunnel(dvs, tunnel_name, **kwargs):
-    """Create tunnel and verify all needed entries in state DB exists."""
-    appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    fvs = create_fvs(**kwargs)
-    # create tunnel entry in DB
-    ps = swsscommon.ProducerStateTable(appdb, "TUNNEL_DECAP_TABLE")
-    ps.set(tunnel_name, fvs)
-
-    # wait till config will be applied
-    time.sleep(1)
-
-    # validate the tunnel entry in state db
-    tunnel_state_table = swsscommon.Table(statedb, "TUNNEL_DECAP_TABLE")
-
-    tunnels = tunnel_state_table.getKeys()
-    for tunnel in tunnels:
-        status, fvs = tunnel_state_table.get(tunnel)
-        assert status == True
-
-        for field, value in fvs:
-            if field == "tunnel_type":
-                assert value == "IPINIP"
-            elif field == "dscp_mode":
-                assert value == kwargs["dscp_mode"]
-            elif field == "ecn_mode":
-                assert value == kwargs["ecn_mode"]
-            elif field == "ttl_mode":
-                assert value == kwargs["ttl_mode"]
-            elif field == "encap_ecn_mode":
-                assert value == kwargs["encap_ecn_mode"]
-            else:
-                assert False, "Field %s is not tested" % field
-
-
-def delete_subnet_decap_tunnel(dvs, tunnel_name):
-    """Delete tunnel and checks that state DB is cleared."""
-    appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    statedb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-    tunnel_app_table = swsscommon.Table(appdb, "TUNNEL_DECAP_TABLE")
-    tunnel_state_table = swsscommon.Table(statedb, "TUNNEL_DECAP_TABLE")
-
-    ps = swsscommon.ProducerStateTable(appdb, "TUNNEL_DECAP_TABLE")
-    ps._del(tunnel_name)
-
-    # wait till config will be applied
-    time.sleep(1)
-
-    assert len(tunnel_app_table.getKeys()) == 0
-    assert len(tunnel_state_table.getKeys()) == 0
-
-
-loopback_id = 0
-def_vr_id = 0
-switch_mac = None
-
-def update_bgp_global_dev_state(dvs, state):
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    create_entry_tbl(
-        config_db,
-        "BGP_DEVICE_GLOBAL",'|',"STATE",
-        [
-            ("tsa_enabled", state),
-        ]
-    )
-
-def set_tsa(dvs):
-    update_bgp_global_dev_state(dvs, "true")
-
-def clear_tsa(dvs):
-    update_bgp_global_dev_state(dvs, "false")
-
-class VnetVxlanVrfTunnel(object):
-
-    ASIC_TUNNEL_TABLE       = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
-    ASIC_TUNNEL_MAP         = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP"
-    ASIC_TUNNEL_MAP_ENTRY   = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY"
-    ASIC_TUNNEL_TERM_ENTRY  = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
-    ASIC_RIF_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
-    ASIC_VRF_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
-    ASIC_ROUTE_ENTRY        = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
-    ASIC_NEXT_HOP           = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
-    ASIC_VLAN_TABLE         = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
-    ASIC_NEXT_HOP_GROUP     = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
-    ASIC_NEXT_HOP_GROUP_MEMBER  = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
-    ASIC_BFD_SESSION        = "ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"
-    APP_VNET_MONITOR        =  "VNET_MONITOR_TABLE"
-
-    ecn_modes_map = {
-        "standard"       : "SAI_TUNNEL_DECAP_ECN_MODE_STANDARD",
-        "copy_from_outer": "SAI_TUNNEL_DECAP_ECN_MODE_COPY_FROM_OUTER"
-    }
-
-    dscp_modes_map = {
-        "pipe"    : "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL",
-        "uniform" : "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL"
-    }
-
-    ttl_modes_map = {
-        "pipe"    : "SAI_TUNNEL_TTL_MODE_PIPE_MODEL",
-        "uniform" : "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
-    }
-
-    def __init__(self):
-        self.tunnel_map_ids       = set()
-        self.tunnel_map_entry_ids = set()
-        self.tunnel_ids           = set()
-        self.tunnel_term_ids      = set()
-        self.ipinip_tunnel_term_ids = {}
-        self.tunnel_map_map       = {}
-        self.tunnel               = {}
-        self.vnet_vr_ids          = set()
-        self.vr_map               = {}
-        self.nh_ids               = {}
-        self.nhg_ids              = {}
-
-    def fetch_exist_entries(self, dvs):
-        self.vnet_vr_ids = get_exist_entries(dvs, self.ASIC_VRF_TABLE)
-        self.tunnel_ids = get_exist_entries(dvs, self.ASIC_TUNNEL_TABLE)
-        self.tunnel_map_ids = get_exist_entries(dvs, self.ASIC_TUNNEL_MAP)
-        self.tunnel_map_entry_ids = get_exist_entries(dvs, self.ASIC_TUNNEL_MAP_ENTRY)
-        self.tunnel_term_ids = get_exist_entries(dvs, self.ASIC_TUNNEL_TERM_ENTRY)
-        self.rifs = get_exist_entries(dvs, self.ASIC_RIF_TABLE)
-        self.routes = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
-        self.nhops = get_exist_entries(dvs, self.ASIC_NEXT_HOP)
-        self.nhgs = get_exist_entries(dvs, self.ASIC_NEXT_HOP_GROUP)
-        self.bfd_sessions = get_exist_entries(dvs, self.ASIC_BFD_SESSION)
-
-        global loopback_id, def_vr_id, switch_mac
-        if not loopback_id:
-            loopback_id = get_lo(dvs)
-
-        if not def_vr_id:
-            def_vr_id = get_default_vr_id(dvs)
-
-        if switch_mac is None:
-            switch_mac = get_switch_mac(dvs)
-
-    def check_ipinip_tunnel(self, dvs, tunnel_name, dscp_mode, ecn_mode, ttl_mode):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        tunnel_id = get_created_entry(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids)
-        tunnel_attrs = {
-            'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_IPINIP',
-            'SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE': self.dscp_modes_map[dscp_mode],
-            'SAI_TUNNEL_ATTR_ENCAP_ECN_MODE': self.ecn_modes_map[ecn_mode],
-            'SAI_TUNNEL_ATTR_ENCAP_TTL_MODE': self.ttl_modes_map[ttl_mode]
-        }
-        check_object(asic_db, self.ASIC_TUNNEL_TABLE, tunnel_id, tunnel_attrs)
-
-        self.tunnel_ids.add(tunnel_id)
-        self.tunnel[tunnel_name] = tunnel_id
-
-    def check_del_ipinip_tunnel(self, dvs, tunnel_name):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        tunnel_id = get_deleted_entries(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids, 1)[0]
-        check_deleted_object(asic_db, self.ASIC_TUNNEL_TABLE, tunnel_id)
-        self.tunnel_ids.remove(tunnel_id)
-        assert tunnel_id == self.tunnel[tunnel_name]
-        self.tunnel.pop(tunnel_name)
-
-    def check_ipinip_tunnel_decap_term(self, dvs, tunnel_name, dst_ip, src_ip):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        dst_ip = ipaddress.ip_network(dst_ip)
-        src_ip = ipaddress.ip_network(src_ip)
-        tunnel_term_id = get_created_entry(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids)
-        tunnel_term_attrs = {
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE': 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_MP2MP',
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE': 'SAI_TUNNEL_TYPE_IPINIP',
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP': str(dst_ip.network_address),
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK': str(dst_ip.netmask),
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP': str(src_ip.network_address),
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP_MASK': str(src_ip.netmask),
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID': self.tunnel[tunnel_name]
-        }
-        check_object(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, tunnel_term_id, tunnel_term_attrs)
-
-        self.tunnel_term_ids.add(tunnel_term_id)
-        self.ipinip_tunnel_term_ids[(tunnel_name, src_ip, dst_ip)] = tunnel_term_id
-
-    def check_del_ipinip_tunnel_decap_term(self, dvs, tunnel_name, dst_ip, src_ip):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        dst_ip = ipaddress.ip_network(dst_ip)
-        src_ip = ipaddress.ip_network(src_ip)
-        tunnel_term_id = get_deleted_entries(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids, 1)[0]
-        check_deleted_object(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, tunnel_term_id)
-        self.tunnel_term_ids.remove(tunnel_term_id)
-        assert self.ipinip_tunnel_term_ids[(tunnel_name, src_ip, dst_ip)] == tunnel_term_id
-        self.ipinip_tunnel_term_ids.pop((tunnel_name, src_ip, dst_ip))
-
-    def check_vxlan_tunnel(self, dvs, tunnel_name, src_ip):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        global loopback_id, def_vr_id
-
-        tunnel_map_id  = get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
-        tunnel_id      = get_created_entry(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids)
-        tunnel_term_id = get_created_entry(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids)
-
-        # check that the vxlan tunnel termination are there
-        assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP) == (len(self.tunnel_map_ids) + 4), "The TUNNEL_MAP wasn't created"
-        assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == len(self.tunnel_map_entry_ids), "The TUNNEL_MAP_ENTRY is created"
-        assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TABLE) == (len(self.tunnel_ids) + 1), "The TUNNEL wasn't created"
-        assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TERM_ENTRY) == (len(self.tunnel_term_ids) + 1), "The TUNNEL_TERM_TABLE_ENTRY wasm't created"
-
-        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[2],
-                        {
-                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID',
-                        }
-                )
-
-        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[3],
-                        {
-                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI',
-                        }
-                )
-
-        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[0],
-                        {
-                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
-                        }
-                    )
-
-        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[1],
-                        {
-                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI',
-                        }
-                )
-
-        check_object(asic_db, self.ASIC_TUNNEL_TABLE, tunnel_id,
-                    {
-                        'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
-                        'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': loopback_id,
-                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': '2:%s,%s' % (tunnel_map_id[0], tunnel_map_id[2]),
-                        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': '2:%s,%s' % (tunnel_map_id[1], tunnel_map_id[3]),
-                        'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip,
-                    }
-                )
-
-        expected_attributes = {
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE': 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP',
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID': def_vr_id,
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP': src_ip,
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
-            'SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID': tunnel_id,
-        }
-
-        check_object(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, tunnel_term_id, expected_attributes)
-
-        self.tunnel_map_ids.update(tunnel_map_id)
-        self.tunnel_ids.add(tunnel_id)
-        self.tunnel_term_ids.add(tunnel_term_id)
-        self.tunnel_map_map[tunnel_name] = tunnel_map_id
-        self.tunnel[tunnel_name] = tunnel_id
-
-    def check_del_vxlan_tunnel(self, dvs):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        old_tunnel = get_deleted_entries(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids, 1)
-        check_deleted_object(asic_db, self.ASIC_TUNNEL_TABLE, old_tunnel[0])
-        self.tunnel_ids.remove(old_tunnel[0])
-
-        old_tunnel_maps = get_deleted_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
-        for old_tunnel_map in old_tunnel_maps:
-            check_deleted_object(asic_db, self.ASIC_TUNNEL_MAP, old_tunnel_map)
-            self.tunnel_map_ids.remove(old_tunnel_map)
-
-    def check_vxlan_tunnel_entry(self, dvs, tunnel_name, vnet_name, vni_id):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-
-        time.sleep(2)
-
-        if (self.tunnel_map_map.get(tunnel_name) is None):
-            tunnel_map_id = get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
-        else:
-            tunnel_map_id = self.tunnel_map_map[tunnel_name]
-
-        tunnel_map_entry_id = get_created_entries(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, self.tunnel_map_entry_ids, 2)
-
-        # check that the vxlan tunnel termination are there
-        assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == (len(self.tunnel_map_entry_ids) + 2), "The TUNNEL_MAP_ENTRY is created too early"
-
-        check_object(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[0],
-            {
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI',
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[3],
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_KEY': self.vr_map[vnet_name].get('ing'),
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE': vni_id,
-            }
-        )
-
-        check_object(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[1],
-            {
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID',
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[2],
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vni_id,
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_VALUE': self.vr_map[vnet_name].get('egr'),
-            }
-        )
-
-        self.tunnel_map_entry_ids.update(tunnel_map_entry_id)
-
-    def check_vnet_entry(self, dvs, name, peer_list=[]):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-
-        #Assert if there are linklocal entries
-        tbl = swsscommon.Table(app_db, "VNET_ROUTE_TUNNEL_TABLE")
-        route_entries = tbl.getKeys()
-        assert "ff00::/8" not in route_entries
-        assert "fe80::/64" not in route_entries
-
-        #Check virtual router objects
-        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids) + 1),\
-                                     "The VR objects are not created"
-
-        new_vr_ids  = get_created_entries(asic_db, self.ASIC_VRF_TABLE, self.vnet_vr_ids, 1)
-
-        self.vnet_vr_ids.update(new_vr_ids)
-        self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[0], 'peer':peer_list }
-
-    def check_default_vnet_entry(self, dvs, name):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        #Check virtual router objects
-        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids)),\
-                                     "Some VR objects are created"
-        #Mappers for default VNET is created with default VR objects.
-        self.vr_map[name] = { 'ing':list(self.vnet_vr_ids)[0], 'egr':list(self.vnet_vr_ids)[0], 'peer':[] }
-
-    def check_del_vnet_entry(self, dvs, name):
-        # TODO: Implement for VRF VNET
-        return True
-
-    def vnet_route_ids(self, dvs, name, local=False):
-        vr_set = set()
-
-        vr_set.add(self.vr_map[name].get('ing'))
-
-        try:
-            for peer in self.vr_map[name].get('peer'):
-                vr_set.add(self.vr_map[peer].get('ing'))
-        except IndexError:
-            pass
-
-        return vr_set
-
-    def check_router_interface(self, dvs, intf_name, name, vlan_oid=0):
-        # Check RIF in ingress VRF
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        global switch_mac
-
-        expected_attr = {
-                        "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": self.vr_map[name].get('ing'),
-                        "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS": switch_mac,
-                        "SAI_ROUTER_INTERFACE_ATTR_MTU": "9100",
-                    }
-
-        if vlan_oid:
-            expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_TYPE': 'SAI_ROUTER_INTERFACE_TYPE_VLAN'})
-            expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_VLAN_ID': vlan_oid})
-        else:
-            expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_TYPE': 'SAI_ROUTER_INTERFACE_TYPE_PORT'})
-
-        new_rif = get_created_entry(asic_db, self.ASIC_RIF_TABLE, self.rifs)
-        check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attr)
-
-        #IP2ME route will be created with every router interface
-        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 1)
-
-        if vlan_oid:
-            expected_attr = { 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
-            check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
-
-            expected_attr = { 'SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
-            check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
-
-        check_linux_intf_arp_proxy(dvs, intf_name)
-
-        self.rifs.add(new_rif)
-        self.routes.update(new_route)
-
-    def check_del_router_interface(self, dvs, name):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        old_rif = get_deleted_entries(asic_db, self.ASIC_RIF_TABLE, self.rifs, 1)
-        check_deleted_object(asic_db, self.ASIC_RIF_TABLE, old_rif[0])
-
-        self.rifs.remove(old_rif[0])
-
-    def check_vnet_local_routes(self, dvs, name):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        vr_ids = self.vnet_route_ids(dvs, name, True)
-        count = len(vr_ids)
-
-        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
-
-        #Routes are not replicated to egress VRF, return if count is 0, else check peering
-        if not count:
-            return
-
-        asic_vrs = set()
-        for idx in range(count):
-            rt_key = json.loads(new_route[idx])
-            asic_vrs.add(rt_key['vr'])
-
-        assert asic_vrs == vr_ids
-
-        self.routes.update(new_route)
-
-    def check_del_vnet_local_routes(self, dvs, name):
-        # TODO: Implement for VRF VNET
-        return True
-
-    def check_vnet_routes(self, dvs, name, endpoint, tunnel, mac="", vni=0, route_ids=""):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        vr_ids = self.vnet_route_ids(dvs, name)
-        count = len(vr_ids)
-
-        # Check routes in ingress VRF
-        expected_attr = {
-                        "SAI_NEXT_HOP_ATTR_TYPE": "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP",
-                        "SAI_NEXT_HOP_ATTR_IP": endpoint,
-                        "SAI_NEXT_HOP_ATTR_TUNNEL_ID": self.tunnel[tunnel],
-                    }
-
-        if vni:
-            expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_VNI': vni})
-
-        if mac:
-            expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_MAC': mac})
-
-        if endpoint in self.nh_ids:
-            new_nh = self.nh_ids[endpoint]
-        else:
-            new_nh = get_created_entry(asic_db, self.ASIC_NEXT_HOP, self.nhops)
-            self.nh_ids[endpoint] = new_nh
-            self.nhops.add(new_nh)
-
-        check_object(asic_db, self.ASIC_NEXT_HOP, new_nh, expected_attr)
-        if not route_ids:
-            new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
-        else:
-            new_route = route_ids
-
-        #Check if the route is in expected VRF
-        asic_vrs = set()
-        for idx in range(count):
-            check_object(asic_db, self.ASIC_ROUTE_ENTRY, new_route[idx],
-                        {
-                            "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": new_nh,
-                        }
-                    )
-            rt_key = json.loads(new_route[idx])
-            asic_vrs.add(rt_key['vr'])
-
-        assert asic_vrs == vr_ids
-
-        self.routes.update(new_route)
-
-        return new_route
-
-    def serialize_endpoint_group(self, endpoints):
-        endpoints.sort()
-        return ",".join(endpoints)
-
-    def check_next_hop_group_member(self, dvs, nhg, ordered_ecmp, expected_endpoint, expected_attrs):
-        expected_endpoint_str = self.serialize_endpoint_group(expected_endpoint)
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        tbl_nhgm =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP_GROUP_MEMBER)
-        tbl_nh =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP)
-        entries = set(tbl_nhgm.getKeys())
-        endpoints = []
-        for entry in entries:
-            status, fvs = tbl_nhgm.get(entry)
-            fvs = dict(fvs)
-            assert status, "Got an error when get a key"
-            if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhg:
-                nh_key = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
-                status, nh_fvs = tbl_nh.get(nh_key)
-                nh_fvs = dict(nh_fvs)
-                assert status, "Got an error when get a key"
-                endpoint = nh_fvs["SAI_NEXT_HOP_ATTR_IP"]
-                endpoints.append(endpoint)
-                assert endpoint in expected_attrs
-                if ordered_ecmp == "true":
-                    assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID"] == expected_attrs[endpoint]['SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID']
-                    del expected_attrs[endpoint]['SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID']
-                else:
-                    assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
-
-                check_object(asic_db, self.ASIC_NEXT_HOP, nh_key, expected_attrs[endpoint])
-
-        assert self.serialize_endpoint_group(endpoints) == expected_endpoint_str
-
-    def get_nexthop_groups(self, dvs, nhg):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        tbl_nhgm =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP_GROUP_MEMBER)
-        tbl_nh =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP)
-        nhg_data = {}
-        nhg_data['id'] = nhg
-        entries = set(tbl_nhgm.getKeys())
-        nhg_data['endpoints'] = []
-        for entry in entries:
-            status, fvs = tbl_nhgm.get(entry)
-            fvs = dict(fvs)
-            assert status, "Got an error when get a key"
-            if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhg:
-                nh_key = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
-                status, nh_fvs = tbl_nh.get(nh_key)
-                nh_fvs = dict(nh_fvs)
-                assert status, "Got an error when get a key"
-                endpoint = nh_fvs["SAI_NEXT_HOP_ATTR_IP"]
-                nhg_data['endpoints'].append(endpoint)
-        return nhg_data
-    def check_vnet_ecmp_routes(self, dvs, name, endpoints, tunnel, mac=[], vni=[], route_ids=[], nhg="", ordered_ecmp="false", nh_seq_id=None):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        endpoint_str = name + "|" + self.serialize_endpoint_group(endpoints)
-
-        vr_ids = self.vnet_route_ids(dvs, name)
-        count = len(vr_ids)
-
-        expected_attrs = {}
-        for idx, endpoint in enumerate(endpoints):
-            expected_attr = {
-                        "SAI_NEXT_HOP_ATTR_TYPE": "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP",
-                        "SAI_NEXT_HOP_ATTR_IP": endpoint,
-                        "SAI_NEXT_HOP_ATTR_TUNNEL_ID": self.tunnel[tunnel],
-                    }
-            if vni and vni[idx]:
-                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_VNI': vni[idx]})
-            if mac and mac[idx]:
-                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_MAC': mac[idx]})
-            if ordered_ecmp == "true" and nh_seq_id:
-                expected_attr.update({'SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID': nh_seq_id[idx]})
-            expected_attrs[endpoint] = expected_attr
-
-        if nhg:
-            new_nhg = nhg
-        elif endpoint_str in self.nhg_ids:
-            new_nhg = self.nhg_ids[endpoint_str]
-        else:
-            new_nhg = get_created_entry(asic_db, self.ASIC_NEXT_HOP_GROUP, self.nhgs)
-            self.nhg_ids[endpoint_str] = new_nhg
-            self.nhgs.add(new_nhg)
-
-
-        # Check routes in ingress VRF
-        expected_nhg_attr = {
-                        "SAI_NEXT_HOP_GROUP_ATTR_TYPE": "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP" if ordered_ecmp == "false" else "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP",
-                    }
-        check_object(asic_db, self.ASIC_NEXT_HOP_GROUP, new_nhg, expected_nhg_attr)
-
-        # Check nexthop group member
-        self.check_next_hop_group_member(dvs, new_nhg, ordered_ecmp, endpoints, expected_attrs)
-
-        if route_ids:
-            new_route = route_ids
-        else:
-            new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
-
-        #Check if the route is in expected VRF
-        asic_vrs = set()
-        for idx in range(count):
-            check_object(asic_db, self.ASIC_ROUTE_ENTRY, new_route[idx],
-                        {
-                            "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": new_nhg,
-                        }
-                    )
-            rt_key = json.loads(new_route[idx])
-            asic_vrs.add(rt_key['vr'])
-
-        assert asic_vrs == vr_ids
-
-        self.routes.update(new_route)
-
-        return new_route, new_nhg
-
-    def check_priority_vnet_ecmp_routes(self, dvs, name, endpoints_primary, tunnel, mac=[], vni=[], route_ids=[], count =1, prefix =""):
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        endpoint_str_primary = name + "|" + self.serialize_endpoint_group(endpoints_primary)
-        new_nhgs = []
-        expected_attrs_primary = {}
-        for idx, endpoint in enumerate(endpoints_primary):
-            expected_attr = {
-                        "SAI_NEXT_HOP_ATTR_TYPE": "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP",
-                        "SAI_NEXT_HOP_ATTR_IP": endpoint,
-                        "SAI_NEXT_HOP_ATTR_TUNNEL_ID": self.tunnel[tunnel],
-                    }
-            if vni and vni[idx]:
-                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_VNI': vni[idx]})
-            if mac and mac[idx]:
-                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_MAC': mac[idx]})
-            expected_attrs_primary[endpoint] = expected_attr
-
-        if len(endpoints_primary) == 1:
-            if route_ids:
-                new_route = route_ids
-            else:
-                new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
-            return new_route
-        else :
-            new_nhgs = get_all_created_entries(asic_db, self.ASIC_NEXT_HOP_GROUP, self.nhgs)
-            found_match = False
-
-            for nhg in new_nhgs:
-                nhg_data = self.get_nexthop_groups(dvs, nhg)
-                eplist = self.serialize_endpoint_group(nhg_data['endpoints'])
-                if eplist == self.serialize_endpoint_group(endpoints_primary):
-                    self.nhg_ids[endpoint_str_primary] = nhg
-                    found_match = True
-
-            assert found_match, "the expected Nexthop group was not found."
-
-            # Check routes in ingress VRF
-            expected_nhg_attr = {
-                            "SAI_NEXT_HOP_GROUP_ATTR_TYPE": "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP",
-                        }
-            for nhg in new_nhgs:
-                check_object(asic_db, self.ASIC_NEXT_HOP_GROUP, nhg, expected_nhg_attr)
-
-            # Check nexthop group member
-            self.check_next_hop_group_member(dvs, self.nhg_ids[endpoint_str_primary], "false", endpoints_primary, expected_attrs_primary)
-
-            if route_ids:
-                new_route = route_ids
-            else:
-                new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
-
-            #Check if the route is in expected VRF
-            active_nhg = self.nhg_ids[endpoint_str_primary]
-            for idx in range(count):
-                if prefix != "" and prefix not in new_route[idx] :
-                    continue
-                check_object(asic_db, self.ASIC_ROUTE_ENTRY, new_route[idx],
-                            {
-                                "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": active_nhg,
-                            }
-                        )
-                rt_key = json.loads(new_route[idx])
-
-
-            self.routes.update(new_route)
-            del self.nhg_ids[endpoint_str_primary]
-            return new_route
-
-    def check_del_vnet_routes(self, dvs, name, prefixes=[]):
-        # TODO: Implement for VRF VNET
-
-        def _access_function():
-            route_entries = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
-            route_prefixes = [json.loads(route_entry)["dest"] for route_entry in route_entries]
-            return (all(prefix not in route_prefixes for prefix in prefixes), None)
-
-        if prefixes:
-            wait_for_result(_access_function)
-
-        return True
-
-    def check_custom_monitor_app_db(self, dvs, prefix, endpoint, packet_type, overlay_dmac):
-        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        key = endpoint + ':' + prefix
-        check_object(app_db, self.APP_VNET_MONITOR, key,
-            {
-                "packet_type": packet_type,
-                "overlay_dmac" : overlay_dmac
-            }
-        )
-        return True
-
-    def check_custom_monitor_deleted(self, dvs, prefix, endpoint):
-        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        key = endpoint + ':' + prefix
-        check_deleted_object(app_db, self.APP_VNET_MONITOR, key)
+from vnet_lib import *
 
 class TestVnetOrch(object):
 
@@ -1280,6 +65,18 @@ class TestVnetOrch(object):
 
     def remove_ip_address(self, interface, ip):
         self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
+
+    def add_neighbor(self, interface, ip, mac):
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEIGH_TABLE")
+        fvs = swsscommon.FieldValuePairs([("neigh", mac),
+                                          ("family", "IPv4")])
+        tbl.set(interface + ":" + ip, fvs)
+        time.sleep(1)
+
+    def remove_neighbor(self, interface, ip):
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEIGH_TABLE")
+        tbl._del(interface + ":" + ip)
+        time.sleep(1)
 
     def create_route_entry(self, key, pairs):
         tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
@@ -1345,10 +142,10 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
 
         vid = create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vnet_2000", "100.100.3.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan100", 'Vnet_2000', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan100", 'Vnet_2000', vid, intf_type="vlan")
 
         vid = create_vlan_interface(dvs, "Vlan101", "Ethernet28", "Vnet_2000", "100.100.4.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan101", 'Vnet_2000', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan101", 'Vnet_2000', vid, intf_type="vlan")
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000', '10.10.10.1')
@@ -1358,10 +155,12 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.1/32")
 
         create_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet_2000', 'Vlan100')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000')
+        # The route to Vlan100's subnet must have already been added to self.ASIC_ROUTE_ENTRY
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000', vlan_subnet_route=True)
 
         create_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet_2000', 'Vlan101')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000')
+        # The route to Vlan101's subnet must have already been added to self.ASIC_ROUTE_ENTRY
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2000', vlan_subnet_route=True)
 
         #Create Physical Interface in another Vnet
 
@@ -1441,7 +240,7 @@ class TestVnetOrch(object):
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
 
         vid = create_vlan_interface(dvs, "Vlan1001", "Ethernet0", "Vnet_1", "1.1.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan1001", 'Vnet_1', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan1001", 'Vnet_1', vid, intf_type="vlan")
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.10/32", 'Vnet_1', '100.1.1.10')
@@ -1471,7 +270,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "1.1.1.14/32")
 
         create_vnet_local_routes(dvs, "1.1.10.0/24", 'Vnet_1', 'Vlan1001')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_1')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_1', vlan_subnet_route=True)
 
         create_vnet_entry(dvs, 'Vnet_2', tunnel_name, '2222', "")
 
@@ -1479,7 +278,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2', '2222')
 
         vid = create_vlan_interface(dvs, "Vlan1002", "Ethernet4", "Vnet_2", "2.2.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan1002", 'Vnet_2', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan1002", 'Vnet_2', vid, intf_type="vlan")
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.10/32", 'Vnet_2', '100.1.1.20')
@@ -1496,7 +295,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "2.2.2.11/32")
 
         create_vnet_local_routes(dvs, "2.2.10.0/24", 'Vnet_2', 'Vlan1002')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2', vlan_subnet_route=True)
 
         # Clean-up and verify remove flows
 
@@ -1576,10 +375,10 @@ class TestVnetOrch(object):
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
 
         vid = create_vlan_interface(dvs, "Vlan2001", "Ethernet8", "Vnet_10", "5.5.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan2001", 'Vnet_10', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan2001", 'Vnet_10', vid, intf_type="vlan-one-peer")
 
         vid = create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan2002", 'Vnet_20', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan2002", 'Vnet_20', vid, intf_type="vlan-one-peer")
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10', '50.1.1.10')
@@ -1596,10 +395,10 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "8.8.8.10/32")
 
         create_vnet_local_routes(dvs, "5.5.10.0/24", 'Vnet_10', 'Vlan2001')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_10')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_10', vlan_subnet_route=True)
 
         create_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20', 'Vlan2002')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_20')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet_20', vlan_subnet_route=True)
 
         # Clean-up and verify remove flows
 
@@ -1653,10 +452,10 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
 
         vid = create_vlan_interface(dvs, "Vlan300", "Ethernet24", 'Vnet3001', "100.100.3.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan300", 'Vnet3001', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan300", 'Vnet3001', vid, intf_type="vlan")
 
         vid = create_vlan_interface(dvs, "Vlan301", "Ethernet28", 'Vnet3001', "100.100.4.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan301",  'Vnet3001', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan301",  'Vnet3001', vid, intf_type="vlan")
 
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000')
         vnet_obj.check_vnet_routes(dvs, 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000', tunnel_name)
@@ -1671,10 +470,10 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.2/32")
 
         create_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001', 'Vlan300')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001', vlan_subnet_route=True)
 
         create_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001', 'Vlan301')
-        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001', vlan_subnet_route=True)
 
         #Create Physical Interface in another Vnet
 
@@ -2914,7 +1713,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-   Test 19 - Test for 2 priority vnet tunnel routes with overlapping primary secondary ECMP nexthop group.
+    Test 19 - Test for 2 priority vnet tunnel routes with overlapping primary secondary ECMP nexthop group.
     '''
     def test_vnet_orch_19(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -3072,7 +1871,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-   Test 20 - Test for Single enpoint priority vnet tunnel routes. Test primary secondary switchover.
+    Test 20 - Test for Single enpoint priority vnet tunnel routes. Test primary secondary switchover.
     '''
     def test_vnet_orch_20(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -3847,6 +2646,328 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         delete_subnet_decap_tunnel(dvs, "IPINIP_SUBNET_V6")
         vnet_obj.check_del_ipinip_tunnel(dvs, "IPINIP_SUBNET_V6")
+
+    '''
+    Test 28 - Test for Single endpoint priority vnet tunnel routes. Test with local endpoint.
+    '''
+    def test_vnet_orch_28(self, dvs, dvs_acl, testlog):
+        self.setup_db(dvs)
+        self.clear_srv_config(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_28'
+        vnet_name = 'Vnet28'
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10028', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10028')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        # no acl rule before creating vnet route
+        dvs_acl.verify_no_acl_rules()
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet8", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet8", "9.1.0.1/32")
+
+        # bring up interface
+        self.set_admin_status("Ethernet8", "up")
+
+        # add neighbor for direcetly connected endpoint
+        self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
+
+        # verify tunnel term acl 
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
+        }
+        intf_id = dvs.asic_db.port_name_map["Ethernet8"]
+        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, intf_id, priority="9998")
+
+        # default monitor session status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        time.sleep(2)
+        nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP,set())
+        tbl_nh =  swsscommon.Table(asic_db, vnet_obj.ASIC_NEXT_HOP)
+        nexthops = dict()
+        for nhid in nhids:
+            status, nh_fvs = tbl_nh.get(nhid)
+            nh_fvs = dict(nh_fvs)
+            for key in nh_fvs.keys():
+                if key == 'SAI_NEXT_HOP_ATTR_IP':
+                    nexthops[nh_fvs[key]] = nhid
+        assert len(nexthops.keys()) == 1
+
+        route = get_created_entries(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, vnet_obj.routes, 1)
+        check_object(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, route[0],
+                        {
+                            "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": nexthops['9.1.0.1'],
+                        }
+                    )
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
+
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+        time.sleep(2)
+
+        route = get_created_entries(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, vnet_obj.routes, 1)
+        check_object(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, route[0],
+                        {
+                            "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": nexthops['9.1.0.1'],
+                        }
+                    )
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
+
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+
+        time.sleep(2)
+
+        nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP,set())
+        tbl_nh =  swsscommon.Table(asic_db, vnet_obj.ASIC_NEXT_HOP)
+        nexthops = dict()
+        for nhid in nhids:
+            status, nh_fvs = tbl_nh.get(nhid)
+            nh_fvs = dict(nh_fvs)
+            for key in nh_fvs.keys():
+                if key == 'SAI_NEXT_HOP_ATTR_IP':
+                    nexthops[nh_fvs[key]] = nhid
+        # nexthop from diectly connected endpoint should NOT be removed
+        assert len(nexthops.keys()) == 2
+
+        route = get_created_entries(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, vnet_obj.routes, 1)
+        check_object(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, route[0],
+                        {
+                            "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": nexthops['9.1.0.2'],
+                        }
+                    )
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.2'])
+        check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
+
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        time.sleep(2)
+
+        nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP,set())
+        tbl_nh =  swsscommon.Table(asic_db, vnet_obj.ASIC_NEXT_HOP)
+        nexthops = dict()
+        for nhid in nhids:
+            status, nh_fvs = tbl_nh.get(nhid)
+            nh_fvs = dict(nh_fvs)
+            for key in nh_fvs.keys():
+                if key == 'SAI_NEXT_HOP_ATTR_IP':
+                    nexthops[nh_fvs[key]] = nhid
+        assert len(nexthops.keys()) == 1
+
+        route = get_created_entries(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, vnet_obj.routes, 1)
+        check_object(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, route[0],
+                        {
+                            "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": nexthops['9.1.0.1'],
+                        }
+                    )
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
+
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+
+        time.sleep(2)
+
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "200.100.1.0/24")
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.1")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        self.remove_neighbor("Ethernet8", "9.1.0.1")
+        self.remove_ip_address("Ethernet8", "9.1.0.1/32")
+        self.set_admin_status("Ethernet8", "down")
+
+    '''
+    Test 29 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover.
+    '''
+    def test_vnet_orch_29(self, dvs, testlog):
+        self.setup_db(dvs)
+        self.clear_srv_config(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_29'
+        vnet_name = 'vnet29'
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10029', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10029')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet8", "")
+        self.create_l3_intf("Ethernet12", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet8", "9.1.0.3/32")
+        self.add_ip_address("Ethernet12", "9.1.0.4/32")
+
+        # bring up interface
+        self.set_admin_status("Ethernet8", "up")
+        self.set_admin_status("Ethernet12", "up")
+
+        # add neighbor for direcetly connected endpoint
+        self.add_neighbor("Ethernet8", "9.1.0.3", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet12", "9.1.0.4", "00:01:02:03:04:06")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', primary ='9.1.0.1,9.1.0.2', monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
+
+        # default monitor status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
+
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Remove first primary endpoint from group.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Switch to secondary if both primary down
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # removing first endpoint of secondary. route should remain on secondary NHG
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # removing last endpoint of secondary. route should be removed
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
+        time.sleep(2)
+
+        new_nhgs = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP_GROUP, [])
+        assert len(new_nhgs) == 0
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+
+        #Route should come up with secondary endpoints.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
+
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should be switched to the primary endpoint.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should be updated with the second primary endpoint.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should not be impacted by seconday endpoints going down.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should not be impacted by seconday endpoints coming back up.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Confirm the monitor sessions are removed
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.1")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.3")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.4")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        self.remove_neighbor("Ethernet8", "9.1.0.3")
+        self.remove_ip_address("Ethernet8", "9.1.0.3/32")
+        self.set_admin_status("Ethernet8", "down")
+
+        self.remove_neighbor("Ethernet12", "9.1.0.4")
+        self.remove_ip_address("Ethernet12", "9.1.0.4/32")
+        self.set_admin_status("Ethernet12", "down")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

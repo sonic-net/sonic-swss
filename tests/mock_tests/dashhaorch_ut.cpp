@@ -1,0 +1,1028 @@
+#include "mock_orch_test.h"
+#include "mock_table.h"
+#include "mock_sai_api.h"
+#include "gtest/gtest.h"
+#include "gmock/gmock.h"
+#include "dash/dashhaorch.h"
+#include "pbutils.h"
+using namespace ::testing;
+
+extern redisReply *mockReply;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
+
+EXTERN_MOCK_FNS
+
+namespace dashhaorch_ut 
+{
+    DEFINE_SAI_GENERIC_APIS_MOCK(dash_ha, ha_set, ha_scope);
+
+    using namespace mock_orch_test;
+
+    class MockBfdOrch : public BfdOrch
+    {
+    public:
+
+        MockBfdOrch(DBConnector* db, DBConnector* state_db) 
+            : BfdOrch(db, APP_BFD_SESSION_TABLE_NAME, TableConnector(state_db, STATE_BFD_SESSION_TABLE_NAME)) {}
+
+        void createSoftwareBfdSession(
+            const std::string& key,
+            const std::vector<swss::FieldValueTuple>& data) override
+        {
+            createSoftwareBfdSession_invoked_times++;
+        }
+
+        void removeSoftwareBfdSession(
+            const std::string& key) override
+        {
+            removeSoftwareBfdSession_invoked_times++;
+        }
+
+        void removeAllSoftwareBfdSessions() override
+        {
+            removeAllSoftwareBfdSessions_invoked_times++;
+        }
+
+        uint32_t createSoftwareBfdSession_invoked_times = 0;
+        uint32_t removeSoftwareBfdSession_invoked_times = 0;
+        uint32_t removeAllSoftwareBfdSessions_invoked_times = 0;
+
+    };
+
+    class DashHaOrchTestable : public DashHaOrch
+    {
+    public:
+        void doTask(swss::NotificationConsumer &consumer) { DashHaOrch::doTask(consumer); }
+    };
+
+    class DashHaOrchTest : public MockOrchTest
+    {
+    protected:
+        std::unique_ptr<MockBfdOrch> m_mockBfdOrch;
+
+        void PostSetUp() override
+        {
+            m_mockBfdOrch = std::make_unique<MockBfdOrch>(m_app_db.get(), m_state_db.get());
+
+            vector<string> dash_ha_tables = {
+                APP_DASH_HA_SET_TABLE_NAME,
+                APP_DASH_HA_SCOPE_TABLE_NAME
+            };
+            m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
+            gDirectory.set(m_dashHaOrch);
+            ut_orch_list.push_back((Orch **)&m_dashHaOrch);
+        }
+
+        void ApplySaiMock()
+        {
+            INIT_SAI_API_MOCK(dash_ha);
+            MockSaiApis();
+        }
+
+        void PreTearDown() override
+        {
+            RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(dash_ha);
+        }
+
+        dash::ha_set::HaSet HaSetPbObject()
+        {
+            dash::ha_set::HaSet ha_set = dash::ha_set::HaSet();
+            swss::IpAddress vip_v4("1.1.1.1");
+            swss::IpAddress vip_v6("::1");
+            swss::IpAddress npu_ip("2.2.2.2");
+            swss::IpAddress local_ip("3.3.3.3");
+            // swss::IpAddress peer_ip("4.4.4.4");
+            swss::IpAddress peer_ip("::2");
+
+            ha_set.set_version("1");
+            ha_set.set_scope(dash::types::HA_SCOPE_DPU);
+            ha_set.mutable_vip_v4()->set_ipv4(vip_v4.getV4Addr());
+            ha_set.mutable_vip_v6()->set_ipv6(reinterpret_cast<const char*>(vip_v6.getV6Addr()));
+            ha_set.mutable_local_npu_ip()->set_ipv4(npu_ip.getV4Addr());
+            ha_set.mutable_local_ip()->set_ipv4(local_ip.getV4Addr());
+            // ha_set.mutable_peer_ip()->set_ipv4(peer_ip.getV4Addr());
+            ha_set.mutable_peer_ip()->set_ipv6(reinterpret_cast<const char*>(peer_ip.getV6Addr()));
+            ha_set.set_cp_data_channel_port(100);
+            ha_set.set_dp_channel_dst_port(200);
+            ha_set.set_dp_channel_src_port_min(0);
+            ha_set.set_dp_channel_src_port_max(1000);
+            ha_set.set_dp_channel_probe_interval_ms(1000);
+            ha_set.set_dp_channel_probe_fail_threshold(3);
+
+            return ha_set;
+        }
+
+        void CreateHaSet()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"vip_v4", "10.0.0.1"},
+                                {"vip_v6", "3:2::1:0"},
+                                {"owner", "dpu"},
+                                {"scope", "dpu"},
+                                {"local_npu_ip", "192.168.1.10"},
+                                {"local_ip", "192.168.2.1"},
+                                {"peer_ip", "192.168.2.2"},
+                                {"cp_data_channel_port", "4789"},
+                                {"dp_channel_dst_port", "4790"},
+                                {"dp_channel_src_port_min", "5000"},
+                                {"dp_channel_src_port_max", "6000"},
+                                {"dp_channel_probe_interval_ms", "1000"},
+                                {"dp_channel_probe_fail_threshold", "3"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void InvalidIpAddresses()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"vip_v4", "invalid_ip"},
+                                {"vip_v6", ""},
+                                {"owner", "dpu"},
+                                {"scope", "dpu"},
+                                {"local_npu_ip", "192.168.1.10"},
+                                {"local_ip", "3:2::1:0"},
+                                {"peer_ip", "300:300:300:300"},
+                                {"cp_data_channel_port", "4789"},
+                                {"dp_channel_dst_port", "4790"},
+                                {"dp_channel_src_port_min", "5000"},
+                                {"dp_channel_src_port_max", "6000"},
+                                {"dp_channel_probe_interval_ms", "1000"},
+                                {"dp_channel_probe_fail_threshold", "3"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void InvalidField()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"vip_v4", "10.0.0.1"},
+                                {"vip_v6", "3:2::1:0"},
+                                {"owner", "dpu"},
+                                {"scope", "dpu"},
+                                {"local_npu_ip", "192.168.1.10"},
+                                {"local_ip", "192.168.2.1"},
+                                {"peer_ip", "192.168.2.2"},
+                                {"cp_data_channel_port", "4789"},
+                                {"dp_channel_dst_port", "4790"},
+                                {"dp_channel_src_port_min", "5000"},
+                                {"dp_channel_src_port_max", "6000"},
+                                {"dp_channel_probe_interval_ms", "1000"},
+                                {"dp_channel_probe_fail_threshold", "3"},
+                                {"invalid_field", "invalid_value"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void CreateEniScopeHaSet()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"vip_v4", "10.0.0.1"},
+                                {"vip_v6", "fc00::1"},
+                                {"owner", "switch"},
+                                {"scope", "eni"},
+                                {"local_npu_ip", "192.168.1.10"},
+                                {"local_ip", "192.168.2.1"},
+                                {"peer_ip", "192.168.2.2"},
+                                {"cp_data_channel_port", "4789"},
+                                {"dp_channel_dst_port", "4790"},
+                                {"dp_channel_src_port_min", "5000"},
+                                {"dp_channel_src_port_max", "6000"},
+                                {"dp_channel_probe_interval_ms", "1000"},
+                                {"dp_channel_probe_fail_threshold", "3"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void RemoveHaSet()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            DEL_COMMAND,
+                            { }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void CreateHaScope()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"ha_role", "dead"},
+                                {"ha_set_id", "HA_SET_1"},
+                                {"vip_v4", "10.0.0.1"},
+                                {"vip_v6", "3:2::1:0"},
+                                {"disabled", "true"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void CreateHaScopeLessFields()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"ha_role", "dead"},
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void RemoveHaScope()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            DEL_COMMAND,
+                            { }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void SetHaScopeHaRole(std::string role="active")
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"ha_role", role},
+                                {"disabled", "false"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void SetHaScopeActivateRoleRequest()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"ha_role", "active"},
+                                {"activate_role_requested", "true"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void SetHaScopeFlowReconcileRequest()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"ha_role", "active"},
+                                {"flow_reconcile_requested", "true"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void RandomTable()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), "RANDOM_TABLE", 1, 1),
+                m_dashHaOrch, "RANDOM_TABLE"));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "random_key",
+                            SET_COMMAND,
+                            {
+                                { "pb", "random" }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void InvalidHaScopePbString()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                { "pb", "invalid" }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void InvalidHaSetPbString()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                { "pb", "invalid" }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void HaSetScopeUnspecified()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            dash::ha_set::HaSet ha_set = dash::ha_set::HaSet();
+            ha_set.set_version("1");
+            ha_set.set_scope(dash::types::HA_SCOPE_UNSPECIFIED);
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                { "pb", ha_set.SerializeAsString() }
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void CreateSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
+        {
+            auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
+
+            vector<FieldValueTuple> bfd_session_data = {
+                {"local_addr", "192.168.1.1"},
+                {"tx_interval", "1000"},
+                {"rx_interval", "1000"},
+                {"multiplier", "3"},
+                {"type", "async_active"},
+                {"multihop", "true"}
+            };
+
+            bfd_consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            bfd_session_key,
+                            SET_COMMAND,
+                            bfd_session_data
+                        }
+                    }
+                )
+            );
+
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*bfd_consumer.get());
+        }
+
+        void deleteSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
+        {
+            auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
+
+            bfd_consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            bfd_session_key,
+                            DEL_COMMAND,
+                            {}
+                        }
+                    }
+                )
+            );
+
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*bfd_consumer.get());
+        }
+
+        void HaSetEvent(sai_ha_set_event_t event_type)
+        {
+            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+
+            sai_ha_set_event_data_t event;
+            memset(&event, 0, sizeof(event));
+            event.ha_set_id = m_dashHaOrch->getHaScopeEntries().begin()->second.ha_scope_id;
+            event.event_type = event_type;
+
+            std::string data = sai_serialize_ha_set_event_ntf(1, &event);
+
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT, data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            auto exec = static_cast<Notifier *>(m_dashHaOrch->getExecutor("HA_SET_NOTIFICATIONS"));
+            auto consumer = exec->getNotificationConsumer();
+            consumer->readData();
+            static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*consumer);
+            mockReply = nullptr;
+
+            sai_redis_communication_mode_t old_mode = gRedisCommunicationMode;
+            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
+            on_ha_set_event(1, &event);
+            gRedisCommunicationMode = old_mode;
+        }
+
+        void HaScopeEvent(sai_ha_scope_event_t event_type,
+                        sai_dash_ha_role_t ha_role,
+                        sai_dash_ha_state_t ha_state)
+        {
+            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+
+            sai_ha_scope_event_data_t event;
+            memset(&event, 0, sizeof(event));
+            event.ha_scope_id = m_dashHaOrch->getHaScopeEntries().begin()->second.ha_scope_id;
+            event.event_type = event_type;
+            event.ha_role = ha_role;
+            event.ha_state = ha_state;
+            event.flow_version = sai_uint32_t(0);
+
+            ASSERT_EQ(to_string(event.flow_version), "0");
+
+            std::string data = sai_serialize_ha_scope_event_ntf(1, &event);
+
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT, data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            auto exec = static_cast<Notifier *>(m_dashHaOrch->getExecutor("HA_SCOPE_NOTIFICATIONS"));
+            auto consumer = exec->getNotificationConsumer();
+            consumer->readData();
+            static_cast<DashHaOrchTestable*>(m_dashHaOrch)->doTask(*consumer);
+            mockReply = nullptr;
+
+            sai_redis_communication_mode_t old_mode = gRedisCommunicationMode;
+            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
+            on_ha_scope_event(1, &event);
+            gRedisCommunicationMode = old_mode;
+        }
+    };
+
+    TEST_F(DashHaOrchTest, AddRemoveHaSet)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaSet();
+
+        auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        sai_ip_address_t sai_vip_v4 = {};
+        sai_ip_address_t sai_vip_v6 = {};
+
+        EXPECT_TRUE(to_sai(ha_set_entry->second.metadata.vip_v4(), sai_vip_v4));
+        EXPECT_TRUE(to_sai(ha_set_entry->second.metadata.vip_v6(), sai_vip_v6));
+
+        EXPECT_EQ(sai_vip_v4.addr_family, SAI_IP_ADDR_FAMILY_IPV4);
+        uint32_t expected_v4 = htonl((10 << 24) | (0 << 16) | (0 << 8) | 1);
+        EXPECT_EQ(sai_vip_v4.addr.ip4, expected_v4);
+
+        // Expected bytes for IPv6 address "3:2::1:0"
+        // 0003:0002:0000:0000:0000:0000:0001:0000
+        uint8_t expected_v6[16] = {
+            0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00
+        };
+        
+        for (int i = 0; i < 16; i++) {
+            EXPECT_EQ(sai_vip_v6.addr.ip6[i], expected_v6[i]) 
+                << "IPv6 VIP byte " << i << " mismatch. Expected: " 
+                << std::hex << (int)expected_v6[i] << ", Got: " 
+                << std::hex << (int)sai_vip_v6.addr.ip6[i];
+        }
+
+        HaSetEvent(SAI_HA_SET_EVENT_DP_CHANNEL_UP);
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, InvalidIpAddresses)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(0);
+
+        InvalidIpAddresses();
+    }
+
+    TEST_F(DashHaOrchTest, InvalidField)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1);
+        
+        InvalidField();
+    }
+
+    TEST_F(DashHaOrchTest, HaSetAlreadyExists)
+    {
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(0);
+
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, AddRemoveHaScope)
+    {
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaScope();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 1);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1") != m_dashHaOrch->getHaScopeEntries().end());
+
+        // HA Scope already exists
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(0);
+        CreateHaScope();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 1);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1") != m_dashHaOrch->getHaScopeEntries().end());
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaScope();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 0);
+    }
+
+    TEST_F(DashHaOrchTest, AddRemoveHaScopeLessFields)
+    {
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(1);
+
+        CreateHaScopeLessFields();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 1);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1") != m_dashHaOrch->getHaScopeEntries().end());
+
+        // HA Scope already exists
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(0);
+        CreateHaScope();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 1);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1") != m_dashHaOrch->getHaScopeEntries().end());
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(1);
+
+        RemoveHaScope();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().size() == 0);
+    }
+
+
+    TEST_F(DashHaOrchTest, AddRemoveEniHaScope)
+    {
+        CreateEniScopeHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaScope();
+    }
+
+    TEST_F(DashHaOrchTest, NoHaSetFound)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+        .Times(0);
+
+        CreateHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+        .Times(0);
+
+        RemoveHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(0);
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, SetHaScopeHaRole)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+        EXPECT_FALSE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
+
+        SetHaScopeHaRole("");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+
+        SetHaScopeHaRole("dead");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_DEAD);
+
+        SetHaScopeHaRole("standby");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_STANDBY, SAI_DASH_HA_STATE_STANDBY);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDBY);
+
+        SetHaScopeHaRole("standalone");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_STANDALONE, SAI_DASH_HA_STATE_STANDALONE);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_STANDALONE);
+
+        SetHaScopeHaRole("switching_to_active");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE, SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION);
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, LastRoleStartTime)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        std::time_t last_role_start_time = m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time;
+
+        sleep(1); // Ensure time difference
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time > last_role_start_time);
+
+        last_role_start_time = m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time;
+
+        sleep(1); 
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().begin()->second.last_role_start_time == last_role_start_time);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, HaScopeActivateRoleRequest)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE, SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION);
+
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
+        .Times(2);       // Set ha_role and activate_role_requested
+
+        SetHaScopeActivateRoleRequest();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        EXPECT_EQ(to_sai(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, HaScopeFlowReconcileRequest)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_FLOW_RECONCILE_NEEDED,
+            SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
+        .Times(1);
+
+        SetHaScopeFlowReconcileRequest();
+
+        EXPECT_TRUE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, HaScopeSplitBrain)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED,
+            SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, InvalidInput)
+    {
+        RandomTable();
+        InvalidHaScopePbString();
+        InvalidHaSetPbString();
+
+        EXPECT_EQ(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1"), m_dashHaOrch->getHaScopeEntries().end());
+        EXPECT_EQ(m_dashHaOrch->getHaSetEntries().find("HA_SET_1"), m_dashHaOrch->getHaSetEntries().end());
+
+        HaSetScopeUnspecified();
+        CreateHaScope();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingEni)
+    {
+        CreateEniScopeHaSet();
+        CreateHaScope();
+
+        CreateSoftwareBfdSession();
+
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 0);
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        SetHaScopeHaRole("dead");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
+        EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 0);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingDpu)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        // bfd sessions should be created when ha_state is set to active
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        CreateSoftwareBfdSession("default:default:192.168.1.101");
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 2);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 2);
+
+        deleteSoftwareBfdSession("default:default:192.168.1.101");
+        EXPECT_EQ(m_mockBfdOrch->removeSoftwareBfdSession_invoked_times, 1);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 1);
+
+        // bfd sessions should be removed immediately when ha_role is set to dead
+        SetHaScopeHaRole("dead");
+        EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingNoHaScope)
+    {
+        CreateHaSet();
+
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        CreateHaScope();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+}

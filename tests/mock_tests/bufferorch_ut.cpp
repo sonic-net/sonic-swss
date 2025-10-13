@@ -29,6 +29,7 @@ namespace bufferorch_test
     shared_ptr<swss::DBConnector> m_config_db;
     shared_ptr<swss::DBConnector> m_state_db;
     shared_ptr<swss::DBConnector> m_chassis_app_db;
+    shared_ptr<swss::DBConnector> m_counters_db;
 
     uint32_t _ut_stub_expected_profile_count;
     uint32_t _ut_stub_port_profile_list_add_count;
@@ -120,22 +121,67 @@ namespace bufferorch_test
         return pold_sai_queue_api->set_queue_attribute(queue_id, attr);
     }
 
+    sai_status_t _ut_stub_sai_set_ports_attribute(
+        uint32_t object_count,
+        const sai_object_id_t *object_id,
+        const sai_attribute_t *attr_list,
+        sai_bulk_op_error_mode_t mode,
+        sai_status_t *object_statuses)
+    {
+        for (size_t i = 0; i < object_count; i++)
+        {
+            object_statuses[i] = _ut_stub_sai_set_port_attribute(object_id[i], attr_list + i);
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_set_ingress_priority_groups_attribute(
+        uint32_t object_count,
+        const sai_object_id_t *object_id,
+        const sai_attribute_t *attr_list,
+        sai_bulk_op_error_mode_t mode,
+        sai_status_t *object_statuses)
+    {
+        for (size_t i = 0; i < object_count; i++)
+        {
+            object_statuses[i] = _ut_stub_sai_set_ingress_priority_group_attribute(object_id[i], attr_list + i);
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_set_queues_attribute(
+        uint32_t object_count,
+        const sai_object_id_t *object_id,
+        const sai_attribute_t *attr_list,
+        sai_bulk_op_error_mode_t mode,
+        sai_status_t *object_statuses)
+    {
+        for (size_t i = 0; i < object_count; i++)
+        {
+            object_statuses[i] = _ut_stub_sai_set_queue_attribute(object_id[i], attr_list + i);
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
     void _hook_sai_apis()
     {
         ut_sai_port_api = *sai_port_api;
         pold_sai_port_api = sai_port_api;
         ut_sai_port_api.set_port_attribute = _ut_stub_sai_set_port_attribute;
+        ut_sai_port_api.set_ports_attribute = _ut_stub_sai_set_ports_attribute;
         sai_port_api = &ut_sai_port_api;
 
         ut_sai_buffer_api = *sai_buffer_api;
         pold_sai_buffer_api = sai_buffer_api;
         ut_sai_buffer_api.set_ingress_priority_group_attribute = _ut_stub_sai_set_ingress_priority_group_attribute;
+        ut_sai_buffer_api.set_ingress_priority_groups_attribute = _ut_stub_sai_set_ingress_priority_groups_attribute;
         ut_sai_buffer_api.set_buffer_profile_attribute = _ut_stub_sai_set_buffer_profile_attribute;
         sai_buffer_api = &ut_sai_buffer_api;
 
         ut_sai_queue_api = *sai_queue_api;
         pold_sai_queue_api = sai_queue_api;
         ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
+        ut_sai_queue_api.set_queues_attribute = _ut_stub_sai_set_queues_attribute;
         sai_queue_api = &ut_sai_queue_api;
     }
 
@@ -199,6 +245,7 @@ namespace bufferorch_test
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
             m_app_state_db = make_shared<swss::DBConnector>("APPL_STATE_DB", 0);
+            m_counters_db = make_shared<swss::DBConnector>("COUNTERS_DB", 0);
             if(gMySwitchType == "voq")
                 m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
 
@@ -254,10 +301,17 @@ namespace bufferorch_test
             };
 
             vector<string> flex_counter_tables = {
-                CFG_FLEX_COUNTER_TABLE_NAME
+                CFG_FLEX_COUNTER_TABLE_NAME,
+                CFG_DEVICE_METADATA_TABLE_NAME
             };
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
             gDirectory.set(flexCounterOrch);
+
+            const vector<string> stel_tables = {
+                CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+                CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME
+            };
+            gHFTOrch = new HFTelOrch(m_config_db.get(), m_state_db.get(), stel_tables);
 
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
@@ -371,6 +425,13 @@ namespace bufferorch_test
             for (auto &i : buffer_maps)
             {
                 i.second->clear();
+            }
+
+            // Clean up FlexCounterOrch
+            auto* flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+            if (flexCounterOrch)
+            {
+                delete flexCounterOrch;
             }
 
             gDirectory.m_values.clear();
@@ -794,5 +855,120 @@ namespace bufferorch_test
 
         _ut_stub_buffer_profile_sanity_check = false;
         _unhook_sai_apis();
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestCreateOnlyConfigDbBuffersDynamicUpdate)
+    {
+        // Get FlexCounterOrch from directory
+        auto* flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+        ASSERT_NE(flexCounterOrch, nullptr);
+
+        // Test Phase 1: Initial State Verification
+        // Set up initial configuration with create_only_config_db_buffers = false and verify it
+        ASSERT_FALSE(flexCounterOrch->isCreateOnlyConfigDbBuffers());
+
+        // Test Phase 2: Enable Flex Counter and Verify All Counters Added
+        // Add configuration to enable flex counter for watermark
+        Table flexCounterTable = Table(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
+        flexCounterTable.set("PG_WATERMARK", {
+            {"FLEX_COUNTER_STATUS", "enable"},
+            {"POLL_INTERVAL", "1000"}
+        });
+        flexCounterTable.set("QUEUE_WATERMARK", {
+            {"FLEX_COUNTER_STATUS", "enable"},
+            {"POLL_INTERVAL", "1000"}
+        });
+        flexCounterOrch->addExistingData(&flexCounterTable);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+
+        // Verify all counters are added to counter database (because create_only_config_db_buffers = false)
+        Table countersPgTable = Table(m_counters_db.get(), COUNTERS_PG_NAME_MAP);
+        Table countersQueueTable = Table(m_counters_db.get(), COUNTERS_QUEUE_NAME_MAP);
+
+        // Check that counter database has entries for all PGs and queues
+        // These tables use empty string "" as key and store all entries as fields
+        std::vector<FieldValueTuple> pgFields;
+        std::vector<FieldValueTuple> queueFields;
+        countersPgTable.get("", pgFields);
+        countersQueueTable.get("", queueFields);
+        ASSERT_GT(pgFields.size(), 0);
+        ASSERT_GT(queueFields.size(), 0);
+
+        // Test Phase 3: Add Individual Buffer Configurations (Should NOT be added to map)
+        // Clear existing counter entries
+        countersPgTable.del("");
+        countersQueueTable.del("");
+
+        // Add buffer PG and buffer queue configuration
+        Table bufferPgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table bufferQueueTable = Table(m_app_db.get(), APP_BUFFER_QUEUE_TABLE_NAME);
+
+        bufferPgTable.set("Ethernet0:0", {
+            {"profile", "ingress_lossy_profile"}
+        });
+        bufferQueueTable.set("Ethernet0:0", {
+            {"profile", "ingress_lossy_profile"}
+        });
+
+        gBufferOrch->addExistingData(&bufferPgTable);
+        gBufferOrch->addExistingData(&bufferQueueTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        // Verify they are NOT added to the counter database (because create_only_config_db_buffers = false)
+        // Individual buffer configurations should not create counter database entries again
+        pgFields.clear();
+        queueFields.clear();
+        countersPgTable.get("", pgFields);
+        countersQueueTable.get("", queueFields);
+        ASSERT_EQ(pgFields.size(), 0);
+        ASSERT_EQ(queueFields.size(), 0);
+
+        // Test Phase 4: Dynamic Configuration Update to true
+        // Update DEVICE_METADATA table
+        Table deviceMetadataTable = Table(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+        deviceMetadataTable.set("localhost", {
+            {"create_only_config_db_buffers", "true"}
+        });
+        flexCounterOrch->addExistingData(&deviceMetadataTable);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+
+        // Verify configuration change
+        ASSERT_TRUE(flexCounterOrch->isCreateOnlyConfigDbBuffers());
+
+        // Test Phase 5: Add Individual Buffer Configurations (Should be added to map)
+        // Add buffer PG and buffer queue configuration for different objects
+        bufferPgTable.set("Ethernet0:1", {
+            {"profile", "ingress_lossy_profile"}
+        });
+        bufferQueueTable.set("Ethernet0:1", {
+            {"profile", "ingress_lossy_profile"}
+        });
+
+        gBufferOrch->addExistingData(&bufferPgTable);
+        gBufferOrch->addExistingData(&bufferQueueTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        // Verify they ARE added to the counter database (because create_only_config_db_buffers = true)
+        // Individual buffer configurations should create counter database entries
+        pgFields.clear();
+        queueFields.clear();
+        countersPgTable.get("", pgFields);
+        countersQueueTable.get("", queueFields);
+        ASSERT_EQ(pgFields.size(), 1);
+        ASSERT_EQ(queueFields.size(), 1);
+
+        // Verify the specific entries exist
+        {
+            std::string value;
+            bool found = countersPgTable.hget("", "Ethernet0:1", value);
+            ASSERT_TRUE(found);
+            ASSERT_FALSE(value.empty());
+        }
+        {
+            std::string value;
+            bool found = countersQueueTable.hget("", "Ethernet0:1", value);
+            ASSERT_TRUE(found);
+            ASSERT_FALSE(value.empty());
+        }
     }
 }

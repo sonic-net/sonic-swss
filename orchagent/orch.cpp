@@ -17,6 +17,79 @@ using namespace swss;
 
 int gBatchSize = 0;
 
+std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
+std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
+
+RingBuffer::RingBuffer(int size): buffer(size)
+{
+    if (size <= 1) {
+        throw std::invalid_argument("Buffer size must be greater than 1");
+    }
+}
+
+void RingBuffer::pauseThread()
+{
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, [&](){ return !IsEmpty() || thread_exited; });
+}
+
+void RingBuffer::notify()
+{
+    // buffer not empty but rthread idle
+    bool task_pending = !IsEmpty() && IsIdle();
+
+    if (thread_exited || task_pending)
+        cv.notify_all();
+}
+
+void RingBuffer::setIdle(bool idle)
+{
+    idle_status = idle;
+}
+
+bool RingBuffer::IsIdle() const
+{
+    return idle_status;
+}
+
+bool RingBuffer::IsFull() const
+{
+    return (tail + 1) % static_cast<int>(buffer.size()) == head;
+}
+
+bool RingBuffer::IsEmpty() const
+{
+    return tail == head;
+}
+
+bool RingBuffer::push(AnyTask ringEntry)
+{
+    if (IsFull())
+        return false;
+    buffer[tail] = std::move(ringEntry);
+    tail = (tail + 1) % static_cast<int>(buffer.size());
+    return true;
+}
+
+bool RingBuffer::pop(AnyTask& ringEntry)
+{
+    if (IsEmpty())
+        return false;
+    ringEntry = std::move(buffer[head]);
+    head = (head + 1) % static_cast<int>(buffer.size());
+    return true;
+}
+
+void RingBuffer::addExecutor(Executor* executor)
+{
+    m_consumerSet.insert(executor->getName());
+}
+
+bool RingBuffer::serves(const std::string& tableName)
+{
+    return m_consumerSet.find(tableName) != m_consumerSet.end();  
+}
+
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
     addConsumer(db, tableName, pri);
@@ -27,6 +100,20 @@ Orch::Orch(DBConnector *db, const vector<string> &tableNames)
     for (auto it : tableNames)
     {
         addConsumer(db, it, default_orch_pri);
+    }
+}
+
+Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2, 
+    const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2)
+{
+    for(auto it : tableNames_1)
+    {
+        addConsumer(db1, it, default_orch_pri);
+    }
+
+    for(auto it : tableNames_2)
+    {
+        addConsumer(db2, it, default_orch_pri);
     }
 }
 
@@ -155,6 +242,10 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
     return entries.size();
 }
 
+size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries) {
+    return addToSync(*entries);
+}
+
 // TODO: Table should be const
 size_t ConsumerBase::refillToSync(Table* table)
 {
@@ -239,19 +330,55 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 
 void Consumer::execute()
 {
-    // ConsumerBase::execute_impl<swss::ConsumerTableBase>();
     SWSS_LOG_ENTER();
 
-    size_t update_size = 0;
-    auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        table->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
+    auto entries = std::make_shared<std::deque<KeyOpFieldsValuesTuple>>();
+    getConsumerTable()->pops(*entries);
 
-    drain();
+    processAnyTask(
+        // bundle tasks into a lambda function which takes no argument and returns void
+        // this lambda captures variables by value from the surrounding scope
+        [=](){
+            addToSync(entries);
+            drain();
+        }
+    );
+}
+
+void Executor::processAnyTask(AnyTask&& task)
+{
+    // if either gRingBuffer isn't initialized or the ring thread isn't created
+    if (!gRingBuffer || !gRingBuffer->thread_created) 
+    {
+        // execute the input task immediately
+        task();
+    }
+
+    // Ring Buffer Logic
+
+    // if this executor isn't served by ring buffer
+    else if (!gRingBuffer->serves(getName()))
+    {
+        // this executor should execute the input task in the main thread
+        // but to avoid thread issue, it should wait when the ring buffer is actively working
+        while (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()) {
+            gRingBuffer->notify();
+            std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
+        }
+        // execute task()
+        task();
+    }
+    else
+    {
+        // if this executor is served by ring buffer, 
+        // push the task to gRingBuffer
+        // this task would be executed in the ring thread, not here
+        while (!gRingBuffer->push(task)) {
+            gRingBuffer->notify();
+            SWSS_LOG_WARN("ring is full...push again");
+        }
+        gRingBuffer->notify();
+    }
 }
 
 void Consumer::drain()
@@ -804,6 +931,10 @@ void Orch::addExecutor(Executor* executor)
     {
         SWSS_LOG_THROW("Duplicated executorName in m_consumerMap: %s", executor->getName().c_str());
     }
+
+    if (gRingBuffer && executor->getName() == APP_ROUTE_TABLE_NAME) {
+        gRingBuffer->addExecutor(executor);
+    }
 }
 
 Executor *Orch::getExecutor(string executorName)
@@ -847,19 +978,19 @@ void Orch2::doTask(Consumer &consumer)
         }
         catch (const std::invalid_argument& e)
         {
-            SWSS_LOG_ERROR("Parse error: %s", e.what());
+            SWSS_LOG_ERROR("Parse error in %s: %s", typeid(*this).name(), e.what());
         }
         catch (const std::logic_error& e)
         {
-            SWSS_LOG_ERROR("Logic error: %s", e.what());
+            SWSS_LOG_ERROR("Logic error in %s: %s", typeid(*this).name(), e.what());
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception was catched in the request parser: %s", e.what());
+            SWSS_LOG_ERROR("Exception was caught in the request parser in %s: %s", typeid(*this).name(), e.what());
         }
         catch (...)
         {
-            SWSS_LOG_ERROR("Unknown exception was catched in the request parser");
+            SWSS_LOG_ERROR("Unknown exception was caught in the request parser");
         }
         request_.clear();
 

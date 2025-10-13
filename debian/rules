@@ -38,15 +38,29 @@ endif
 
 override_dh_auto_configure:
 	dh_auto_configure -- $(configure_opts)
+	# Configure Rust build for countersyncd
+	cargo fetch
+	cargo update -p swss-common
+
+override_dh_auto_build:
+	dh_auto_build
+	# Build and test countersyncd Rust project
+	cargo build --release
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/swss
 ifeq ($(ENABLE_GCOV), y)
 	mkdir -p debian/swss/tmp/gcov
-	lcov -c --directory . --no-external --exclude "$(shell pwd)/tests/*" --exclude "$(shell pwd)/**/tests/*" --output-file coverage.info
+	lcov -c --directory . --no-external --exclude "$(shell pwd)/tests/*" --exclude "$(shell pwd)/**/tests/*" --ignore-errors gcov --output-file coverage.info
+	lcov --add-tracefile coverage.info -o coverage.info
 	lcov_cobertura coverage.info -o coverage.xml
 	find ./ -type f -regex '.*\.\(h\|cpp\|gcno\|info\)' | tar -cf debian/swss/tmp/gcov/gcov-source.tar -T -
 endif
+
+override_dh_auto_clean:
+	dh_auto_clean
+	# Clean Rust build artifacts
+	cargo clean || true
 
 override_dh_strip:
 	dh_strip --dbg-package=swss-dbg

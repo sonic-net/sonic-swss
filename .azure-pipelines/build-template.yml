@@ -88,7 +88,7 @@ jobs:
     ${{ if ne(parameters.pool, 'default') }}:
       name: ${{ parameters.pool }}
     ${{ else }}:
-      vmImage: 'ubuntu-20.04'
+      vmImage: 'ubuntu-22.04'
 
   container:
     image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
@@ -106,6 +106,12 @@ jobs:
         libdbus-1-dev \
         libteam-dev
       sudo pip3 install lcov_cobertura
+      sudo apt-get install -y redis-server
+      sudo sed -i 's/notify-keyspace-events ""/notify-keyspace-events AKE/' /etc/redis/redis.conf
+      sudo sed -ri 's/^# unixsocket/unixsocket/' /etc/redis/redis.conf
+      sudo sed -ri 's/^unixsocketperm .../unixsocketperm 777/' /etc/redis/redis.conf
+      sudo sed -ri 's/redis-server.sock/redis.sock/' /etc/redis/redis.conf
+      sudo service redis-server restart
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -150,18 +156,15 @@ jobs:
       runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download/common
       patterns: |
-        target/debs/bullseye/libnl-3-200_*.deb
-        target/debs/bullseye/libnl-3-dev_*.deb
-        target/debs/bullseye/libnl-genl-3-200_*.deb
-        target/debs/bullseye/libnl-genl-3-dev_*.deb
-        target/debs/bullseye/libnl-route-3-200_*.deb
-        target/debs/bullseye/libnl-route-3-dev_*.deb
-        target/debs/bullseye/libnl-nf-3-200_*.deb
-        target/debs/bullseye/libnl-nf-3-dev_*.deb
-        target/debs/bullseye/libyang_*.deb
-        target/debs/bullseye/libprotobuf*.deb
-        target/debs/bullseye/libprotoc*.deb
-        target/debs/bullseye/protobuf-compiler*.deb
+        target/debs/bookworm/libnl-3-200_*.deb
+        target/debs/bookworm/libnl-3-dev_*.deb
+        target/debs/bookworm/libnl-genl-3-200_*.deb
+        target/debs/bookworm/libnl-genl-3-dev_*.deb
+        target/debs/bookworm/libnl-route-3-200_*.deb
+        target/debs/bookworm/libnl-route-3-dev_*.deb
+        target/debs/bookworm/libnl-nf-3-200_*.deb
+        target/debs/bookworm/libnl-nf-3-dev_*.deb
+        target/debs/bookworm/libyang_*.deb
     displayName: "Download common libs"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -182,12 +185,45 @@ jobs:
       set -ex
       cd download
       sudo dpkg -i $(find common -type f -name '*.deb')
+      cd ..
+    workingDirectory: $(Build.ArtifactStagingDirectory)
+    displayName: "Install libnl3"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: sonic-net.sonic-platform-vpp
+      artifact: vpp
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/main'
+      allowPartiallySucceededBuilds: true
+      path: $(Build.ArtifactStagingDirectory)/download
+    displayName: "Download sonic platform-vpp deb packages"
+    condition: eq('${{ parameters.arch }}', 'amd64')
+  - script: |
+      set -ex
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/libvppinfra-dev_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/libvppinfra_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-crypto-engines_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-dbg_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-dev_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-core_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-devtools_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-dpdk_*_${{ parameters.arch }}.deb
+      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/python3-vpp-api_*_${{ parameters.arch }}.deb
+    workingDirectory: $(Build.ArtifactStagingDirectory)
+    displayName: "Install sonic platform-vpp packages"
+    condition: eq('${{ parameters.arch }}', 'amd64')
+  - script: |
+      set -ex
+      cd download
       sudo dpkg -i $(find swsscommon -type f -name '*.deb')
       sudo dpkg -i $(find sairedis -type f -name '*.deb')
       cd ..
       rm -rf download
     workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install libnl3, sonic swss common and sairedis"
+    displayName: "Install sonic swss common and sairedis"
   - script: |
       set -ex
       tar czf pytest.tgz tests
@@ -202,6 +238,9 @@ jobs:
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
+  - script: |
+      cargo test
+    displayName: "Test countersyncd"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
