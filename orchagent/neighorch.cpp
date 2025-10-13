@@ -1023,7 +1023,6 @@ void NeighOrch::getMuxNeighborsForPort(string port_name, NeighborTable& m_neighb
         }
 
         // Add to m_neighbors if entry found
-        SWSS_LOG_INFO("mux_port: %s, port_name: %s", mux_port_name.c_str(), port_name.c_str());
         if (mux_port_name == port_name)
         {
             m_neighbors.insert(entry);

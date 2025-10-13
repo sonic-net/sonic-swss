@@ -1569,14 +1569,6 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         }
     }
 
-    SWSS_LOG_INFO("old port: %s, port %s, add %d, mac %s, alias %s, ip %s",
-                  old_port.c_str(),
-                  port.c_str(),
-                  update.add,
-                  update.mac.to_string().c_str(),
-                  update.entry.alias.c_str(),
-                  update.entry.ip_address.to_string().c_str());
-
     MuxCable* ptr;
     if (!old_port.empty() && old_port != port && isMuxExists(old_port))
     {
@@ -1790,13 +1782,10 @@ bool MuxOrch::handleMuxCfg(const Request& request)
             bool is_skip_neighbor = isSkipNeighbor(entry.first.ip_address);
             if (!nexthop_found && !is_skip_neighbor)
             {
-                bool add = mux_cable_tb_[port_name]->isActive();
-
-                SWSS_LOG_INFO("Neighbor %s on %s learned before mux port %s configured state: %d. updating...",
+                SWSS_LOG_NOTICE("Neighbor %s on %s learned before mux port %s configured. updating...",
                     entry.first.ip_address.to_string().c_str(),
                     entry.second.mac.to_string().c_str(),
                     port_name.c_str(),
-                    add
                 );
 
                 NeighborUpdate neighbor_update = {entry.first, entry.second.mac, 1};
