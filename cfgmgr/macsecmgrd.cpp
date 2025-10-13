@@ -43,7 +43,7 @@ static void sig_handler(int signo)
 }
 
 /* Check if FIPS mode is enabled */
-bool fipsEnabled(DBConnector *stateDb)
+bool fipsEnabled()
 {
     try
     {
@@ -62,7 +62,29 @@ bool fipsEnabled(DBConnector *stateDb)
     }
     catch (const std::exception& e)
     {
-        SWSS_LOG_ERROR("Exception while checking FIPS mode status: %s", e.what());
+        SWSS_LOG_ERROR("Exception while checking /proc/cmdline for FIPS mode: %s",
+			e.what());
+    }
+
+    try
+    {
+        /* Check if FIPS was enabled via config */
+        std::ifstream fips_enable_file("/etc/fips/fips_enable");
+        if (fips_enable_file.is_open())
+        {
+            bool fips_enabled;
+            fips_enable_file >> fips_enabled;
+            if (fips_enabled)
+            {
+                SWSS_LOG_NOTICE("FIPS mode detected: enabled via config 'fips_enable=1'");
+                return true;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_ERROR("Exception while checking /etc/fips/fips_enable for FIPS mode: %s",
+			e.what());
     }
     return false;
 }
@@ -152,7 +174,7 @@ int main(int argc, char **argv)
 
         /* Perform FIPS compliance check if FIPS mode is enabled */
         bool isCpPostStateReady = false;
-        if (fipsEnabled(&stateDb))
+        if (fipsEnabled())
         {
             SWSS_LOG_NOTICE("System operating in FIPS compliant mode");
             /* Validate that the control plane cryptographic module passed POST */
