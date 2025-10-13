@@ -73,7 +73,13 @@ class TestMacsecPost(object):
             dvs.runcmd(["sh", "-c", f"echo '{k} {v}' >> {VS_SAI_POST_CONFIG_FILE}"])
  
         marker = dvs.add_log_marker()
+
+        dvs.runcmd('killall5 -15')
+        dvs.net_cleanup()
+        dvs.destroy_servers()
+        dvs.create_servers()
         dvs.restart()
+
         return marker
  
     def check_syslog(self, dvs, marker, log):
