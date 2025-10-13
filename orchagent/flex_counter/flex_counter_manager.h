@@ -12,6 +12,7 @@
 #include <type_traits>
 #include "sai_serialize.h"
 #include "saihelper.h"
+#include <boost/functional/hash.hpp>
 
 extern "C" {
 #include "sai.h"
@@ -135,71 +136,76 @@ class FlexCounterManager
 
 struct CachedObjects
 {
-    CounterType pending_counter_type;
-    sai_object_id_t pending_switch_id;
-    std::unordered_set<std::string> pending_counter_stats;
-    std::unordered_set<sai_object_id_t> pending_sai_objects;
+    struct PendingMapKey
+    {
+        std::unordered_set<std::string> counter_stats;
+        CounterType counter_type;
+        sai_object_id_t switch_id;
 
-    bool try_cache(const sai_object_id_t object_id,
+        bool operator==(const PendingMapKey& other) const {
+            return counter_stats == other.counter_stats &&
+                   counter_type == other.counter_type &&
+                   switch_id == other.switch_id;
+        }
+    };
+
+    struct PendingMapHash {
+        size_t operator()(const PendingMapKey& key) const {
+            size_t seed = 0;
+            std::vector<std::string> sorted_stats(key.counter_stats.begin(), key.counter_stats.end());
+            std::sort(sorted_stats.begin(), sorted_stats.end());
+            boost::hash_combine(seed, boost::hash_range(sorted_stats.begin(), sorted_stats.end()));
+            boost::hash_combine(seed, key.counter_type);
+            boost::hash_combine(seed, key.switch_id);
+            return seed;
+        }
+    };
+
+    std::unordered_map<PendingMapKey, std::unordered_set<sai_object_id_t>, PendingMapHash> pending_objects_map;
+
+    void cache(const sai_object_id_t object_id,
                    const CounterType counter_type,
                    const std::unordered_set<std::string>& counter_stats,
                    sai_object_id_t switch_id)
     {
-        if (pending_sai_objects.empty())
-        {
-            pending_counter_type = counter_type;
-            pending_switch_id = switch_id;
-            // Just to avoid recreating counter IDs
-            if (pending_counter_stats != counter_stats)
-            {
-                pending_counter_stats = counter_stats;
-            }
-        }
-        else if (counter_type != pending_counter_type ||
-                 switch_id != pending_switch_id ||
-                 counter_stats != pending_counter_stats)
-        {
-            return false;
-        }
-
-        cache(object_id);
-
-        return true;
-    }
-
-    bool is_cached(const sai_object_id_t object_id)
-    {
-        return pending_sai_objects.find(object_id) != pending_sai_objects.end();
+        PendingMapKey key{counter_stats, counter_type, switch_id};
+        pending_objects_map[key].emplace(object_id);
     }
 
     void flush(const std::string &group_name)
     {
-        if (pending_sai_objects.empty())
+        if (pending_objects_map.empty())
         {
             return;
         }
 
-        auto counter_ids = FlexCounterManager::serializeCounterStats(pending_counter_stats);
-        auto counter_type_it = FlexCounterManager::counter_id_field_lookup.find(pending_counter_type);
-
-        auto counter_keys = group_name + ":";
-        for (const auto& oid: pending_sai_objects)
+        for (const auto& entry : pending_objects_map)
         {
-            counter_keys += sai_serialize_object_id(oid) + ",";
+            const auto& counter_stats = entry.first.counter_stats;
+            const auto& counter_type = entry.first.counter_type;
+            const auto& switch_id = entry.first.switch_id;
+            const auto& pending_sai_objects = entry.second;
+
+            if (pending_sai_objects.empty())
+            {
+                continue;
+            }
+
+            auto counter_ids = FlexCounterManager::serializeCounterStats(counter_stats);
+            auto counter_type_it = FlexCounterManager::counter_id_field_lookup.find(counter_type);
+
+            auto counter_keys = group_name + ":";
+            for (const auto& oid: pending_sai_objects)
+            {
+                counter_keys += sai_serialize_object_id(oid) + ",";
+            }
+            counter_keys.pop_back();
+
+            startFlexCounterPolling(switch_id, counter_keys, counter_ids, counter_type_it->second);
         }
-        counter_keys.pop_back();
 
-        startFlexCounterPolling(pending_switch_id, counter_keys, counter_ids, counter_type_it->second);
-        
-        /* Clear the cached stats and objects after flush */
-        pending_sai_objects.clear();
-        pending_counter_stats.clear();
-        pending_switch_id = SAI_NULL_OBJECT_ID;
-    }
-
-    void cache(sai_object_id_t object_id)
-    {
-        pending_sai_objects.emplace(object_id);
+        /* Clear all cached entries after flush */
+        pending_objects_map.clear();
     }
 };
 
@@ -242,34 +248,38 @@ class FlexCounterCachedManager : public FlexCounterManager
 
             auto effective_switch_id = switch_id == SAI_NULL_OBJECT_ID ? gSwitchId : switch_id;
             installed_counters[object_id] = effective_switch_id;
-            if (cached_objects.try_cache(object_id, counter_type, counter_stats, effective_switch_id))
-            {
-                return;
-            }
-            else
-            {
-                // Either counter_type, counter_ids or switch_id has changed in the new entry 
-                // Flush the old entries and save the new one 
-                // TODO: Improve the logic to read all the entries and group them before flushing 
-                //       to reduce number of sairedis calls
-                flush(group_name, cached_objects);
-                cached_objects.try_cache(object_id, counter_type, counter_stats, effective_switch_id);
-            }
+            cached_objects.cache(object_id, counter_type, counter_stats, effective_switch_id);
         }
 
         void clearCounterIdList(
             struct CachedObjects &cached_objects,
             const sai_object_id_t object_id)
         {
-            auto search = cached_objects.pending_sai_objects.find(object_id);
-            if (search == cached_objects.pending_sai_objects.end())
+            bool found = false;
+            for (auto entry = cached_objects.pending_objects_map.begin(); entry != cached_objects.pending_objects_map.end(); )
             {
-                FlexCounterManager::clearCounterIdList(object_id);
+                if (entry->second.find(object_id) != entry->second.end())
+                {
+                    found = true;
+                    installed_counters.erase(object_id);
+                    entry->second.erase(object_id);
+                }
+
+                if (found && entry->second.empty())
+                {
+                    entry = cached_objects.pending_objects_map.erase(entry);
+                    break;
+                }
+                else
+                {
+                    ++entry;
+                }
             }
-            else
+
+            if (!found)
             {
-                installed_counters.erase(object_id);
-                cached_objects.pending_sai_objects.erase(search);
+                /* If the object is not found in the cached objects, clear the counter id list assuming it is already installed */
+                FlexCounterManager::clearCounterIdList(object_id);
             }
         }
 };
