@@ -12,7 +12,7 @@ end
 
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
-local delta = tonumber(ARGV[3])
+local default_poll_interval = tonumber(ARGV[3])
 
 local APPL_DB         = 0      -- Application database
 local COUNTERS_DB     = 2      -- Counters and statistics
@@ -29,7 +29,7 @@ local rates_table_name = "RATES"
 local bookmark_table_name = "RATES:GLOBAL"
 local BIN_FILTER_VALUE = 10
 local MIN_SIGNIFICANT_BINS = 2
-
+local FEC_FLR_POLL_INTERVAL = 120
 local MFC = 8
 
 local function get_port_name_from_oid(port)
@@ -414,7 +414,7 @@ local function time_to_calculate_flr()
 
     timestamp_last = tonumber(timestamp_last) or 0
 
-    if (timestamp_last == 0) or ((timestamp_current - timestamp_last) >= 120) then
+    if (timestamp_last == 0) or ((timestamp_current - timestamp_last) >= FEC_FLR_POLL_INTERVAL) then
         return true
     end
 
