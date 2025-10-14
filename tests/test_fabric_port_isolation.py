@@ -4,6 +4,7 @@ from dvslib.dvs_common import PollingConfig
 
 
 class TestVirtualChassis(object):
+    @pytest.mark.skip(reason="Covered by mock test:  FabricPort_Isolation_And_Monitor_Propagates)"
     def test_voq_switch_fabric_link(self, vst):
         """Test basic fabric link monitoring infrastructure in VOQ switchs.
 
