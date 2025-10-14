@@ -974,6 +974,56 @@ class VnetVxlanVrfTunnel(object):
         assert asic_vrs == vr_ids
 
         self.routes.update(new_route)
+        return new_route
+
+    def check_vnet_local_route_nexthops(self, dvs, route_key, nexthops=[]):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        route_tbl = swsscommon.Table(asic_db, self.ASIC_ROUTE_ENTRY)
+        nhgm_tbl = swsscommon.Table(asic_db, self.ASIC_NEXT_HOP_GROUP_MEMBER)
+        nh_tbl = swsscommon.Table(asic_db, self.ASIC_NEXT_HOP)
+                
+        # Verify next hop or next hop group
+        status, route_fvs = route_tbl.get(route_key)
+        route_fvs = dict(route_fvs)
+        assert status, "Error occurred when trying to get a route entry key"
+
+        if (len(nexthops) == 1):
+            expected_attr = {
+                "SAI_NEXT_HOP_ATTR_IP": nexthops[0]
+            }
+
+            # Check next hop entry
+            nh_key = route_fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+            assert nh_key, "Route entry does not have a next hop"
+            check_object(asic_db, self.ASIC_NEXT_HOP, nh_key, expected_attr)
+
+        elif (len(nexthops) > 1):
+            expected_attr = {
+                "SAI_NEXT_HOP_GROUP_ATTR_TYPE": "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP",
+            }
+
+            # Check next hop group entry
+            nhg_key = route_fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+            assert nhg_key, "Route entry does not have a next hop"
+            check_object(asic_db, self.ASIC_NEXT_HOP_GROUP, nhg_key, expected_attr)
+
+            # Check next hop group members
+            remaining_nexthops = set(nexthops)
+            nhgms = get_exist_entries(dvs, self.ASIC_NEXT_HOP_GROUP_MEMBER)
+            for nhgm in nhgms:
+                status, fvs = nhgm_tbl.get(nhgm)
+                fvs = dict(fvs)
+                assert status, "Error occurred when trying to get a next hop group member key"
+
+                if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhg_key:
+                    nh_key = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                    status, nh_fvs = nh_tbl.get(nh_key)
+                    nh_fvs = dict(nh_fvs)
+                    assert status, "Error occurred when trying to get a next hop key"
+                    assert nh_fvs["SAI_NEXT_HOP_ATTR_IP"] in remaining_nexthops
+                    remaining_nexthops.remove(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+
+            assert len(remaining_nexthops) == 0, "Not all nexthops are associated with the next hop group"
 
     def check_del_vnet_local_routes(self, dvs, name):
         # TODO: Implement for VRF VNET

@@ -3004,7 +3004,8 @@ class TestVnetOrch(object):
 
         # create vnet local route
         create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
-        vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9"])
 
         # Clean-up and verify remove flows
         delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
@@ -3062,7 +3063,16 @@ class TestVnetOrch(object):
 
         # create vnet local route
         create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
-        vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9", "10.10.0.11"])
+
+        # update vnet local route to single nexthop
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9"])
+
+        # update vnet local route back to ecmp
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9", "10.10.0.11"])
 
         # Clean-up and verify remove flows
         delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
