@@ -579,14 +579,14 @@ namespace routeorch_test
         // PART B: Default route DEL -> state 'na' -> SET -> state 'ok'
         {
             const std::string def = "0.0.0.0/0";
-            const bool hasStateField = stateRouteStateFieldExists(m_state_db.get(), def);
+            ASSERT_TRUE(stateRouteStateFieldExists(m_state_db.get(), def))
+        << "Expected STATE_DB:ROUTE_TABLE to expose 'state' for the default route.";
 
             // SetUp() seeds a default route; if state is exposed, it should become 'ok'
-            if (hasStateField)
-            {
-                ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "ok"))
-                    << "Expected initial default-route state to become 'ok'.";
-            }
+        
+            ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "ok"))
+                << "Expected initial default-route state to become 'ok'.";
+        
 
             // DEL default route
             std::deque<KeyOpFieldsValuesTuple> entries;
@@ -605,11 +605,9 @@ namespace routeorch_test
             ASSERT_EQ(base_set + 1,        set_route_count);
             ASSERT_EQ(sai_fail_count, 0);
 
-            if (hasStateField)
-            {
-                ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "na"))
+            ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "na"))
                     << "Expected default-route state to become 'na' after DEL.";
-            }
+            
 
             // Re-SET default route
             entries.clear();
@@ -628,11 +626,9 @@ namespace routeorch_test
             ASSERT_EQ(base_set + 1,        set_route_count);
             ASSERT_EQ(sai_fail_count, 0);
 
-            if (hasStateField)
-            {
-                ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "ok"))
+            ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "ok"))
                     << "Expected default-route state to return to 'ok' after re-SET.";
-            }
+        
         }
     }
 
