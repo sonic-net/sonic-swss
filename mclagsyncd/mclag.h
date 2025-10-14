@@ -58,7 +58,7 @@ enum MCLAG_DOMAIN_CFG_ATTR_BMAP_FLAGS {
 /*
  * Largest message that can be sent to or received from the MCLAG.
  */
-#define MCLAG_MAX_MSG_LEN 4096
+#define MCLAG_MAX_MSG_LEN 8320 + 4096 /*CONFIG_MCLAG_ENABLE_INTF_LEN 8320: max number of mclag enable portchannel is 520*/
 #define MCLAG_MAX_SEND_MSG_LEN 4096
 
 typedef struct mclag_msg_hdr_t_ {
