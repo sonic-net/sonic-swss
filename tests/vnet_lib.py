@@ -678,6 +678,7 @@ class VnetVxlanVrfTunnel(object):
         self.routes = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
         self.nhops = get_exist_entries(dvs, self.ASIC_NEXT_HOP)
         self.nhgs = get_exist_entries(dvs, self.ASIC_NEXT_HOP_GROUP)
+        self.nhgms = get_exist_entries(dvs, self.ASIC_NEXT_HOP_GROUP_MEMBER)
         self.bfd_sessions = get_exist_entries(dvs, self.ASIC_BFD_SESSION)
 
         global loopback_id, def_vr_id, switch_mac
@@ -1020,14 +1021,20 @@ class VnetVxlanVrfTunnel(object):
                     status, nh_fvs = nh_tbl.get(nh_key)
                     nh_fvs = dict(nh_fvs)
                     assert status, "Error occurred when trying to get a next hop key"
-                    assert nh_fvs["SAI_NEXT_HOP_ATTR_IP"] in remaining_nexthops
+                    assert nh_fvs["SAI_NEXT_HOP_ATTR_IP"] in remaining_nexthops, "Next hop in next hop group member not expected"
                     remaining_nexthops.remove(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
 
             assert len(remaining_nexthops) == 0, "Not all nexthops are associated with the next hop group"
 
-    def check_del_vnet_local_routes(self, dvs, name):
+    def check_del_vnet_local_routes(self, dvs, name, prefix):
         # TODO: Implement for VRF VNET
-        return True
+        vr_ids = self.vnet_route_ids(dvs, name, True)
+
+        routes = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
+
+        for route in routes:
+            rt_key = json.loads(route)
+            assert rt_key['vr'] not in vr_ids or rt_key['dest'] != prefix, "The route %s in VRF %s is not deleted" % (prefix, name)
 
     def check_vnet_routes(self, dvs, name, endpoint, tunnel, mac="", vni=0, route_ids=""):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
