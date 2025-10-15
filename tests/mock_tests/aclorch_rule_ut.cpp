@@ -178,8 +178,8 @@ namespace aclorch_rule_test
                     acl_table_type,
                     SET_COMMAND,
                     {
-                        { ACL_TABLE_TYPE_MATCHES, MATCH_DST_IP },
-                        { ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION }
+                        { ACL_TABLE_TYPE_MATCHES, string(MATCH_DST_IP) + "," + MATCH_TUNNEL_TERM },
+                        { ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION },
                     } 
                 }
             });
@@ -205,6 +205,7 @@ namespace aclorch_rule_test
                     {
                         { RULE_PRIORITY, "9999" },
                         { MATCH_DST_IP, "10.0.0.1/24" },
+                        { MATCH_TUNNEL_TERM, "true" },
                         { ACTION_REDIRECT_ACTION, ip + "@" + tunnel_name }
                     } 
                 }
@@ -247,9 +248,10 @@ namespace aclorch_rule_test
               { "SAI_ACL_ENTRY_ATTR_ADMIN_STATE", "true" },
               { "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER", "oid:0xfffffffffff"},
               { "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP", "10.0.0.1&mask:255.255.255.0"},
+              { "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_TERMINATED", "true"},
               { "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT", sai_serialize_object_id(nh_oid) }
         }), false);
-        vector<bool> skip_list = {false, false, false, true, false, false}; /* skip checking counter */
+        vector<bool> skip_list = {false, false, false, true, false, false, false}; /* skip checking counter */
         ASSERT_TRUE(Check::AttrListSubset(SAI_OBJECT_TYPE_ACL_ENTRY, aclMockState->create_attrs, attr_list, skip_list));
         ASSERT_TRUE(gAclOrch->getAclRule(acl_table, acl_rule));
 
