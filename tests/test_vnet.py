@@ -185,13 +185,13 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet_2000')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000', "100.100.3.0/24")
 
         delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet_2000')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000', "100.100.4.0/24")
 
         delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet_2001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2001', "100.102.1.0/24")
 
         delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2001')
@@ -300,10 +300,10 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "2.2.10.0/24", 'Vnet_2')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2', "2.2.10.0/24")
 
         delete_vnet_local_routes(dvs, "1.1.10.0/24", 'Vnet_1')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_1')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_1', "1.1.10.0/24")
 
         delete_vnet_routes(dvs, "2.2.2.11/32", 'Vnet_2')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2')
@@ -403,10 +403,10 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "5.5.10.0/24", 'Vnet_10')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_10')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_10', "5.5.10.0/24")
 
         delete_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_20')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_20', "8.8.10.0/24")
 
         delete_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_10')
@@ -541,7 +541,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.2.1/24")
 
         delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002', "100.102.1.0/24")
 
         delete_phy_interface(dvs, "Ethernet60", "100.102.1.1/24")
         vnet_obj.check_del_router_interface(dvs, "Ethernet60")
@@ -550,10 +550,10 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3002')
 
         delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001', "100.100.3.0/24")
 
         delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001', "100.100.4.0/24")
 
         delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet3001')
@@ -3002,6 +3002,10 @@ class TestVnetOrch(object):
 
         vnet_obj.fetch_exist_entries(dvs)
 
+        num_nh = len(vnet_obj.nhops)
+        num_nhg = len(vnet_obj.nhgs)
+        num_nhgm = len(vnet_obj.nhgms)
+
         # create vnet local route
         create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
         route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
@@ -3009,7 +3013,12 @@ class TestVnetOrch(object):
 
         # Clean-up and verify remove flows
         delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
-        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name, "10.10.0.0/24")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == num_nh
+        assert len(vnet_obj.nhgs) == num_nhg
+        assert len(vnet_obj.nhgms) == num_nhgm
 
         self.remove_neighbor("Ethernet20", "10.10.0.9")
         self.set_admin_status("Ethernet20", "down")
@@ -3061,6 +3070,10 @@ class TestVnetOrch(object):
 
         vnet_obj.fetch_exist_entries(dvs)
 
+        num_nh = len(vnet_obj.nhops)
+        num_nhg = len(vnet_obj.nhgs)
+        num_nhgm = len(vnet_obj.nhgms)
+
         # create vnet local route
         create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
         route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
@@ -3076,7 +3089,12 @@ class TestVnetOrch(object):
 
         # Clean-up and verify remove flows
         delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
-        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name, "10.10.0.0/24")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == num_nh
+        assert len(vnet_obj.nhgs) == num_nhg
+        assert len(vnet_obj.nhgms) == num_nhgm
 
         self.remove_neighbor("Ethernet20", "10.10.0.9")
         self.remove_neighbor("Ethernet16", "10.10.0.11")
