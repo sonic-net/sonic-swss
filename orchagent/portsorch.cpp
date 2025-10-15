@@ -6464,10 +6464,16 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
+        // Track separate bulker index for verification
+        size_t bulker_idx = 0;
         for (size_t idx = 0; idx < portCount; idx++)
         {
             const auto& port = ports[idx];
-            const auto status = bulker.statuses[idx];
+            if (port.m_priority_group_ids.size() == 0)
+            {
+                continue;
+            }
+            const auto status = bulker.statuses[bulker_idx];
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -6477,6 +6483,7 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
             }
 
             SWSS_LOG_INFO("Get priority groups for port %s", port.m_alias.c_str());
+            bulker_idx++;
         }
     }
 }

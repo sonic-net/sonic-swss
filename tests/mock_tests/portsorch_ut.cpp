@@ -3860,6 +3860,69 @@ namespace portsorch_test
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
 
+    // Mock variables for priority groups test
+    // Map of port OID to number of priority groups
+    std::map<sai_object_id_t, uint32_t> mock_port_pg_counts;
+
+    sai_status_t _ut_stub_sai_get_ports_attribute_zero_pg(
+        _In_ uint32_t object_count,
+        _In_ const sai_object_id_t *object_id,
+        _In_ const uint32_t *attr_count,
+        _Inout_ sai_attribute_t **attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses)
+    {
+        // Implement the mock ourselves instead of calling original
+        for (uint32_t i = 0; i < object_count; i++)
+        {
+            if (attr_count[i] == 1 &&
+                attr_list[i] != nullptr &&
+                attr_list[i][0].id == SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS)
+            {
+                // Check if we have a configured PG count for this port
+                auto it = mock_port_pg_counts.find(object_id[i]);
+                if (it != mock_port_pg_counts.end())
+                {
+                    // Return configured priority group count
+                    attr_list[i][0].value.u32 = it->second;
+                    object_statuses[i] = SAI_STATUS_SUCCESS;
+                }
+                else
+                {
+                    // Return default 8 priority groups for unconfigured ports
+                    attr_list[i][0].value.u32 = 8;
+                    object_statuses[i] = SAI_STATUS_SUCCESS;
+                }
+            }
+            else if (attr_count[i] == 1 &&
+                     attr_list[i] != nullptr &&
+                     attr_list[i][0].id == SAI_PORT_ATTR_INGRESS_PRIORITY_GROUP_LIST)
+            {
+                // For the priority group list query, just return success
+                // The list is already allocated by the caller
+                object_statuses[i] = SAI_STATUS_SUCCESS;
+            }
+            else
+            {
+                // For other attributes, call the original implementation
+                object_statuses[i] = pold_sai_port_api->get_port_attribute(
+                    object_id[i], attr_count[i], attr_list[i]);
+            }
+        }
+
+        return SAI_STATUS_SUCCESS;
+    }
+
+    void _hook_sai_port_api_zero_pg()
+    {
+        ut_sai_port_api = *sai_port_api;
+        pold_sai_port_api = sai_port_api;
+        ut_sai_port_api.get_port_attribute = _ut_stub_sai_get_port_attribute;
+        ut_sai_port_api.set_port_attribute = _ut_stub_sai_set_port_attribute;
+        ut_sai_port_api.get_ports_attribute = _ut_stub_sai_get_ports_attribute_zero_pg;
+        sai_port_api = &ut_sai_port_api;
+    }
+
     struct PostPortInitTests : PortsOrchTest
     {
     };
@@ -3907,5 +3970,44 @@ namespace portsorch_test
         // Now the field "max_priority_groups" is set
         stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
         ASSERT_TRUE(stateDbSet);
+
+        // Test case for ports with mixed priority group configurations
+        // Test pattern: [8 PGs, 0 PGs, 8 PGs, 0 PGs, 8 PGs]
+        // This tests the bulker index mapping with multiple zero-PG ports at different positions
+        std::vector<std::string> port_names = {"Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12", "Ethernet16"};
+        std::vector<uint32_t> expected_pg_counts = {8, 0, 8, 0, 8};
+        std::vector<Port> test_ports;
+
+        // Get ports and configure mock PG counts
+        for (size_t i = 0; i < port_names.size(); i++)
+        {
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort(port_names[i], port));
+
+            // Clear existing priority group IDs to simulate fresh initialization
+            port.m_priority_group_ids.clear();
+
+            // Configure mock to return specific PG count for this port
+            mock_port_pg_counts[port.m_port_id] = expected_pg_counts[i];
+
+            test_ports.push_back(port);
+        }
+
+        // Hook SAI API with our mock
+        _hook_sai_port_api_zero_pg();
+
+        // Initialize priority groups in bulk - should handle mixed scenario correctly
+        ASSERT_NO_THROW(gPortsOrch->initializePriorityGroupsBulk(test_ports));
+
+        // Verify each port has the expected number of priority groups
+        for (size_t i = 0; i < test_ports.size(); i++)
+        {
+            ASSERT_EQ(test_ports[i].m_priority_group_ids.size(), expected_pg_counts[i])
+                << "Port " << port_names[i] << " has incorrect PG count";
+        }
+
+        // Cleanup: unhook SAI API and reset mock variables
+        _unhook_sai_port_api();
+        mock_port_pg_counts.clear();
     }
 }
