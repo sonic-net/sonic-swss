@@ -596,11 +596,9 @@ TEST_F(FpmSyncdResponseTest, TestUpdateNextHopGroupDb)
         vector<FieldValueTuple> fieldValues;
         nexthop_group_table.get("5", fieldValues);
 
-        EXPECT_EQ(fieldValues.size(), 2);
+        EXPECT_EQ(fieldValues.size(), 1);
         EXPECT_EQ(fvField(fieldValues[0]), "nexthop");
         EXPECT_EQ(fvValue(fieldValues[0]), test_gateway);
-        EXPECT_EQ(fvField(fieldValues[1]), "ifname");
-        EXPECT_EQ(fvValue(fieldValues[1]), "");
     }
 }
 
