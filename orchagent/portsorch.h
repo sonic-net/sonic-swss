@@ -126,6 +126,8 @@ struct PortCapability
 
 typedef PortCapability<PortSupportedFecModes> PortFecModeCapability_t;
 
+extern const std::vector<sai_port_attr_t> port_serdes_attr_ids;
+
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -205,6 +207,10 @@ public:
 
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
+
+    void generatePortSerdesAttrCounterMap();
+    void clearPortSerdesAttrCounterMap();
+    const std::vector<sai_port_attr_t>& getPortSerdesAttrIds() const;
 
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
@@ -288,6 +294,7 @@ private:
     shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterTaggedCachedManager<void> port_stat_manager;
+    FlexCounterTaggedCachedManager<void> port_serdes_attr_manager;
     FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
@@ -490,6 +497,7 @@ private:
     void addPriorityGroupWatermarkFlexCountersPerPortPerPgIndex(const Port& port, size_t pgIndex);
 
     bool m_isPortCounterMapGenerated = false;
+    bool m_isPortSerdesAttrCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
     bool isAutoNegEnabled(sai_object_id_t id);

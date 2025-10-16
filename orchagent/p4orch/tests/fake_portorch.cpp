@@ -8,6 +8,16 @@ extern "C"
 
 #include "portsorch.h"
 
+// Global SERDES attribute vector for PORT_SERDES_ATTR flex counter (for test compatibility)
+// TODO:: check if moving the definition of port_serdes_attr_ids from portsorch.cpp -> portsorch.h 
+// will help to avoid this redundant declaration
+const vector<sai_port_attr_t> port_serdes_attr_ids =
+{
+    SAI_PORT_ATTR_RX_SIGNAL_DETECT,     // RX signal detection per lane
+    SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK,   // FEC alignment lock status per lane
+    SAI_PORT_ATTR_RX_SNR                // Receive Signal-to-Noise Ratio per lane
+};
+
 #define PORT_SPEED_LIST_DEFAULT_SIZE                     16
 #define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
@@ -31,7 +41,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
       pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
       pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
       wred_port_stat_manager(WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-      wred_queue_stat_manager(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
+      wred_queue_stat_manager(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+      port_serdes_attr_manager(PORT_SERDES_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
 }
 
@@ -691,6 +702,11 @@ template <typename T>
 std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> &counterIds, std::string (*serializer)(const T))
 {
     return {};
+}
+
+const std::vector<sai_port_attr_t>& PortsOrch::getPortSerdesAttrIds() const
+{
+    return port_serdes_attr_ids;
 }
 
 void PortsOrch::doTask(swss::SelectableTimer &timer)

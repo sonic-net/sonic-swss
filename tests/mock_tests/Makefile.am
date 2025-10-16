@@ -74,6 +74,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
+                portserdesattr_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \

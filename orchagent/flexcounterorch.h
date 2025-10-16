@@ -56,12 +56,14 @@ public:
     bool getRouteFlowCountersState() const {return m_route_flow_counter_enabled;}
     bool getWredQueueCountersState() const;
     bool getWredPortCountersState() const;
+    bool getPortSerdesAttrCountersState() const;
     bool isCreateOnlyConfigDbBuffers() const;
     bool bake() override;
 
 private:
     void handleDeviceMetadataTable(Consumer &consumer);
     bool m_port_counter_enabled = false;
+    bool m_port_serdes_attr_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
     bool m_queue_enabled = false;
     bool m_queue_watermark_enabled = false;

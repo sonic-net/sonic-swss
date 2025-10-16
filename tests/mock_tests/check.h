@@ -71,8 +71,8 @@ struct Check
         auto act_len = sai_serialize_attribute_value(act_buf.data(), meta, &act->value);
         auto exp_len = sai_serialize_attribute_value(exp_buf.data(), meta, &exp->value);
 
-        assert(act_len < act_str.size());
-        assert(act_len < exp_str.size());
+        assert(act_len < act_buf.size());
+        assert(act_len < exp_buf.size());
 
         act_buf.resize(act_len);
         exp_buf.resize(exp_len);

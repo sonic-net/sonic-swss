@@ -75,6 +75,7 @@ extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
+extern FlexCounterOrch *gFlexCounterOrch;
 extern HFTelOrch *gHFTOrch;
 extern Directory<Orch*> gDirectory;
 
