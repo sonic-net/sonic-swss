@@ -20,6 +20,24 @@ EXTERN_MOCK_FNS
 
 namespace dashorch_test
 {
+    class MockDashHaOrch : public DashHaOrch
+    {
+    public:
+        MockDashHaOrch(DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, BfdOrch *bfd_orch, DBConnector *app_state_db, ZmqServer *zmqServer)
+            : DashHaOrch(db, tableNames, dash_orch, bfd_orch, app_state_db, zmqServer) {}
+
+        HaScopeEntry getHaScopeForEni(const std::string& eni) override
+        {
+            HaScopeEntry entry;
+
+            entry.ha_scope_id = 0x123456789ABCDEF0ULL;
+            entry.metadata.set_ha_role(dash::types::HA_ROLE_ACTIVE);
+            entry.metadata.set_disabled(false);
+
+            return entry;
+        }
+    };
+
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
     DEFINE_SAI_ENTRY_APIS_MOCK(dash_trusted_vni, global_trusted_vni, eni_trusted_vni)
     DEFINE_SAI_ENTRY_APIS_MOCK(dash_direction_lookup, direction_lookup)
@@ -63,6 +81,8 @@ namespace dashorch_test
         }
     }
     class DashOrchTest : public MockDashOrchTest, public ::testing::WithParamInterface<std::tuple<ValueOrRange, ValueOrRange>> {
+    private:
+        std::unique_ptr<MockDashHaOrch> m_mock_dash_ha_orch;
         
         void ApplySaiMock()
         {
@@ -70,6 +90,13 @@ namespace dashorch_test
             INIT_SAI_API_MOCK(dash_trusted_vni);
             INIT_SAI_API_MOCK(dash_direction_lookup);
             MockSaiApis();
+        }
+
+        void PostSetUp()
+        {
+            m_mock_dash_ha_orch = std::make_unique<MockDashHaOrch>(m_dpu_app_db.get(), std::vector<std::string>{APP_DASH_HA_SET_TABLE_NAME, APP_DASH_HA_SCOPE_TABLE_NAME}, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
+
+            m_DashOrch->setDashHaOrch(m_mock_dash_ha_orch.get());
         }
 
         void PreTearDown() override
