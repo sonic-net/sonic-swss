@@ -30,7 +30,7 @@ extern CrmOrch *gCrmOrch;
 namespace
 {
 
-std::vector<sai_attribute_t> getSaiAttrs(const P4NeighborEntry &neighbor_entry)
+std::vector<sai_attribute_t> prepareSaiAttrs(const P4NeighborEntry &neighbor_entry)
 {
     std::vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
@@ -62,16 +62,12 @@ P4NeighborEntry::P4NeighborEntry(const std::string &router_interface_id, const s
     neighbor_key = KeyGenerator::generateNeighborKey(router_intf_id, neighbor_id);
 }
 
-ReturnCodeOr<sai_neighbor_entry_t> NeighborManager::getSaiEntry(const P4NeighborEntry &neighbor_entry)
-{
+sai_neighbor_entry_t NeighborManager::prepareSaiEntry(
+	const P4NeighborEntry& neighbor_entry) {
     const std::string &router_intf_key = neighbor_entry.router_intf_key;
     sai_object_id_t router_intf_oid;
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key, &router_intf_oid))
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Router intf key " << QuotedVar(router_intf_key)
-                             << " does not exist in certralized map");
-    }
+    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key,
+                        &router_intf_oid);
 
     sai_neighbor_entry_t neigh_entry;
     neigh_entry.switch_id = gSwitchId;
@@ -139,8 +135,7 @@ ReturnCodeOr<P4NeighborAppDbEntry> NeighborManager::deserializeNeighborEntry(
 ReturnCode NeighborManager::validateNeighborAppDbEntry(const P4NeighborAppDbEntry &app_db_entry)
 {
     SWSS_LOG_ENTER();
-    // Perform generic APP DB entry validations. Operation specific validations
-    // will be done by the respective request process methods.
+    // Perform generic APP DB entry validations.
 
     const std::string router_intf_key = KeyGenerator::generateRouterInterfaceKey(app_db_entry.router_intf_id);
     if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key))
@@ -158,170 +153,253 @@ ReturnCode NeighborManager::validateNeighborAppDbEntry(const P4NeighborAppDbEntr
     return ReturnCode();
 }
 
-P4NeighborEntry *NeighborManager::getNeighborEntry(const std::string &neighbor_key)
+ReturnCode NeighborManager::validateNeighborEntryOperation(
+    const P4NeighborAppDbEntry& app_db_entry, const std::string& operation)
 {
     SWSS_LOG_ENTER();
 
+    RETURN_IF_ERROR(validateNeighborAppDbEntry(app_db_entry));
+    const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+        app_db_entry.router_intf_id, app_db_entry.neighbor_id);
+    bool exist = (getNeighborEntry(neighbor_key) != nullptr);
+    if (operation == SET_COMMAND) {
+      if (!exist) {
+        if (!app_db_entry.is_set_dst_mac) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << p4orch::kDstMac
+                 << " is mandatory to create neighbor entry. Failed to create "
+                    "neighbor with key "
+                 << QuotedVar(neighbor_key);
+        }
+        if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                                     neighbor_key)) {
+          RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+              "Neighbor entry with key " << QuotedVar(neighbor_key)
+                                         << " already exists in centralized map");
+        }
+      }
+    } else if (operation == DEL_COMMAND) {
+      if (!exist) {
+        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+               << "Neighbor with key " << QuotedVar(neighbor_key)
+               << " does not exist";
+      }
+      uint32_t ref_count;
+      if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                                      neighbor_key, &ref_count)) {
+        RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+            "Failed to get reference count of neighbor with key "
+            << QuotedVar(neighbor_key));
+      }
+      if (ref_count > 0) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Neighbor with key " << QuotedVar(neighbor_key)
+               << " referenced by other objects (ref_count = " << ref_count
+               << ")";
+      }
+    }
+    else
+    {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Unknown operation type " << QuotedVar(operation);
+    }
+
+    return ReturnCode();
+}
+
+P4NeighborEntry* NeighborManager::getNeighborEntry(
+    const std::string& neighbor_key) {
+    SWSS_LOG_ENTER();
+
     if (m_neighborTable.find(neighbor_key) == m_neighborTable.end())
-        return nullptr;
+      return nullptr;
 
     return &m_neighborTable[neighbor_key];
 }
 
-ReturnCode NeighborManager::createNeighbor(P4NeighborEntry &neighbor_entry)
-{
-    SWSS_LOG_ENTER();
+std::vector<ReturnCode> NeighborManager::createNeighbors(
+    const std::vector<P4NeighborAppDbEntry>& neighbor_entries) {
+  SWSS_LOG_ENTER();
 
-    const std::string &neighbor_key = neighbor_entry.neighbor_key;
-    if (getNeighborEntry(neighbor_key) != nullptr)
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_EXISTS)
-                             << "Neighbor entry with key " << QuotedVar(neighbor_key) << " already exists");
-    }
+  std::vector<P4NeighborEntry> entries(neighbor_entries.size());
+  std::vector<sai_neighbor_entry_t> sai_entries(neighbor_entries.size());
+  std::vector<std::vector<sai_attribute_t>> sai_attrs(neighbor_entries.size());
+  std::vector<uint32_t> attrs_cnt(neighbor_entries.size());
+  std::vector<const sai_attribute_t*> attrs_ptr(neighbor_entries.size());
+  std::vector<sai_status_t> object_statuses(neighbor_entries.size());
+  std::vector<ReturnCode> statuses(neighbor_entries.size());
 
-    if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key))
-    {
-        RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL("Neighbor entry with key " << QuotedVar(neighbor_key)
-                                                                            << " already exists in centralized map");
-    }
+  for (size_t i = 0; i < neighbor_entries.size(); ++i) {
+    entries[i] = P4NeighborEntry(neighbor_entries[i].router_intf_id,
+                                 neighbor_entries[i].neighbor_id,
+                                 neighbor_entries[i].dst_mac_address);
+    sai_entries[i] = prepareSaiEntry(entries[i]);
+    entries[i].neigh_entry = sai_entries[i];
+    sai_attrs[i] = prepareSaiAttrs(entries[i]);
+    attrs_cnt[i] = static_cast<uint32_t>(sai_attrs[i].size());
+    attrs_ptr[i] = sai_attrs[i].data();
+  }
+  sai_neighbor_api->create_neighbor_entries(
+      static_cast<uint32_t>(neighbor_entries.size()), sai_entries.data(),
+      attrs_cnt.data(), attrs_ptr.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR,
+      object_statuses.data());
 
-    ASSIGN_OR_RETURN(neighbor_entry.neigh_entry, getSaiEntry(neighbor_entry));
-    auto attrs = getSaiAttrs(neighbor_entry);
+  for (size_t i = 0; i < neighbor_entries.size(); ++i) {
+    CHECK_ERROR_AND_LOG(object_statuses[i],
+                        "Failed to create neighbor with key "
+                            << QuotedVar(entries[i].neighbor_key));
 
-    CHECK_ERROR_AND_LOG_AND_RETURN(sai_neighbor_api->create_neighbor_entry(
-                                       &neighbor_entry.neigh_entry, static_cast<uint32_t>(attrs.size()), attrs.data()),
-                                   "Failed to create neighbor with key " << QuotedVar(neighbor_key));
-
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE, neighbor_entry.router_intf_key);
-    if (neighbor_entry.neighbor_id.isV4())
-    {
+    if (object_statuses[i] == SAI_STATUS_SUCCESS) {
+      m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      entries[i].router_intf_key);
+      if (entries[i].neighbor_id.isV4()) {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-    }
-    else
-    {
+      } else {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+      }
+      m_neighborTable[entries[i].neighbor_key] = entries[i];
+      m_p4OidMapper->setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                                 entries[i].neighbor_key);
+      statuses[i] = ReturnCode();
+    } else {
+      statuses[i] = ReturnCode(object_statuses[i])
+                    << "Failed to create neighbor with key "
+                    << QuotedVar(entries[i].neighbor_key);
     }
-
-    m_neighborTable[neighbor_key] = neighbor_entry;
-    m_p4OidMapper->setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key);
-    return ReturnCode();
+  }
+  return statuses;
 }
 
-ReturnCode NeighborManager::removeNeighbor(const std::string &neighbor_key)
-{
-    SWSS_LOG_ENTER();
+std::vector<ReturnCode> NeighborManager::removeNeighbors(
+    const std::vector<P4NeighborAppDbEntry>& neighbor_entries) {
+  SWSS_LOG_ENTER();
 
-    auto *neighbor_entry = getNeighborEntry(neighbor_key);
-    if (neighbor_entry == nullptr)
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Neighbor with key " << QuotedVar(neighbor_key) << " does not exist");
-    }
+  std::vector<P4NeighborEntry*> entries(neighbor_entries.size());
+  std::vector<sai_neighbor_entry_t> sai_entries(neighbor_entries.size());
+  std::vector<sai_status_t> object_statuses(neighbor_entries.size());
+  std::vector<ReturnCode> statuses(neighbor_entries.size());
 
-    uint32_t ref_count;
-    if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, &ref_count))
-    {
-        RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL("Failed to get reference count of neighbor with key "
-                                                 << QuotedVar(neighbor_key));
-    }
-    if (ref_count > 0)
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                             << "Neighbor with key " << QuotedVar(neighbor_key)
-                             << " referenced by other objects (ref_count = " << ref_count << ")");
-    }
+  for (size_t i = 0; i < neighbor_entries.size(); ++i) {
+    entries[i] = getNeighborEntry(KeyGenerator::generateNeighborKey(
+        neighbor_entries[i].router_intf_id, neighbor_entries[i].neighbor_id));
+    sai_entries[i] = entries[i]->neigh_entry;
+  }
+  sai_neighbor_api->remove_neighbor_entries(
+      static_cast<uint32_t>(neighbor_entries.size()), sai_entries.data(),
+      SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_statuses.data());
 
-    CHECK_ERROR_AND_LOG_AND_RETURN(sai_neighbor_api->remove_neighbor_entry(&neighbor_entry->neigh_entry),
-                                   "Failed to remove neighbor with key " << QuotedVar(neighbor_key));
+  for (size_t i = 0; i < neighbor_entries.size(); ++i) {
+    CHECK_ERROR_AND_LOG(object_statuses[i],
+                        "Failed to create neighbor with key "
+                            << QuotedVar(entries[i]->neighbor_key));
 
-    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE, neighbor_entry->router_intf_key);
-    if (neighbor_entry->neighbor_id.isV4())
-    {
+    if (object_statuses[i] == SAI_STATUS_SUCCESS) {
+      m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      entries[i]->router_intf_key);
+      if (entries[i]->neighbor_id.isV4()) {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-    }
-    else
-    {
+      } else {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+      }
+      m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                              entries[i]->neighbor_key);
+      m_neighborTable.erase(entries[i]->neighbor_key);
+      statuses[i] = ReturnCode();
+    } else {
+      statuses[i] = ReturnCode(object_statuses[i])
+                    << "Failed to create neighbor with key "
+                    << QuotedVar(entries[i]->neighbor_key);
     }
-
-    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key);
-    m_neighborTable.erase(neighbor_key);
-    return ReturnCode();
+  }
+  return statuses;
 }
 
-ReturnCode NeighborManager::setDstMacAddress(P4NeighborEntry *neighbor_entry, const swss::MacAddress &mac_address)
-{
-    SWSS_LOG_ENTER();
+std::vector<ReturnCode> NeighborManager::updateNeighbors(
+    const std::vector<P4NeighborAppDbEntry>& neighbor_entries) {
 
-    if (neighbor_entry->dst_mac_address == mac_address)
-        return ReturnCode();
+  SWSS_LOG_ENTER();
 
-    sai_attribute_t neigh_attr;
-    neigh_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
-    memcpy(neigh_attr.value.mac, mac_address.getMac(), sizeof(sai_mac_t));
-    CHECK_ERROR_AND_LOG_AND_RETURN(
-        sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry->neigh_entry, &neigh_attr),
-        "Failed to set mac address " << QuotedVar(mac_address.to_string()) << " for neighbor with key "
-                                     << QuotedVar(neighbor_entry->neighbor_key));
+  std::vector<P4NeighborEntry*> entries(neighbor_entries.size());
+  std::vector<size_t> indice(neighbor_entries.size());
+  std::vector<sai_neighbor_entry_t> sai_entries(neighbor_entries.size());
+  std::vector<sai_attribute_t> sai_attr(neighbor_entries.size());
+  std::vector<sai_status_t> object_statuses(neighbor_entries.size());
+  std::vector<ReturnCode> statuses(neighbor_entries.size());
 
-    neighbor_entry->dst_mac_address = mac_address;
-    return ReturnCode();
+  size_t size = 0;
+  for (size_t i = 0; i < neighbor_entries.size(); ++i) {
+    entries[i] = getNeighborEntry(KeyGenerator::generateNeighborKey(
+        neighbor_entries[i].router_intf_id, neighbor_entries[i].neighbor_id));
+    if (!neighbor_entries[i].is_set_dst_mac ||
+        entries[i]->dst_mac_address == neighbor_entries[i].dst_mac_address) {
+      statuses[i] = ReturnCode();
+      continue;
+    }
+    sai_entries[size] = entries[i]->neigh_entry;
+    sai_attr[size].id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+    memcpy(sai_attr[size].value.mac,
+           neighbor_entries[i].dst_mac_address.getMac(), sizeof(sai_mac_t));
+    indice[size++] = i;
+  }
+  if (size == 0) {
+    return statuses;
+  }
+  sai_neighbor_api->set_neighbor_entries_attribute(
+      static_cast<uint32_t>(size), sai_entries.data(), sai_attr.data(),
+      SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_statuses.data());
+
+  for (size_t i = 0; i < size; ++i) {
+    CHECK_ERROR_AND_LOG(
+        object_statuses[i],
+        "Failed to set mac address "
+            << QuotedVar(
+                   neighbor_entries[indice[i]].dst_mac_address.to_string())
+            << " for neighbor with key "
+            << QuotedVar(entries[indice[i]]->neighbor_key));
+
+    if (object_statuses[i] == SAI_STATUS_SUCCESS) {
+      entries[indice[i]]->dst_mac_address =
+          neighbor_entries[indice[i]].dst_mac_address;
+    } else {
+      statuses[indice[i]] =
+          ReturnCode(object_statuses[i])
+          << "Failed to set mac address "
+          << QuotedVar(neighbor_entries[indice[i]].dst_mac_address.to_string())
+          << " for neighbor with key "
+          << QuotedVar(entries[indice[i]]->neighbor_key);
+    }
+  }
+  return statuses;
 }
 
-ReturnCode NeighborManager::processAddRequest(const P4NeighborAppDbEntry &app_db_entry, const std::string &neighbor_key)
-{
-    SWSS_LOG_ENTER();
+ReturnCode NeighborManager::processEntries(
+    const std::vector<P4NeighborAppDbEntry>& entries,
+    const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+    const std::string& op, bool update) {
+  SWSS_LOG_ENTER();
 
-    // Perform operation specific validations.
-    if (!app_db_entry.is_set_dst_mac)
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                             << p4orch::kDstMac
-                             << " is mandatory to create neighbor entry. Failed to create "
-                                "neighbor with key "
-                             << QuotedVar(neighbor_key));
+  ReturnCode status;
+  std::vector<ReturnCode> statuses;
+  // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
+  if (op == SET_COMMAND) {
+    if (!update) {
+      statuses = createNeighbors(entries);
+    } else {
+      statuses = updateNeighbors(entries);
     }
-
-    P4NeighborEntry neighbor_entry(app_db_entry.router_intf_id, app_db_entry.neighbor_id, app_db_entry.dst_mac_address);
-    auto status = createNeighbor(neighbor_entry);
-    if (!status.ok())
-    {
-        SWSS_LOG_ERROR("Failed to create neighbor with key %s", QuotedVar(neighbor_key).c_str());
+  } else {
+    statuses = removeNeighbors(entries);
+  }
+  for (size_t i = 0; i < entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
     }
+  }
 
-    return status;
-}
-
-ReturnCode NeighborManager::processUpdateRequest(const P4NeighborAppDbEntry &app_db_entry,
-                                                 P4NeighborEntry *neighbor_entry)
-{
-    SWSS_LOG_ENTER();
-
-    if (app_db_entry.is_set_dst_mac)
-    {
-        auto status = setDstMacAddress(neighbor_entry, app_db_entry.dst_mac_address);
-        if (!status.ok())
-        {
-            SWSS_LOG_ERROR("Failed to set destination mac address for neighbor with key %s",
-                           QuotedVar(neighbor_entry->neighbor_key).c_str());
-            return status;
-        }
-    }
-
-    return ReturnCode();
-}
-
-ReturnCode NeighborManager::processDeleteRequest(const std::string &neighbor_key)
-{
-    SWSS_LOG_ENTER();
-
-    auto status = removeNeighbor(neighbor_key);
-    if (!status.ok())
-    {
-        SWSS_LOG_ERROR("Failed to remove neighbor with key %s", QuotedVar(neighbor_key).c_str());
-    }
-
-    return status;
+  return status;
 }
 
 ReturnCode NeighborManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
@@ -375,7 +453,11 @@ void NeighborManager::drainWithNotExecuted() {
 ReturnCode NeighborManager::drain() {
   SWSS_LOG_ENTER();
 
+  std::vector<P4NeighborAppDbEntry> entry_list;
+  std::vector<swss::KeyOpFieldsValuesTuple> tuple_list;
   ReturnCode status;
+  std::string prev_op;
+  bool prev_update = false;
   while (!m_entries.empty()) {
     auto key_op_fvs_tuple = m_entries.front();
     m_entries.pop_front();
@@ -398,7 +480,12 @@ ReturnCode NeighborManager::drain() {
     }
     auto& app_db_entry = *app_db_entry_or;
 
-    status = validateNeighborAppDbEntry(app_db_entry);
+    const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+        app_db_entry.router_intf_id, app_db_entry.neighbor_id);
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    bool update = (getNeighborEntry(neighbor_key) != nullptr);
+
+    status = validateNeighborEntryOperation(app_db_entry, operation);
     if (!status.ok()) {
       SWSS_LOG_ERROR(
           "Validation failed for Neighbor APP DB entry with key %s: %s",
@@ -410,32 +497,37 @@ ReturnCode NeighborManager::drain() {
       break;
     }
 
-    const std::string neighbor_key = KeyGenerator::generateNeighborKey(
-        app_db_entry.router_intf_id, app_db_entry.neighbor_id);
-
-    const std::string& operation = kfvOp(key_op_fvs_tuple);
-    if (operation == SET_COMMAND) {
-      auto* neighbor_entry = getNeighborEntry(neighbor_key);
-      if (neighbor_entry == nullptr) {
-        // Create neighbor
-        status = processAddRequest(app_db_entry, neighbor_key);
-      } else {
-        // Modify existing neighbor
-        status = processUpdateRequest(app_db_entry, neighbor_entry);
-      }
-    } else if (operation == DEL_COMMAND) {
-      // Delete neighbor
-      status = processDeleteRequest(neighbor_key);
-    } else {
-      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Unknown operation type " << QuotedVar(operation);
-      SWSS_LOG_ERROR("%s", status.message().c_str());
+    if (prev_op == "") {
+      prev_op = operation;
+      prev_update = update;
     }
-    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                         kfvFieldsValues(key_op_fvs_tuple), status,
-                         /*replace=*/true);
+
+    // Process the entries if the operation type changes.
+    if (operation != prev_op || update != prev_update) {
+      status = processEntries(entry_list, tuple_list, prev_op, prev_update);
+      entry_list.clear();
+      tuple_list.clear();
+      prev_op = operation;
+      prev_update = update;
+    }
+
     if (!status.ok()) {
+      // Return SWSS_RC_NOT_EXECUTED if failure has occured.
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple),
+                           ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                           /*replace=*/true);
       break;
+    } else {
+      entry_list.push_back(app_db_entry);
+      tuple_list.push_back(key_op_fvs_tuple);
+    }
+  }
+
+  if (!entry_list.empty()) {
+    auto rc = processEntries(entry_list, tuple_list, prev_op, prev_update);
+    if (!rc.ok()) {
+      status = rc;
     }
   }
   drainWithNotExecuted();
@@ -555,13 +647,8 @@ std::string NeighborManager::verifyStateCache(const P4NeighborAppDbEntry &app_db
 
 std::string NeighborManager::verifyStateAsicDb(const P4NeighborEntry *neighbor_entry)
 {
-    auto sai_entry_or = getSaiEntry(*neighbor_entry);
-    if (!sai_entry_or.ok())
-    {
-        return std::string("Failed to get SAI entry: ") + sai_entry_or.status().message();
-    }
-    sai_neighbor_entry_t sai_entry = *sai_entry_or;
-    auto attrs = getSaiAttrs(*neighbor_entry);
+    sai_neighbor_entry_t sai_entry = prepareSaiEntry(*neighbor_entry);
+    auto attrs = prepareSaiAttrs(*neighbor_entry);
     std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
         SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, (uint32_t)attrs.size(), attrs.data(),
         /*countOnly=*/false);
