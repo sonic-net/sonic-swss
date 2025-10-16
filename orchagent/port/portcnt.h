@@ -193,6 +193,12 @@ public:
     } serdes; // Port serdes
 
     struct {
+        sai_port_interface_type_t intf_type;
+        bool value;
+        bool is_set = false;
+    } apply_port_unreliable_los; // Port role
+
+    struct {
         swss::Port::Role value;
         bool is_set = false;
     } role; // Port role
