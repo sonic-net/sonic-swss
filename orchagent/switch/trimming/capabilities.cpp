@@ -115,6 +115,13 @@ static std::string toStr(const std::set<sai_packet_trim_queue_resolution_mode_t>
     return join(",", strList.cbegin(), strList.cend());
 }
 
+static std::string toStr(sai_status_t value)
+{
+    const auto *name = sai_metadata_get_status_name(value);
+
+    return name != nullptr ? name : "UNKNOWN";
+}
+
 static std::string toStr(sai_uint8_t value)
 {
     return std::to_string(value);
@@ -297,9 +304,10 @@ void SwitchTrimmingCapabilities::queryTrimSizeAttrCapabilities()
     );
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_SIZE).c_str()
+        SWSS_LOG_NOTICE(
+            "Attribute(%s) capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_SIZE).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
@@ -324,19 +332,12 @@ void SwitchTrimmingCapabilities::queryTrimDscpModeEnumCapabilities()
     auto status = queryEnumCapabilitiesSai(
         mList, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE
     );
-    if (status == SAI_STATUS_NOT_SUPPORTED)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE(
-            "Attribute not supported(%s) to query enum value capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str()
-        );
-        return;
-    }
-    else if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) enum value capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str()
+            "Attribute(%s) enum value capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
@@ -377,19 +378,12 @@ void SwitchTrimmingCapabilities::queryTrimDscpModeAttrCapabilities()
     auto status = queryAttrCapabilitiesSai(
         attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE
     );
-    if (status == SAI_STATUS_NOT_SUPPORTED)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE(
-            "Attribute not supported(%s) to query attr vapabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str()
-        );
-        return;
-    }
-    else if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str()
+            "Attribute(%s) capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
@@ -417,9 +411,10 @@ void SwitchTrimmingCapabilities::queryTrimDscpAttrCapabilities()
     );
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE).c_str()
+        SWSS_LOG_NOTICE(
+            "Attribute(%s) capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
@@ -447,9 +442,10 @@ void SwitchTrimmingCapabilities::queryTrimTcAttrCapabilities()
     );
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE).c_str()
+        SWSS_LOG_NOTICE(
+            "Attribute(%s) capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
@@ -474,19 +470,12 @@ void SwitchTrimmingCapabilities::queryTrimQueueModeEnumCapabilities()
     auto status = queryEnumCapabilitiesSai(
         mList, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE
     );
-    if (status == SAI_STATUS_NOT_SUPPORTED)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE(
-            "Attribute not supported(%s) to query enum value capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str()
-        );
-        return;
-    }
-    else if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) enum value capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str()
+            "Attribute(%s) enum value capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
@@ -514,19 +503,12 @@ void SwitchTrimmingCapabilities::queryTrimQueueModeAttrCapabilities()
     auto status = queryAttrCapabilitiesSai(
         attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE
     );
-    if (status == SAI_STATUS_NOT_SUPPORTED)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE(
-            "Attribute not supported(%s) to query attr capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str()
-        );
-        return;
-    }
-    else if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str()
+            "Attribute(%s) capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
@@ -554,9 +536,10 @@ void SwitchTrimmingCapabilities::queryTrimQueueIndexAttrCapabilities()
     );
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR(
-            "Failed to get attribute(%s) capabilities",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX).c_str()
+        SWSS_LOG_NOTICE(
+            "Attribute(%s) capabilities are not available: unexpected status(%s)",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX).c_str(),
+            toStr(status).c_str()
         );
         return;
     }
