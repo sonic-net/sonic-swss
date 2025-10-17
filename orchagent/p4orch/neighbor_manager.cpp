@@ -30,7 +30,7 @@ extern CrmOrch *gCrmOrch;
 namespace
 {
 
-std::vector<sai_attribute_t> getSaiAttrs(const P4NeighborEntry &neighbor_entry)
+std::vector<sai_attribute_t> prepareSaiAttrs(const P4NeighborEntry &neighbor_entry)
 {
     std::vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
@@ -62,7 +62,7 @@ P4NeighborEntry::P4NeighborEntry(const std::string &router_interface_id, const s
     neighbor_key = KeyGenerator::generateNeighborKey(router_intf_id, neighbor_id);
 }
 
-ReturnCodeOr<sai_neighbor_entry_t> NeighborManager::getSaiEntry(const P4NeighborEntry &neighbor_entry)
+ReturnCodeOr<sai_neighbor_entry_t> NeighborManager::prepareSaiEntry(const P4NeighborEntry &neighbor_entry)
 {
     const std::string &router_intf_key = neighbor_entry.router_intf_key;
     sai_object_id_t router_intf_oid;
@@ -185,8 +185,8 @@ ReturnCode NeighborManager::createNeighbor(P4NeighborEntry &neighbor_entry)
                                                                             << " already exists in centralized map");
     }
 
-    ASSIGN_OR_RETURN(neighbor_entry.neigh_entry, getSaiEntry(neighbor_entry));
-    auto attrs = getSaiAttrs(neighbor_entry);
+    ASSIGN_OR_RETURN(neighbor_entry.neigh_entry, prepareSaiEntry(neighbor_entry));
+    auto attrs = prepareSaiAttrs(neighbor_entry);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_neighbor_api->create_neighbor_entry(
                                        &neighbor_entry.neigh_entry, static_cast<uint32_t>(attrs.size()), attrs.data()),
@@ -555,13 +555,13 @@ std::string NeighborManager::verifyStateCache(const P4NeighborAppDbEntry &app_db
 
 std::string NeighborManager::verifyStateAsicDb(const P4NeighborEntry *neighbor_entry)
 {
-    auto sai_entry_or = getSaiEntry(*neighbor_entry);
+    auto sai_entry_or = prepareSaiEntry(*neighbor_entry);
     if (!sai_entry_or.ok())
     {
         return std::string("Failed to get SAI entry: ") + sai_entry_or.status().message();
     }
     sai_neighbor_entry_t sai_entry = *sai_entry_or;
-    auto attrs = getSaiAttrs(*neighbor_entry);
+    auto attrs = prepareSaiAttrs(*neighbor_entry);
     std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
         SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, (uint32_t)attrs.size(), attrs.data(),
         /*countOnly=*/false);
