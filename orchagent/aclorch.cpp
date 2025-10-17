@@ -749,6 +749,7 @@ bool AclTableTypeParser::parse(const std::string& key,
             {
                 return false;
             }
+            builder.withAction(AclEntryActionToAclAction(SAI_ACL_ENTRY_ATTR_ACTION_COUNTER));
         }
         else if (field == ACL_TABLE_TYPE_BPOINT_TYPES)
         {
