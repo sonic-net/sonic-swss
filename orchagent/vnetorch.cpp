@@ -1664,21 +1664,43 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
             if (op == SET_COMMAND)
             {
-                gRouteOrch->addRoute(ctx, nhg);
+                if (gRouteOrch->addRoute(ctx, nhg))
+                {
+                    continue;
+                }
+                
                 gRouteOrch->flushRouteBulker();
                 bulkNhgReducedRefCnt.clear();
-                gRouteOrch->addRoutePost(ctx, nhg);
 
-                SWSS_LOG_NOTICE("Route %s added via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+                if (gRouteOrch->addRoutePost(ctx, nhg))
+                {
+                    SWSS_LOG_NOTICE("Route %s added via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Route %s add failed in routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+                    return false;
+                }
             }
             else if (op == DEL_COMMAND)
             {
-                gRouteOrch->removeRoute(ctx);
+                if (gRouteOrch->removeRoute(ctx))
+                {
+                    continue;
+                }
+
                 gRouteOrch->flushRouteBulker();
                 bulkNhgReducedRefCnt.clear();
-                gRouteOrch->removeRoutePost(ctx);
 
-                SWSS_LOG_NOTICE("Route %s removed via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+                if (gRouteOrch->removeRoutePost(ctx))
+                {
+                    SWSS_LOG_NOTICE("Route %s removed via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Route %s remove failed in routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+                    return false;
+                }
             }
 
             // Remove next hop groups with 0 ref count
