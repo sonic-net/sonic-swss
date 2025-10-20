@@ -501,6 +501,9 @@ private:
     void createSubnetDecapTerm(const IpPrefix &ipPrefix);
     void removeSubnetDecapTerm(const IpPrefix &ipPrefix);
 
+    bool setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id, const IpPrefix& ipPrefix,
+                                        const NextHopGroupKey& nhg, const string& op);
+
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,

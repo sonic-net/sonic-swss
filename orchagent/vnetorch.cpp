@@ -1531,6 +1531,86 @@ inline void VNetRouteOrch::removeSubnetDecapTerm(const IpPrefix &ipPrefix)
     subnet_decap_terms_created_.erase(it);
 }
 
+bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id, const IpPrefix& ipPrefix,
+                                                    const NextHopGroupKey& nhg, const string& op)
+{
+    auto& bulkNhgReducedRefCnt = gRouteOrch->getBulkNhgReducedRefCnt();
+
+    // Get vnet name from vrf id
+    std::string vnet_name;
+    if (!vnet_orch_->getVnetNameByVrfId(vr_id, vnet_name))
+    {
+        SWSS_LOG_INFO("Failed to get VNET name for vrf id '0x%" PRIx64, vr_id);
+        return false;
+    }
+
+    // Set up route bulk context
+    string key = vnet_name + ":" + ipPrefix.to_string();
+    RouteBulkContext ctx(key, (op == SET_COMMAND));
+    ctx.vrf_id = vr_id;
+    ctx.ip_prefix = ipPrefix;
+    ctx.nhg = nhg;
+
+    if (op == SET_COMMAND)
+    {
+        // Add route via route orch
+        if (gRouteOrch->addRoute(ctx, nhg))
+        {
+            return true;
+        }
+        
+        // Flush the route bulker, so routes will be written to syncd and ASIC
+        gRouteOrch->flushRouteBulker();
+        bulkNhgReducedRefCnt.clear();
+
+        // Post add route via route orch
+        if (gRouteOrch->addRoutePost(ctx, nhg))
+        {
+            SWSS_LOG_NOTICE("Route %s added via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Route %s add failed in routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+            return false;
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        // Remove route via route orch
+        if (gRouteOrch->removeRoute(ctx))
+        {
+            return true;
+        }
+
+        // Flush the route bulker, so routes will be written to syncd and ASIC
+        gRouteOrch->flushRouteBulker();
+        bulkNhgReducedRefCnt.clear();
+
+        // Post remove route via route orch
+        if (gRouteOrch->removeRoutePost(ctx))
+        {
+            SWSS_LOG_NOTICE("Route %s removed via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Route %s remove failed in routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+            return false;
+        }
+    }
+
+    // Remove next hop groups with 0 ref count
+    for (auto& it : bulkNhgReducedRefCnt)
+    {
+        if (gRouteOrch->getNextHopGroupRefCount(it.first) == 0)
+        {
+            gRouteOrch->removeNextHopGroup(it.first);
+            SWSS_LOG_INFO("Next hop group %s has 0 references, removed via routeorch", it.first.to_string().c_str());
+        }
+    }
+
+    return true;
+}
+
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
                                                nextHop& nh, string& op)
@@ -1646,71 +1726,10 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
         else
         {
-            auto& bulkNhgReducedRefCnt = gRouteOrch->getBulkNhgReducedRefCnt();
-
-            std::string vnet_name;
-            if (!vnet_orch_->getVnetNameByVrfId(vr_id, vnet_name))
-            {
-                SWSS_LOG_INFO("Failed to get VNET name for vrf id '0x%" PRIx64, vr_id);
-                continue;
-            }
-
             NextHopGroupKey nhg(nhg_str);
-            string key = vnet_name + ":" + ipPrefix.to_string();
-            RouteBulkContext ctx(key, (op == SET_COMMAND));
-            ctx.vrf_id = vr_id;
-            ctx.ip_prefix = ipPrefix;
-            ctx.nhg = nhg;
-
-            if (op == SET_COMMAND)
+            if (!setAndDeleteRoutesWithRouteOrch(vr_id, ipPrefix, nhg, op))
             {
-                if (gRouteOrch->addRoute(ctx, nhg))
-                {
-                    continue;
-                }
-                
-                gRouteOrch->flushRouteBulker();
-                bulkNhgReducedRefCnt.clear();
-
-                if (gRouteOrch->addRoutePost(ctx, nhg))
-                {
-                    SWSS_LOG_NOTICE("Route %s added via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Route %s add failed in routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
-                    return false;
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (gRouteOrch->removeRoute(ctx))
-                {
-                    continue;
-                }
-
-                gRouteOrch->flushRouteBulker();
-                bulkNhgReducedRefCnt.clear();
-
-                if (gRouteOrch->removeRoutePost(ctx))
-                {
-                    SWSS_LOG_NOTICE("Route %s removed via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Route %s remove failed in routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
-                    return false;
-                }
-            }
-
-            // Remove next hop groups with 0 ref count
-            for (auto& it : bulkNhgReducedRefCnt)
-            {
-                if (gRouteOrch->getNextHopGroupRefCount(it.first) == 0)
-                {
-                    gRouteOrch->removeNextHopGroup(it.first);
-                    SWSS_LOG_INFO("Next hop group %s has 0 references, removed via routeorch", it.first.to_string().c_str());
-                }
+                return false;
             }
         }
     }
