@@ -3002,7 +3002,7 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet8", "up")
         self.set_admin_status("Ethernet12", "up")
 
-        # add neighbor for direcetly connected endpoint
+        # add neighbor for directly connected endpoint
         self.add_neighbor("Ethernet8", "9.1.0.3", "00:01:02:03:04:05")
         self.add_neighbor("Ethernet12", "9.1.0.4", "00:01:02:03:04:06")
 
@@ -3013,8 +3013,6 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
-
-        import pdb; pdb.set_trace()
 
         # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
         update_bfd_session_state(dvs, '9.1.0.1', 'Up')

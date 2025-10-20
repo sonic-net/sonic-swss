@@ -2271,7 +2271,7 @@ void VNetRouteOrch::updateCustomBfdState(const IpAddress& monitoring_ip, const s
                 status_update.vnet = vnet;
                 updateVnetTunnelCustomMonitor(status_update);
             }
-            
+
             if (sai_state == SAI_BFD_SESSION_STATE_DOWN &&
                 monitor_info_[vnet][prefix][monitoring_ip].custom_bfd_state != sai_state)
             {
