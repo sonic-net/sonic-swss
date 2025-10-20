@@ -923,7 +923,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_TUNNEL_TERM)
         {
-            matchData.data.booldata = (attr_value == "true");
+            matchData.data.booldata = (to_upper(attr_value) == "TRUE");;
         }
         else if (attr_name == MATCH_INNER_DST_MAC || attr_name == MATCH_INNER_SRC_MAC)
         {

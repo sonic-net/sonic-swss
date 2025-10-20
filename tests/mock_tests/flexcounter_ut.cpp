@@ -230,14 +230,14 @@ namespace flexcounter_test
 
         for (auto pgCounterManager : pgCounterManagers)
         {
-            ASSERT_TRUE(pgCounterManager->cached_objects.pending_sai_objects.empty());
+            ASSERT_TRUE(pgCounterManager->cached_objects.pending_objects_map.empty());
         }
 
         for (auto queueCounterManager : queueCounterManagers)
         {
             for (auto it : queueCounterManager->cached_objects)
             {
-                ASSERT_TRUE(it.second.pending_sai_objects.empty());
+                ASSERT_TRUE(it.second.pending_objects_map.empty());
             }
         }
     }
@@ -1067,6 +1067,8 @@ namespace flexcounter_test
         sai_object_id_t port2_oid = 0x100000000000e;
         sai_object_id_t port3_oid = 0x100000000000f;
         sai_object_id_t port4_oid = 0x1000000000010;
+        sai_object_id_t port5_oid = 0x100000000000a;
+        sai_object_id_t port6_oid = 0x100000000000b;
         // Different counter stats for each port
         std::unordered_set<string> type1_stats = {
             "SAI_PORT_STAT_IF_IN_OCTETS",
@@ -1076,19 +1078,39 @@ namespace flexcounter_test
             "SAI_PORT_STAT_IF_OUT_OCTETS",
             "SAI_PORT_STAT_IF_OUT_ERRORS"
         };
+        std::unordered_set<string> type3_stats = {
+            "SAI_PORT_STAT_IF_IN_OCTETS",
+            "SAI_PORT_STAT_IF_OUT_ERRORS"
+        };
 
         // Set counter IDs for both ports
         port_stat_manager.setCounterIdList(port1_oid, CounterType::PORT, type1_stats);
         port_stat_manager.setCounterIdList(port2_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port6_oid, CounterType::PORT, type3_stats);
         port_stat_manager.setCounterIdList(port3_oid, CounterType::PORT, type2_stats);
-        port_stat_manager.setCounterIdList(port4_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port4_oid, CounterType::PORT, type2_stats);
+        port_stat_manager.setCounterIdList(port5_oid, CounterType::PORT, type1_stats);
 
         // Flush the counters
         port_stat_manager.flush();
 
-        /* SAIREDIS channel should have been called thrice, once for port1&port2,port3,port4 */
+        /* SAIREDIS channel should have been called thrice, once for port1&port2&port5, port3&port4 and port6*/
         ASSERT_EQ(mockFlexCounterOperationCallCount, 3);
 
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port6_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_OUT_ERRORS"
+                                         }
+                                     }));
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port5_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port1_oid,
                                      {
                                          {PORT_COUNTER_ID_LIST,
@@ -1116,8 +1138,8 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port4_oid,
                                      {
                                          {PORT_COUNTER_ID_LIST,
-                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
-                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                          "SAI_PORT_STAT_IF_OUT_OCTETS,"
+                                          "SAI_PORT_STAT_IF_OUT_ERRORS"
                                          }
                                      }));
     }
