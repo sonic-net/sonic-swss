@@ -399,7 +399,7 @@ accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_manag
 
 -- Accumulate sizes for egress mirror and management pool
 local accumulative_egress_mirror_overhead = admin_up_port * egress_mirror_headroom
-accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size
+accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size + modification_descriptors_pool_size
 
 -- Switch to CONFIG_DB
 redis.call('SELECT', config_db)
@@ -439,7 +439,7 @@ if shp_size then
     accumulative_occupied_buffer = accumulative_occupied_buffer + shp_size
 end
 
-local available_buffer = mmu_size - accumulative_occupied_buffer - modification_descriptors_pool_size
+local available_buffer = mmu_size - accumulative_occupied_buffer
 if ingress_pool_count == 1 then
     pool_size = available_buffer
 else
