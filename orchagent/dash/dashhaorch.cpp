@@ -204,7 +204,7 @@ HaScopeEntry DashHaOrch::getHaScopeForEni(const std::string& eni)
         return emptyEntry;
     }
 
-    // Return the first entry
+    /* Return the first entry. This logic only applies to DPU Scope HA */
     return m_ha_scope_entries.begin()->second;
 }
 

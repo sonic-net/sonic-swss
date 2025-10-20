@@ -688,6 +688,10 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
             }
             eni_attrs.push_back(eni_attr);
         }
+        else
+        {
+            SWSS_LOG_INFO("No HA Scope ID set for ENI %s", eni.c_str());
+        }
     }
 
     if (entry.metadata.has_eni_mode()) {
