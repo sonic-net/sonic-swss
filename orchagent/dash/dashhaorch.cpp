@@ -86,6 +86,9 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
 
     register_ha_set_notifier();
     register_ha_scope_notifier();
+
+    // Register this DashHaOrch instance with DashOrch
+    m_dash_orch->setDashHaOrch(this);
 }
 
 bool DashHaOrch::register_ha_set_notifier()
@@ -188,6 +191,21 @@ std::string DashHaOrch::getHaScopeObjectKey(const sai_object_id_t ha_scope_oid)
     }
 
     return "";
+}
+
+HaScopeEntry DashHaOrch::getHaScopeForEni(const std::string& eni)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_ha_scope_entries.empty())
+    {
+        HaScopeEntry emptyEntry;
+        emptyEntry.ha_scope_id = SAI_NULL_OBJECT_ID;
+        return emptyEntry;
+    }
+
+    /* Return the first entry. This logic only applies to DPU Scope HA */
+    return m_ha_scope_entries.begin()->second;
 }
 
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)

@@ -31,6 +31,8 @@
 #define DASH_RESULT_SUCCESS 0
 #define DASH_RESULT_FAILURE 1
 
+class DashHaOrch;
+
 struct EniEntry
 {
     sai_object_id_t eni_id;
@@ -53,6 +55,7 @@ class DashOrch : public ZmqOrch
 {
 public:
     DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
+    void setDashHaOrch(DashHaOrch *dash_ha_orch);
     const EniEntry *getEni(const std::string &eni) const;
     const EniTable *getEniTable() const { return &eni_entries_; };
     bool getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type);
@@ -110,6 +113,7 @@ private:
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
     swss::SelectableTimer* m_fc_update_timer = nullptr;
+    DashHaOrch* m_dash_ha_orch = nullptr;
 
     void doTask(swss::SelectableTimer&);
     void addEniMapEntry(sai_object_id_t oid, const std::string& name);
