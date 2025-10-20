@@ -22,6 +22,7 @@ local total_port = 0
 
 local mgmt_pool_size = 256 * 1024
 local egress_mirror_headroom = 10 * 1024
+local modification_descriptors_pool_size = 0
 
 -- The set of ports with 8 lanes
 local port_set_8lanes = {}
@@ -185,6 +186,20 @@ end
 -- Main --
 -- Connect to CONFIG_DB
 redis.call('SELECT', config_db)
+
+-- Check if platform is SPC6 or later and set modification descriptors pool size
+-- Extract first digit of model number from platform string (e.g., "sn6600" -> 6, "sn6800" -> 6)
+local platform = redis.call('HGET', 'DEVICE_METADATA|localhost', 'platform')
+if platform then
+    local model_str = string.match(platform, "sn(%d)")
+    if model_str then
+        local model_number = tonumber(model_str)
+        -- SPC6 or later models (6xxx, 7xxx, etc.), reserve 32MB for modification descriptors pool
+        if model_number and model_number >= 6 then
+            modification_descriptors_pool_size = 32 * 1024 * 1024
+        end
+    end
+end
 
 -- Parse all the pools and seperate them according to the direction
 local ipools = {}
@@ -424,7 +439,7 @@ if shp_size then
     accumulative_occupied_buffer = accumulative_occupied_buffer + shp_size
 end
 
-local available_buffer = mmu_size - accumulative_occupied_buffer
+local available_buffer = mmu_size - accumulative_occupied_buffer - modification_descriptors_pool_size
 if ingress_pool_count == 1 then
     pool_size = available_buffer
 else
@@ -475,5 +490,6 @@ table.insert(result, "debug:shp_enabled:" .. tostring(shp_enabled))
 table.insert(result, "debug:shp_size:" .. shp_size)
 table.insert(result, "debug:total port:" .. total_port .. " ports with 8 lanes:" .. port_count_8lanes)
 table.insert(result, "debug:admin up port:" .. admin_up_port .. " admin up ports with 8 lanes:" .. admin_up_8lanes_port)
+table.insert(result, "debug:modification_descriptors_pool_size:" .. modification_descriptors_pool_size)
 
 return result
