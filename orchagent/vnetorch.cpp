@@ -3043,9 +3043,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
     }
 
-    /******************hard code it before hamgrd change is ready*******************/
-    monitoring = "custom_bfd";
-
     if (vni_list.size() > 1 && vni_list.size() != ip_list.size())
     {
         SWSS_LOG_ERROR("VNI size of %zu does not match endpoint size of %zu", vni_list.size(), ip_list.size());
