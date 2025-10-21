@@ -2976,8 +2976,8 @@ class TestVnetOrch(object):
         self.setup_db(dvs)
 
         vnet_obj = self.get_vnet_obj()
-        tunnel_name = 'tunnel_30'
-        vnet_name = 'vnet30'
+        tunnel_name = 'tunnel_31'
+        vnet_name = 'vnet31'
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vnet_obj.fetch_exist_entries(dvs)
