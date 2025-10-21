@@ -17,6 +17,8 @@ class DVSQueue:
     COUNTERS_COUNTERS = "COUNTERS"
     COUNTERS_QUEUE_NAME_MAP = "COUNTERS_QUEUE_NAME_MAP"
 
+    OID_NULL = "oid:0x0"
+
     def __init__(self, asic_db, config_db, counters_db):
         """Create a new DVS queue manager."""
         self.asic_db = asic_db
@@ -47,6 +49,12 @@ class DVSQueue:
         sai_queue_id = self.get_queue_id(port_name, queue_index)
         attr_list = [ field ]
         fvs = self.asic_db.wait_for_fields(self.ASIC_QUEUE, sai_queue_id, attr_list)
+
+        if fvs[field] == self.OID_NULL:
+            attr_dict = {
+                field: self.OID_NULL
+            }
+            fvs = self.asic_db.wait_for_field_negative_match(self.ASIC_QUEUE, sai_queue_id, attr_dict)
 
         return fvs[field]
 
