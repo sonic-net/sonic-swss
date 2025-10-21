@@ -760,7 +760,7 @@ ReturnCode AclRuleManager::setAclRuleCounterStats(const P4AclRule &acl_rule)
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
+ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name, const std::string &attr_value,
                                          sai_attribute_value_t *value, P4AclRule *acl_rule,
                                          const std::string &ip_type_bit_type)
 {
@@ -860,7 +860,6 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
         case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
         case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
-        case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
         case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
@@ -1030,6 +1029,21 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
             value->aclfield.mask.u32 = 0xFFFFFFFF;
             break;
         }
+        case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID: {
+            const std::vector<std::string>& value_and_mask =
+                tokenize(attr_value, kDataMaskDelimiter);
+            const std::string vrf_id = trim(value_and_mask[0]);
+            if (vrf_id.empty() || !m_vrfOrch->isVRFexists(vrf_id))
+            {
+                return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "VRF ID " << QuotedVar(vrf_id) << " was not found.";
+            }
+            value->aclfield.data.oid = m_vrfOrch->getVRFid(vrf_id);
+            if (value_and_mask.size() > 1)
+            {
+                SWSS_LOG_INFO("Mask ignored for VRF ID.");
+            }
+            break;
+        }
         case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
         {
             const std::vector<std::string>& value_and_mask =
@@ -1120,9 +1134,12 @@ ReturnCode AclRuleManager::setAllMatchFieldValues(const P4AclRuleAppDbEntry &app
                 }
                 set_match_rc = setUdfMatchValue(
                     udf_field, match_value,
-                    &acl_rule.match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN + udf_group_index_it->second],
-                    &acl_rule
-                         .udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN + udf_group_index_it->second],
+                &acl_rule.match_fvs[(
+                    sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN +
+                                          udf_group_index_it->second)],
+                &acl_rule.udf_data_masks[(
+                    sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN +
+                                          udf_group_index_it->second)],
                     bytes_offset);
                 if (!set_match_rc.ok())
                 {
@@ -1233,7 +1250,7 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
+ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name, const std::string &attr_value,
                                           sai_attribute_value_t *value, P4AclRule *acl_rule)
 {
     switch (attr_name)
@@ -1597,7 +1614,7 @@ ReturnCode AclRuleManager::updateAclRule(const P4AclRule &acl_rule, const P4AclR
     SWSS_LOG_ENTER();
 
     sai_attribute_t acl_entry_attr;
-    std::set<acl_entry_attr_union_t> actions_to_reset;
+    std::set<sai_acl_entry_attr_t> actions_to_reset;
     for (const auto &old_action_fv : old_acl_rule.action_fvs)
     {
         actions_to_reset.insert(fvField(old_action_fv));
