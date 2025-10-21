@@ -216,86 +216,94 @@ void AclTableManager::enqueue(const std::string &table_name, const swss::KeyOpFi
     m_entries.push_back(entry);
 }
 
-void AclTableManager::drain()
-{
-    SWSS_LOG_ENTER();
+void AclTableManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string db_key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
-        SWSS_LOG_NOTICE("P4AclTableManager drain tuple for table %s", QuotedVar(table_name).c_str());
-        if (table_name != APP_P4RT_ACL_TABLE_DEFINITION_NAME)
-        {
-            ReturnCode status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                                << "Invalid table " << QuotedVar(table_name);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode AclTableManager::drain() {
+  SWSS_LOG_ENTER();
 
-        ReturnCode status;
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto app_db_entry_or = deserializeAclTableDefinitionAppDbEntry(db_key, attributes);
-            if (!app_db_entry_or.ok())
-            {
-                status = app_db_entry_or.status();
-                SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                               QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-                m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status,
-                                     /*replace=*/true);
-                continue;
-            }
-            auto &app_db_entry = *app_db_entry_or;
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string db_key;
 
-            status = validateAclTableDefinitionAppDbEntry(app_db_entry);
-            if (!status.ok())
-            {
-                SWSS_LOG_ERROR("Validation failed for ACL definition APP DB entry with key %s: %s",
-                               QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-                m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status,
-                                     /*replace=*/true);
-                continue;
-            }
-            auto *acl_table_definition = getAclTable(app_db_entry.acl_table_name);
-            if (acl_table_definition == nullptr)
-            {
-                SWSS_LOG_NOTICE("ACL table SET %s", app_db_entry.acl_table_name.c_str());
-                status = processAddTableRequest(app_db_entry);
-            }
-            else
-            {
-                // All attributes in sai_acl_table_attr_t are CREATE_ONLY.
-                status = ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-                         << "Unable to update ACL table definition in APP DB entry with key "
-                         << QuotedVar(table_name + ":" + db_key)
-                         << " : All attributes in sai_acl_table_attr_t are CREATE_ONLY.";
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            status = processDeleteTableRequest(db_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-        }
-        if (!status.ok())
-        {
-            SWSS_LOG_ERROR("Processed DEFINITION entry status: %s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
+    SWSS_LOG_NOTICE("P4AclTableManager drain tuple for table %s",
+                    QuotedVar(table_name).c_str());
+    if (table_name != APP_P4RT_ACL_TABLE_DEFINITION_NAME) {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Invalid table " << QuotedVar(table_name);
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
+
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto app_db_entry_or =
+          deserializeAclTableDefinitionAppDbEntry(db_key, attributes);
+      if (!app_db_entry_or.ok()) {
+        status = app_db_entry_or.status();
+        SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                       QuotedVar(table_name + ":" + db_key).c_str(),
+                       status.message().c_str());
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
+        break;
+      }
+      auto& app_db_entry = *app_db_entry_or;
+
+      status = validateAclTableDefinitionAppDbEntry(app_db_entry);
+      if (!status.ok()) {
+        SWSS_LOG_ERROR(
+            "Validation failed for ACL definition APP DB entry with key %s: %s",
+            QuotedVar(table_name + ":" + db_key).c_str(),
+            status.message().c_str());
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
+        break;
+      }
+      auto* acl_table_definition = getAclTable(app_db_entry.acl_table_name);
+      if (acl_table_definition == nullptr) {
+        SWSS_LOG_NOTICE("ACL table SET %s",
+                        app_db_entry.acl_table_name.c_str());
+        status = processAddTableRequest(app_db_entry);
+      } else {
+        // All attributes in sai_acl_table_attr_t are CREATE_ONLY.
+        status =
+            ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+            << "Unable to update ACL table definition in APP DB entry with key "
+            << QuotedVar(table_name + ":" + db_key)
+            << " : All attributes in sai_acl_table_attr_t are CREATE_ONLY.";
+      }
+    } else if (operation == DEL_COMMAND) {
+      status = processDeleteTableRequest(db_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << QuotedVar(operation);
+    }
+    if (!status.ok()) {
+      SWSS_LOG_ERROR("Processed DEFINITION entry status: %s",
+                     status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 ReturnCodeOr<P4AclTableDefinitionAppDbEntry> AclTableManager::deserializeAclTableDefinitionAppDbEntry(
