@@ -46,25 +46,26 @@ local function get_port_name_from_oid(port)
     return 0
 end
 
-local function get_port_speed(port_name)
-    redis.call('SELECT', STATE_DB)
-    local raw_speed = redis.call('HGET', STATE_DB_PORT_TABLE_PREFIX .. port_name, KEY_SPEED)
+local function get_port_speed_numlanes(interface_name)
+    -- get the port config from config db
+    local _
+    local port_speed, lane_count = 0, 0
 
+    -- Get the port configure
     redis.call('SELECT', APPL_DB)
-    local oper_status = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. port_name, KEY_OPER_STATUS)
+    local lanes = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. interface_name, KEY_LANES)
 
-    if (raw_speed == false) or (oper_status ~= 'up') then
-        redis.call('SELECT', APPL_DB)
-        raw_speed = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. port_name, KEY_SPEED)
+    if lanes then
+        port_speed = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. interface_name, KEY_SPEED)
+
+        -- we were spliting it on ','
+        _, lane_count = string.gsub(lanes, ",", ",")
+        lane_count = lane_count + 1
     end
-    return raw_speed
-end
+    -- switch back to counter db
+    redis.call('SELECT', counters_db)
 
-local function get_port_numlanes(port_name)
-    redis.call('SELECT', APPL_DB)
-    local port_lanes = redis.call('HGET', APPL_DB_PORT_TABLE_PREFIX .. port_name, KEY_LANES)
-    local count = select(2, string.gsub(port_lanes, ',', ''))
-    return (count+1)
+    return port_speed, lane_count
 end
 
 
@@ -84,8 +85,7 @@ local function get_interleaving_factor_for_port(port_oid)
     }
 
     local port_name = get_port_name_from_oid(port_oid)
-    local port_speed = get_port_speed(port_name)
-    local port_numlanes = get_port_numlanes(port_name)
+    local port_speed, port_numlanes = get_port_speed_numlanes(port_name)
 
     -- Create the key from the port's properties to search the map.
     local key = tostring(port_speed) .. '_' .. tostring(port_numlanes)
