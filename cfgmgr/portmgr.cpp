@@ -91,6 +91,7 @@ bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_
 
     if (dhcp_rate_limit == "0")
     {
+        // Delete filter when dhcp-rate limit is set to zero
         cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
     }
     else
