@@ -70,6 +70,7 @@ TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
+L2mcOrch *gL2mcOrch
 HFTelOrch *gHFTOrch;
 
 bool gIsNatSupported = false;
@@ -525,6 +526,15 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    vector<string> app_l2mc_tables = {
+        APP_L2MC_VLAN_TABLE_NAME,
+        APP_L2MC_MEMBER_TABLE_NAME,
+        APP_L2MC_MROUTER_TABLE_NAME,
+        APP_L2MC_SUPPRESS_TABLE_NAME
+    };
+
+    gL2mcOrch = new L2mcOrch(m_applDb, app_l2mc_tables);
+
     //
     // Policy Based Hashing (PBH) orchestrator
     //
@@ -576,6 +586,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
+    m_orchList.push_back(gL2mcOrch);
 
     if (m_fabricEnabled)
     {
