@@ -18,6 +18,12 @@ AC_CHECK_LIB([team], [team_alloc],
    [AC_MSG_WARN([libteam is not installed.])
     AM_CONDITIONAL(HAVE_LIBTEAM, false)])
 
+AC_CHECK_FILE([/usr/include/l2mcd_ipc.h], 
+    AM_CONDITIONAL(HAVE_L2MCD, true),
+   [AC_MSG_WARN([l2mcd is not installed.])
+    AM_CONDITIONAL(HAVE_L2MCD, false)])
+
+
 PKG_CHECK_MODULES([JANSSON], [jansson])
 
 AC_CHECK_FILE([/usr/include/stp_ipc.h],
