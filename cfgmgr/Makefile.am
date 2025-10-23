@@ -5,7 +5,7 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon -lpthread
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd l2mcmgrd
 
 cfgmgrdir = $(datadir)/swss
 
@@ -107,6 +107,11 @@ stpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAG
 stpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 stpmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
+l2mcmgrd_SOURCES = l2mcmgrd.cpp l2mcmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+l2mcmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+l2mcmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+l2mcmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+
 if GCOV_ENABLED
 vlanmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 teammgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
@@ -123,6 +128,7 @@ coppmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 tunnelmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 macsecmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 stpmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+l2mcmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
@@ -141,5 +147,6 @@ tunnelmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 macsecmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 fabricmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 stpmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+l2mcmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 endif
 

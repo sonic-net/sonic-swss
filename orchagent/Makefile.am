@@ -130,6 +130,7 @@ orchagent_SOURCES = \
             dash/dashportmaporch.cpp \
             twamporch.cpp \
             stporch.cpp \
+            l2mcorch.cpp\
             nexthopkey.cpp \
             high_frequency_telemetry/hftelorch.cpp \
             high_frequency_telemetry/hftelprofile.cpp \
