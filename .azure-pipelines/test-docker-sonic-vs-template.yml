@@ -181,7 +181,7 @@ jobs:
       IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
       echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh "$IMAGE_NAME" "$params" "TEST_MODULE" 3
       single_asic_voq_tests="test_portchannel.py test_neighbor.py test_route.py"
-      echo $single_asic_voq_tests | xargs -n 1 | xargs -P 3 -I TEST_MODULE sudo ./run-tests.sh "$IMAGE_NAME" "--force-recreate-dvs --switch-mode=single_asic_fs_voq" "TEST_MODULE" 3
+      echo $single_asic_voq_tests | xargs -n 1 | xargs -P 3 -I TEST_MODULE sudo ./run-tests.sh "$IMAGE_NAME" "--force-recreate-dvs --switch-mode=single_asic_voq_fs" "TEST_MODULE" 3
 
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"

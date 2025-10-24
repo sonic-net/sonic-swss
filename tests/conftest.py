@@ -44,7 +44,7 @@ NUM_PORTS = 32
 # Voq asics will have 16 fabric ports created (defined in Azure/sonic-buildimage#7629).
 FABRIC_NUM_PORTS = 16
 
-SINGLE_ASIC_FS_VOQ = "single_asic_fs_voq"
+SINGLE_ASIC_VOQ_FS = "single_asic_voq_fs"
 
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
@@ -587,7 +587,7 @@ class DockerVirtualSwitch:
         self.get_config_db()
         metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            if self.switch_mode and self.switch_mode == SINGLE_ASIC_FS_VOQ:
+            if self.switch_mode and self.switch_mode == SINGLE_ASIC_VOQ_FS:
                 num_ports = NUM_PORTS
             else:
                 num_ports = NUM_PORTS + FABRIC_NUM_PORTS
@@ -610,7 +610,7 @@ class DockerVirtualSwitch:
 
         # Verify that fabric ports are monitored in STATE_DB
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            if not self.switch_mode or (self.switch_mode and self.switch_mode != SINGLE_ASIC_FS_VOQ):
+            if not self.switch_mode or (self.switch_mode and self.switch_mode != SINGLE_ASIC_VOQ_FS):
                 self.get_state_db()
                 self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
 
@@ -1911,7 +1911,7 @@ def manage_dvs(request) -> str:
                 dvs.destroy()
 
             vol = {}
-            if switch_mode and switch_mode == SINGLE_ASIC_FS_VOQ:
+            if switch_mode and switch_mode == SINGLE_ASIC_VOQ_FS:
                 cwd = os.getcwd()
                 voq_configs = cwd + "/single_asic_voq_fs"
                 vol[voq_configs] = {"bind": "/usr/share/sonic/single_asic_voq_fs", "mode": "ro"}
