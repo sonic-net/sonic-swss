@@ -67,7 +67,7 @@ TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
-L2mcOrch *gL2mcOrch
+L2mcOrch *gL2mcOrch;
 HFTelOrch *gHFTOrch;
 
 bool gIsNatSupported = false;
