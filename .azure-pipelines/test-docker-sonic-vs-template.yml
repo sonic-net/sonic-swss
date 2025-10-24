@@ -152,9 +152,9 @@ jobs:
       sudo docker load -i $(Build.ArtifactStagingDirectory)/download/docker-sonic-vs.gz
       docker ps
       ip netns list
+      sudo /sbin/ip link add Vrf1 type vrf table 1001
       uname -a
       sudo /sbin/ip link add Vrf1 type vrf table 1001 || { echo 'vrf command failed' ; exit 1; }
-      sudo /sbin/ip link del Vrf1 type vrf table 1001
       pushd tests
 
       params=""
