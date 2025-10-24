@@ -1059,7 +1059,8 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
     // Skip headroom validation only during warm start while initialization is incomplete.
     // - Non-warm start: never skip.
     // - Warm start: skip only if initialization has not completed.
-    if (WarmStart::isWarmStart() && !m_bufferCompletelyInitialized)
+    if (WarmStart::isWarmStart() &&
+        !m_bufferCompletelyInitialized)
     {
         return true;
     }
