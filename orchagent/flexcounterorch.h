@@ -68,9 +68,11 @@ public:
     bool getRouteFlowCountersState() const {return m_route_flow_counter_enabled;}
     bool getWredQueueCountersState() const;
     bool getWredPortCountersState() const;
+    bool isCreateOnlyConfigDbBuffers() const;
     bool bake() override;
 
 private:
+    void handleDeviceMetadataTable(Consumer &consumer);
     bool m_port_counter_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
     bool m_queue_enabled = false;
@@ -87,6 +89,8 @@ private:
     Table m_deviceMetadataConfigTable;
     SelectableTimer* m_delayTimer;
     std::unordered_set<std::string> m_groupsWithBulkChunkSize;
+
+    bool m_createOnlyConfigDbBuffers = false;
 };
 
 #endif

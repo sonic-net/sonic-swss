@@ -895,6 +895,7 @@ bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_att
     case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE:
     case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
     case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META:
     case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_FLOW_LABEL:
     case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG:
     case SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN: {
@@ -928,6 +929,7 @@ bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_att
     case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
     case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
+    case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
     case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
@@ -952,6 +954,10 @@ bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_att
     case SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC: {
         return memcmp(value.aclfield.data.mac, old_value.aclfield.data.mac, sizeof(sai_mac_t)) ||
                memcmp(value.aclfield.mask.mac, old_value.aclfield.mask.mac, sizeof(sai_mac_t));
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+    {
+        return value.aclfield.data.booldata != old_value.aclfield.data.booldata;
     }
     default: {
         return false;
