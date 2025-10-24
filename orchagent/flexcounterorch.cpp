@@ -39,7 +39,7 @@ extern Srv6Orch *gSrv6Orch;
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
 
-#define FLEX_COUNTER_DELAY_SEC 60
+int gFlexCounterDelaySec;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -116,11 +116,12 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
         SWSS_LOG_ERROR("System error reading create_only_config_db_buffers: %s", e.what());
     }
 
-    m_delayTimer = std::make_unique<SelectableTimer>(timespec{.tv_sec = FLEX_COUNTER_DELAY_SEC, .tv_nsec = 0});
-    if (WarmStart::isWarmStart())
+    SWSS_LOG_NOTICE("Counter delay is %d seconds", gFlexCounterDelaySec);
+    if (gFlexCounterDelaySec > 0)
     {
-        m_delayExecutor = std::make_unique<ExecutableTimer>(m_delayTimer.get(), this, "FLEX_COUNTER_DELAY");
-        Orch::addExecutor(m_delayExecutor.get());
+        m_delayTimer = new SelectableTimer(timespec{.tv_sec = static_cast<time_t>(gFlexCounterDelaySec), .tv_nsec = 0});
+        auto delayExecutor = new ExecutableTimer(m_delayTimer, this, "FLEX_COUNTER_DELAY");
+        Orch::addExecutor(delayExecutor);
         m_delayTimer->start();
     }
     else
