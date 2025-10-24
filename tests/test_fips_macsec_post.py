@@ -31,7 +31,7 @@ SAI_MACSEC_POST_STATUS_IN_PROGRESS = "SAI_MACSEC_POST_STATUS_IN_PROGRESS"
 # POST syslogs
 SWITCH_MACSEC_POST_PASS_SYSYLOG = "Switch MACSec POST passed"
 SWITCH_MACSEC_POST_FAIL_SYSYLOG = "Switch MACSec POST failed"
-SWITCH_MACSEC_POST_FAIL_SYSYLOG_SAI_NOT_SUPPORTED = "MACSec POST is not supported by SAI. POST failed"
+SWITCH_MACSEC_POST_FAIL_SYSYLOG_SAI_NOT_SUPPORTED = "MACSec POST is not supported by SAI"
 MACSEC_POST_ENABLED_SYSLOG = "Init MACSec objects and enable POST"
 INGRESS_MACSEC_POST_PASS_SYSLOG = "Ingress MACSec POST passed"
 INGRESS_MACSEC_POST_FAIL_SYSLOG = "Ingress MACSec POST failed"
@@ -130,7 +130,7 @@ class TestMacsecPost(object):
 
     def test_PostEnabled_SaiPostNotSupported(self, dvs):
         marker = self.restart_dvs_with_post_config(dvs, sai_post_capability=SAI_MACSEC_POST_CAPABILITY_NOT_SUPPORTED)
-        self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_FAIL)
+        self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_DISABLED)
         self.check_syslog(dvs, marker, SWITCH_MACSEC_POST_FAIL_SYSYLOG_SAI_NOT_SUPPORTED)
         self.check_asic_db_post_state(dvs)
         
