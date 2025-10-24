@@ -98,7 +98,7 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
-      
+
     // Read create_only_config_db_buffers configuration once during initialization
     std::string createOnlyConfigDbBuffersValue;
     try
