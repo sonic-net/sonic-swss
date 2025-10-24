@@ -6438,6 +6438,10 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
         for (size_t idx = 0; idx < portCount; idx++)
         {
             const auto& port = ports[idx];
+            if (port.m_priority_group_ids.size() == 0)
+            {
+                continue;
+            }
             const auto status = bulker.statuses[idx];
 
             if (status != SAI_STATUS_SUCCESS)
