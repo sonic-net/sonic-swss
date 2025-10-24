@@ -592,7 +592,8 @@ bool OrchDaemon::init()
     }
 
     vector<string> flex_counter_tables = {
-        CFG_FLEX_COUNTER_TABLE_NAME
+        CFG_FLEX_COUNTER_TABLE_NAME,
+        CFG_DEVICE_METADATA_TABLE_NAME
     };
 
     auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
@@ -865,9 +866,24 @@ void OrchDaemon::flush()
         handleSaiFailure(SAI_API_SWITCH, "set", status);
     }
 
-    for (auto* orch: m_orchList)
+    /*
+     * Don't flush if ringbuffer is enable and it is not empty or Idle. Ring buffer thread
+     * could trigger notification update.
+     *
+     * Flush would be triggered later after SELECT_TIMEOUT in main thread again
+     * for avoiding race condition.
+     */
+    if (gRingBuffer &&(!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()))
     {
-        orch->flushResponses();
+        gRingBuffer->notify();
+        SWSS_LOG_WARN("Skip Flush waiting for RingBuffer empty");
+    }
+    else
+    {
+        for (auto* orch: m_orchList)
+        {
+            orch->flushResponses();
+        }
     }
 }
 
