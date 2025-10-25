@@ -23,7 +23,7 @@ def to_string(value):
     return str(value)
 
 # connect to Dash ZMQ endpoint
-db_connection = swsscommon.DBConnector("APPL_DB", 0)
+db_connection = swsscommon.DBConnector("DPU_APPL_DB", 0)
 zmq_client = swsscommon.ZmqClient("tcp://127.0.0.1:8100")
 app_dash_appliance_table = swsscommon.ZmqProducerStateTable(
                 db_connection,
