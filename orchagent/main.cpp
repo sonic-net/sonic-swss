@@ -840,6 +840,7 @@ int main(int argc, char **argv)
             else
             {
                 // POST is not supported by SAI. Don't declare that SAI POST fails.
+                setMacsecPostState(&state_db, "disabled");
                 SWSS_LOG_ERROR("MACSec POST is not supported by SAI");
             }
         }
