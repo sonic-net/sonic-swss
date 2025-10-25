@@ -177,8 +177,10 @@ class TestFlexCounters(TestFlexCountersBase):
         time.sleep(2)
         self.wait_for_port_attribute_set(port, field, value)
 
-    def verify_fec_counters(self, meta_data):
-        port_name = 'Ethernet0'
+    def verify_fec_counters(self, meta_data, test_port, is_fec_none=False):
+        port_name = 'None'
+        if (is_fec_none == True):
+            port_name = test_port
         port_oid = None
         port_counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map']).items()
         for counter_key in port_counters_keys:
@@ -288,7 +290,16 @@ class TestFlexCounters(TestFlexCountersBase):
 
     def post_port_counter_test(self, meta_data):
         self.verify_only_phy_ports_created(meta_data)
-        self.verify_fec_counters(meta_data)
+        self.verify_fec_counters(meta_data, 'Ethernet0', True)
+        self.set_port_attribute(meta_data, 'Ethernet0', 'fec', 'rs')
+        self.verify_fec_counters(meta_data, 'Ethernet0', False)
+        attr_dict = {
+            "lanes": "1000,1001,1002,1003",
+            "speed": "100000",
+            "fec": "none"
+        }
+        self.config_db.create_entry("PORT", "Ethernet1000", attr_dict)
+        self.verify_fec_counters(meta_data, 'Ethernet1000', True)
 
     def post_trap_flow_counter_test(self, meta_data):
         """Post verification for test_flex_counters for trap_flow_counter. Steps:

@@ -5060,6 +5060,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         auto old_fec_mode = p.m_fec_mode;
                         p.m_fec_mode = pCfg.fec.value;
                         p.m_override_fec = pCfg.fec.override_fec;
+                        p.m_fec_cfg = true;
                         if (old_fec_mode != p.m_fec_mode)
                         {
                             updatePortCounterMap(p);
