@@ -23,6 +23,7 @@ extern sai_next_hop_api_t*         sai_next_hop_api;
 NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();
+    createRetryCache(tableName);
 }
 
 /*
@@ -266,6 +267,7 @@ void NhgOrch::doTask(Consumer& consumer)
                         if (nhg->sync())
                         {
                             m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
+                            notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_NHG, index));
                         }
                         else
                         {
@@ -300,6 +302,7 @@ void NhgOrch::doTask(Consumer& consumer)
                             success = false;
                         }
                         m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
+                        notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_NHG, index));
                     }
                 }
             }
@@ -414,6 +417,7 @@ void NhgOrch::doTask(Consumer& consumer)
             else if (nhg_it->second.ref_count > 0)
             {
                 SWSS_LOG_INFO("Unable to remove group %s which is referenced", index.c_str());
+                success = consumer.addToRetry(std::move(it->second), make_constraint(RETRY_CST_NHG_REF, index));
             }
             /* Else, if the group is no more referenced, remove it. */
             else
@@ -425,6 +429,7 @@ void NhgOrch::doTask(Consumer& consumer)
                 if (success)
                 {
                     m_syncdNextHopGroups.erase(nhg_it);
+                    notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_ECMP));
                 }
             }
         }
