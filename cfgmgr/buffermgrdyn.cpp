@@ -857,7 +857,7 @@ void BufferMgrDynamic::checkSharedBufferPoolSize(bool force_update_during_initia
     // Execute recalculateSharedBufferPool when MMU size is available, and avoid extra recalculation in startup.
     // Logic:
     // - Non-warm start: execute as soon as MMU size is available.
-    // - Warm start: execute only if both buffer is completely initialized AND buffer pools are ready.
+    // - Warm start: execute if buffer is completely initialized OR buffer pools are not ready.
     if (!m_mmuSize.empty() &&
         (!WarmStart::isWarmStart() ||
          (m_bufferCompletelyInitialized || !m_bufferPoolReady)))
