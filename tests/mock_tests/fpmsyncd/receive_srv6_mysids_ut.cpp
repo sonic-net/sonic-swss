@@ -569,6 +569,58 @@ namespace ut_fpmsyncd
         free_nlobj(nl_obj);
     }
 
+    /* Test Receiving an SRv6 My SID nexthop bound to the uA behavior with an interface */
+    TEST_F(FpmSyncdSRv6MySIDsTest, RecevingRouteWithSRv6MySIDUAWithIntf)
+    {
+        ASSERT_NE(m_routeSync, nullptr);
+
+        /* Create a Netlink object containing an SRv6 My SID */
+        IpAddress _mysid = IpAddress("fc00:0:1:e000::");
+        int8_t _block_len = 32;
+        int8_t _node_len = 16;
+        int8_t _func_len = 16;
+        int8_t _arg_len = 0;
+        uint32_t _action = SRV6_LOCALSID_ACTION_UA;
+        IpAddress _adj = IpAddress("fe80::e822:daff:feab:3ee9");
+        char *_intf = "Ethernet0";
+        string my_sid_table_key = get_srv6_my_sid_table_key(&_mysid, _block_len, _node_len, _func_len, _arg_len);
+
+        struct nlmsg *nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, _block_len, _node_len, _func_len, _arg_len, _action, NULL, &_adj, _intf);
+        if (!nl_obj)
+            throw std::runtime_error("SRv6 My SID creation failed");
+
+        /* Send the Netlink object to the FpmLink */
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Check that fpmsyncd created the correct entries in APP_DB */
+        std::string action;
+        ASSERT_EQ(m_srv6MySidTable->hget(my_sid_table_key, "action", action), true);
+        ASSERT_EQ(action, "ua");
+
+        std::string adj;
+        ASSERT_EQ(m_srv6MySidTable->hget(my_sid_table_key, "adj", adj), true);
+        ASSERT_EQ(adj, "fe80::e822:daff:feab:3ee9@Ethernet0");
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+
+        /* Delete My SID */
+        nl_obj = create_srv6_mysid_nlmsg(RTM_DELSRV6LOCALSID, &_mysid, _block_len, _node_len, _func_len, _arg_len, _action, NULL, &_adj, _intf);
+        if (!nl_obj)
+            throw std::runtime_error("SRv6 My SID creation failed");
+
+        /* Send the Netlink object to the FpmLink */
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Check that fpmsyncd created the correct entries in APP_DB */
+        ASSERT_EQ(m_srv6MySidTable->hget(my_sid_table_key, "action", action), false);
+
+        ASSERT_EQ(m_srv6MySidTable->hget(my_sid_table_key, "adj", adj), false);
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+    }
+
     /* Test Receiving an SRv6 My SID nexthop bound to the uDX6 behavior */
     TEST_F(FpmSyncdSRv6MySIDsTest, RecevingRouteWithSRv6MySIDUDX6)
     {
@@ -1014,7 +1066,7 @@ namespace ut_fpmsyncd
         string my_sid_table_key = get_srv6_my_sid_table_key(&_mysid, _block_len, _node_len, _func_len, _arg_len);
 
         /* Create a Netlink object containing an SRv6 My SID with IPv4 SID value */
-        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, 10, 0, AF_INET);
+        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, NULL, 10, 0, AF_INET);
 
         /* Send the Netlink object to the FpmLink */
         ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
@@ -1042,7 +1094,7 @@ namespace ut_fpmsyncd
         string my_sid_table_key = get_srv6_my_sid_table_key(&_mysid, _block_len, _node_len, _func_len, _arg_len);
 
         /* Create a Netlink object containing an SRv6 My SID with invalid SID value prefix length */
-        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, 10, 200, AF_INET6);
+        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, NULL, 10, 200, AF_INET6);
 
         /* Send the Netlink object to the FpmLink */
         ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
@@ -1182,7 +1234,7 @@ namespace ut_fpmsyncd
         string my_sid_table_key = get_srv6_my_sid_table_key(&_mysid, _block_len, _node_len, _func_len, _arg_len);
 
         /* Create a Netlink object containing an SRv6 My SID with missing block length */
-        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, -1, 16, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, 10, AF_INET6, 200);
+        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, -1, 16, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, NULL, 10, AF_INET6, 200);
 
         /* Send the Netlink object to the FpmLink */
         ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
@@ -1210,7 +1262,7 @@ namespace ut_fpmsyncd
         string my_sid_table_key = get_srv6_my_sid_table_key(&_mysid, _block_len, _node_len, _func_len, _arg_len);
 
         /* Create a Netlink object containing an SRv6 My SID with missing node length */
-        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, -1, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, 10, AF_INET6, 200);
+        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, -1, 16, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, NULL, 10, AF_INET6, 200);
 
         /* Send the Netlink object to the FpmLink */
         ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
@@ -1238,7 +1290,7 @@ namespace ut_fpmsyncd
         string my_sid_table_key = get_srv6_my_sid_table_key(&_mysid, _block_len, _node_len, _func_len, _arg_len);
 
         /* Create a Netlink object containing an SRv6 My SID with missing node length */
-        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, -1, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, 10, AF_INET6, 200);
+        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, -1, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, NULL, 10, AF_INET6, 200);
 
         /* Send the Netlink object to the FpmLink */
         ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
