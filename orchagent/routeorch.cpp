@@ -1854,8 +1854,8 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
             continue;
         }
 
-        SWSS_LOG_INFO("Updating route %s", (*rt).prefix.to_string().c_str());
         next_hop_id = m_neighOrch->getNextHopId(nextHop);
+        SWSS_LOG_INFO("Updating route %s with nexthop %" PRIu64, (*rt).prefix.to_string().c_str(), (uint64_t)next_hop_id);
 
         route_entry.vr_id = (*rt).vrf_id;
         route_entry.switch_id = gSwitchId;
