@@ -185,13 +185,13 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet_2000')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000', "100.100.3.0/24")
 
         delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet_2000')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000', "100.100.4.0/24")
 
         delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet_2001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2001', "100.102.1.0/24")
 
         delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2001')
@@ -300,10 +300,10 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "2.2.10.0/24", 'Vnet_2')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2', "2.2.10.0/24")
 
         delete_vnet_local_routes(dvs, "1.1.10.0/24", 'Vnet_1')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_1')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_1', "1.1.10.0/24")
 
         delete_vnet_routes(dvs, "2.2.2.11/32", 'Vnet_2')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2')
@@ -403,10 +403,10 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "5.5.10.0/24", 'Vnet_10')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_10')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_10', "5.5.10.0/24")
 
         delete_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_20')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_20', "8.8.10.0/24")
 
         delete_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_10')
@@ -541,7 +541,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.2.1/24")
 
         delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002', "100.102.1.0/24")
 
         delete_phy_interface(dvs, "Ethernet60", "100.102.1.1/24")
         vnet_obj.check_del_router_interface(dvs, "Ethernet60")
@@ -550,10 +550,10 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3002')
 
         delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001', "100.100.3.0/24")
 
         delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001', "100.100.4.0/24")
 
         delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet3001')
@@ -2970,14 +2970,157 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet12", "down")
 
     '''
-    Test 31 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover & custom_bfd.
+    Test 30 - Test vnet local route with single nexthop
     '''
-    def test_vnet_orch_31(self, dvs, testlog):
+    def test_vnet_local_route_single(self, dvs, testlog):
         self.setup_db(dvs)
 
         vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_30'
+
+        vnet_obj.fetch_exist_entries(dvs)
+        vnet_name = "Vnet5000"
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '30.30.30.30')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5000', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5000')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '30.30.30.30')
+
+        # setup interface under vnet
+        create_phy_interface(dvs, "Ethernet20", vnet_name, "10.10.0.8/31")
+        vnet_obj.check_router_interface(dvs, "Ethernet20", vnet_name)
+
+        # bring up interface
+        self.set_admin_status("Ethernet20", "up")
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet20", "10.10.0.9", "00:01:02:03:04:05")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        num_nh = len(vnet_obj.nhops)
+        num_nhg = len(vnet_obj.nhgs)
+        num_nhgm = len(vnet_obj.nhgms)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
+        route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9"])
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name, "10.10.0.0/24")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == num_nh
+        assert len(vnet_obj.nhgs) == num_nhg
+        assert len(vnet_obj.nhgms) == num_nhgm
+
+        self.remove_neighbor("Ethernet20", "10.10.0.9")
+        self.set_admin_status("Ethernet20", "down")
+
+        delete_phy_interface(dvs, "Ethernet20", "10.10.0.8/31")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet20")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+    '''
+    Test 31 - Test ecmp vnet local route with multiple nexthops
+    '''
+    def test_vnet_local_route_ecmp(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
         tunnel_name = 'tunnel_31'
-        vnet_name = 'vnet31'
+        vnet_name = "Vnet5001"
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '31.31.31.31')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5001', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5001')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '31.31.31.31')
+
+        # setup interfaces under vnet
+        create_phy_interface(dvs, "Ethernet20", vnet_name, "10.10.0.8/31")
+        vnet_obj.check_router_interface(dvs, "Ethernet20", vnet_name)
+
+        create_phy_interface(dvs, "Ethernet16", vnet_name, "10.10.0.10/31")
+        vnet_obj.check_router_interface(dvs, "Ethernet16", vnet_name)
+
+        # bring up interface
+        self.set_admin_status("Ethernet20", "up")
+        self.set_admin_status("Ethernet16", "up")
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet20", "10.10.0.9", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet16", "10.10.0.11", "00:01:02:03:04:06")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        num_nh = len(vnet_obj.nhops)
+        num_nhg = len(vnet_obj.nhgs)
+        num_nhgm = len(vnet_obj.nhgms)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
+        route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9", "10.10.0.11"])
+
+        # update vnet local route to single nexthop
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9"])
+
+        # update vnet local route back to ecmp
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9", "10.10.0.11"])
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name, "10.10.0.0/24")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == num_nh
+        assert len(vnet_obj.nhgs) == num_nhg
+        assert len(vnet_obj.nhgms) == num_nhgm
+
+        self.remove_neighbor("Ethernet20", "10.10.0.9")
+        self.remove_neighbor("Ethernet16", "10.10.0.11")
+        self.set_admin_status("Ethernet20", "down")
+        self.set_admin_status("Ethernet16", "down")
+
+        delete_phy_interface(dvs, "Ethernet20", "10.10.0.8/31")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet20")
+        delete_phy_interface(dvs, "Ethernet16", "10.10.0.10/31")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet16")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+    '''
+    Test 32 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover & custom_bfd.
+    '''
+    def test_vnet_orch_32(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_32'
+        vnet_name = 'vnet32'
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vnet_obj.fetch_exist_entries(dvs)
@@ -3122,6 +3265,7 @@ class TestVnetOrch(object):
         self.remove_neighbor("Ethernet12", "9.1.0.4")
         self.remove_ip_address("Ethernet12", "9.1.0.4/32")
         self.set_admin_status("Ethernet12", "down")
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

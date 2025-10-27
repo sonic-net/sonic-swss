@@ -207,8 +207,8 @@ public:
     bool updateObj(vector<sai_attribute_t>&);
 
     bool addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
-    bool addRoute(IpPrefix& ipPrefix, nextHop& nh);
-    bool removeRoute(IpPrefix& ipPrefix);
+    bool addRoute(IpPrefix& ipPrefix, nextHop& nh, bool increaseRefCount = true);
+    bool removeRoute(IpPrefix& ipPrefix, bool decreaseRefCount = true);
 
     void addProfile(IpPrefix& ipPrefix, string& profile);
     void removeProfile(IpPrefix& ipPrefix);
@@ -549,6 +549,9 @@ private:
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
     void createSubnetDecapTerm(const IpPrefix &ipPrefix);
     void removeSubnetDecapTerm(const IpPrefix &ipPrefix);
+
+    bool setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id, const IpPrefix& ipPrefix,
+                                        const NextHopGroupKey& nhg, const string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
