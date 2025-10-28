@@ -543,7 +543,7 @@ namespace fabricorch_test
     ASSERT_TRUE(waitFieldNe(statePort, sdbKey, "OLD_TX_DATA", old_tx))
         << "Expected OLD_TX_DATA to change after TEST flag was set";
 
-    // Cleanup 
+    // Cleanup: restore TEST flag to product mode
     statePort.set(sdbKey, {{"TEST", "product"}});
 }
     TEST_F(FabricOrchTest, InvalidFabricSwitchId_Handling)
