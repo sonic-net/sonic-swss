@@ -333,7 +333,7 @@ namespace fabricorch_test
         });
     }
 
-    TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
+    TEST_F(FabricOrchTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
 {
     // Get CONFIG_DB consumers via the orch executors.
     auto* mon_cons  = dynamic_cast<Consumer*>(m_fabric->getExecutor("FABRIC_MONITOR"));
