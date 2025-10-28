@@ -26,6 +26,38 @@ namespace routeorch_test
     using ::testing::Return;
     using ::testing::DoAll;
 
+    static bool stateRouteStateFieldExists(swss::DBConnector* state_db,
+                                       const std::string& prefix)
+    {
+        Table stateRoute(state_db, "ROUTE_TABLE");
+        std::vector<FieldValueTuple> fvs;
+        stateRoute.get(prefix, fvs);
+        for (const auto &fv : fvs)
+            if (fvField(fv) == "state")
+                return true;
+        return false;
+    }
+
+    static bool waitStateRouteState(swss::DBConnector* state_db,
+                                const std::string& prefix,
+                                const std::string& want,
+                                int attempts = 30)
+    {
+        Table stateRoute(state_db, "ROUTE_TABLE");
+        for (int i = 0; i < attempts; ++i)
+        {
+            std::vector<FieldValueTuple> fvs;
+            stateRoute.get(prefix, fvs);
+            for (const auto &fv : fvs)
+                if (fvField(fv) == "state" && fvValue(fv) == want)
+                    return true;
+
+            // Let orch process any pending work again
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+        return false;
+    }
+
     DEFINE_SAI_API_MOCK_SPECIFY_ENTRY_WITH_SET(route, route);
 
     shared_ptr<swss::DBConnector> m_app_db;
@@ -396,6 +428,209 @@ namespace routeorch_test
             ut_helper::uninitSaiApi();
         }
     };
+
+    TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
+    {
+        // Add IPv6 interface IPs (like the pytest does) and an IPv6 neighbor.
+        {
+            Table intfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
+            intfTable.set("Ethernet0:2000::1/64", { {"scope","global"}, {"family","IPv6"} });
+            intfTable.set("Ethernet4:2001::1/64", { {"scope","global"}, {"family","IPv6"} });
+            gIntfsOrch->addExistingData(&intfTable);
+            static_cast<Orch *>(gIntfsOrch)->doTask();
+
+            Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+            neighborTable.set("Ethernet0:2000::2", { {"neigh","00:00:00:00:00:22"}, {"family","IPv6"} });
+            gNeighOrch->addExistingData(&neighborTable);
+            static_cast<Orch *>(gNeighOrch)->doTask();
+        }
+
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // PART A: Add/Remove IPv6 prefix 3000::/64 via 2000::2 on Ethernet0
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "3000::/64", "SET",
+                            { {"ifname","Ethernet0"}, {"nexthop","2000::2"} }});
+            routeConsumer->addToSync(entries);
+
+            auto base_create = create_route_count;
+            auto base_set    = set_route_count;
+            auto base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Expect CREATE +1 for new route, no SET/REMOVE yet
+            ASSERT_EQ(base_create + 1, create_route_count);
+            ASSERT_EQ(base_set,        set_route_count);
+            ASSERT_EQ(base_remove,     remove_route_count);
+
+            // Remove the route
+            entries.clear();
+            entries.push_back({ "3000::/64", "DEL", {} });
+            routeConsumer->addToSync(entries);
+
+            base_create = create_route_count;
+            base_set    = set_route_count;
+            base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Expect REMOVE +1, create/set unchanged
+            ASSERT_EQ(base_create,         create_route_count);
+            ASSERT_EQ(base_set,            set_route_count);
+            ASSERT_EQ(base_remove + 1,     remove_route_count);
+        }
+
+        // PART B: IPv6 default route (::/0): SET to add (state -> ok), DEL to remove (state -> na) 
+        {
+            const std::string def6 = "::/0";
+            const bool hasStateField = stateRouteStateFieldExists(m_state_db.get(), def6);
+
+            // Add default v6 route (::/0) via SET path
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ def6, "SET", { {"ifname","Ethernet0"}, {"nexthop","2000::2"} }});
+            routeConsumer->addToSync(entries);
+
+            auto base_create = create_route_count;
+            auto base_set    = set_route_count;
+            auto base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Default route typically programs via attribute SET (no create/remove)
+            ASSERT_EQ(base_create,         create_route_count);
+            ASSERT_EQ(base_remove,         remove_route_count);
+            ASSERT_EQ(base_set + 1,        set_route_count);
+            ASSERT_EQ(sai_fail_count, 0);
+
+            if (hasStateField)
+            {
+                ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def6, "ok"))
+                    << "Expected IPv6 default-route state to become 'ok' after SET.";
+            }
+
+            // Now delete the default v6 route
+            entries.clear();
+            entries.push_back({ def6, "DEL", {} });
+            routeConsumer->addToSync(entries);
+
+            base_create = create_route_count;
+            base_set    = set_route_count;
+            base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Expect another SET (no create/remove), and no invalid SAI programming
+            ASSERT_EQ(base_create,         create_route_count);
+            ASSERT_EQ(base_remove,         remove_route_count);
+            ASSERT_EQ(base_set + 1,        set_route_count);
+            ASSERT_EQ(sai_fail_count, 0);
+
+            if (hasStateField)
+            {
+                ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def6, "na"))
+                    << "Expected IPv6 default-route state to become 'na' after DEL.";
+            }
+        }
+    }
+
+    TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv4)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // PART A: Regular prefix add/remove (2.2.2.0/24)
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "2.2.2.0/24", "SET",
+                            { {"ifname","Ethernet0"}, {"nexthop","10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+
+            auto base_create = create_route_count;
+            auto base_set    = set_route_count;
+            auto base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Expect create +1, set unchanged, remove unchanged
+            ASSERT_EQ(base_create + 1, create_route_count);
+            ASSERT_EQ(base_set,        set_route_count);
+            ASSERT_EQ(base_remove,     remove_route_count);
+
+            // Now remove the route
+            entries.clear();
+            entries.push_back({ "2.2.2.0/24", "DEL", {} });
+            routeConsumer->addToSync(entries);
+
+            base_create = create_route_count;
+            base_set    = set_route_count;
+            base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Expect remove +1, create/set unchanged
+            ASSERT_EQ(base_create,         create_route_count);
+            ASSERT_EQ(base_set,            set_route_count);
+            ASSERT_EQ(base_remove + 1,     remove_route_count);
+        }
+
+        // PART B: Default route DEL -> state 'na' -> SET -> state 'ok'
+        {
+            const std::string def = "0.0.0.0/0";
+            ASSERT_TRUE(stateRouteStateFieldExists(m_state_db.get(), def))
+        << "Expected STATE_DB:ROUTE_TABLE to expose 'state' for the default route.";
+
+            // SetUp() seeds a default route; if state is exposed, it should become 'ok'
+        
+            ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "ok"))
+                << "Expected initial default-route state to become 'ok'.";
+        
+
+            // DEL default route
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ def, "DEL", {} });
+            routeConsumer->addToSync(entries);
+
+            auto base_create = create_route_count;
+            auto base_set    = set_route_count;
+            auto base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // For default route, expect attribute SET path (no create/remove), set +1
+            ASSERT_EQ(base_create,         create_route_count);
+            ASSERT_EQ(base_remove,         remove_route_count);
+            ASSERT_EQ(base_set + 1,        set_route_count);
+            ASSERT_EQ(sai_fail_count, 0);
+
+            ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "na"))
+                    << "Expected default-route state to become 'na' after DEL.";
+            
+
+            // Re-SET default route
+            entries.clear();
+            entries.push_back({ def, "SET", { {"ifname","Ethernet0"}, {"nexthop","10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+
+            base_create = create_route_count;
+            base_set    = set_route_count;
+            base_remove = remove_route_count;
+
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Expect another SET (no create/remove)
+            ASSERT_EQ(base_create,         create_route_count);
+            ASSERT_EQ(base_remove,         remove_route_count);
+            ASSERT_EQ(base_set + 1,        set_route_count);
+            ASSERT_EQ(sai_fail_count, 0);
+
+            ASSERT_TRUE(waitStateRouteState(m_state_db.get(), def, "ok"))
+                    << "Expected default-route state to return to 'ok' after re-SET.";
+        
+        }
+    }
 
     TEST_F(RouteOrchTest, RouteOrchTestDelSetSameNexthop)
     {
