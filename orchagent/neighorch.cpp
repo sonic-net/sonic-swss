@@ -1006,6 +1006,30 @@ void NeighOrch::doTask(Consumer &consumer)
     }
 }
 
+/* Gets all neighbor entries tied to a given mux port */
+void NeighOrch::getMuxNeighborsForPort(string port_name, NeighborTable& m_neighbors)
+{
+    SWSS_LOG_INFO("Getting mux neighbors on %s", port_name.c_str());
+
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    string mux_port_name;
+    for (const auto &entry : m_syncdNeighbors)
+    {
+        // Check if mux port exists for given neighbor entry
+        mux_port_name = "";
+        if (!mux_orch->getMuxPort(entry.second.mac, entry.first.alias, mux_port_name) || mux_port_name.empty())
+        {
+            continue;
+        }
+
+        // Add to m_neighbors if entry found
+        if (mux_port_name == port_name)
+        {
+            m_neighbors.insert(entry);
+        }
+    }
+}
+
 bool NeighOrch::addNeighbor(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
