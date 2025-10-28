@@ -2685,14 +2685,14 @@ class TestVnetOrch(object):
         self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.3,9.1.0.4', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
         # verify tunnel term acl 
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
         }
-        intf_id = dvs.asic_db.port_name_map["Ethernet8"]
-        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, intf_id, priority="9998")
+        nh_id = dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)[0]
+        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, nh_id, priority="9998")
 
         # default monitor session status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
@@ -2700,8 +2700,8 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
 
         # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
         time.sleep(2)
         nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP,set())
         tbl_nh =  swsscommon.Table(asic_db, vnet_obj.ASIC_NEXT_HOP)
@@ -2723,7 +2723,7 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
         time.sleep(2)
 
         route = get_created_entries(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, vnet_obj.routes, 1)
@@ -2735,8 +2735,8 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
 
         time.sleep(2)
 
@@ -2761,7 +2761,7 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.2'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
         time.sleep(2)
 
         nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP,set())
@@ -2784,8 +2784,8 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
 
         time.sleep(2)
 
@@ -2800,8 +2800,8 @@ class TestVnetOrch(object):
         check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
 
-        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.1")
-        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.3")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.4")
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
