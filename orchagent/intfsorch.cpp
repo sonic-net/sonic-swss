@@ -98,7 +98,13 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
                                  RIF_PLUGIN_FIELD,
                                  rifRateSha);
 
-    if(gMySwitchType == "voq")
+    // check if this is a single asic voq
+    if (chassisAppDb == nullptr)
+    {
+        m_singleVoq = true;
+    }
+
+    if(gMySwitchType == "voq" && !m_singleVoq)
     {
         //Add subscriber to process VOQ system interface
         tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
@@ -1670,6 +1676,11 @@ bool IntfsOrch::isLocalSystemPortIntf(string alias)
 
 void IntfsOrch::voqSyncAddIntf(string &alias)
 {
+    if (m_singleVoq)
+    {
+        return;
+    }
+
     //Sync only local interface. Confirm for the local interface and
     //get the system port alias for key for syncing to CHASSIS_APP_DB
     Port port;
@@ -1710,6 +1721,11 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
 
 void IntfsOrch::voqSyncDelIntf(string &alias)
 {
+    if (m_singleVoq)
+    {
+        return;
+    }
+
     //Sync only local interface. Confirm for the local interface and
     //get the system port alias for key for syncing to CHASSIS_APP_DB
     Port port;
@@ -1743,6 +1759,11 @@ void IntfsOrch::voqSyncDelIntf(string &alias)
 
 void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
 {
+    if (m_singleVoq)
+    {
+        return;
+    }
+
     Port port;
     string port_alias;
     if(gPortsOrch->getPort(alias, port))
@@ -1773,4 +1794,3 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
-

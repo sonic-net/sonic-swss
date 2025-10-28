@@ -17,6 +17,8 @@ extern "C" {
 #include <stdexcept>
 #include <stdlib.h>
 #include <string.h>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #include <sys/time.h>
 #include <sairedis.h>
@@ -204,6 +206,18 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
         SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
     }
 
+}
+
+bool isChassisAppDbPresent()
+{
+    std::ifstream file("/etc/sonic/database_config.json");
+    if (!file.is_open()) return false;
+
+    nlohmann::json db_config;
+    file >> db_config;
+
+    return db_config.contains("DATABASES") &&
+           db_config["DATABASES"].contains("CHASSIS_APP_DB");
 }
 
 bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
@@ -609,7 +623,17 @@ int main(int argc, char **argv)
 
         //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
         //connection info in database_config.json
-        chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+        chassis_app_db = nullptr;
+        if (isChassisAppDbPresent())
+       	{
+            try {
+                chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_NOTICE("CHASSIS_APP_DB not available, operating in standalone VOQ mode");
+            }
+        }
     }
     else if (gMySwitchType == "fabric")
     {
@@ -806,6 +830,11 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
+    DBConnector *chassis_db = nullptr;
+    if (chassis_app_db != nullptr)
+    {
+        chassis_db = chassis_app_db.get();
+    }
 
     /*
      * Declare shared pointers for dpu specific databases.
@@ -823,7 +852,7 @@ int main(int argc, char **argv)
 
     else if (gMySwitchType != "fabric")
     {
-        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_db, zmq_server.get());
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
@@ -833,7 +862,7 @@ int main(int argc, char **argv)
     }
     else
     {
-        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_db, zmq_server.get());
     }
 
     if (gRingMode) {
