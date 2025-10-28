@@ -493,7 +493,99 @@ namespace flexcounter_test
         }
 
     };
+	TEST_P(FlexCounterTest, TelemetryPeriod)
+{
+    using ::testing_db::reset;
 
+    // Enable the usual flex counters (reusing the same pattern as CounterTest)
+    Table flexCounterCfg(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
+
+    const std::vector<swss::FieldValueTuple> enable{{FLEX_COUNTER_STATUS_FIELD, "enable"}};
+    flexCounterCfg.set("BUFFER_POOL_WATERMARK", enable);
+    flexCounterCfg.set("PG_WATERMARK",          enable);
+    flexCounterCfg.set("QUEUE_WATERMARK",       enable);
+
+    auto* flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+    flexCounterOrch->addExistingData(&flexCounterCfg);
+    static_cast<Orch*>(flexCounterOrch)->doTask();
+
+    // In warm start case, expire its delay timer once (mirrors your other test)
+    if (GetParam() == std::make_tuple(get<0>(GetParam()), get<1>(GetParam()), StartType::Warm))
+    {
+        flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
+        static_cast<Orch*>(flexCounterOrch)->doTask();
+    }
+
+    // Assert the default poll interval (mock harness uses 60000 for watermark groups).
+    ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                      {
+                                          {POLL_INTERVAL_FIELD, "60000"},
+                                          {STATS_MODE_FIELD,    STATS_MODE_READ_AND_CLEAR},
+                                          {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                          {BUFFER_POOL_PLUGIN_FIELD, ""}
+                                      }));
+    ASSERT_TRUE(checkFlexCounterGroup(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                      {
+                                          {POLL_INTERVAL_FIELD, "60000"},
+                                          {STATS_MODE_FIELD,    STATS_MODE_READ_AND_CLEAR},
+                                          {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                          {PG_PLUGIN_FIELD, ""}
+                                      }));
+    ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                      {
+                                          {POLL_INTERVAL_FIELD, "60000"},
+                                          {STATS_MODE_FIELD,    STATS_MODE_READ_AND_CLEAR},
+                                          {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                          {QUEUE_PLUGIN_FIELD, ""}
+                                      }));
+
+    //  "Change TELEMETRY_INTERVAL to 5s" via the SAI_REDIS mock hook 
+    auto set_group_interval_ms = [&](const std::string& group, const std::string& ms)
+    {
+        // Build a small group parameter and pass it through the hooked SAI call.
+        sai_redis_flex_counter_group_parameter_t gp{};
+        std::string name = group;
+        std::string poll = ms;
+
+        gp.counter_group_name.count = static_cast<uint32_t>(name.size() + 1);
+        gp.counter_group_name.list  = reinterpret_cast<uint8_t*>(const_cast<char*>(name.c_str()));
+        gp.poll_interval.count      = static_cast<uint32_t>(poll.size() + 1);
+        gp.poll_interval.list       = reinterpret_cast<uint8_t*>(const_cast<char*>(poll.c_str()));
+
+        sai_attribute_t attr{};
+        attr.id        = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = &gp;
+
+        ASSERT_EQ(SAI_STATUS_SUCCESS, sai_switch_api->set_switch_attribute(gSwitchId, &attr));
+    };
+
+    // Simulate what WATERMARK_TABLE interval update would do in system: drive group poll interval to 5s.
+    set_group_interval_ms(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, "5000");
+    set_group_interval_ms(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,          "5000");
+    set_group_interval_ms(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,       "5000");
+
+    // Verify FLEX_COUNTER_GROUP_TABLE reflects the new interval
+    ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                      {
+                                          {POLL_INTERVAL_FIELD, "5000"},
+                                          {STATS_MODE_FIELD,    STATS_MODE_READ_AND_CLEAR},
+                                          {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                          {BUFFER_POOL_PLUGIN_FIELD, ""}
+                                      }));
+    ASSERT_TRUE(checkFlexCounterGroup(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                      {
+                                          {POLL_INTERVAL_FIELD, "5000"},
+                                          {STATS_MODE_FIELD,    STATS_MODE_READ_AND_CLEAR},
+                                          {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                          {PG_PLUGIN_FIELD, ""}
+                                      }));
+    ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                      {
+                                          {POLL_INTERVAL_FIELD, "5000"},
+                                          {STATS_MODE_FIELD,    STATS_MODE_READ_AND_CLEAR},
+                                          {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                          {QUEUE_PLUGIN_FIELD, ""}
+                                      }));
     TEST_P(FlexCounterTest, CounterTest)
     {
         // Check flex counter database after system initialization
