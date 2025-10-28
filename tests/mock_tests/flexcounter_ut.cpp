@@ -586,6 +586,7 @@ namespace flexcounter_test
                                           {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                           {QUEUE_PLUGIN_FIELD, ""}
                                       }));
+}
     TEST_P(FlexCounterTest, CounterTest)
     {
         // Check flex counter database after system initialization
