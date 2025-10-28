@@ -485,7 +485,7 @@ namespace fabricorch_test
         return false;
     };
 
-    //Disable -> Enable monitor (CONFIG -> APP reflection)
+    // Disable -> Enable monitor (CONFIG -> APP reflection)
     {
         deque<KeyOpFieldsValuesTuple> e;
         e.push_back({"FABRIC_MONITOR_DATA", "SET", {{"monState","disable"}}});
