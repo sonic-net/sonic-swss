@@ -449,7 +449,7 @@ namespace fabricorch_test
     // Cleanup: unisolate and restore test fields.
     statePort.set(sdbKey, {{"ISOLATED","0"}, {"TEST","product"}});
 }
-    TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
+    TEST_F(FabricOrchTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
 {
     // CONFIG_DB executors.
     auto* mon_cons = dynamic_cast<Consumer*>(m_fabric->getExecutor("FABRIC_MONITOR"));
