@@ -500,7 +500,7 @@ namespace fabricorch_test
         ASSERT_TRUE(waitFieldEq(appMon, "FABRIC_MONITOR_DATA", "monState", "enable"));
     }
 
-    // Deterministic port 
+    // Use port 7 for deterministic testing: ensures test repeatability and avoids random port selection.
     const int portNum = 7;
     const string sdbKey = "PORT" + to_string(portNum);
 
