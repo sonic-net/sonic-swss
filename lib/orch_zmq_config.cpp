@@ -35,12 +35,20 @@ std::set<std::string> swss::load_zmq_tables()
 int swss::get_zmq_port()
 {
     auto zmq_port = ORCH_ZMQ_PORT;
-    if (const char* nsid = std::getenv("NAMESPACE_ID"))
+    const char* nsid = std::getenv("NAMESPACE_ID");
+    std::string nsid_str = nsid ? std::string(nsid) : "";
+    if (!nsid_str.empty())
     {
-        // namespace start from 0, using original ZMQ port for global namespace
-        zmq_port += atoi(nsid) + 1;
+        try
+        {
+            // namespace start from 0, using original ZMQ port for global namespace
+            zmq_port += std::stoi(nsid) + 1;
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Failed to convert %s to int, fallback to default port", nsid_str.c_str());
+        }
     }
-
     return zmq_port;
 }
 
@@ -64,7 +72,10 @@ std::shared_ptr<swss::ZmqServer> swss::create_zmq_server(std::string zmq_address
     }
 
     SWSS_LOG_NOTICE("Create ZMQ server with address: %s, vrf: %s", zmq_address.c_str(), vrf.c_str());
-    return std::make_shared<ZmqServer>(zmq_address, vrf);
+
+    // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
+    // use lazy binding and call bind() only after the handler has been registered.
+    return std::make_shared<ZmqServer>(zmq_address, vrf, true);
 }
 
 bool swss::get_feature_status(std::string feature, bool default_value)

@@ -91,6 +91,7 @@ sai_twamp_api_t*                    sai_twamp_api;
 sai_tam_api_t*                      sai_tam_api;
 sai_stp_api_t*                      sai_stp_api;
 sai_dash_meter_api_t*               sai_dash_meter_api;
+sai_dash_outbound_port_map_api_t*   sai_dash_outbound_port_map_api;
 sai_dash_trusted_vni_api_t*         sai_dash_trusted_vni_api;
 
 extern sai_object_id_t gSwitchId;
@@ -245,6 +246,8 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
     sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL,               (void**)&sai_dash_tunnel_api);
     sai_api_query((sai_api_t)SAI_API_DASH_HA,                   (void**)&sai_dash_ha_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP,    (void**)&sai_dash_outbound_port_map_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI,          (void**)&sai_dash_trusted_vni_api);    
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
