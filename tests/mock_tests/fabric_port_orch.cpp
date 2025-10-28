@@ -45,12 +45,14 @@ namespace fabricorch_test
         void doTask(Consumer &consumer) override
         {
             const auto &tname = consumer.getTableName();
-            auto &q = consumer.m_toSync;
+            auto &q = consumer.m_toSync; // std::multimap<key, tuple>
 
             while (!q.empty())
             {
-                auto tuple = q.front();
-                q.pop_front();
+                // multimap doesn't support front()/pop_front()
+                auto it = q.begin();
+                auto tuple = it->second;
+                q.erase(it);
 
                 const string op = kfvOp(tuple);
                 if (op != "SET")
@@ -61,12 +63,11 @@ namespace fabricorch_test
 
                 if (tname == "FABRIC_MONITOR")
                 {
-                    // SWSS Table::set requires 5 args in this build
+                    // Use 5-arg swss::Table::set to match signature in this environment
                     m_appMon.set(key, fvs, "", "", 0);
                 }
                 else if (tname == "FABRIC_PORT")
                 {
-                    // SWSS Table::set requires 5 args in this build
                     m_appPort.set(key, fvs, "", "", 0);
                 }
             }
@@ -179,15 +180,14 @@ namespace fabricorch_test
             auto ports = ut_helper::getInitialSaiPorts();
             for (const auto &it : ports)
             {
-                // NOTE: 5-arg set() required by this SWSS build
-                portTable.set(it.first, it.second, "", "", 0);
-                portTable.set(it.first, {{"oper_status","up"}}, "", "", 0);
+                portTable.set(it.first, it.second);
+                portTable.set(it.first, {{"oper_status","up"}});
             }
-            portTable.set("PortConfigDone", {{"count", to_string(ports.size())}}, "", "", 0);
+            portTable.set("PortConfigDone", {{"count", to_string(ports.size())}});
             gPortsOrch->addExistingData(&portTable);
             static_cast<Orch *>(gPortsOrch)->doTask();
 
-            portTable.set("PortInitDone", {{"lanes","0"}}, "", "", 0);
+            portTable.set("PortInitDone", {{"lanes","0"}});
             gPortsOrch->addExistingData(&portTable);
             static_cast<Orch *>(gPortsOrch)->doTask();
 
@@ -210,6 +210,7 @@ namespace fabricorch_test
             ut_helper::uninitSaiApi();
         }
     };
+
 
     // Test 1: CONFIG->APP propagation for FABRIC_MONITOR and FABRIC_PORT
     TEST_F(FabricOrchTest, FabricPort_Isolation_And_Monitor_Propagates)
@@ -284,41 +285,40 @@ namespace fabricorch_test
         const string portKey = "PORT" + to_string(portNum);
         const string cfgKey  = "Fabric" + to_string(portNum);
 
-        // NOTE: 5-arg set() used for all writes below
         statePort.set(portKey, {
             {"STATUS","up"},
             {"TEST_CRC_ERRORS","0"},
             {"TEST_CODE_ERRORS","0"},
             {"PORT_DOWN_COUNT","0"},
             {"TEST","TEST"}
-        }, "", "", 0);
+        });
 
         // Inject CRC errors -> isolate
-        statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} }, "", "", 0);
-        statePort.set(portKey, { {"AUTO_ISOLATED","1"} }, "", "", 0);
+        statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} });
+        statePort.set(portKey, { {"AUTO_ISOLATED","1"} });
         ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "1"));
 
         // Clear errors -> unisolate
-        statePort.set(portKey, { {"TEST_CRC_ERRORS","0"} }, "", "", 0);
-        statePort.set(portKey, { {"AUTO_ISOLATED","0"} }, "", "", 0);
+        statePort.set(portKey, { {"TEST_CRC_ERRORS","0"} });
+        statePort.set(portKey, { {"AUTO_ISOLATED","0"} });
         ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "0"));
 
         // Errors again -> isolate, then handle PORT_DOWN_COUNT and unisolate
-        statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} }, "", "", 0);
-        statePort.set(portKey, { {"AUTO_ISOLATED","1"} }, "", "", 0);
+        statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} });
+        statePort.set(portKey, { {"AUTO_ISOLATED","1"} });
         ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "1"));
 
         const string downCnt = "2";
-        statePort.set(portKey, { {"PORT_DOWN_COUNT", downCnt} }, "", "", 0);
-        statePort.set(portKey, { {"PORT_DOWN_COUNT_handled", downCnt} }, "", "", 0);
+        statePort.set(portKey, { {"PORT_DOWN_COUNT", downCnt} });
+        statePort.set(portKey, { {"PORT_DOWN_COUNT_handled", downCnt} });
         ASSERT_TRUE(waitFieldEq(statePort, portKey, "PORT_DOWN_COUNT_handled", downCnt));
 
-        statePort.set(portKey, { {"AUTO_ISOLATED","0"} }, "", "", 0);
+        statePort.set(portKey, { {"AUTO_ISOLATED","0"} });
         ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "0"));
 
         // Errors again -> isolate, then force unisolate via CONFIG_DB
-        statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} }, "", "", 0);
-        statePort.set(portKey, { {"AUTO_ISOLATED","1"} }, "", "", 0);
+        statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} });
+        statePort.set(portKey, { {"AUTO_ISOLATED","1"} });
         ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "1"));
 
         {
@@ -328,7 +328,7 @@ namespace fabricorch_test
             static_cast<Orch *>(gFabricOrch.get())->doTask();
         }
 
-        statePort.set(portKey, { {"AUTO_ISOLATED","0"} }, "", "", 0);
+        statePort.set(portKey, { {"AUTO_ISOLATED","0"} });
         ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "0"));
 
         // Cleanup
@@ -336,8 +336,7 @@ namespace fabricorch_test
             {"TEST_CRC_ERRORS","0"},
             {"TEST_CODE_ERRORS","0"},
             {"TEST","product"}
-        }, "", "", 0);
+        });
     }
-
-
 }
+
