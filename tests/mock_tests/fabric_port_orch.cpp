@@ -546,7 +546,7 @@ namespace fabricorch_test
     // Cleanup 
     statePort.set(sdbKey, {{"TEST", "product"}});
 }
-    TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
+    TEST_F(FabricOrchTest, InvalidFabricSwitchId_Handling)
 {
     // Mirrors the pytest test_invalid_fabric_switch_id
 
