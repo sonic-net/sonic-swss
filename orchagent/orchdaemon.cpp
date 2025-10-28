@@ -1333,7 +1333,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_METER_POLICY_TABLE_NAME,
         APP_DASH_METER_RULE_TABLE_NAME
     };
-    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
 
     vector<string> dash_port_map_tables = {
