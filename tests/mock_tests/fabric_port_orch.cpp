@@ -393,7 +393,7 @@ namespace fabricorch_test
         }
     }
 
-    //Step 2: Isolate with monitor enabled -> capacity should drop by 1
+    // Step 2: Isolate with monitor enabled -> capacity should drop by 1
     {
         deque<KeyOpFieldsValuesTuple> e;
         e.push_back({cfgKey, "SET", {{"isolateStatus","True"}}});
