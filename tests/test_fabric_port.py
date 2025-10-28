@@ -3,7 +3,7 @@ from dvslib.dvs_database import DVSDatabase
 
 
 class TestVirtualChassis(object):
-    @pytest.mark.skip(reason="Covered by mock test:  FabricPort_Isolation_And_Monitor_Propagates")
+    @pytest.mark.skip(reason="Covered by mock test: FabricPort_Isolation_And_Monitor_Propagates")
     def test_voq_switch_fabric_link(self, vst):
         """Test fabric link manual isolation commands in VOQ switch.
 
