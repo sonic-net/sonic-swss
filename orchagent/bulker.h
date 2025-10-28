@@ -702,14 +702,23 @@ public:
             std::vector<Te> rs;
             std::vector<sai_attribute_t> ts;
             std::vector<sai_status_t*> status_vector;
+            // Use a set to keep track of the entries that have been processed.
+            std::unordered_set<Te> entries;
 
             for (auto const& entry : set_order)
             {
+                // Skip the entry if it is alreay processed.
+                // All attributes of an entry are processed in the first run.
+                if (entries.count(entry) != 0)
+                {
+                    continue;
+                }
                 auto i = setting_entries.find(entry);
                 if (i == setting_entries.end())
                 {
                     continue;
                 }
+                entries.insert(entry);
                 auto const& attrs = i->second;
                 for (auto const& ia: attrs)
                 {
