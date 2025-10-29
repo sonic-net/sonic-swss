@@ -65,7 +65,13 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                               TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
     auto consumer = new Consumer(consumerStateTable, this, APP_NEIGH_RESOLVE_TABLE_NAME);
     Orch::addExecutor(consumer);
-          
+
+    //NEIGH_REFRESH_TABLE from neighsyncd
+    consumerStateTable = new swss::ConsumerStateTable(appDb, APP_NEIGH_REFRESH_TABLE_NAME,
+                              TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+    consumer = new Consumer(consumerStateTable, this, APP_NEIGH_REFRESH_TABLE_NAME);
+    Orch::addExecutor(consumer);
+
     string swtype;
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
     if(cfgDeviceMetaDataTable.hget("localhost", "switch_type", swtype))
@@ -341,6 +347,11 @@ void NbrMgr::doTask(Consumer &consumer)
     } else if(table_name == STATE_SYSTEM_NEIGH_TABLE_NAME)
     {
         doStateSystemNeighTask(consumer);
+    }
+    else if (table_name == APP_NEIGH_REFRESH_TABLE_NAME)
+    {
+        doNeighCacheTask(consumer);
+        return;
     }
     else
     {
@@ -625,4 +636,241 @@ bool NbrMgr::delKernelNeigh(string odev, IpAddress ip_addr)
 
     SWSS_LOG_INFO("Deleted Nbr for %s on interface %s", ip_str.c_str(), odev.c_str());
     return true;
+}
+
+void NbrMgr::doNeighCacheTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        const vector<FieldValueTuple>& data = kfvFieldsValues(t);
+        string key = kfvKey(t);
+
+        std::size_t delimiter = key.find_first_of(":");
+        auto alias = key.substr(0, delimiter);
+        auto ip_addr = key.substr(delimiter+1);
+
+        string op = kfvOp(t);
+        string mac = "none";
+        int flags = 0, state = 0, type = 0;
+        bool invalid_field = false;
+        for (auto idx : data)
+        {
+            const auto &field = fvField(idx);
+            const auto &value = fvValue(idx);
+            if (field == "neigh")
+            {
+                    mac = value;
+            }
+            if (field == "state")
+            {
+                try
+                {
+                    state = stoi(value);
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    SWSS_LOG_ERROR("Invalid state '%s' for '%s'", value.c_str(), kfvKey(t).c_str());
+                    invalid_field = true;
+                    break;
+                }
+            }
+        }
+        if (invalid_field)
+        {
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        updateNeighCache(op, type, IpAddress(ip_addr), alias, mac, state, flags);
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+bool NbrMgr::isRefreshRequired(int type, IpAddress ip, string ifname, string mac, int state, int flags)
+{
+    /*TODO:  will be enabled after merging interface cache related changes
+    //Skip IPv4 LL entries created for BGP unnumbered, correponding ipv6ll will be refreshed
+    if(ip.getAddrScope() == IpAddress::LINK_SCOPE)
+    {
+        if(ip.isV4())
+        {
+            if (!isPrefixSubnet(ip, ifname))
+            {
+                SWSS_LOG_INFO("NbrRefCache: Ignore Ipv4LL neighbor(%s) interface(%s)",ip.to_string().c_str(), ifname.c_str());
+                return false;
+            }
+        }
+    }
+
+    if(!hasIntfIpAddress(ifname, ip.isV4()))
+    {
+        SWSS_LOG_INFO("NbrRefCache: Ignore neighbor(%s) interface(%s), as there is no ip configured",ip.to_string().c_str(), ifname.c_str());
+        return false;
+    }
+    */
+
+    return true;
+}
+
+bool NbrMgr::updateNeighCache(string op, int type, IpAddress ip, string ifname, string mac, int state, int flags)
+{
+    bool del = false;
+
+    if (op == DEL_COMMAND || type == RTM_DELNEIGH)
+    {
+        del = true;
+    }
+    else
+    {
+       if(!isRefreshRequired(type, ip, ifname, mac, state, flags))
+           return true;
+    }
+
+    if (state == NUD_PERMANENT && flags & NTF_EXT_LEARNED)
+    {
+        SWSS_LOG_NOTICE("NbrRefCache: neighbor(%s) intf(%s) learned from remote nodes ",ip.to_string().c_str(), ifname.c_str());
+        del = true;
+    }
+
+    if(state & NUD_NOARP)
+    {
+        SWSS_LOG_INFO("NbrRefCache: Ignore NUD_NOARP neighbor(%s) interface(%s)",ip.to_string().c_str(), ifname.c_str());
+        del = true;
+    }
+
+    if (!del)
+    {
+        /* In case of Failed entries MAC may not be present, but we want to store them and refresh them */
+        if(!strcmp(mac.c_str(),"none"))
+        {
+            if((state == NUD_FAILED) || (state == NUD_INCOMPLETE))
+            {
+                // this is applicable only for state = FAILED/INCOMPLETE
+                mac = "ff:ff:ff:ff:ff:ff";
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("NbrRefCache: Ignore this update as no MAC address received for neighbor %s interface(%s)",
+                                 ip.to_string().c_str(), ifname.c_str());
+                return true;
+            }
+        }
+    }
+
+    if (del)
+    {
+        delNeighFrmCache(ip, ifname);
+    }
+    else
+    {
+        addNeighToCache(ip, ifname, mac, state);
+    }
+
+    return true;
+}
+
+bool NbrMgr::addNeighToCache(IpAddress ipAddress, string alias, string mac, int state)
+{
+    NeighCacheKey neigh = { ipAddress, alias };
+
+    if(m_neighCache.find(neigh) == m_neighCache.end())
+    {
+        NeighCacheEntry neigh_cache_entry;
+        if((state == NUD_FAILED) || (state == NUD_INCOMPLETE))
+        {
+            neigh_cache_entry.mac_address       = MacAddress("ff:ff:ff:ff:ff:ff");
+        }
+        else
+            neigh_cache_entry.mac_address       = MacAddress(mac);
+
+        neigh_cache_entry.state                 = state;
+        neigh_cache_entry.start_time            = get_currtime_ms();
+        neigh_cache_entry.refresh_timeout       = get_refresh_timeout(ipAddress.isV4());
+        neigh_cache_entry.num_refresh_sent      = 0;
+
+        m_neighCache[neigh]                     = neigh_cache_entry;
+
+        SWSS_LOG_NOTICE("NbrRefCache: Add neighbor %s interface %s MAC:%s state:(%d) start_time(%lld), timeout(%lld)",
+                ipAddress.to_string().c_str(), alias.c_str(), mac.c_str(), state, neigh_cache_entry.start_time,
+                neigh_cache_entry.refresh_timeout);
+    }
+    else
+    {
+        if (( m_neighCache[neigh].state != state ) || (m_neighCache[neigh].mac_address != MacAddress(mac)))
+        {
+            m_neighCache[neigh].state               = state;
+            m_neighCache[neigh].start_time          = get_currtime_ms();
+            m_neighCache[neigh].refresh_timeout     = get_refresh_timeout(ipAddress.isV4());
+            m_neighCache[neigh].num_refresh_sent    = 0;
+
+            if((state == NUD_FAILED) || (state == NUD_INCOMPLETE))
+            {
+                m_neighCache[neigh].mac_address     = MacAddress("ff:ff:ff:ff:ff:ff");
+            }
+            else
+            {
+                m_neighCache[neigh].mac_address     = MacAddress(mac);
+            }
+
+            SWSS_LOG_NOTICE("NbrRefCache: Update neighbor %s interface %s MAC:%s state:(%d) start_time(%lld), timeout(%lld)",
+                    ipAddress.to_string().c_str(), alias.c_str(), mac.c_str(), state, m_neighCache[neigh].start_time,
+                    m_neighCache[neigh].refresh_timeout);
+        }
+        else
+        {
+            SWSS_LOG_INFO("NbrRefCache: No Update: neighbor %s interface %s MAC:%s state:(%d) num_refresh(%d)",
+                    ipAddress.to_string().c_str(), alias.c_str(), mac.c_str(), state, m_neighCache[neigh].num_refresh_sent);
+        }
+    }
+
+    return true;
+}
+
+bool NbrMgr::delNeighFrmCache(IpAddress ipAddress, string alias)
+{
+    NeighCacheKey neigh = { ipAddress, alias };
+
+    if(m_neighCache.find(neigh) == m_neighCache.end())
+    {
+        SWSS_LOG_NOTICE("NbrRefCache: EntryNotFound - neighbor %s interface %s ", ipAddress.to_string().c_str(), alias.c_str() );
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("NbrRefCache: Del neighbor %s interface %s ", ipAddress.to_string().c_str(), alias.c_str());
+
+    m_neighCache.erase(neigh);
+
+    return true;
+}
+
+unsigned long long NbrMgr::get_currtime_ms(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+    {
+        return ((((unsigned long long)ts.tv_sec) * 1000) + (((unsigned long long)ts.tv_nsec)/1000000));
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("NbrMgrCache: GetTime Failed");
+    }
+
+    return 0;
+}
+
+unsigned long long NbrMgr::get_refresh_timeout(bool isV4)
+{
+    if(isV4)
+    {
+        return (((1 + rand ()) % (((TIMEOUT_MAX_PERCENT - TIMEOUT_MIN_PERCENT) * m_ref_timeout_v4 )/100)) +  ((TIMEOUT_MIN_PERCENT * m_ref_timeout_v4)/100));
+    }
+    else
+    {
+        return (((1 + rand ()) % (((TIMEOUT_MAX_PERCENT - TIMEOUT_MIN_PERCENT) * m_ref_timeout_v6 )/100)) +  ((TIMEOUT_MIN_PERCENT * m_ref_timeout_v6)/100));
+    }
 }
