@@ -517,22 +517,52 @@ namespace flexcounter_test
 
         // ---- FIX #2: use int8_t* for SAI strings ----
         auto set_group_interval_ms = [&](const std::string& group, const std::string& ms)
-        {
-            sai_redis_flex_counter_group_parameter_t gp{};
-            std::string name = group;
-            std::string poll = ms;
+{
+    // Figure out the plugin field name for this group.
+    std::string plugin_field;
+    if (group == BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP)
+        plugin_field = BUFFER_POOL_PLUGIN_FIELD;
+    else if (group == PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP)
+        plugin_field = PG_PLUGIN_FIELD;
+    else if (group == QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP)
+        plugin_field = QUEUE_PLUGIN_FIELD;
+    else
+        plugin_field.clear(); // unknown group, fine—plugin will be omitted
 
-            gp.counter_group_name.count = static_cast<uint32_t>(name.size() + 1);
-            gp.counter_group_name.list  = reinterpret_cast<int8_t*>(const_cast<char*>(name.c_str()));
-            gp.poll_interval.count      = static_cast<uint32_t>(poll.size() + 1);
-            gp.poll_interval.list       = reinterpret_cast<int8_t*>(const_cast<char*>(poll.c_str()));
+    // Strings we’ll point the SAI-REDIS parameter lists at.
+    std::string name = group;
+    std::string poll = ms;
+    std::string stats = STATS_MODE_READ_AND_CLEAR; // matches watermark groups
+    std::string op    = "enable";
+    // NOTE: The plugin "value" is empty; the "field" is the key itself.
+    // SAI mock expects plugin_name.list to carry the field-name key.
+    std::string plugin_key = plugin_field;
 
-            sai_attribute_t attr{};
-            attr.id        = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
-            attr.value.ptr = &gp;
+    sai_redis_flex_counter_group_parameter_t gp{};
+    gp.counter_group_name.count = static_cast<uint32_t>(name.size() + 1);
+    gp.counter_group_name.list  = reinterpret_cast<int8_t*>(const_cast<char*>(name.c_str()));
 
-            ASSERT_EQ(SAI_STATUS_SUCCESS, sai_switch_api->set_switch_attribute(gSwitchId, &attr));
-        };
+    gp.poll_interval.count      = static_cast<uint32_t>(poll.size() + 1);
+    gp.poll_interval.list       = reinterpret_cast<int8_t*>(const_cast<char*>(poll.c_str()));
+
+    gp.stats_mode.count         = static_cast<uint32_t>(stats.size() + 1);
+    gp.stats_mode.list          = reinterpret_cast<int8_t*>(const_cast<char*>(stats.c_str()));
+
+    gp.operation.count          = static_cast<uint32_t>(op.size() + 1);
+    gp.operation.list           = reinterpret_cast<int8_t*>(const_cast<char*>(op.c_str()));
+
+    if (!plugin_key.empty())
+    {
+        gp.plugin_name.count    = static_cast<uint32_t>(plugin_key.size() + 1);
+        gp.plugin_name.list     = reinterpret_cast<int8_t*>(const_cast<char*>(plugin_key.c_str()));
+    }
+
+    sai_attribute_t attr{};
+    attr.id        = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &gp;
+
+    ASSERT_EQ(SAI_STATUS_SUCCESS, sai_switch_api->set_switch_attribute(gSwitchId, &attr));
+};
 
         // Simulate WATERMARK_TABLE interval update to 5000 ms.
         set_group_interval_ms(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, "5000");
