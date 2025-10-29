@@ -3878,7 +3878,7 @@ string PortsOrch::getWredQueueFlexCounterTableKey(string key)
 
 
 
-bool PortsOrch::querySupportedPortStats(sai_object_id_t port_id, vector<sai_port_stat_t>& stat_ids)
+bool PortsOrch::querySupportedPortExtendedStats(sai_object_id_t port_id, vector<sai_port_stat_t>& stat_ids)
 {
     sai_attr_capability_t capability;
     bool extendedCountersSupported = true;
