@@ -123,7 +123,6 @@ namespace fabricorch_test
             };
             ut_helper::initSaiApi(profile);
 
-            MockSaiApis();
 
             // Init DBs
             m_app_db    = make_shared<DBConnector>("APPL_DB",   0);
