@@ -254,6 +254,7 @@ public:
         enable_cache_neigh_updates_ = false;
     }
     void updateCachedNeighbors();
+    bool getMuxPort(const MacAddress&, const string&, string&);
 
     void restoreMuxNeighbors();
 
@@ -273,8 +274,6 @@ private:
 
     void updateNeighbor(const NeighborUpdate& update);
     void updateFdb(const FdbUpdate&);
-
-    bool getMuxPort(const MacAddress&, const string&, string&);
 
     /***
      * Methods for managing tunnel routes for neighbor IPs not associated
