@@ -154,6 +154,7 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
                         'SAI_TUNNEL_ATTR_PEER_MODE': 'SAI_TUNNEL_PEER_MODE_P2MP',
                         'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip,
                         'SAI_TUNNEL_ATTR_ENCAP_TTL_MODE': 'SAI_TUNNEL_TTL_MODE_PIPE_MODEL',
+                        'SAI_TUNNEL_ATTR_DECAP_TTL_MODE': 'SAI_TUNNEL_TTL_MODE_PIPE_MODEL',
                         'SAI_TUNNEL_ATTR_ENCAP_TTL_VAL': '255'
                     }
                 )
