@@ -25,6 +25,7 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_select(select),
     m_lagTable(db, APP_LAG_TABLE_NAME),
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
+    m_portTable(db, APP_PORT_TABLE_NAME),
     m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
     WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
@@ -184,7 +185,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     if (lag_update)
     {
         /* Create the team instance */
-        auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+        auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable, &m_portTable);
         m_teamSelectables[lagName] = sync;
         m_selectablesToAdd.insert(lagName);
     }
@@ -242,8 +243,9 @@ const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
 };
 
 TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
-                                     ProducerStateTable *lagMemberTable) :
+                                     ProducerStateTable *lagMemberTable, Table *portMemberTable) :
     m_lagMemberTable(lagMemberTable),
+    m_portMemberTable(portMemberTable),
     m_lagName(lagName),
     m_ifindex(ifindex)
 {
@@ -346,14 +348,26 @@ int TeamSync::TeamPortSync::onChange()
     {
         if (m_lagMembers.find(it.first) == m_lagMembers.end() || it.second != m_lagMembers[it.first])
         {
-            string key = m_lagName + ":" + it.first;
-            vector<FieldValueTuple> v;
-            FieldValueTuple l("status", it.second ? "enabled" : "disabled");
-            v.push_back(l);
-            m_lagMemberTable->set(key, v);
+            string admin_state, oper_state;
+            m_portMemberTable->hget(it.first, "admin_status", admin_state);
+            m_portMemberTable->hget(it.first, "oper_status", oper_state);
+            SWSS_LOG_INFO("Oper and Admin status of LAG %s member %s: %s, %s",
+                    m_lagName.c_str(), it.first.c_str(), oper_state.c_str(), admin_state.c_str());
+            if (admin_state == "up" || !it.second)
+            {
+                string key = m_lagName + ":" + it.first;
+                vector<FieldValueTuple> v;
+                FieldValueTuple l("status", it.second ? "enabled" : "disabled");
+                v.push_back(l);
+                m_lagMemberTable->set(key, v);
 
-            SWSS_LOG_INFO("Set LAG %s member %s with status %s",
-                    m_lagName.c_str(), it.first.c_str(), it.second ? "enabled" : "disabled");
+                SWSS_LOG_INFO("Set LAG %s member %s with status %s",
+                        m_lagName.c_str(), it.first.c_str(), it.second ? "enabled" : "disabled");
+            }
+            else
+            {
+                SWSS_LOG_WARN("Refuse to receive the teamd state of port member when port is down");
+            }
         }
     }
 
