@@ -1,6 +1,7 @@
 #include "mock_orch_test.h"
 
 using namespace std;
+extern ArsOrch *gArsOrch;
 
 namespace mock_orch_test
 {
@@ -227,7 +228,7 @@ void MockOrchTest::SetUp()
         { APP_ROUTE_TABLE_NAME, routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME, routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+    gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch, gArsOrch);
     gDirectory.set(gRouteOrch);
     ut_orch_list.push_back((Orch **)&gRouteOrch);
     global_orch_list.insert((Orch **)&gRouteOrch);

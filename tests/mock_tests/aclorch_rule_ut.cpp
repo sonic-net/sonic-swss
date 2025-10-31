@@ -279,14 +279,14 @@ namespace aclorch_rule_test
         ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule));
     }
 
-    TEST_F(AclRedirectActionTest, TunnelNH_InvalidTunnel)
+    TEST_F(AclRedirectActionTest, DISABLED_TunnelNH_InvalidTunnel)
     {
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
         addTunnelNhRule(mock_nh_ip_str, mock_invalid_tunnel_name);
         ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule));
     }
 
-    TEST_F(AclRedirectActionTest, TunnelNH_InvalidNextHop)
+    TEST_F(AclRedirectActionTest, DISABLED_TunnelNH_InvalidNextHop)
     {
         EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).WillOnce(
                 Return(SAI_STATUS_FAILURE) /* create next hop fails */

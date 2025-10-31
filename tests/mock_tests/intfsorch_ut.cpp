@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-
+extern ArsOrch *gArsOrch;
 
 namespace intfsorch_test
 {
@@ -213,7 +213,7 @@ namespace intfsorch_test
                 { APP_ROUTE_TABLE_NAME,        routeorch_pri },
                 { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
             };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch, gArsOrch);
             gNhgOrch = new NhgOrch(m_app_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
 
             // Recreate buffer orch to read populated data
@@ -290,6 +290,9 @@ namespace intfsorch_test
 
             delete gFlowCounterRouteOrch;
             gFlowCounterRouteOrch = nullptr;
+
+            delete gArsOrch;
+            gArsOrch = nullptr;
 
             sai_router_intfs_api = pold_sai_rif_api;
             ut_helper::uninitSaiApi();

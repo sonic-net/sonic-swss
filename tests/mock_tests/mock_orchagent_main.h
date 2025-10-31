@@ -21,6 +21,7 @@
 #include "pfcwdorch.h"
 #undef protected
 #undef private
+#include "arsorch.h"
 #include "vrforch.h"
 #include "vnetorch.h"
 #include "vxlanorch.h"
@@ -37,6 +38,7 @@
 #define private public
 #include "stporch.h"
 #undef private 
+#include "arsorch.h"
 #include "directory.h"
 #include "dashvnetorch.h"
 #include "dashhaorch.h"
