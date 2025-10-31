@@ -35,7 +35,7 @@ public:
     public:
         enum { MAX_IFNAME = 64 };
         TeamPortSync(const std::string &lagName, int ifindex,
-                     ProducerStateTable *lagMemberTable);
+                     ProducerStateTable *lagMemberTable, Table *portMemberTable);
         ~TeamPortSync();
 
         int getFd() override;
@@ -52,6 +52,7 @@ public:
         static const struct team_change_handler gPortChangeHandler;
     private:
         ProducerStateTable *m_lagMemberTable;
+        Table *m_portMemberTable;
         struct team_handle *m_team;
         std::string m_lagName;
         int m_ifindex;
