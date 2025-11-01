@@ -118,20 +118,6 @@ static map<string, sai_switch_hardware_access_bus_t> hardware_access_map =
 
 map<string, string> gProfileMap;
 
-sai_status_t mdio_read(uint64_t platform_context,
-  uint32_t mdio_addr, uint32_t reg_addr,
-  uint32_t number_of_registers, uint32_t *data)
-{
-    return SAI_STATUS_NOT_IMPLEMENTED;
-}
-
-sai_status_t mdio_write(uint64_t platform_context,
-  uint32_t mdio_addr, uint32_t reg_addr,
-  uint32_t number_of_registers, uint32_t *data)
-{
-    return SAI_STATUS_NOT_IMPLEMENTED;
-}
-
 const char *test_profile_get_value (
     _In_ sai_switch_profile_id_t profile_id,
     _In_ const char *variable)
@@ -506,11 +492,33 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     }
 
     attr.id = SAI_SWITCH_ATTR_REGISTER_READ;
-    attr.value.ptr = (void *) mdio_read;
+    if (phy->access_sw == "ipc_mdio_cl22")
+    {
+        attr.value.ptr = (void *)SAI_REDIS_SWITCH_REGISTER_FN_MDIO_CL22_READ;
+    }
+    else if (phy->access_sw == "ipc_mdio_cl45")
+    {
+        attr.value.ptr = (void *)SAI_REDIS_SWITCH_REGISTER_FN_MDIO_CL45_READ;
+    }
+    else
+    {
+        attr.value.ptr = NULL;
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_SWITCH_ATTR_REGISTER_WRITE;
-    attr.value.ptr = (void *) mdio_write;
+    if (phy->access_sw == "ipc_mdio_cl22")
+    {
+        attr.value.ptr = (void *)SAI_REDIS_SWITCH_REGISTER_FN_MDIO_CL22_WRITE;
+    }
+    else if (phy->access_sw == "ipc_mdio_cl45")
+    {
+        attr.value.ptr = (void *)SAI_REDIS_SWITCH_REGISTER_FN_MDIO_CL45_WRITE;
+    }
+    else
+    {
+        attr.value.ptr = NULL;
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_SWITCH_ATTR_HARDWARE_ACCESS_BUS;
