@@ -727,11 +727,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha;
+    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha, portFlrSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
     string nvdaPortTrimPluginName = "nvda_port_trim_drop.lua";
+    string portFlrPluginName = "port_flr.lua";
 
     try
     {
@@ -746,13 +747,29 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         string nvdaPortTrimLuaScript = swss::loadLuaScript(nvdaPortTrimPluginName);
         nvdaPortTrimSha = swss::loadRedisScript(m_counter_db.get(), nvdaPortTrimLuaScript);
+
+        string portFlrLuaScript = swss::loadLuaScript(portFlrPluginName);
+        portFlrSha = swss::loadRedisScript(m_counter_db.get(), portFlrLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
     }
 
-    std::string portStatPlugins = portRateSha;
+    // Build portStatPlugins string, only adding non-empty plugin SHAs
+    std::string portStatPlugins;
+    if (!portRateSha.empty())
+    {
+        portStatPlugins = portRateSha;
+    }
+    if (!portFlrSha.empty())
+    {
+        if (!portStatPlugins.empty())
+        {
+            portStatPlugins += ",";
+        }
+        portStatPlugins += portFlrSha;
+    }
 
     // Nvidia custom trim stat calculation
     if (isMlnxPlatform() && \
