@@ -63,4 +63,3 @@ sai_status_t mock_set_next_hops_attribute(_In_ uint32_t object_count, _In_ const
 {
     return mock_sai_next_hop->set_next_hops_attribute(object_count, object_id, attr_list, mode, object_statuses);
 }
-                                   _Out_ sai_status_t *object_statuses);
