@@ -222,6 +222,16 @@ public:
     inline size_t getSize() const
                                 { SWSS_LOG_ENTER(); return m_members.size(); }
 
+    size_t getSyncedMemberCount() const
+    {
+        SWSS_LOG_ENTER();
+        size_t count = 0;
+        for (const auto &member : m_members)
+            if (member.second.isSynced())
+                ++count;
+        return count;
+    }
+
     /*
      * Sync the group, generating a SAI ID.
      */

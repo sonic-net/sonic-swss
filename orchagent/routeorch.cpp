@@ -1005,6 +1005,15 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                         const NhgBase& nh_group = getNhg(nhg_index);
                         nhg = nh_group.getNhgKey();
                         ctx.using_temp_nhg = nh_group.isTemp();
+                        /**
+                         * If the NHG is a temp NHG, add to retry cache,
+                         * and remove it from m_toSync.
+                         * Do not retry until NHG is updated.
+                         */
+                        if (ctx.using_temp_nhg)
+                        {
+                            ctx.retry_cst = make_constraint(RETRY_CST_NHG, nhg_index);
+                        }
                     }
                     catch (const std::out_of_range& e)
                     {
