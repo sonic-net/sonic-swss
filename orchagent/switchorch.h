@@ -101,11 +101,14 @@ private:
     void generateSwitchCounterNameMap() const;
 
     // Switch hash
-    bool setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const;
+    sai_status_t setSwitchHashFieldListSai(const sai_object_id_t oid, const std::set<sai_native_hash_field_t> &hfSet) const;
+    sai_status_t createHashObjectSai(sai_object_id_t &oid, const std::set<sai_native_hash_field_t> &hfSet) const;
+    sai_status_t setSwitchHashAttributeSai(sai_attr_id_t attrType, sai_object_id_t oid) const;
+    bool setSwitchHashFieldList(const SwitchHash &hash, bool isEcmpHash);
     bool setSwitchHashAlgorithmSai(const SwitchHash &hash, bool isEcmpHash) const;
     bool setSwitchHash(const SwitchHash &hash);
 
-    bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
+    bool getSwitchHashOidSai(sai_object_id_t &oid, sai_attr_id_t attr_id) const;
     void querySwitchHashDefaults();
     void setSwitchIcmpOffloadCapability();
 
@@ -174,10 +177,17 @@ private:
     struct {
         struct {
             sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            sai_object_id_t v4Oid = SAI_NULL_OBJECT_ID;
+            sai_object_id_t v6Oid = SAI_NULL_OBJECT_ID;
+            bool platformSupportsOnlyV4V6 = false; // platform supports only V4/V6 attr type
         } ecmpHash;
         struct {
             sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            sai_object_id_t v4Oid = SAI_NULL_OBJECT_ID;
+            sai_object_id_t v6Oid = SAI_NULL_OBJECT_ID;
+            bool platformSupportsOnlyV4V6 = false; // platform supports only V4/V6 attr type
         } lagHash;
+
     } m_switchHashDefaults;
 
     // Statistics
