@@ -396,7 +396,7 @@ bool SflowDropMonitor::createTam()
 
     if (tam_event == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("The TAM event must be created before the TAM event action.");
+        SWSS_LOG_ERROR("The TAM event must be created before the TAM.");
         return false;
     }
 
