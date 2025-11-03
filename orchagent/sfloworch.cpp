@@ -545,7 +545,7 @@ bool SflowDropMonitor::removeHostifTrapGroup()
 
     if (m_hostifTrapGroup == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("The HOSTIF trap group has already been created.");
+        SWSS_LOG_ERROR("The HOSTIF trap group does not exist or has already been removed.");
         return true;
     }
 
