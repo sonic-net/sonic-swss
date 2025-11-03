@@ -2349,36 +2349,19 @@ void VNetRouteOrch::updateCustomBfdState(const IpAddress& monitoring_ip, const s
         if (monitor_info_[vnet][prefix].find(monitoring_ip) != monitor_info_[vnet][prefix].end() &&
             monitor_info_[vnet][prefix][monitoring_ip].endpoint == endpoint)
         {
-            if (sai_state == SAI_BFD_SESSION_STATE_UP &&
+            if ((sai_state == SAI_BFD_SESSION_STATE_UP || sai_state == SAI_BFD_SESSION_STATE_DOWN) &&
                 monitor_info_[vnet][prefix][monitoring_ip].custom_bfd_state != sai_state)
             {
-                SWSS_LOG_NOTICE("Custom BFD Monitor session state for %s:%s, endpoint:%s, monitoring_ip:%s changed from down to up",
+                SWSS_LOG_NOTICE("Custom BFD Monitor session state for %s:%s, endpoint:%s, monitoring_ip:%s changed to %s",
                     vnet.c_str(),
                     prefix.to_string().c_str(),
                     endpoint.ip_address.to_string().c_str(),
-                    monitoring_ip.to_string().c_str());
+                    monitoring_ip.to_string().c_str(),
+                    state.c_str());
 
                 struct MonitorUpdate status_update;
                 status_update.monitoring_type = VNET_MONITORING_TYPE_CUSTOM_BFD;
-                status_update.custom_bfd_state = SAI_BFD_SESSION_STATE_UP;
-                status_update.prefix = prefix;
-                status_update.monitor = monitoring_ip;
-                status_update.vnet = vnet;
-                updateVnetTunnelCustomMonitor(status_update);
-            }
-
-            if (sai_state == SAI_BFD_SESSION_STATE_DOWN &&
-                monitor_info_[vnet][prefix][monitoring_ip].custom_bfd_state != sai_state)
-            {
-                SWSS_LOG_NOTICE("Custom BFD Monitor session state for %s:%s, endpoint:%s, monitoring_ip:%s changed from up to down",
-                    vnet.c_str(),
-                    prefix.to_string().c_str(),
-                    endpoint.ip_address.to_string().c_str(),
-                    monitoring_ip.to_string().c_str());
-
-                struct MonitorUpdate status_update;
-                status_update.monitoring_type = VNET_MONITORING_TYPE_CUSTOM_BFD;
-                status_update.custom_bfd_state = SAI_BFD_SESSION_STATE_DOWN;
+                status_update.custom_bfd_state = sai_state;
                 status_update.prefix = prefix;
                 status_update.monitor = monitoring_ip;
                 status_update.vnet = vnet;
@@ -3459,29 +3442,15 @@ MonitorOrch::~MonitorOrch(void)
 bool MonitorOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
+    auto monitor = request.getKeyIpAddress(0);
+    auto ip_Prefix = request.getKeyIpPrefix(1);
 
-    auto& tn = request.getTableName();
-    
-    if (tn == STATE_VNET_MONITOR_TABLE_NAME)
-    {
-        auto monitor = request.getKeyIpAddress(0);
-        auto ip_Prefix = request.getKeyIpPrefix(1);
-    
-        auto session_state = request.getAttrString("state");
-        SWSS_LOG_INFO("Added state table entry for monitor %s|%s", ip_Prefix.to_string().c_str(),monitor.to_string().c_str());
-    
-        string op = SET_COMMAND;
-        VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
-        vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, session_state);
-    }
-    else if (tn == STATE_BFD_SESSION_TABLE_NAME)
-    {
-        auto monitor = request.getKeyIpAddress(2);
-        auto session_state = request.getAttrString("state");
+    auto session_state = request.getAttrString("state");
+    SWSS_LOG_INFO("Added state table entry for monitor %s|%s", ip_Prefix.to_string().c_str(),monitor.to_string().c_str());
 
-        VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
-        vnet_route_orch->updateCustomBfdState(monitor, session_state);
-    }
+    string op = SET_COMMAND;
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    vnet_route_orch->updateMonitorState(op, ip_Prefix, monitor, session_state);
 
     return true;
 }
