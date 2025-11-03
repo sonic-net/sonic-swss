@@ -697,7 +697,6 @@ void MuxCable::updateNeighborFromEvent(NextHopKey nh, bool add)
     {
         mux_orch_->removeNexthop(nh);
     }
-    nbr_handler_->update(nh, tnh, add, state_);
     updateRoutesForNextHop(nh);
 }
 
@@ -790,7 +789,6 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
             }
 
             gRouteOrch->updateNextHopRoutes(nh, num_routes);
-            gNeighOrch->increaseNextHopRefCount(nh, num_routes);
             break;
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
@@ -811,9 +809,6 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
                               nh.ip_address.to_string().c_str(), nh.alias.c_str());
             }
 
-            gRouteOrch->updateNextHopRoutes(nh, num_routes);
-            gNeighOrch->decreaseNextHopRefCount(nh, num_routes);
-            gNeighOrch->disableNeighbor(nh);
             updateTunnelRoute(nh, true);
             gRouteOrch->updateNextHopRoutes(nh, num_routes);
             break;
@@ -2054,26 +2049,6 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         mux_cable_tb_[port_name] = std::make_unique<MuxCable>
                                    (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type));
         addSkipNeighbors(skip_neighbors);
-
-        // Add neighbors that were learned before this mux port was configured.
-        NeighborTable m_neighbors;
-        gNeighOrch->getMuxNeighborsForPort(port_name, m_neighbors);
-        for (const auto &entry : m_neighbors)
-        {
-            bool nexthop_found = containsNextHop(entry.first);
-            bool is_skip_neighbor = isSkipNeighbor(entry.first.ip_address);
-            if (!nexthop_found && !is_skip_neighbor)
-            {
-                SWSS_LOG_NOTICE("Neighbor %s on %s learned before mux port %s configured. updating...",
-                    entry.first.ip_address.to_string().c_str(),
-                    entry.second.mac.to_string().c_str(),
-                    port_name.c_str()
-                );
-
-                NeighborUpdate neighbor_update = {entry.first, entry.second.mac, 1};
-                updateNeighbor(neighbor_update);
-            }
-        }
 
         SWSS_LOG_NOTICE("Mux entry for port '%s' was added, cable type %d", port_name.c_str(), cable_type);
     }

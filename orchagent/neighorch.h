@@ -107,7 +107,6 @@ public:
     void resolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
     bool ifChangeInformRemoteNextHop(const string &, bool);
-    void getMuxNeighborsForPort(string port_name, NeighborTable &m_neighbors);
 
 private:
     PortsOrch *m_portsOrch;

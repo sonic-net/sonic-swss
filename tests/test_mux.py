@@ -1796,10 +1796,10 @@ class TestMuxTunnel(TestMuxTunnelBase):
                     self.add_fdb(dvs, "Ethernet4", "00-00-00-11-11-11")
 
                     self.add_neighbor(dvs, test_ip_v4, "00:00:00:11:11:11")
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v4, expected=True)
+                    self.check_neigh_in_asic_db(asicdb, test_ip_v4, expected=True, no_host_route=False)
 
                     self.add_neighbor(dvs, test_ip_v6, "00:00:00:11:11:11")
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v6, expected=True)
+                    self.check_neigh_in_asic_db(asicdb, test_ip_v6, expected=True, no_host_route=False)
 
                     if create_route:
                         # Step 1.b: Create a route pointing to the neighbor
