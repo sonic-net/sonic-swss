@@ -419,7 +419,8 @@ bool OrchDaemon::init()
 
     vector<string> debug_counter_tables = {
         CFG_DEBUG_COUNTER_TABLE_NAME,
-        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME
+        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
+        CFG_DEBUG_DROP_MONITOR_TABLE_NAME
     };
 
     gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
@@ -591,7 +592,8 @@ bool OrchDaemon::init()
     }
 
     vector<string> flex_counter_tables = {
-        CFG_FLEX_COUNTER_TABLE_NAME
+        CFG_FLEX_COUNTER_TABLE_NAME,
+        CFG_DEVICE_METADATA_TABLE_NAME
     };
 
     auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
@@ -864,9 +866,24 @@ void OrchDaemon::flush()
         handleSaiFailure(SAI_API_SWITCH, "set", status);
     }
 
-    for (auto* orch: m_orchList)
+    /*
+     * Don't flush if ringbuffer is enable and it is not empty or Idle. Ring buffer thread
+     * could trigger notification update.
+     *
+     * Flush would be triggered later after SELECT_TIMEOUT in main thread again
+     * for avoiding race condition.
+     */
+    if (gRingBuffer &&(!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()))
     {
-        orch->flushResponses();
+        gRingBuffer->notify();
+        SWSS_LOG_WARN("Skip Flush waiting for RingBuffer empty");
+    }
+    else
+    {
+        for (auto* orch: m_orchList)
+        {
+            orch->flushResponses();
+        }
     }
 }
 
@@ -1022,6 +1039,8 @@ void OrchDaemon::start(long heartBeatInterval)
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
+    SWSS_LOG_ENTER();
+
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
 
     for (Orch *o : m_orchList)
@@ -1278,10 +1297,11 @@ bool DpuOrchDaemon::init()
 
     vector<string> dash_ha_tables = {
         APP_DASH_HA_SET_TABLE_NAME,
-        APP_DASH_HA_SCOPE_TABLE_NAME
+        APP_DASH_HA_SCOPE_TABLE_NAME,
+        APP_BFD_SESSION_TABLE_NAME
     };
 
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, gBfdOrch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
