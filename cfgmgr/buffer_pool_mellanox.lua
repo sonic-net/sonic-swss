@@ -188,14 +188,16 @@ end
 redis.call('SELECT', config_db)
 
 -- Check if platform is SPC6 or later and set modification descriptors pool size
--- Extract first digit of model number from platform string (e.g., "sn6600" -> 6, "sn6800" -> 6)
+-- Extract model number from platform string (e.g., "sn6600" -> 6600, "sn5800" -> 5800, "sn10600" -> 10600)
+-- Use (%d+) pattern to capture one or more digits for extensibility (handles future multi-digit series like sn10xxx, sn11xxx)
 local platform = redis.call('HGET', 'DEVICE_METADATA|localhost', 'platform')
 if platform then
-    local model_str = string.match(platform, "sn(%d)")
+    local model_str = string.match(platform, "sn(%d+)")
     if model_str then
         local model_number = tonumber(model_str)
-        -- SPC6 or later models (6xxx, 7xxx, etc.), reserve 32MB for modification descriptors pool
-        if model_number and model_number >= 6 then
+        -- SPC6 or later models (>= 6000 excludes SPC5 models like 5400/5800, includes SPC6+ like 6600/7xxx/10xxx)
+        -- Reserve 32MB for modification descriptors pool
+        if model_number and model_number >= 6000 then
             modification_descriptors_pool_size = 32 * 1024 * 1024
         end
     end
