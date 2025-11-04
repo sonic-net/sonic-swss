@@ -164,6 +164,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
+    querySwitchMirrorOnDropCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
 
