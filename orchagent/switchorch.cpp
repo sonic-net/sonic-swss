@@ -1872,8 +1872,8 @@ void SwitchOrch::querySwitchPortMirrorCapability()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Could not query port ingress mirror capability %d", status);
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "false");
-        m_portIngressMirrorSupported = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "true");
+        m_portIngressMirrorSupported = true;
     }
     else
     {
@@ -1896,8 +1896,8 @@ void SwitchOrch::querySwitchPortMirrorCapability()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Could not query port egress mirror capability %d", status);
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "false");
-        m_portEgressMirrorSupported = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "true");
+        m_portEgressMirrorSupported = true;
     }
     else
     {
