@@ -80,7 +80,7 @@ uint32_t create_switch_timeout = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -104,6 +104,7 @@ void usage()
     cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
+    cout << "    -M disable SAI MACSec POST" << endl;
 }
 
 void sighup_handler(int signo)
@@ -342,38 +343,6 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
     return true;
 }
 
-bool isFipsEnabled()
-{
-    // Check if FIPS was enabled via config file, i.e., /etc/sonic/fips.json
-    std::ifstream fips_enable_file("/etc/fips/fips_enable");
-    if (fips_enable_file.is_open())
-    {
-        bool fips_enabled;
-        fips_enable_file >> fips_enabled;
-        if (fips_enabled)
-        {
-            SWSS_LOG_NOTICE("FIPS enabled in /etc/fips/fips_enable");
-            return true;
-        }
-    }
-
-    // Check if FIPS was enabled via sonic-installer.
-    std::ifstream proc_cmdline_file("/proc/cmdline");
-    if (proc_cmdline_file.is_open())
-    {
-        std::string cmdline;
-        std::getline(proc_cmdline_file, cmdline);
-        if (cmdline.find("sonic_fips=1") != std::string::npos)
-        {
-            SWSS_LOG_NOTICE("FIPS enabled in /proc/cmdline");
-            return true;
-        }
-    }
-
-    SWSS_LOG_NOTICE("FIPS disabled");
-    return false;
-}
-
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
@@ -401,6 +370,10 @@ int main(int argc, char **argv)
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
+
+    // Enable SAI MACSec POST by default. If SAI does not support MACSec POST,
+    // this is no-op.
+    bool macsec_post_enabled = true;
 
     while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R")) != -1)
     {
@@ -519,6 +492,9 @@ int main(int argc, char **argv)
             break;
         case 'R':
             gRingMode = true;
+            break;
+         case 'M':
+            macsec_post_enabled = false;
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
@@ -675,9 +651,6 @@ int main(int argc, char **argv)
         attr.value.u32 = gVoqMySwitchId;
         attrs.push_back(attr);
     }
-
-    // Enable MACSec POST if FIPS is enabled.
-    bool macsec_post_enabled = isFipsEnabled();
 
     string macsec_post_state;
     if (gMySwitchType != "fabric" && macsec_post_enabled)
