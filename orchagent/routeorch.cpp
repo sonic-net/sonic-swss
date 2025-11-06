@@ -2322,7 +2322,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
             }
 
-            // Set update prefix agg id if need
+            // Set/update prefix agg id if needed
             if (!ctx.context_index.empty() || nextHops.is_srv6_vpn())
             {
                 route_attr.id = SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID;
