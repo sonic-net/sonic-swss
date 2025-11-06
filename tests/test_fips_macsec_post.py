@@ -39,9 +39,9 @@ EGRESS_MACSEC_POST_FAIL_SYSLOG = "Egress MACSec POST failed"
 MACSEC_POST_PASS_SYSLOG = "Ingress and egress MACSec POST passed"
 MACSEC_POST_FAIL_SYSLOG = "MACSec POST failed"
 
-class TestMacsecPost(object):
-    orchagent_sh_backup = "/usr/bin/orchagent_sh_macsec_post_ut_backup"
+ORCHAGENT_SH_BACKUP = "/usr/bin/orchagent_sh_macsec_post_ut_backup"
 
+class TestMacsecPost(object):
     def check_state_db_post_state(self, dvs, expected_state):
         dvs.get_state_db().wait_for_field_match(STATE_DB_MACSEC_POST_TABLE, "sai",
                                                 {'post_state': expected_state})
@@ -70,11 +70,11 @@ class TestMacsecPost(object):
         if sai_macsec_post_enabled:
             marker = dvs.add_log_marker()
 
-            rc, _ = dvs.runcmd(["sh", "-c", f"ls {TestMacsecPost.orchagent_sh_backup}"])
+            rc, _ = dvs.runcmd(["sh", "-c", f"ls {ORCHAGENT_SH_BACKUP}"])
             if rc == 0:
-                dvs.runcmd(f"cp {TestMacsecPost.orchagent_sh_backup} /usr/bin/orchagent.sh")
+                dvs.runcmd(f"cp {ORCHAGENT_SH_BACKUP} /usr/bin/orchagent.sh")
             else:
-                dvs.runcmd(f"cp /usr/bin/orchagent.sh {TestMacsecPost.orchagent_sh_backup}")
+                dvs.runcmd(f"cp /usr/bin/orchagent.sh {ORCHAGENT_SH_BACKUP}")
             dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -M /g' /usr/bin/orchagent.sh")
             dvs.stop_swss()
             dvs.start_swss()
@@ -192,9 +192,9 @@ class TestMacsecPost(object):
         self.check_asic_db_post_state(dvs, sai_post_capability=SAI_MACSEC_POST_CAPABILITY_MACSEC)
 
     def test_CleanUp(self,dvs):
-       rc, _ = dvs.runcmd(["sh", "-c", f"ls {TestMacsecPost.orchagent_sh_backup}"])
+       rc, _ = dvs.runcmd(["sh", "-c", f"ls {ORCHAGENT_SH_BACKUP}"])
        if rc == 0:
-           dvs.runcmd(f"cp {TestMacsecPost.orchagent_sh_backup} /usr/bin/orchagent.sh")
+           dvs.runcmd(f"cp {ORCHAGENT_SH_BACKUP} /usr/bin/orchagent.sh")
         dvs.runcmd(["sh", "-c", f"rm -f {VS_SAI_POST_CONFIG_FILE}"])
         dvs.restart()
 
