@@ -104,7 +104,7 @@ void usage()
     cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
-    cout << "    -M disable SAI MACSec POST" << endl;
+    cout << "    -M enable SAI MACSec POST" << endl;
     cout << "    -D Delay in seconds before flex counter processing begins after orchagent startup (default 0)" << endl;
 }
 
@@ -372,9 +372,8 @@ int main(int argc, char **argv)
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    // Enable SAI MACSec POST by default. If SAI does not support MACSec POST,
-    // this is no-op.
-    bool macsec_post_enabled = true;
+    // Disable SAI MACSec POST by default. Use option -M to enable it.
+    bool macsec_post_enabled = false;
 
     while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:D:M")) != -1)
     {
@@ -495,7 +494,7 @@ int main(int argc, char **argv)
             gRingMode = true;
             break;
          case 'M':
-            macsec_post_enabled = false;
+            macsec_post_enabled = true;
             break;
         case 'D': { gFlexCounterDelaySec = swss::to_int<int>(optarg); } break;
         default: /* '?' */

@@ -40,7 +40,7 @@ MACSEC_POST_PASS_SYSLOG = "Ingress and egress MACSec POST passed"
 MACSEC_POST_FAIL_SYSLOG = "MACSec POST failed"
 
 class TestMacsecPost(object):
-    saved_fips_config = None
+    orchagent_sh_backup = "/usr/bin/orchagent_sh_macsec_post_ut_backup"
 
     def check_state_db_post_state(self, dvs, expected_state):
         dvs.get_state_db().wait_for_field_match(STATE_DB_MACSEC_POST_TABLE, "sai",
@@ -48,6 +48,7 @@ class TestMacsecPost(object):
  
     def restart_dvs_with_post_config(self, dvs, sai_post_capability=SAI_MACSEC_POST_CAPABILITY_SWITCH,
                                      sai_post_notification_status_config=None, sai_macsec_post_enabled=True):
+
         sai_post_config = {}    
         if sai_post_capability != SAI_MACSEC_POST_CAPABILITY_NOT_SUPPORTED:
             sai_post_config[SAI_MACSEC_POST_CAPABILITY] = sai_post_capability
@@ -65,6 +66,18 @@ class TestMacsecPost(object):
         dvs.destroy_servers()
         dvs.create_servers()
         dvs.restart()
+
+        if sai_macsec_post_enabled:
+            marker = dvs.add_log_marker()
+
+            rc, _ = dvs.runcmd(["sh", "-c", f"ls {TestMacsecPost.orchagent_sh_backup}"])
+            if rc == 0:
+                dvs.runcmd(f"cp {TestMacsecPost.orchagent_sh_backup} /usr/bin/orchagent.sh")
+            else:
+                dvs.runcmd(f"cp /usr/bin/orchagent.sh {TestMacsecPost.orchagent_sh_backup}")
+            dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -M /g' /usr/bin/orchagent.sh")
+            dvs.stop_swss()
+            dvs.start_swss()
 
         return marker
  
@@ -94,6 +107,11 @@ class TestMacsecPost(object):
             for oid in macsec_oids:
                 entry = dvs.get_asic_db().get_entry("ASIC_STATE", f"SAI_OBJECT_TYPE_MACSEC:{oid}")
                 assert entry["SAI_MACSEC_ATTR_ENABLE_POST"]
+
+    def test_PostDisabled(self, dvs):
+        self.restart_dvs_with_post_config(dvs, sai_macsec_post_enabled=False)
+        self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_DISABLED)
+        self.check_asic_db_post_state(dvs, sonic_fips_enabled=False)
 
     def test_PostEnabled_InitialState(self, dvs):
         sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_SWITCH_MACSEC_POST_STATUS_IN_PROGRESS}
@@ -174,9 +192,11 @@ class TestMacsecPost(object):
         self.check_asic_db_post_state(dvs, sai_post_capability=SAI_MACSEC_POST_CAPABILITY_MACSEC)
 
     def test_CleanUp(self,dvs):
+       rc, _ = dvs.runcmd(["sh", "-c", f"ls {TestMacsecPost.orchagent_sh_backup}"])
+       if rc == 0:
+           dvs.runcmd(f"cp {TestMacsecPost.orchagent_sh_backup} /usr/bin/orchagent.sh")
         dvs.runcmd(["sh", "-c", f"rm -f {VS_SAI_POST_CONFIG_FILE}"])
         dvs.restart()
-
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
