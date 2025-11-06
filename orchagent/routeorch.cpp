@@ -1005,20 +1005,10 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                         const NhgBase& nh_group = getNhg(nhg_index);
                         nhg = nh_group.getNhgKey();
                         ctx.using_temp_nhg = nh_group.isTemp();
-                        /**
-                         * If the NHG is a temp NHG, add to retry cache,
-                         * and remove it from m_toSync.
-                         * Do not retry until NHG is updated.
-                         */
-                        if (ctx.using_temp_nhg)
-                        {
-                            ctx.retry_cst = make_constraint(RETRY_CST_NHG, nhg_index);
-                        }
                     }
                     catch (const std::out_of_range& e)
                     {
                         SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
-                        ctx.retry_cst = make_constraint(RETRY_CST_NHG, nhg_index);
                         ++it;
                         continue;
                     }
@@ -1469,7 +1459,6 @@ bool RouteOrch::removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
     m_nextHopGroupCount--;
-    notifyRetry(this, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_ECMP));
     return true;
 }
 
@@ -1747,8 +1736,6 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
 
     m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
-    notifyRetry(this, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_ECMP));
-
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
 
@@ -2169,11 +2156,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             /* Try to create a new next hop group */
             if (!addNextHopGroup(nextHops))
             {
-                if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
-                {
-                    ctx.retry_cst = make_constraint(RETRY_CST_ECMP);
-                }
-
                 /* If the nexthop is a srv6 nexthop, not create tempRoute
                  * retry to add route */
                 if (nextHops.is_srv6_nexthop())
@@ -2230,8 +2212,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 }
 
                 /* Add a temporary route when a next hop group cannot be added,
-                * and there is no temporary route right now or the current temporary
-                * route is not pointing to a member of the next hop group to sync. */
+                 * and there is no temporary route right now or the current temporary
+                 * route is not pointing to a member of the next hop group to sync. */
                 addTempRoute(ctx, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;

@@ -21,7 +21,6 @@ extern size_t gMaxBulkSize;
 CbfNhgOrch::CbfNhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();
-    createRetryCache(tableName);
 }
 
 /*
@@ -120,7 +119,6 @@ void CbfNhgOrch::doTask(Consumer& consumer)
                         }
 
                         m_syncdNextHopGroups.emplace(index, NhgEntry<CbfNhg>(move(cbf_nhg)));
-                        notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_NHG, index));
                     }
                 }
             }
@@ -168,8 +166,8 @@ void CbfNhgOrch::doTask(Consumer& consumer)
             else if (cbf_nhg_it->second.ref_count > 0)
             {
                 SWSS_LOG_WARN("Skipping removal of CBF next hop group %s which"
-                              " is still referenced, move task entry to RetryCache", index.c_str());
-                success = consumer.addToRetry(std::move(it->second), make_constraint(RETRY_CST_NHG_REF, index));
+                              " is still referenced", index.c_str());
+                success = false;
             }
             /* Otherwise, delete it. */
             else
@@ -179,7 +177,6 @@ void CbfNhgOrch::doTask(Consumer& consumer)
                 if (success)
                 {
                     m_syncdNextHopGroups.erase(cbf_nhg_it);
-                    notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_ECMP));
                 }
             }
         }

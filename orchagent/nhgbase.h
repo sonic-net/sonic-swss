@@ -222,16 +222,6 @@ public:
     inline size_t getSize() const
                                 { SWSS_LOG_ENTER(); return m_members.size(); }
 
-    size_t getSyncedMemberCount() const
-    {
-        SWSS_LOG_ENTER();
-        size_t count = 0;
-        for (const auto &member : m_members)
-            if (member.second.isSynced())
-                ++count;
-        return count;
-    }
-
     /*
      * Sync the group, generating a SAI ID.
      */
@@ -411,7 +401,7 @@ public:
     /*
      * Constructor.
      */
-    NhgOrchCommon(DBConnector *db, string tableName) : Orch(db, tableName) { m_tableName = tableName;}
+    NhgOrchCommon(DBConnector *db, string tableName) : Orch(db, tableName) {}
 
     /*
      * Check if the given next hop group index exists.
@@ -448,9 +438,6 @@ public:
         /* Sanity check so we don't overflow. */
         assert(nhg_entry.ref_count > 0);
         --nhg_entry.ref_count;
-
-        if (nhg_entry.ref_count == 0)
-            notifyRetry(this, m_tableName, make_constraint(RETRY_CST_NHG_REF, index));
     }
 
     /* Getters / Setters. */
@@ -469,8 +456,4 @@ protected:
      * Map of synced next hop groups.
      */
     unordered_map<string, NhgEntry<NhgClass>> m_syncdNextHopGroups;
-    /**
-     * Name of its Consumer.
-     */
-    string m_tableName;
 };
