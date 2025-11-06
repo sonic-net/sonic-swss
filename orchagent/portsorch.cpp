@@ -702,6 +702,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
     m_sendToIngressPortTable = unique_ptr<Table>(new Table(db, APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
+    m_systemPortTable = unique_ptr<Table>(new Table(db, APP_SYSTEM_PORT_TABLE_NAME));
 
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
@@ -3973,6 +3974,7 @@ void PortsOrch::registerPort(Port &p)
 
     /* Create associated Gearbox lane mapping */
     initGearboxPort(p);
+    updateSystemPort(p);
 
     /* Add port to port list */
     m_portList[alias] = p;
@@ -10017,7 +10019,9 @@ bool PortsOrch::getSystemPorts()
                     attr.value.sysportconfig.attached_core_index,
                     attr.value.sysportconfig.attached_core_port_index);
 
-            m_systemPortOidMap[sp_key] = system_port_list[i];
+            systemPortMapInfo system_port_info;
+            system_port_info.system_port_id = system_port_list[i];
+            m_systemPortOidMap[sp_key] = system_port_info;
         }
     }
 
@@ -10103,7 +10107,8 @@ bool PortsOrch::addSystemPorts()
             sai_status_t status;
 
             //Retrive system port config info and enable
-            system_port_oid = m_systemPortOidMap[sp_key];
+            system_port_oid = m_systemPortOidMap[sp_key].system_port_id;
+
 
             attr.id = SAI_SYSTEM_PORT_ATTR_TYPE;
             attrs.push_back(attr);
@@ -10166,6 +10171,10 @@ bool PortsOrch::addSystemPorts()
             port.m_system_port_info.speed = attrs[1].value.sysportconfig.speed;
             port.m_system_port_info.num_voq = attrs[1].value.sysportconfig.num_voq;
 
+            //Update the system Port Info to the m_systemPortOidMap to be used later when the Port Speed is changed dynamically
+            m_systemPortOidMap[sp_key].system_port_info = port.m_system_port_info;
+            m_systemPortOidMap[sp_key].info_valid = true;
+
             initializeVoqs( port );
             setPort(port.m_alias, port);
             /* Add system port name map to counter table */
@@ -10193,6 +10202,73 @@ bool PortsOrch::addSystemPorts()
 
     return true;
 }
+
+void PortsOrch::updateSystemPort(Port &port)
+{
+     if (!m_initDone)
+     {
+         //addSystemPorts will update the system port
+         return;
+     }
+
+     if ((gMySwitchType == "voq") && (port.m_type == Port::PHY))
+     {
+        auto system_port_alias = gMyHostName + "|" + gMyAsicName + "|" + port.m_alias;
+        vector<FieldValueTuple> spFv;
+
+        m_systemPortTable->get(system_port_alias, spFv);
+
+        //Retrieve system port configurations from APP DB
+        int32_t switch_id = -1;
+        int32_t core_index = -1;
+        int32_t core_port_index = -1;
+
+        for ( auto &fv : spFv )
+        {
+             if(fv.first == "switch_id")
+             {
+                switch_id = stoi(fv.second);
+                continue;
+             }
+             if(fv.first == "core_index")
+             {
+                core_index = stoi(fv.second);
+                continue;
+             }
+             if(fv.first == "core_port_index")
+             {
+                core_port_index = stoi(fv.second);
+                continue;
+             }
+             if(switch_id < 0 || core_index < 0 || core_port_index < 0)
+             {
+                continue;
+             }
+             tuple<int, int, int> sp_key(switch_id, core_index, core_port_index);
+
+             if(m_systemPortOidMap.find(sp_key) != m_systemPortOidMap.end())
+             {
+                 auto system_port = m_systemPortOidMap[sp_key];
+                 // Check if the system_port_info is already populated in m_systemPortOidMap.
+                 if(system_port.info_valid)
+                 {
+                     port.m_system_port_oid = system_port.system_port_id;
+                     port.m_system_port_info = system_port.system_port_info;
+                     port.m_system_port_info.local_port_oid = port.m_port_id;
+                     //initializeVoqs(port);
+                     SWSS_LOG_NOTICE("Updated system port for %s with  system_port_alias:%s switch_id:%d, core_index:%d, core_port_index:%d",
+                                port.m_alias.c_str(), system_port.system_port_info.alias.c_str(), system_port.system_port_info.switch_id,
+                                system_port.system_port_info.core_index, system_port.system_port_info.core_port_index);
+                 }
+             }
+        }
+        if(port.m_system_port_info.alias.empty())
+        {
+            SWSS_LOG_ERROR("SYSTEM PORT Information is not updated for %s", port.m_alias.c_str());
+        }
+     }
+}
+
 
 bool PortsOrch::getInbandPort(Port &port)
 {
