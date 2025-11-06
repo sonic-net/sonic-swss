@@ -23,7 +23,6 @@ extern sai_next_hop_api_t*         sai_next_hop_api;
 NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();
-    createRetryCache(tableName);
 }
 
 /*
@@ -267,9 +266,6 @@ void NhgOrch::doTask(Consumer& consumer)
                         if (nhg->sync())
                         {
                             m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
-                            success = true;
-                            consumer.addToRetry(it->second, make_constraint(RETRY_CST_ECMP));
-                            notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_NHG, index));
                         }
                         else
                         {
@@ -303,12 +299,7 @@ void NhgOrch::doTask(Consumer& consumer)
                         {
                             success = false;
                         }
-
-                        if ((!nhg->isRecursive() && nhg->getSize() == 1 && nhg->isSynced()) || nhg->getSyncedMemberCount())
-                        {
-                            m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
-                            notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_NHG, index));
-                        }
+                        m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
                     }
                 }
             }
@@ -351,9 +342,6 @@ void NhgOrch::doTask(Consumer& consumer)
                             if (new_nhg->sync())
                             {
                                 nhg_it->second.nhg = std::move(new_nhg);
-                                success = true;
-                                consumer.addToRetry(it->second, make_constraint(RETRY_CST_ECMP));
-                                notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_NHG, index));
                             }
                             else
                             {
@@ -369,12 +357,6 @@ void NhgOrch::doTask(Consumer& consumer)
                                 nhg_key.to_string().c_str());
                         }
                     }
-                    else
-                    {
-                        consumer.addToRetry(it->second, make_constraint(RETRY_CST_ECMP));
-                        success = true;
-                    }
-                    nhg_ptr->setRecursive(is_recursive);
                 }
                 /*
                  * If the group is temporary but can now be promoted, create and sync a new group for
@@ -392,7 +374,6 @@ void NhgOrch::doTask(Consumer& consumer)
                          * it to be removed and freed.
                          */
                         nhg_it->second.nhg = std::move(nhg);
-                        notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_NHG, index));
                     }
                 }
                 /* Common update, when all the requirements are met. */
@@ -433,7 +414,6 @@ void NhgOrch::doTask(Consumer& consumer)
             else if (nhg_it->second.ref_count > 0)
             {
                 SWSS_LOG_INFO("Unable to remove group %s which is referenced", index.c_str());
-                success = consumer.addToRetry(std::move(it->second), make_constraint(RETRY_CST_NHG_REF, index));
             }
             /* Else, if the group is no more referenced, remove it. */
             else
@@ -445,8 +425,6 @@ void NhgOrch::doTask(Consumer& consumer)
                 if (success)
                 {
                     m_syncdNextHopGroups.erase(nhg_it);
-                    notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_ECMP));
-                    notifyRetry(this, m_tableName, make_constraint(RETRY_CST_ECMP));
                 }
             }
         }
