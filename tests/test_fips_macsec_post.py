@@ -111,7 +111,7 @@ class TestMacsecPost(object):
     def test_PostDisabled(self, dvs):
         self.restart_dvs_with_post_config(dvs, sai_macsec_post_enabled=False)
         self.check_state_db_post_state(dvs, STATE_DB_MACSEC_POST_STATE_DISABLED)
-        self.check_asic_db_post_state(dvs, sonic_fips_enabled=False)
+        self.check_asic_db_post_state(dvs, sai_macsec_post_enabled=False)
 
     def test_PostEnabled_InitialState(self, dvs):
         sai_post_notification_status_config = {VS_SAI_POST_CONFIG_SWITCH_POST_STATUS_QUERY : SAI_SWITCH_MACSEC_POST_STATUS_IN_PROGRESS}
