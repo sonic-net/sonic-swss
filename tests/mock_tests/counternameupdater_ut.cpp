@@ -56,17 +56,11 @@ namespace counternameupdater_test
         // Create CounterNameMapUpdater for QUEUE
         CounterNameMapUpdater queue_updater("COUNTERS_DB", "COUNTERS_QUEUE_NAME_MAP");
 
-        // Create test data - vector of counter name maps
-        vector<FieldValueTuple> queue_maps = {
-            {"Ethernet0:0", "oid:0x1500000000001"},
-            {"Ethernet0:1", "oid:0x1500000000002"},
-            {"Ethernet0:2", "oid:0x1500000000003"},
-        };
-
-        cout << "Calling setCounterNameMap with " << queue_maps.size() << " entries..." << endl;
-
-        // Call setCounterNameMap with vector - this should work even without HFT
-        queue_updater.setCounterNameMap(queue_maps);
+        // Set counter maps one by one using numeric OIDs
+        cout << "Calling setCounterNameMap with 3 entries..." << endl;
+        queue_updater.setCounterNameMap("Ethernet0:0", 0x1500000000001ULL);
+        queue_updater.setCounterNameMap("Ethernet0:1", 0x1500000000002ULL);
+        queue_updater.setCounterNameMap("Ethernet0:2", 0x1500000000003ULL);
 
         cout << "Verifying entries were written to COUNTERS_DB..." << endl;
 
@@ -106,10 +100,11 @@ namespace counternameupdater_test
         CounterNameMapUpdater pg_updater("COUNTERS_DB", "COUNTERS_PG_NAME_MAP");
 
         // Create test data - vector of PG counter name maps
+        // Use sai_serialize_object_id to create properly formatted OID strings
         vector<FieldValueTuple> pg_maps = {
-            {"Ethernet0:0", "oid:0x1a00000000001"},
-            {"Ethernet0:1", "oid:0x1a00000000002"},
-            {"Ethernet4:0", "oid:0x1a00000000003"},
+            {"Ethernet0:0", sai_serialize_object_id(0x1a00000000001)},
+            {"Ethernet0:1", sai_serialize_object_id(0x1a00000000002)},
+            {"Ethernet4:0", sai_serialize_object_id(0x1a00000000003)},
         };
 
         // Call setCounterNameMap with vector - this should work even without HFT
@@ -145,10 +140,11 @@ namespace counternameupdater_test
         CounterNameMapUpdater queue_updater("COUNTERS_DB", "COUNTERS_QUEUE_NAME_MAP");
 
         // Create test data with empty OID value
+        // Use sai_serialize_object_id to create properly formatted OID strings
         vector<FieldValueTuple> queue_maps = {
-            {"Ethernet0:0", "oid:0x1500000000001"},
+            {"Ethernet0:0", sai_serialize_object_id(0x1500000000001)},
             {"Ethernet0:1", ""},  // Empty OID
-            {"Ethernet0:2", "oid:0x1500000000003"},
+            {"Ethernet0:2", sai_serialize_object_id(0x1500000000003)},
         };
 
         // Call setCounterNameMap - should handle empty OID gracefully
