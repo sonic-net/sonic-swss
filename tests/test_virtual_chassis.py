@@ -930,25 +930,35 @@ class TestVirtualChassis(object):
             asic_db = dvs.get_asic_db()
             metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
             cfg_switch_type = metatbl.get("switch_type")
+            cfg_hostname = metatbl.get("hostname")
+            cfg_asic_name = metatbl.get("asic_name")
 
             if cfg_switch_type == "voq":
                 num_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
                 # Get the port info we'll flap
                 port = config_db.get_keys('PORT')[0]
                 port_info = config_db.get_entry("PORT", port)
+                system_port = cfg_hostname+"|"+cfg_asic_name+"|"+port
 
                 # Remove port's other configs
                 pgs = config_db.get_keys('BUFFER_PG')
-                queues = config_db.get_keys('BUFFER_QUEUE')
+                buf_queues = config_db.get_keys('BUFFER_QUEUE')
+                queues = config_db.get_keys('QUEUE')
+
                 for key in pgs:
                     if port in key:
                         config_db.delete_entry('BUFFER_PG', key)
                         app_db.wait_for_deleted_entry('BUFFER_PG_TABLE', key)
 
-                for key in queues:
+                for key in buf_queues:
                     if port in key:
                         config_db.delete_entry('BUFFER_QUEUE', key)
                         app_db.wait_for_deleted_entry('BUFFER_QUEUE_TABLE', key)
+
+                for key in queues:
+                    if system_port in key:
+                        config_db.delete_entry('QUEUE', key)
+                        app_db.wait_for_deleted_entry('QUEUE_TABLE', key)
 
                 # Remove port
                 config_db.delete_entry('PORT', port)
