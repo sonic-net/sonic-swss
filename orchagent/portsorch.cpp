@@ -6466,9 +6466,8 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
 
         // Track separate bulker index for verification
         size_t bulker_idx = 0;
-        for (size_t idx = 0; idx < portCount; idx++)
+        for (auto& port: ports)
         {
-            const auto& port = ports[idx];
             if (port.m_priority_group_ids.size() == 0)
             {
                 continue;
