@@ -192,9 +192,9 @@ class TestMacsecPost(object):
         self.check_asic_db_post_state(dvs, sai_post_capability=SAI_MACSEC_POST_CAPABILITY_MACSEC)
 
     def test_CleanUp(self,dvs):
-       rc, _ = dvs.runcmd(["sh", "-c", f"ls {ORCHAGENT_SH_BACKUP}"])
-       if rc == 0:
-           dvs.runcmd(f"cp {ORCHAGENT_SH_BACKUP} /usr/bin/orchagent.sh")
+        rc, _ = dvs.runcmd(["sh", "-c", f"ls {ORCHAGENT_SH_BACKUP}"])
+        if rc == 0:
+            dvs.runcmd(f"cp {ORCHAGENT_SH_BACKUP} /usr/bin/orchagent.sh")
         dvs.runcmd(["sh", "-c", f"rm -f {VS_SAI_POST_CONFIG_FILE}"])
         dvs.restart()
 
