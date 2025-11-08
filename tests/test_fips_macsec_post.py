@@ -1,4 +1,5 @@
 from dvslib.dvs_common import wait_for_result, PollingConfig
+import time
 
 # State DB POST state
 STATE_DB_MACSEC_POST_TABLE = "FIPS_MACSEC_POST_TABLE"
@@ -78,6 +79,7 @@ class TestMacsecPost(object):
             dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -M /g' /usr/bin/orchagent.sh")
             dvs.stop_swss()
             dvs.start_swss()
+            time.sleep(5)
 
         return marker
  
