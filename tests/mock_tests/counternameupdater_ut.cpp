@@ -27,7 +27,8 @@ namespace counternameupdater_test
         void SetUp() override
         {
             // Initialize database connectors
-            m_counters_db = make_shared<DBConnector>("COUNTERS_DB", 0);
+            // Use the string constructor to get the correct dbId from database_config.json
+            m_counters_db = make_shared<DBConnector>("COUNTERS_DB", 0, true);
             m_counters_queue_name_map_table = make_shared<Table>(m_counters_db.get(), "COUNTERS_QUEUE_NAME_MAP");
             m_counters_pg_name_map_table = make_shared<Table>(m_counters_db.get(), "COUNTERS_PG_NAME_MAP");
 
