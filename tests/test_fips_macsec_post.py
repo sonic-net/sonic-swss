@@ -59,7 +59,15 @@ class TestMacsecPost(object):
         dvs.runcmd(["sh", "-c", f"touch {VS_SAI_POST_CONFIG_FILE}"])
         for k, v in sai_post_config.items():
             dvs.runcmd(["sh", "-c", f"echo '{k} {v}' >> {VS_SAI_POST_CONFIG_FILE}"])
- 
+
+        if sai_macsec_post_enabled:
+            rc, _ = dvs.runcmd(["sh", "-c", f"ls {ORCHAGENT_SH_BACKUP}"])
+            if rc == 0:
+                dvs.runcmd(f"cp {ORCHAGENT_SH_BACKUP} /usr/bin/orchagent.sh")
+            else:
+                dvs.runcmd(f"cp /usr/bin/orchagent.sh {ORCHAGENT_SH_BACKUP}")
+            dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -M /g' /usr/bin/orchagent.sh")
+
         marker = dvs.add_log_marker()
 
         dvs.runcmd('killall5 -15')
@@ -67,19 +75,6 @@ class TestMacsecPost(object):
         dvs.destroy_servers()
         dvs.create_servers()
         dvs.restart()
-
-        if sai_macsec_post_enabled:
-            marker = dvs.add_log_marker()
-
-            rc, _ = dvs.runcmd(["sh", "-c", f"ls {ORCHAGENT_SH_BACKUP}"])
-            if rc == 0:
-                dvs.runcmd(f"cp {ORCHAGENT_SH_BACKUP} /usr/bin/orchagent.sh")
-            else:
-                dvs.runcmd(f"cp /usr/bin/orchagent.sh {ORCHAGENT_SH_BACKUP}")
-            dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -M /g' /usr/bin/orchagent.sh")
-            dvs.stop_swss()
-            dvs.start_swss()
-            time.sleep(5)
 
         return marker
  
