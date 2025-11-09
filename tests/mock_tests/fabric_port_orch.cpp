@@ -580,7 +580,7 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
     statePort.set(sdbKey, FV({{"TEST", "product"}}), "SET", "", 0);
 }
 
-// Mirrors the pytest test_invalid_fabric_switch_id — uses a fake log sink for validation
+// Mirrors the pytest test_invalid_fabric_switch_id — C++14 compatible (no std::optional)
 TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
 {
     auto* mon_cons = dynamic_cast<Consumer*>(m_fabric->getExecutor("FABRIC_MONITOR"));
@@ -594,15 +594,19 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
 
     std::stringstream fakeLog;
 
-    // Test both invalid and missing switch_id cases
-    std::vector<std::optional<int>> invalidIds = { -1, std::nullopt };
+    // Represent "optional int" in C++14: (has_value, value)
+    struct MaybeId { bool has; int value; };
+    std::vector<MaybeId> cases = {
+        {true,  -1},  // invalid id present
+        {false,  0},  // missing id
+    };
 
-    for (auto invalidId : invalidIds)
+    for (const auto& c : cases)
     {
-        if (invalidId.has_value())
+        if (c.has)
         {
-            cfgDeviceMeta.set("localhost", FV({{"switch_id", std::to_string(invalidId.value())}}), "SET", "", 0);
-            fakeLog << "Invalid fabric switch id " << invalidId.value() << " configured\n";
+            cfgDeviceMeta.set("localhost", FV({{"switch_id", std::to_string(c.value)}}), "SET", "", 0);
+            fakeLog << "Invalid fabric switch id " << c.value << " configured\n";
         }
         else
         {
@@ -622,10 +626,10 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
 
         // Validate the expected log line exists (against our fake sink)
         std::string lastLog = fakeLog.str();
-        if (invalidId.has_value())
+        if (c.has)
         {
             ASSERT_NE(lastLog.find("Invalid fabric switch id"), std::string::npos)
-                << "Expected log missing for invalid switch id " << invalidId.value();
+                << "Expected log missing for invalid switch id " << c.value;
         }
         else
         {
