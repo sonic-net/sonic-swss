@@ -1,3 +1,4 @@
+// === begin test file ===
 #define private public
 #include "directory.h"
 #undef private
@@ -60,9 +61,9 @@ public:
             const auto  &fvs = kfvFieldsValues(tuple);
 
             if (tname == "FABRIC_MONITOR")
-                m_appMon.set(key, fvs);
+                m_appMon.set(key, fvs, "SET", "", 0);
             else if (tname == "FABRIC_PORT")
-                m_appPort.set(key, fvs);
+                m_appPort.set(key, fvs, "SET", "", 0);
         }
     }
 
@@ -107,6 +108,9 @@ static bool waitFieldEq(Table& t, const string& key,
     return false;
 }
 
+// ------------------------
+// Full-stack style fixture
+// ------------------------
 struct FabricOrchTest : public ::testing::Test
 {
     void SetUp() override
@@ -173,13 +177,13 @@ struct FabricOrchTest : public ::testing::Test
         auto ports = ut_helper::getInitialSaiPorts();
         for (const auto &it : ports)
         {
-            portTable.set(it.first, it.second);
-            portTable.set(it.first, {{"oper_status","up"}});
+            portTable.set(it.first, it.second, "SET", "", 0);
+            portTable.set(it.first, {{"oper_status","up"}}, "SET", "", 0);
         }
-        portTable.set("PortConfigDone", {{"count", to_string(ports.size())}});
+        portTable.set("PortConfigDone", {{"count", to_string(ports.size())}}, "SET", "", 0);
         gPortsOrch->addExistingData(&portTable);
         static_cast<Orch *>(gPortsOrch)->doTask();
-        portTable.set("PortInitDone", {{"lanes","0"}});
+        portTable.set("PortInitDone", {{"lanes","0"}}, "SET", "", 0);
         gPortsOrch->addExistingData(&portTable);
         static_cast<Orch *>(gPortsOrch)->doTask();
 
@@ -281,34 +285,34 @@ TEST_F(FabricOrchTest, FabricPort_BasicMonitoring_Isolate_Unisolate_Force)
         {"TEST_CODE_ERRORS","0"},
         {"PORT_DOWN_COUNT","0"},
         {"TEST","TEST"}
-    });
+    }, "SET", "", 0);
 
     // Inject CRC errors -> isolate
-    statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} });
-    statePort.set(portKey, { {"AUTO_ISOLATED","1"} });
+    statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} }, "SET", "", 0);
+    statePort.set(portKey, { {"AUTO_ISOLATED","1"} }, "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "1"));
 
     // Clear errors -> unisolate
-    statePort.set(portKey, { {"TEST_CRC_ERRORS","0"} });
-    statePort.set(portKey, { {"AUTO_ISOLATED","0"} });
+    statePort.set(portKey, { {"TEST_CRC_ERRORS","0"} }, "SET", "", 0);
+    statePort.set(portKey, { {"AUTO_ISOLATED","0"} }, "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "0"));
 
     // Errors again -> isolate, then handle PORT_DOWN_COUNT and unisolate
-    statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} });
-    statePort.set(portKey, { {"AUTO_ISOLATED","1"} });
+    statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} }, "SET", "", 0);
+    statePort.set(portKey, { {"AUTO_ISOLATED","1"} }, "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "1"));
 
     const string downCnt = "2";
-    statePort.set(portKey, { {"PORT_DOWN_COUNT", downCnt} });
-    statePort.set(portKey, { {"PORT_DOWN_COUNT_handled", downCnt} });
+    statePort.set(portKey, { {"PORT_DOWN_COUNT", downCnt} }, "SET", "", 0);
+    statePort.set(portKey, { {"PORT_DOWN_COUNT_handled", downCnt} }, "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "PORT_DOWN_COUNT_handled", downCnt));
 
-    statePort.set(portKey, { {"AUTO_ISOLATED","0"} });
+    statePort.set(portKey, { {"AUTO_ISOLATED","0"} }, "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "0"));
 
     // Errors again -> isolate, then force unisolate via CONFIG_DB
-    statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} });
-    statePort.set(portKey, { {"AUTO_ISOLATED","1"} });
+    statePort.set(portKey, { {"TEST_CRC_ERRORS","2"} }, "SET", "", 0);
+    statePort.set(portKey, { {"AUTO_ISOLATED","1"} }, "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "1"));
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -316,7 +320,7 @@ TEST_F(FabricOrchTest, FabricPort_BasicMonitoring_Isolate_Unisolate_Force)
         port_cons->addToSync(entries);
         static_cast<Orch *>(gFabricOrch.get())->doTask();
     }
-    statePort.set(portKey, { {"AUTO_ISOLATED","0"} });
+    statePort.set(portKey, { {"AUTO_ISOLATED","0"} }, "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "0"));
 
     // Cleanup
@@ -324,7 +328,7 @@ TEST_F(FabricOrchTest, FabricPort_BasicMonitoring_Isolate_Unisolate_Force)
         {"TEST_CRC_ERRORS","0"},
         {"TEST_CODE_ERRORS","0"},
         {"TEST","product"}
-    });
+    }, "SET", "", 0);
 
     (void)appPort; // silence unused-var in some compilers
 }
@@ -406,7 +410,7 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
     }
 
     // Deterministic test port row.
-    statePort.set(sdbKey, {{"STATUS","up"}, {"TEST","TEST"}});
+    statePort.set(sdbKey, {{"STATUS","up"}, {"TEST","TEST"}}, "SET", "", 0);
 
     int baseline = 16;
     {
@@ -415,7 +419,7 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
             for (auto& fv : fvs)
                 if (fvField(fv) == "operating_links") { baseline = stoi(fvValue(fv)); break; }
         } else {
-            stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline)}});
+            stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline)}}, "SET", "", 0);
         }
     }
 
@@ -427,8 +431,8 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
         static_cast<Orch*>(m_fabric.get())->doTask();
 
         // Simulate monitor loop effects in STATE_DB.
-        statePort.set(sdbKey, {{"ISOLATED","1"}});
-        stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline - 1)}});
+        statePort.set(sdbKey, {{"ISOLATED","1"}}, "SET", "", 0);
+        stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline - 1)}}, "SET", "", 0);
         ASSERT_TRUE(waitEq(statePort, sdbKey, "ISOLATED", "1"));
         ASSERT_TRUE(waitEq(stateCap, "FABRIC_CAPACITY_DATA", "operating_links",
                            to_string(baseline - 1)));
@@ -441,8 +445,8 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
         port_cons->addToSync(e);
         static_cast<Orch*>(m_fabric.get())->doTask();
 
-        statePort.set(sdbKey, {{"ISOLATED","0"}});
-        stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline)}});
+        statePort.set(sdbKey, {{"ISOLATED","0"}}, "SET", "", 0);
+        stateCap.set("FABRIC_CAPACITY_DATA", {{"operating_links", to_string(baseline)}}, "SET", "", 0);
         ASSERT_TRUE(waitEq(statePort, sdbKey, "ISOLATED", "0"));
         ASSERT_TRUE(waitEq(stateCap, "FABRIC_CAPACITY_DATA", "operating_links",
                            to_string(baseline)));
@@ -461,14 +465,14 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
         port_cons->addToSync(e);
         static_cast<Orch*>(m_fabric.get())->doTask();
 
-        statePort.set(sdbKey, {{"ISOLATED","1"}});
+        statePort.set(sdbKey, {{"ISOLATED","1"}}, "SET", "", 0);
         ASSERT_TRUE(waitEq(statePort, sdbKey, "ISOLATED", "1"));
         ASSERT_TRUE(waitEq(stateCap, "FABRIC_CAPACITY_DATA", "operating_links",
                            to_string(baseline)));
     }
 
     // Cleanup
-    statePort.set(sdbKey, {{"ISOLATED","0"}, {"TEST","product"}});
+    statePort.set(sdbKey, {{"ISOLATED","0"}, {"TEST","product"}}, "SET", "", 0);
 }
 
 // Test: OLD_TX_DATA increases after we set TEST flag
@@ -533,11 +537,11 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
     {
         vector<FieldValueTuple> fvs;
         if (!statePort.get(sdbKey, fvs)) {
-            statePort.set(sdbKey, {{"STATUS","up"}});
+            statePort.set(sdbKey, {{"STATUS","up"}}, "SET", "", 0);
         } else {
             bool hasStatus = false;
             for (auto& fv : fvs) if (fvField(fv) == "STATUS") { hasStatus = true; break; }
-            if (!hasStatus) statePort.set(sdbKey, {{"STATUS","up"}});
+            if (!hasStatus) statePort.set(sdbKey, {{"STATUS","up"}}, "SET", "", 0);
         }
     }
 
@@ -551,15 +555,15 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
             if (fvField(fv) == "OLD_TX_DATA") { old_tx = fvValue(fv); found = true; break; }
         }
         if (!found) {
-            statePort.set(sdbKey, {{"OLD_TX_DATA", old_tx}});
+            statePort.set(sdbKey, {{"OLD_TX_DATA", old_tx}}, "SET", "", 0);
         }
     }
 
     // Set TEST=TEST, simulate a bump in counters.
-    statePort.set(sdbKey, {{"TEST", "TEST"}});
+    statePort.set(sdbKey, {{"TEST", "TEST"}}, "SET", "", 0);
     {
         int bumped = stoi(old_tx) + 500; // arbitrary increase
-        statePort.set(sdbKey, {{"OLD_TX_DATA", to_string(bumped)}});
+        statePort.set(sdbKey, {{"OLD_TX_DATA", to_string(bumped)}}, "SET", "", 0);
     }
 
     // Assert the rate changed
@@ -567,7 +571,7 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
         << "Expected OLD_TX_DATA to change after TEST flag was set";
 
     // Cleanup
-    statePort.set(sdbKey, {{"TEST", "product"}});
+    statePort.set(sdbKey, {{"TEST", "product"}}, "SET", "", 0);
 }
 
 // Mirrors the pytest test_invalid_fabric_switch_id — uses a fake log sink for validation
@@ -580,7 +584,7 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
     Table cfgDeviceMeta(m_config_db.get(), "DEVICE_METADATA");
 
     // Setup metadata as fabric switch
-    cfgDeviceMeta.set("localhost", {{"switch_type", "fabric"}});
+    cfgDeviceMeta.set("localhost", {{"switch_type", "fabric"}}, "SET", "", 0);
 
     std::stringstream fakeLog;
 
@@ -591,7 +595,7 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
     {
         if (invalidId.has_value())
         {
-            cfgDeviceMeta.set("localhost", {{"switch_id", std::to_string(invalidId.value())}});
+            cfgDeviceMeta.set("localhost", {{"switch_id", std::to_string(invalidId.value())}}, "SET", "", 0);
             fakeLog << "Invalid fabric switch id " << invalidId.value() << " configured\n";
         }
         else
@@ -603,7 +607,7 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
             for (auto& fv : fields)
                 if (fvField(fv) != "switch_id")
                     filtered.push_back(fv);
-            cfgDeviceMeta.set("localhost", filtered);
+            cfgDeviceMeta.set("localhost", filtered, "SET", "", 0);
             fakeLog << "Fabric switch id is not configured\n";
         }
 
@@ -624,4 +628,6 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
         }
     }
 }
-} 
+} // namespace fabricorch_test
+// === end test file ===
+
