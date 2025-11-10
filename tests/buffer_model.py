@@ -96,11 +96,26 @@ def disable_dynamic_buffer(dvs):
         # restart daemon
         dvs.runcmd("supervisorctl restart buffermgrd")
 
+        # Remove all the PGs referencing non-default zero profiles
+        pgs = app_db.get_keys('BUFFER_PG_TABLE')
+        for key in pgs:
+            pg = app_db.get_entry('BUFFER_PG_TABLE', key)
+            if re.search(zero_profile_name_pattern, pg['profile']):
+                app_db.delete_entry('BUFFER_PG_TABLE', key)
+
+        # Remove all the Qs referencing non-default zero profiles
+        qs = app_db.get_keys('BUFFER_QUEUE_TABLE')
+        for key in qs:
+            q = app_db.get_entry('BUFFER_QUEUE_TABLE', key)
+            if re.search(zero_profile_name_pattern, q['profile']):
+                app_db.delete_entry('BUFFER_QUEUE_TABLE', key)
+
         # Remove all the non-default zero profiles
         profiles = app_db.get_keys('BUFFER_PROFILE_TABLE')
         for key in profiles:
             if re.search(zero_profile_name_pattern, key):
                 app_db.delete_entry('BUFFER_PROFILE_TABLE', key)
+
         # Remove all the non-default zero pools
         pools = app_db.get_keys('BUFFER_POOL_TABLE')
         for key in pools:
