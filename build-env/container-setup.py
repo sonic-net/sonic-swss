@@ -12,13 +12,15 @@ COMMON = 'sonic-common-libs'
 SWSSCOMMON = 'sonic-swsscommon'
 BUILDIMAGE = 'sonic-buildimage'
 VPP = 'sonic-platform-vpp'
+DASH_API = 'sonic-dash-api'
 
 pipeline_id_map = {
     SAIREDIS: 12,
     COMMON: 465,
     SWSSCOMMON: 9,
     BUILDIMAGE: 142,
-    VPP: 1016
+    VPP: 1016,
+    DASH_API: 1318
 }
 
 pipeline_artifact_map = {
@@ -26,29 +28,37 @@ pipeline_artifact_map = {
     COMMON: 'common-lib',
     SWSSCOMMON: 'sonic-swss-common-{}',
     BUILDIMAGE: 'sonic-buildimage.vs',
-    VPP: "VPP"
+    VPP: 'VPP',
+    DASH_API: 'sonic-dash-api'
 }
 
-deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang_*.deb', 'python3-swsscommon*.deb', '*vpp*.deb']
-dash_deb_regex = ['libproto*.deb', 'libdash*.deb']
+deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang_*.deb', 'libyang-*_1.0*.deb', 'python3-swsscommon*.deb', '*vpp*.deb', 'libdash*.deb']
 
 pipeline_out_file_map = {
     SAIREDIS: 'sairedis.zip',
     COMMON: 'common-lib.zip',
     SWSSCOMMON: 'swsscommon.zip',
-    VPP: 'vpp.zip'
+    VPP: 'vpp.zip',
+    DASH_API: 'dash-api.zip'
 }
 
-build_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds?definitions={}&branchName=refs/heads/{}&resultFilter=succeeded&statusFilter=completed&maxBuildsPerDefinition=1&queryOrder=finishTimeDescending'
+force_master_branch = [VPP]
+
+build_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds?definitions={}&branchName=refs/heads/{}&resultFilter=succeeded,partiallySucceeded&statusFilter=completed&maxBuildsPerDefinition=1&queryOrder=finishTimeDescending'
 artifact_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds/{}/artifacts?artifactName={}&api-version=5.1'
 
 
 def get_latest_build(pipeline, branch):
-    url = build_url.format(pipeline_id_map[pipeline], branch)
+    if pipeline in force_master_branch:
+        target_branch = "master"
+    else:
+        target_branch = branch
+
+    url = build_url.format(pipeline_id_map[pipeline], target_branch)
     print(url)
     res = requests.get(url)
     build_info = json.loads(res.content)
-    if not build_info['value'] and branch == "master":
+    if not build_info['value'] and target_branch == "master":
         url = build_url.format(pipeline_id_map[pipeline], "main")
         print(url)
         res = requests.get(url)
@@ -107,13 +117,8 @@ def main(branch, debian_version):
                 cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/bullseye/libproto.*deb$' | xargs unzip -o -j {filename}"]
                 subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
 
-        available_debs = subprocess.run(["ls", work_dir], cwd=work_dir, capture_output=True, text=True).stdout
-        deb_patterns = deb_files_regex
-        if 'libyang' in available_debs and 'libproto' in available_debs:
-            deb_patterns += dash_deb_regex
-
         debs_to_install = []
-        for pattern in deb_patterns:
+        for pattern in deb_files_regex:
             debs_to_install += glob.glob(pattern, root_dir=work_dir)
 
         cmd = ["sudo", "env", "VPP_INSTALL_SKIP_SYSCTL=1", "/usr/bin/dpkg", "-i"] + debs_to_install
