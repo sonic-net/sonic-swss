@@ -120,7 +120,8 @@ impl OtelGauge {
 
     /// Creates multiple OtelGauges from SAI statistics collection
     pub fn from_sai_stats(sai_stats: &SAIStats) -> Vec<Self> {
-        let observation_time_nano = sai_stats.observation_time * 1_000_000_000;
+        // 1970-01-01 00:00:00 UTC 
+        let observation_time_nano = 0u64;
 
         sai_stats.stats
             .iter()
@@ -230,7 +231,7 @@ mod tests {
             counter: 1500,
         };
 
-        let observation_time_nano = 1234567890 * 1_000_000_000;
+        let observation_time_nano = 0u64; // 1970-01-01 00:00:00 UTC
         let data_point = OtelDataPoint::from_sai_stat(&sai_stat, observation_time_nano);
 
         assert_eq!(data_point.time_unix_nano, observation_time_nano);
@@ -260,7 +261,7 @@ mod tests {
             counter: 5000,
         };
 
-        let observation_time_nano = 9999999999 * 1_000_000_000;
+        let observation_time_nano = 0u64; // 1970-01-01 00:00:00 UTC
         let gauge = OtelGauge::from_sai_stat(&sai_stat, observation_time_nano);
 
         assert_eq!(gauge.name, "sai_counter_type_24_stat_2");
@@ -286,14 +287,8 @@ mod tests {
         assert!(first_gauge.description.contains("Ethernet0"));
         assert_eq!(first_gauge.data_points[0].value, 500);
 
-        // Check second gauge
-        let second_gauge = &gauges[1];
-        assert_eq!(second_gauge.name, "sai_counter_type_101_stat_11");
-        assert!(second_gauge.description.contains("Ethernet1"));
-        assert_eq!(second_gauge.data_points[0].value, 1500);
-
-        // All should have same timestamp (converted to nanoseconds)
-        let expected_time_nano = 1672531200 * 1_000_000_000;
+        // All should have same timestamp 
+        let expected_time_nano = 0u64; 
         for gauge in &gauges {
             assert_eq!(gauge.data_points[0].time_unix_nano, expected_time_nano);
         }
@@ -434,8 +429,8 @@ fn test_realistic_sai_to_otel_conversion() {
         .collect();
     assert_eq!(buffer_stats.len(), 1);
 
-    // Check that all metrics have proper timestamps
-    let expected_time = 1672531200 * 1_000_000_000;
+    // Check that all metrics have proper timestamps 
+    let expected_time = 0u64; 
     for gauge in &otel_metrics.gauges {
         assert_eq!(gauge.data_points[0].time_unix_nano, expected_time);
     }

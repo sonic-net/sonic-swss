@@ -121,7 +121,7 @@ impl OtelActor {
     async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
         self.console_reports += 1;
 
-        println!("🔗 [OTel Report #{}] OpenTelemetry Metrics Export", self.console_reports);
+        println!("   [OTel Report #{}] OpenTelemetry Metrics Export", self.console_reports);
         println!("   Service: {}", otel_metrics.service_name);
         println!("   Scope: {} v{}", otel_metrics.scope_name, otel_metrics.scope_version);
         println!("   Total Gauges: {}", otel_metrics.len());
@@ -129,7 +129,7 @@ impl OtelActor {
         println!("   Exports: {} (Failures: {})", self.exports_performed, self.export_failures);
 
         if !otel_metrics.is_empty() {
-            println!("   📊 Gauge Metrics:");
+            println!("Gauge Metrics:");
             for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
                 let data_point = &gauge.data_points[0]; // Each gauge has one data point
 
@@ -214,23 +214,23 @@ impl OtelActor {
         match self.client.export(request).await {
             Ok(_) => {
                 self.exports_performed += 1;
-                info!("✅ Exported {} metrics to collector", otel_metrics.len());
+                info!("Exported {} metrics to collector", otel_metrics.len());
             }
             Err(e) => {
                 self.export_failures += 1;
-                error!("❌ Failed to export metrics: {}", e);
+                error!("Failed to export metrics: {}", e);
             }
         }
     }
 
     pub fn print_conversion_report(sai_stats: &SAIStats, otel_metrics: &OtelMetrics) {
-        println!("🔄 [Conversion Report] SAI Stats → OpenTelemetry Gauges");
+        println!(" [Conversion Report] SAI Stats → OpenTelemetry Gauges");
         println!("   Conversion timestamp: {}", sai_stats.observation_time);
         println!("   Input: {} SAI statistics", sai_stats.stats.len());
         println!("   Output: {} OpenTelemetry gauges", otel_metrics.len());
         println!();
 
-        println!("📊 BEFORE - Original SAI Statistics:");
+        println!("BEFORE - Original SAI Statistics:");
         for (index, sai_stat) in sai_stats.stats.iter().enumerate().take(10) {
             println!(
                 "   [{:2}] Object: {:20} | Type: {:3} | Stat: {:3} | Counter: {:>12}",
@@ -246,7 +246,7 @@ impl OtelActor {
         }
         println!();
 
-        println!("🔗 AFTER - Converted OpenTelemetry Gauges:");
+        println!("AFTER - Converted OpenTelemetry Gauges:");
         for (index, gauge) in otel_metrics.gauges.iter().enumerate().take(10) {
             let data_point = &gauge.data_points[0];
             println!(
@@ -271,7 +271,7 @@ impl OtelActor {
             println!("   ... and {} more OpenTelemetry gauges", otel_metrics.gauges.len() - 10);
         }
 
-        println!("✅ Conversion completed successfully!");
+        println!("Conversion completed successfully!");
         println!("═══════════════════════════════════════════════════════════════════");
         println!();
     }
