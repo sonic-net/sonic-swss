@@ -53,11 +53,14 @@ public:
     void doTask(Consumer &consumer) override
     {
         const auto &tname = consumer.getTableName();
+        // NOTE: m_toSync is a std::multimap<key, tuple>, not a deque.
         auto &q = consumer.m_toSync;
+
         while (!q.empty())
         {
-            auto tuple = q.front();
-            q.pop_front();
+            auto it = q.begin();              // first element in the multimap
+            auto tuple = it->second;          // KeyOpFieldsValuesTuple
+            q.erase(it);                      // remove processed entry
 
             const string op = kfvOp(tuple);
             if (op != "SET")
@@ -92,10 +95,10 @@ shared_ptr<DBConnector> m_chassis_app_db;
 // Local pointer to our fabric test orch (for FabricOrchTest)
 unique_ptr<FabricOrchMock> gFabricOrch;
 
-// Small polling helper (APP/STATE DB field wait) — give CI plenty of headroom.
+// Small polling helper (APP/STATE DB field wait)
 static bool waitFieldEq(Table& t, const string& key,
                         const string& field, const string& want,
-                        int attempts = 1000, // was 200
+                        int attempts = 1000,
                         chrono::milliseconds sleep = chrono::milliseconds(10))
 {
     for (int i = 0; i < attempts; ++i)
@@ -104,10 +107,8 @@ static bool waitFieldEq(Table& t, const string& key,
         if (t.get(key, fvs))
         {
             for (const auto& fv : fvs)
-            {
                 if (fvField(fv) == field && fvValue(fv) == want)
                     return true;
-            }
         }
         this_thread::sleep_for(sleep);
     }
@@ -147,10 +148,7 @@ struct FabricOrchTest : public ::testing::Test
         TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
         TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
         TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
-        vector<TableConnector> switch_tables = {
-            conf_asic_sensors,
-            app_switch_table
-        };
+        vector<TableConnector> switch_tables = { conf_asic_sensors, app_switch_table };
 
         ASSERT_EQ(gSwitchOrch, nullptr);
         gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
@@ -178,7 +176,7 @@ struct FabricOrchTest : public ::testing::Test
         };
         gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
-        // Seed APP_PORT_TABLE with initial ports, like routeorch_test does
+        // Seed APP_PORT_TABLE with initial ports
         Table portTable(m_app_db.get(), APP_PORT_TABLE_NAME);
         auto ports = ut_helper::getInitialSaiPorts();
         for (const auto &it : ports)
@@ -202,7 +200,7 @@ struct FabricOrchTest : public ::testing::Test
         // Destroy our fabric orch
         gFabricOrch.reset();
 
-        // Standard cleanup (like routeorch_test)
+        // Standard cleanup
         gDirectory.m_values.clear();
         delete gBufferOrch;     gBufferOrch = nullptr;
         delete gPortsOrch;      gPortsOrch  = nullptr;
@@ -258,7 +256,7 @@ TEST_F(FabricOrchTest, FabricPort_Isolation_And_Monitor_Propagates)
     }
 }
 
-// Test 2: Simulated monitoring flow on STATE_DB (errors->isolate, clear->unisolate, down-count handled, force-unisolate)
+// Test 2: Simulated monitoring flow on STATE_DB
 TEST_F(FabricOrchTest, FabricPort_BasicMonitoring_Isolate_Unisolate_Force)
 {
     auto *mon_cons  = dynamic_cast<Consumer *>(gFabricOrch->getExecutor("FABRIC_MONITOR"));
@@ -336,7 +334,7 @@ TEST_F(FabricOrchTest, FabricPort_BasicMonitoring_Isolate_Unisolate_Force)
         {"TEST","product"}
     }), "SET", "", 0);
 
-    (void)appPort; // silence unused-var in some compilers
+    (void)appPort;
 }
 
 // --------------------------
@@ -640,5 +638,6 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
 }
 } // namespace fabricorch_test
 // === end test file ===
+
 
 
