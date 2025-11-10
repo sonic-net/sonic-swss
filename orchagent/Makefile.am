@@ -15,6 +15,7 @@ CFLAGS_SAI = -I /usr/include/sai
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 nvda_port_trim_drop.lua \
 		 eliminate_events.lua \
 		 rif_rates.lua \
 		 pfc_detect_marvell_teralynx.lua  \
@@ -28,6 +29,8 @@ dist_swss_DATA = \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
 		 port_rates.lua \
+		 port_flr.lua \
+		 drop_monitor.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
 		 watermark_bufferpool.lua \
@@ -92,6 +95,7 @@ orchagent_SOURCES = \
             vrforch.cpp \
             countercheckorch.cpp \
             vxlanorch.cpp \
+            tunneltermhelper.cpp \
             vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
@@ -127,7 +131,12 @@ orchagent_SOURCES = \
             dash/dashportmaporch.cpp \
             twamporch.cpp \
             stporch.cpp \
-            nexthopkey.cpp
+            nexthopkey.cpp \
+            high_frequency_telemetry/hftelorch.cpp \
+            high_frequency_telemetry/hftelprofile.cpp \
+            high_frequency_telemetry/counternameupdater.cpp \
+            high_frequency_telemetry/hftelutils.cpp \
+            high_frequency_telemetry/hftelgroup.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp

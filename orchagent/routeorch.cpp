@@ -1854,8 +1854,8 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
             continue;
         }
 
-        SWSS_LOG_INFO("Updating route %s", (*rt).prefix.to_string().c_str());
         next_hop_id = m_neighOrch->getNextHopId(nextHop);
+        SWSS_LOG_INFO("Updating route %s with nexthop %" PRIu64, (*rt).prefix.to_string().c_str(), (uint64_t)next_hop_id);
 
         route_entry.vr_id = (*rt).vrf_id;
         route_entry.switch_id = gSwitchId;
@@ -2646,7 +2646,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             addNextHopRoute(nexthop, r_key);
         }
     }
-    else if (mux_orch->isMuxNexthops(nextHops))
+    else if (nextHops.getSize() > 1 && mux_orch->isMuxNexthops(nextHops) && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
     {
         RouteKey routekey = { vrf_id, ipPrefix };
         auto nexthop_list = nextHops.getNextHops();
@@ -2681,7 +2681,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     // update routes to reflect mux state
     if (mux_orch->isMuxNexthops(nextHops))
     {
-        mux_orch->updateRoute(ipPrefix, true);
+        mux_orch->updateRoute(ipPrefix);
     }
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
@@ -2892,11 +2892,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                 {
                     if (!nh->ip_address.isZero())
                     {
-                        SWSS_LOG_NOTICE("removeNextHopRoute");
                         removeNextHopRoute(*nh, routekey);
                     }
                 }
-                mux_orch->updateRoute(ipPrefix, false);
             }
         }
         else if (ol_nextHops.is_overlay_nexthop())
@@ -2993,7 +2991,7 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
 {
     // This function removes the route if it exists.
 
-    string key = "ROUTE_TABLE:" + prefix.to_string();
+    string key = prefix.to_string();
     RouteBulkContext context(key, false);
     context.ip_prefix = prefix;
     context.vrf_id = gVirtualRouterId;

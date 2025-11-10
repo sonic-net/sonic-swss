@@ -4,6 +4,7 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "portsorch.h"
+#include "debugcounterorch.h"
 #include "routeorch.h"
 #include "flowcounterrouteorch.h"
 #include "intfsorch.h"
@@ -13,6 +14,7 @@
 #define private public
 #include "dashorch.h"
 #include "dashrouteorch.h"
+#include "dashmeterorch.h"
 #include "bufferorch.h"
 #include "qosorch.h"
 #define protected public
@@ -31,6 +33,7 @@
 #include "copporch.h"
 #include "twamporch.h"
 #include "mlagorch.h"
+#include "high_frequency_telemetry/hftelorch.h"
 #define private public
 #include "stporch.h"
 #undef private 
@@ -52,6 +55,7 @@ extern sai_object_id_t gUnderlayIfId;
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+extern DebugCounterOrch *gDebugCounterOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
@@ -71,6 +75,7 @@ extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
+extern HFTelOrch *gHFTOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -113,6 +118,7 @@ extern sai_dash_vnet_api_t* sai_dash_vnet_api;
 extern sai_dash_appliance_api_t* sai_dash_appliance_api;
 extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
 extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
+extern sai_dash_meter_api_t* sai_dash_meter_api;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
 extern sai_dash_outbound_port_map_api_t* sai_dash_outbound_port_map_api;
 extern sai_dash_trusted_vni_api_t* sai_dash_trusted_vni_api;
