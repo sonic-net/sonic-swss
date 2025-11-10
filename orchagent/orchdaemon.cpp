@@ -68,6 +68,7 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
+ShlOrch *gShlOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -520,6 +521,13 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    TableConnector appDbShlTbl(m_applDb, APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<TableConnector> shl_tbl_ctrs = {
+        appDbShlTbl
+    };
+
+    gShlOrch = new ShlOrch(shl_tbl_ctrs);
+
     //
     // Policy Based Hashing (PBH) orchestrator
     //
@@ -547,6 +555,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
+    m_orchList.push_back(gShlOrch);
 
     if (vxlan_tunnel_orch->isDipTunnelsSupported())
     {
