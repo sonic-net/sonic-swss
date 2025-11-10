@@ -53,21 +53,23 @@ public:
     void doTask(Consumer &consumer) override
     {
         const auto &tname = consumer.getTableName();
-        // m_toSync is a std::multimap
+        // m_toSync is a std::multimap<string, KeyOpFieldsValuesTuple>
         auto &q = consumer.m_toSync;
 
         while (!q.empty())
         {
             auto it = q.begin();              // first element
-            auto tuple = it->second;          // KeyOpFieldsValuesTuple
+            auto tuple  = it->second;         // KeyOpFieldsValuesTuple
+            auto mapKey = it->first;          // record key
             q.erase(it);                      // remove processed
 
             const string op = kfvOp(tuple);
             if (op != "SET")
                 continue;
 
-            const string key = kfvKey(tuple);
-            const auto  &fvs = kfvFieldsValues(tuple);
+            // Prefer the multimap key; fall back to tuple key if empty.
+            string key = mapKey.empty() ? kfvKey(tuple) : mapKey;
+            const auto &fvs = kfvFieldsValues(tuple);
 
             if (tname == "FABRIC_MONITOR")
                 m_appMon.set(key, fvs, "SET", "", 0);
