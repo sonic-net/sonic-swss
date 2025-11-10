@@ -135,11 +135,11 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
         m_PfcDlrInitEnable = false;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
     }
-    else 
+    else
     {
         SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
-        m_PfcDlrInitEnable = true;
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "true");
+        m_PfcDlrInitEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
     }
     set_switch_capability(fvVector);
 }
