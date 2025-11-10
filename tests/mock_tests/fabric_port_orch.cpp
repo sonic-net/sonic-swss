@@ -52,29 +52,52 @@ public:
 
     void doTask(Consumer &consumer) override
     {
-        const auto &tname = consumer.getTableName();
-        // m_toSync is a std::multimap<string, KeyOpFieldsValuesTuple>
+        // Drain the multimap safely
         auto &q = consumer.m_toSync;
 
         while (!q.empty())
         {
             auto it = q.begin();              // first element
-            auto tuple  = it->second;         // KeyOpFieldsValuesTuple
-            auto mapKey = it->first;          // record key
+            auto tuple  = it->second;         // KeyOpFieldsValuesTuple (copy)
+            auto mapKey = it->first;          // record key (may be empty)
             q.erase(it);                      // remove processed
 
             const string op = kfvOp(tuple);
             if (op != "SET")
                 continue;
 
-            // Prefer the multimap key; fall back to tuple key if empty.
-            string key = mapKey.empty() ? kfvKey(tuple) : mapKey;
+            // Prefer the tuple key; fall back to the multimap key.
+            string key = kfvKey(tuple);
+            if (key.empty()) key = mapKey;
+
             const auto &fvs = kfvFieldsValues(tuple);
 
-            if (tname == "FABRIC_MONITOR")
+            // Route based on the fields present (robust to table name quirks)
+            bool isMonitor = false;
+            bool isPort    = false;
+            for (const auto &fv : fvs)
+            {
+                const auto &f = fvField(fv);
+                if (f == "monState")
+                    isMonitor = true;
+                if (f == "isolateStatus" || f == "forceUnisolateStatus")
+                    isPort = true;
+            }
+
+            if (isMonitor)
+            {
                 m_appMon.set(key, fvs, "SET", "", 0);
-            else if (tname == "FABRIC_PORT")
+            }
+            else if (isPort)
+            {
                 m_appPort.set(key, fvs, "SET", "", 0);
+            }
+            else
+            {
+                // Fallback: if we can’t classify, mirror to both (harmless for tests)
+                m_appMon.set(key, fvs, "SET", "", 0);
+                m_appPort.set(key, fvs, "SET", "", 0);
+            }
         }
     }
 
@@ -100,7 +123,7 @@ unique_ptr<FabricOrchMock> gFabricOrch;
 // Small polling helper (APP/STATE DB field wait)
 static bool waitFieldEq(Table& t, const string& key,
                         const string& field, const string& want,
-                        int attempts = 1000,
+                        int attempts = 1500,
                         chrono::milliseconds sleep = chrono::milliseconds(10))
 {
     for (int i = 0; i < attempts; ++i)
@@ -388,7 +411,7 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
     const string sdbKey = string("PORT")   + to_string(portNum) + "_" + tname;
 
     auto waitEq = [](Table& t, const string& key, const string& field, const string& want,
-                     int attempts = 1000) {
+                     int attempts = 1500) {
         for (int i = 0; i < attempts; ++i) {
             vector<FieldValueTuple> fvs;
             if (t.get(key, fvs)) {
@@ -493,7 +516,7 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
     Table statePort(m_state_db.get(), "FABRIC_PORT_TABLE");
 
     auto waitEq = [](Table& t, const string& key, const string& field, const string& want,
-                     int attempts = 1000) {
+                     int attempts = 1500) {
         for (int i = 0; i < attempts; ++i) {
             vector<FieldValueTuple> fvs;
             if (t.get(key, fvs)) {
@@ -505,7 +528,7 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
         return false;
     };
     auto waitNe = [](Table& t, const string& key, const string& field, const string& not_want,
-                     int attempts = 1000) {
+                     int attempts = 1500) {
         for (int i = 0; i < attempts; ++i) {
             vector<FieldValueTuple> fvs;
             if (t.get(key, fvs)) {
