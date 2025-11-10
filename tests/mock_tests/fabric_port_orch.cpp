@@ -53,14 +53,14 @@ public:
     void doTask(Consumer &consumer) override
     {
         const auto &tname = consumer.getTableName();
-        // NOTE: m_toSync is a std::multimap<key, tuple>, not a deque.
+        // m_toSync is a std::multimap
         auto &q = consumer.m_toSync;
 
         while (!q.empty())
         {
-            auto it = q.begin();              // first element in the multimap
+            auto it = q.begin();              // first element
             auto tuple = it->second;          // KeyOpFieldsValuesTuple
-            q.erase(it);                      // remove processed entry
+            q.erase(it);                      // remove processed
 
             const string op = kfvOp(tuple);
             if (op != "SET")
@@ -230,13 +230,13 @@ TEST_F(FabricOrchTest, FabricPort_Isolation_And_Monitor_Propagates)
         std::deque<KeyOpFieldsValuesTuple> entries;
         entries.push_back({ "FABRIC_MONITOR_DATA", "SET", FV({ {"monState","disable"} }) });
         fabric_mon_cons->addToSync(entries);
-        static_cast<Orch *>(gFabricOrch.get())->doTask();
+        gFabricOrch->doTask(*fabric_mon_cons);
         ASSERT_TRUE(waitFieldEq(appFabricMon, "FABRIC_MONITOR_DATA", "monState", "disable"));
 
         entries.clear();
         entries.push_back({ "FABRIC_MONITOR_DATA", "SET", FV({ {"monState","enable"} }) });
         fabric_mon_cons->addToSync(entries);
-        static_cast<Orch *>(gFabricOrch.get())->doTask();
+        gFabricOrch->doTask(*fabric_mon_cons);
         ASSERT_TRUE(waitFieldEq(appFabricMon, "FABRIC_MONITOR_DATA", "monState", "enable"));
     }
 
@@ -245,13 +245,13 @@ TEST_F(FabricOrchTest, FabricPort_Isolation_And_Monitor_Propagates)
         std::deque<KeyOpFieldsValuesTuple> entries;
         entries.push_back({ "Fabric1", "SET", FV({ {"isolateStatus","True"} }) });
         fabric_port_cons->addToSync(entries);
-        static_cast<Orch *>(gFabricOrch.get())->doTask();
+        gFabricOrch->doTask(*fabric_port_cons);
         ASSERT_TRUE(waitFieldEq(appFabricPort, "Fabric1", "isolateStatus", "True"));
 
         entries.clear();
         entries.push_back({ "Fabric1", "SET", FV({ {"isolateStatus","False"} }) });
         fabric_port_cons->addToSync(entries);
-        static_cast<Orch *>(gFabricOrch.get())->doTask();
+        gFabricOrch->doTask(*fabric_port_cons);
         ASSERT_TRUE(waitFieldEq(appFabricPort, "Fabric1", "isolateStatus", "False"));
     }
 }
@@ -275,7 +275,7 @@ TEST_F(FabricOrchTest, FabricPort_BasicMonitoring_Isolate_Unisolate_Force)
         std::deque<KeyOpFieldsValuesTuple> entries;
         entries.push_back({ "FABRIC_MONITOR_DATA", "SET", FV({ {"monState","enable"} }) });
         mon_cons->addToSync(entries);
-        static_cast<Orch *>(gFabricOrch.get())->doTask();
+        gFabricOrch->doTask(*mon_cons);
         ASSERT_TRUE(waitFieldEq(appMon, "FABRIC_MONITOR_DATA", "monState", "enable"));
     }
 
@@ -322,7 +322,7 @@ TEST_F(FabricOrchTest, FabricPort_BasicMonitoring_Isolate_Unisolate_Force)
         std::deque<KeyOpFieldsValuesTuple> entries;
         entries.push_back({ cfgKey, "SET", FV({ {"forceUnisolateStatus","1"} }) });
         port_cons->addToSync(entries);
-        static_cast<Orch *>(gFabricOrch.get())->doTask();
+        gFabricOrch->doTask(*port_cons);
     }
     statePort.set(portKey, FV({ {"AUTO_ISOLATED","0"} }), "SET", "", 0);
     ASSERT_TRUE(waitFieldEq(statePort, portKey, "AUTO_ISOLATED", "0"));
@@ -403,13 +403,13 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
         deque<KeyOpFieldsValuesTuple> e;
         e.push_back({monKey, "SET", FV({{"monState","disable"}})});
         mon_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*mon_cons);
         ASSERT_TRUE(waitEq(appMon, monKey, "monState", "disable"));
 
         e.clear();
         e.push_back({monKey, "SET", FV({{"monState","enable"}})});
         mon_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*mon_cons);
         ASSERT_TRUE(waitEq(appMon, monKey, "monState", "enable"));
     }
 
@@ -432,7 +432,7 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
         deque<KeyOpFieldsValuesTuple> e;
         e.push_back({cfgKey, "SET", FV({{"isolateStatus","True"}})});
         port_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*port_cons);
 
         // Simulate monitor loop effects in STATE_DB.
         statePort.set(sdbKey, FV({{"ISOLATED","1"}}), "SET", "", 0);
@@ -447,7 +447,7 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
         deque<KeyOpFieldsValuesTuple> e;
         e.push_back({cfgKey, "SET", FV({{"isolateStatus","False"}})});
         port_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*port_cons);
 
         statePort.set(sdbKey, FV({{"ISOLATED","0"}}), "SET", "", 0);
         stateCap.set("FABRIC_CAPACITY_DATA", FV({{"operating_links", to_string(baseline)}}), "SET", "", 0);
@@ -461,13 +461,13 @@ TEST_F(FabricOnlyTest, FabricCapacity_Isolation_Affects_When_Monitor_Enabled)
         deque<KeyOpFieldsValuesTuple> e;
         e.push_back({monKey,"SET",FV({{"monState","disable"}})});
         mon_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*mon_cons);
         ASSERT_TRUE(waitEq(appMon, monKey, "monState", "disable"));
 
         e.clear();
         e.push_back({cfgKey, "SET", FV({{"isolateStatus","True"}})});
         port_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*port_cons);
 
         statePort.set(sdbKey, FV({{"ISOLATED","1"}}), "SET", "", 0);
         ASSERT_TRUE(waitEq(statePort, sdbKey, "ISOLATED", "1"));
@@ -523,13 +523,13 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
         deque<KeyOpFieldsValuesTuple> e;
         e.push_back({monKey, "SET", FV({{"monState","disable"}})});
         mon_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*mon_cons);
         ASSERT_TRUE(waitEq(appMon, monKey, "monState", "disable"));
 
         e.clear();
         e.push_back({monKey, "SET", FV({{"monState","enable"}})});
         mon_cons->addToSync(e);
-        static_cast<Orch*>(m_fabric.get())->doTask();
+        m_fabric->doTask(*mon_cons);
         ASSERT_TRUE(waitEq(appMon, monKey, "monState", "enable"));
     }
 
@@ -549,7 +549,7 @@ TEST_F(FabricOnlyTest, FabricPort_TxRate_Increases_When_TestFlag_Set)
         }
     }
 
-    // Get initial OLD_TX_DATA like pytest’s wait_for_fields.
+    // Get initial OLD_TX_DATA
     string old_tx = "1000";
     {
         vector<FieldValueTuple> fvs;
@@ -638,6 +638,5 @@ TEST_F(FabricOnlyTest, InvalidFabricSwitchId_Handling)
 }
 } // namespace fabricorch_test
 // === end test file ===
-
 
 
