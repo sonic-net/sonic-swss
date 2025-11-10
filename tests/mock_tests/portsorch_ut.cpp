@@ -54,6 +54,8 @@ namespace portsorch_test
 
     bool not_support_fetching_fec;
     uint32_t _sai_set_port_fec_count;
+    uint32_t _sai_set_port_auto_neg_count;
+    uint32_t _sai_set_port_tpid_count;
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
 
@@ -128,6 +130,7 @@ namespace portsorch_test
         }
         else if (attr[0].id == SAI_PORT_ATTR_AUTO_NEG_MODE)
         {
+            _sai_set_port_auto_neg_count++;
             /* Simulating failure case */
             return SAI_STATUS_FAILURE;
         }
@@ -178,6 +181,10 @@ namespace portsorch_test
                 set_port_tam_failures++;
                 return SAI_STATUS_INVALID_ATTR_VALUE_0;
             }
+        }
+        else if (attr[0].id == SAI_PORT_ATTR_TPID)
+        {
+            _sai_set_port_tpid_count++;
         }
         else if (attr[0].id == SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGORITHM)
         {
@@ -557,7 +564,15 @@ namespace portsorch_test
 
             ASSERT_EQ(gMlagOrch, nullptr);
             gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
- 
+
+            vector<string> debug_counter_tables = {
+                CFG_DEBUG_COUNTER_TABLE_NAME,
+                CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
+                CFG_DEBUG_DROP_MONITOR_TABLE_NAME
+            };
+
+           ASSERT_EQ(gDebugCounterOrch, nullptr);
+           gDebugCounterOrch = new DebugCounterOrch(m_config_db.get(), debug_counter_tables, 1000);
         }
 
         virtual void TearDown() override
@@ -576,6 +591,8 @@ namespace portsorch_test
             gFdbOrch = nullptr;
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
+            delete gDebugCounterOrch;
+            gDebugCounterOrch = nullptr;
             delete gPortsOrch;
             gPortsOrch = nullptr;
             delete gBufferOrch;
@@ -946,6 +963,105 @@ namespace portsorch_test
         ASSERT_TRUE(keys.empty());
     }
 
+    // Verifies certain port attributes are set on port creation, ensures no set API calls are made.
+    TEST_F(PortsOrchTest, PortAttributeSetOnCreation)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        const auto alias = "Ethernet0";
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // default Ethernet0 has different lanes so create_ports() is triggered
+        std::vector<FieldValueTuple> fvList = {
+            { "alias",               alias       },
+            { "index",               "0"         },
+            { "lanes",               "0,1,2,3"   },
+            { "speed",               "100000"    },
+            { "autoneg",             "on"        },
+            { "adv_speeds",          "all"       },
+            { "interface_type",      "none"      },
+            { "adv_interface_types", "all"       },
+            { "fec",                 "rs"        },
+            { "mtu",                 "9100"      },
+            { "tpid",                "0x8101"    },
+            { "pfc_asym",            "on"        },
+            { "admin_status",        "up"        },
+            { "description",         "FP port"   }
+        };
+
+        portTable.set(alias, fvList);
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        const auto set_port_fec_count = _sai_set_port_fec_count;
+        const auto set_port_auto_neg_count = _sai_set_port_auto_neg_count;
+        const auto set_port_tpid_count = _sai_set_port_tpid_count;
+        const auto sai_set_pfc_mode_count = _sai_set_pfc_mode_count;
+
+        _hook_sai_port_api();
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        EXPECT_TRUE(taskList.empty());
+
+        _unhook_sai_port_api();
+
+        Port p;
+        EXPECT_TRUE(gPortsOrch->getPort(alias, p));
+
+        // Validate SAI port configuration
+
+        sai_attribute_t attr;
+
+        attr.id = SAI_PORT_ATTR_FEC_MODE;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.s32, SAI_PORT_FEC_MODE_RS);
+
+        if (gPortsOrch->fec_override_sup)
+        {
+            attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+            EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+            EXPECT_FALSE(attr.value.booldata);
+        }
+
+        attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_TRUE(attr.value.booldata);
+
+        attr.id = SAI_PORT_ATTR_TPID;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.u16, 0x8101);
+
+        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.s32, SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE);
+
+        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.u8, 0xff);
+
+        // Validate no set API calls performed for specified attributes
+
+        EXPECT_EQ(set_port_fec_count, _sai_set_port_fec_count);
+        EXPECT_EQ(set_port_auto_neg_count, _sai_set_port_auto_neg_count);
+        EXPECT_EQ(set_port_tpid_count, _sai_set_port_tpid_count);
+        EXPECT_EQ(sai_set_pfc_mode_count, _sai_set_pfc_mode_count);
+
+        // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
     TEST_F(PortsOrchTest, PortBasicConfig)
     {
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -1262,7 +1378,8 @@ namespace portsorch_test
         consumer->addToSync(kfvSerdes);
 
         _hook_sai_port_api();
-        uint32_t current_sai_api_call_count = _sai_set_admin_state_down_count;
+        uint32_t down_call_count = _sai_set_admin_state_down_count;
+        uint32_t up_call_count = _sai_set_admin_state_up_count;
 
         // Apply configuration
         static_cast<Orch*>(gPortsOrch)->doTask();
@@ -1277,8 +1394,8 @@ namespace portsorch_test
         ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
 
         // Verify admin-disable then admin-enable
-        ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);
-        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_down_count, ++down_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, ++up_call_count);
 
         // Configure non-serdes attribute that does not trigger admin state change
         std::deque<KeyOpFieldsValuesTuple> kfvMtu = {{
@@ -1292,7 +1409,7 @@ namespace portsorch_test
         consumer->addToSync(kfvMtu);
 
         _hook_sai_port_api();
-        current_sai_api_call_count = _sai_set_admin_state_down_count;
+        down_call_count = _sai_set_admin_state_down_count;
 
         // Apply configuration
         static_cast<Orch*>(gPortsOrch)->doTask();
@@ -1306,8 +1423,8 @@ namespace portsorch_test
         ASSERT_EQ(p.m_mtu, 1234);
 
         // Verify no admin-disable then admin-enable
-        ASSERT_EQ(_sai_set_admin_state_down_count, current_sai_api_call_count);
-        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_down_count, down_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, up_call_count);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
@@ -2525,7 +2642,7 @@ namespace portsorch_test
 
         entries.push_back({"Ethernet0", "SET",
                            {
-                               { "pfc_asym", "off"}
+                               { "pfc_asym", "on"}
                            }});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(entries);
@@ -3066,6 +3183,85 @@ namespace portsorch_test
         ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 0);
 
 	_unhook_sai_switch_api();
+    }
+
+    TEST_F(PortsOrchTest, DebugDropMonitorToggle)
+    {
+        // setup the tables with data
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        // Apply configuration again
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+
+        // Check if default status is disabled
+        ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
+
+        // Set status to enabled
+        entries.clear();
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "enabled" }
+        } });
+        auto DebugCounterConsumer = dynamic_cast<Consumer *>(gDebugCounterOrch->getExecutor("DEBUG_DROP_MONITOR"));
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set status with an invalid value
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "turnoff" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set an unsupported attribute
+        entries.push_back({ "CONFIG", "SET", {
+            { "enable", "false" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Use an unsupported operation type
+        entries.push_back({ "CONFIG", "GET", {
+            { "status", "disable" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set status back to disabled
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "disabled" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
     }
 
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)

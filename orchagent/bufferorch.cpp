@@ -780,7 +780,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
             }
 
-            for (auto &attribute : attribs)
+            for (auto &attribute : attribs_to_retry)
             {
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
                 if (SAI_STATUS_SUCCESS != sai_status)
@@ -1103,18 +1103,21 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
                 else if (gMySwitchType != "voq")
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
-                    auto queues = tokens[1];
-                    if (!queueContext.counter_was_added && queueContext.counter_needs_to_add &&
-                        (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                    if (flexCounterOrch->isCreateOnlyConfigDbBuffers())
                     {
-                        SWSS_LOG_INFO("Creating counters for %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->createPortBufferQueueCounters(port, queues);
-                    }
-                    else if (queueContext.counter_was_added && !queueContext.counter_needs_to_add &&
-                                (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
-                    {
-                        SWSS_LOG_INFO("Removing counters for %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->removePortBufferQueueCounters(port, queues);
+                        auto queues = tokens[1];
+                        if (!queueContext.counter_was_added && queueContext.counter_needs_to_add &&
+                            (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Creating counters for %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->createPortBufferQueueCounters(port, queues);
+                        }
+                        else if (queueContext.counter_was_added && !queueContext.counter_needs_to_add &&
+                                    (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Removing counters for %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->removePortBufferQueueCounters(port, queues);
+                        }
                     }
                 }
             }
@@ -1471,18 +1474,21 @@ task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask
                 else
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
-                    auto pgs = tokens[1];
-                    if (!pg.counter_was_added && pg.counter_needs_to_add &&
-                        (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                    if (flexCounterOrch->isCreateOnlyConfigDbBuffers())
                     {
-                        SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->createPortBufferPgCounters(port, pgs);
-                    }
-                    else if (pg.counter_was_added && !pg.counter_needs_to_add &&
-                                (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
-                    {
-                        SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->removePortBufferPgCounters(port, pgs);
+                        auto pgs = tokens[1];
+                        if (!pg.counter_was_added && pg.counter_needs_to_add &&
+                            (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->createPortBufferPgCounters(port, pgs);
+                        }
+                        else if (pg.counter_was_added && !pg.counter_needs_to_add &&
+                                    (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->removePortBufferPgCounters(port, pgs);
+                        }
                     }
                 }
             }
