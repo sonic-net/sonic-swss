@@ -168,7 +168,7 @@ namespace dashportmaporch_test
         EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(2);
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
-        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, false);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
     }
 
     TEST_F(DashPortMapOrchTest, RemoveNonexistPortMapRange)
@@ -179,7 +179,7 @@ namespace dashportmaporch_test
 
         EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_map_port_range_entries);
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
-        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, port_map_range_key, dash::outbound_port_map_range::OutboundPortMapRange(), false, false);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, port_map_range_key, dash::outbound_port_map_range::OutboundPortMapRange(), false);
     }
 
     TEST_F(DashPortMapOrchTest, AddPortRangeWithoutPortMap)

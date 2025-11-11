@@ -100,6 +100,15 @@ namespace swss
         }
     }
 
+    void Table::hset(const std::string &key, const std::string &field, const std::string &value,
+                const std::string& op, const std::string& prefix)
+    {
+        FieldValueTuple fvp(field, value);
+        std::vector<FieldValueTuple> attrs = { fvp };
+
+        Table::set(key, attrs, op, prefix);
+    }
+
     void Table::getKeys(std::vector<std::string> &keys)
     {
         keys.clear();
@@ -141,6 +150,33 @@ namespace swss
     {
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table.erase(key);
+    }
+
+    void ProducerStateTable::set(const std::vector<KeyOpFieldsValuesTuple>& values)
+    {
+        for (const auto& kfv : values)
+        {
+            const std::string& key = kfvKey(kfv);
+            const std::string& op = kfvOp(kfv);
+            const std::vector<FieldValueTuple>& fvs = kfvFieldsValues(kfv);
+
+            if (op == SET_COMMAND)
+            {
+                set(key, fvs);
+            }
+            else if (op == DEL_COMMAND)
+            {
+                del(key);
+            }
+        }
+    }
+
+    void ProducerStateTable::del(const std::vector<std::string>& keys)
+    {
+        for (const auto& key : keys)
+        {
+            del(key);
+        }
     }
 
     std::shared_ptr<std::string> DBConnector::hget(const std::string &key, const std::string &field)

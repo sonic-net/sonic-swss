@@ -251,6 +251,15 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_DashOrch);
     ut_orch_list.push_back((Orch **)&m_DashOrch);
 
+    vector<string> dash_meter_tables = {
+        APP_DASH_METER_POLICY_TABLE_NAME,
+        APP_DASH_METER_RULE_TABLE_NAME
+    };
+
+    m_DashMeterOrch = new DashMeterOrch(m_app_db.get(), dash_meter_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
+    gDirectory.set(m_DashMeterOrch);
+    ut_orch_list.push_back((Orch **)&m_DashMeterOrch);
+
     TableConnector confDbAclTable(m_config_db.get(), CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_config_db.get(), CFG_ACL_TABLE_TYPE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_config_db.get(), CFG_ACL_RULE_TABLE_NAME);
@@ -300,14 +309,6 @@ void MockOrchTest::SetUp()
     m_dashVnetOrch = new DashVnetOrch(m_app_db.get(), dash_vnet_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_dashVnetOrch);
     ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
-
-    vector<string> dash_ha_tables = {
-        APP_DASH_HA_SET_TABLE_NAME,
-        APP_DASH_HA_SCOPE_TABLE_NAME
-    };
-    m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
-    gDirectory.set(m_dashHaOrch);
-    ut_orch_list.push_back((Orch **)&m_dashHaOrch);
 
     vector<string> dash_route_tables = {
         APP_DASH_ROUTE_TABLE_NAME,
