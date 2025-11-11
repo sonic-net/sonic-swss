@@ -249,6 +249,8 @@ private:
     /* nexthop group table */
     ProducerStateTable  m_nexthop_groupTable;
     map<uint32_t,NextHopGroup> m_nh_groups;
+    /* SID list to refcount */
+    map<string, uint32_t> m_srv6_sidlist_refcnt;
 
     bool                m_isSuppressionEnabled{false};
     FpmInterface*       m_fpmInterface {nullptr};
