@@ -1702,9 +1702,9 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->m_bufferPoolReady = false;
 
         // Verify the condition logic - should be false when MMU size empty
-        // New condition: !m_mmuSize.empty() && (!WarmStart::isWarmStart() || (m_bufferCompletelyInitialized || !m_bufferPoolReady))
+        // New condition: !m_mmuSize.empty() && (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_bufferCompletelyInitialized || !m_bufferPoolReady)))
         bool conditionShouldNotExecute = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                         (!WarmStart::isWarmStart() || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                         (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_FALSE(conditionShouldNotExecute) << "Condition should evaluate to false when MMU size is empty";
 
         // Call checkSharedBufferPoolSize - should not execute recalculateSharedBufferPool
@@ -1726,7 +1726,7 @@ namespace buffermgrdyn_test
         // Verify the condition logic
         EXPECT_FALSE(WarmStart::isWarmStart()) << "Test setup is non-warm-start";
         bool conditionShouldExecute = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                     (!WarmStart::isWarmStart() || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                     (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_TRUE(conditionShouldExecute) << "Condition should evaluate to true for execution in non-warm-start";
 
         // TEST CASE 3: MMU size available, buffer not initialized, buffer pool ready (non-warm-start) - should execute
@@ -1737,7 +1737,7 @@ namespace buffermgrdyn_test
         // Verify the condition logic - should be true in non-warm-start
         // New condition: true && (!false || (false || !true)) = true && (true || false) = true && true = true
         bool conditionShouldExecute3 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (!WarmStart::isWarmStart() || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_TRUE(conditionShouldExecute3) << "Condition should evaluate to true in non-warm-start (true && true = true)";
 
         // Call checkSharedBufferPoolSize - should execute
@@ -1751,7 +1751,7 @@ namespace buffermgrdyn_test
         // Verify the condition logic - should be true (normal case after initialization)
         // New condition: true && (!false || (true || !true)) = true && (true || true) = true && true = true
         bool conditionShouldExecute4 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (!WarmStart::isWarmStart() || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_TRUE(conditionShouldExecute4) << "Condition should evaluate to true (true && true = true)";
 
         // Call checkSharedBufferPoolSize - should execute (normal case)
@@ -1765,7 +1765,7 @@ namespace buffermgrdyn_test
         // Verify the condition logic - should be true in non-warm-start
         // New condition: true && (!false || (true || !false)) = true && (true || true) = true && true = true
         bool conditionShouldExecute5 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (!WarmStart::isWarmStart() || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_TRUE(conditionShouldExecute5) << "Condition should evaluate to true in non-warm-start";
 
         // Call checkSharedBufferPoolSize - should execute
@@ -1789,7 +1789,7 @@ namespace buffermgrdyn_test
         // If it were warm start: true && (false || (true || !true)) = true && (false || true) = true && true = true
         // This would execute during warm start when buffer is initialized or pool not ready
         bool conditionShouldExecute7 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (!WarmStart::isWarmStart() || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_TRUE(conditionShouldExecute7) << "Condition should evaluate to true when both buffer initialized and pool ready";
     }
 
@@ -1938,7 +1938,7 @@ namespace buffermgrdyn_test
 
         // If warm start is enabled, the condition should still execute when pool not ready
         bool conditionShouldExecute1 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (!WarmStart::isWarmStart() || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         // In warm start: true && (false || (false || true)) = true && (false || true) = true
         EXPECT_TRUE(conditionShouldExecute1) << "Condition should execute in warm start when pool not ready";
 
@@ -1948,9 +1948,9 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->m_bufferCompletelyInitialized = true;
         m_dynamicBuffer->m_bufferPoolReady = false;
 
-        // New condition: true && (true || (true || !false)) = true && (true || true) = true
+        // New condition: true && (!false || (true && (true || !false))) = true && (true || true) = true
         bool conditionShouldExecute2 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (true || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_TRUE(conditionShouldExecute2) << "Condition should execute in warm start when buffer initialized";
 
         m_dynamicBuffer->checkSharedBufferPoolSize(false);
@@ -1959,9 +1959,9 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->m_bufferCompletelyInitialized = true;
         m_dynamicBuffer->m_bufferPoolReady = true;
 
-        // New condition: true && (true || (true || !true)) = true && (true || true) = true
+        // New condition: true && (!false || (true && (true || !true))) = true && (true || true) = true
         bool conditionShouldExecute3 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (true || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         EXPECT_TRUE(conditionShouldExecute3) << "Condition should execute in warm start when both initialized and ready";
 
         m_dynamicBuffer->checkSharedBufferPoolSize(false);
@@ -1970,9 +1970,12 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->m_bufferCompletelyInitialized = false;
         m_dynamicBuffer->m_bufferPoolReady = true;
 
-        // New condition: true && (false || (false || false)) = true && false = false
+        // New condition with explicit warm-start gating:
+        // true && (!false || (true && (false || false))) = true && (true || false) = true
+        // But with bufferCompletelyInitialized=false and bufferPoolReady=true:
+        // true && (false || (true && false)) = false -> should not execute
         bool conditionShouldNotExecute4 = !m_dynamicBuffer->m_mmuSize.empty() &&
-                                       (false || (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady));
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
         // In warm start: !WarmStart::isWarmStart() = false, m_bufferCompletelyInitialized = false, !m_bufferPoolReady = false
         // So: true && (false || (false || false)) = true && false = false
         EXPECT_FALSE(conditionShouldNotExecute4) << "Condition should not execute when warm start is enabled, buffer not initialized and pool ready";
