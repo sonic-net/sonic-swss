@@ -789,6 +789,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
             }
 
             gRouteOrch->updateNextHopRoutes(nh, num_routes);
+            gNeighOrch->increaseNextHopRefCount(nh, num_routes);
             break;
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
@@ -811,6 +812,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
 
             updateTunnelRoute(nh, true);
             gRouteOrch->updateNextHopRoutes(nh, num_routes);
+            gNeighOrch->decreaseNextHopRefCount(nh, num_routes);
             break;
         default:
             SWSS_LOG_NOTICE("State '%s' not handled for nbr %s update",
@@ -1695,47 +1697,56 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
                     if (getMuxPort(update.entry.mac, vlan_alias, port_name) && 
                         !port_name.empty() && port_name == update.entry.port_name)
                     {
-                        // Verify MUX cable exists and is properly configured before conversion
-                        ptr = getMuxCable(port_name);
-                        if (!ptr)
-                        {
-                            SWSS_LOG_WARN("MUX cable for port %s not found, skipping neighbor conversion", port_name.c_str());
-                            continue;
-                        }
-
                         // Convert this neighbor to a MUX neighbor
                         SWSS_LOG_INFO("Converting existing neighbor %s on %s to MUX neighbor due to FDB update",
                                       neighbor_entry.ip_address.to_string().c_str(), vlan_alias.c_str());
 
-                        // Get tunnel nexthop if needed (for standby state)
-                        sai_object_id_t tunnel_nh_id = SAI_NULL_OBJECT_ID;
-                        if (!ptr->isActive())
-                        {
-                            tunnel_nh_id = getTunnelNextHopId();
-                        }
-
-                        // Convert to MUX neighbor
-                        if (neigh_orch_->convertToMuxNeighbor(neighbor_entry, tunnel_nh_id))
-                        {
-                            // Add to MUX nexthop table
-                            NextHopKey nh_key = { neighbor_entry.ip_address, neighbor_entry.alias };
-                            mux_nexthop_tb_[nh_key] = port_name;
-
-                            // Update MUX cable with the new neighbor
-                            ptr->updateNeighbor(neighbor_entry, true);
-
-                            SWSS_LOG_NOTICE("Successfully converted neighbor %s on %s to MUX neighbor",
-                                           neighbor_entry.ip_address.to_string().c_str(), vlan_alias.c_str());
-                        }
-                        else
-                        {
-                            SWSS_LOG_ERROR("Failed to convert neighbor %s on %s to MUX neighbor",
-                                         neighbor_entry.ip_address.to_string().c_str(), vlan_alias.c_str());
-                        }
+                        convertNeighborToMux(neighbor_entry, port_name, "due to FDB update");
                     }
                 }
             }
         }
+    }
+}
+
+bool MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const string& port_name, const string& context)
+{
+    // Verify MUX cable exists and is properly configured before conversion
+    MuxCable* ptr = getMuxCable(port_name);
+    if (!ptr)
+    {
+        SWSS_LOG_WARN("MUX cable for port %s not found, skipping neighbor conversion", port_name.c_str());
+        return false;
+    }
+
+    // Get tunnel nexthop if needed (for standby state)
+    sai_object_id_t tunnel_nh_id = SAI_NULL_OBJECT_ID;
+    if (!ptr->isActive())
+    {
+        tunnel_nh_id = getTunnelNextHopId();
+    }
+
+    // Convert to MUX neighbor using convertToMuxNeighbor
+    if (neigh_orch_->convertToMuxNeighbor(neighbor_entry, tunnel_nh_id))
+    {
+        // Add to MUX nexthop table
+        NextHopKey nh_key = { neighbor_entry.ip_address, neighbor_entry.alias };
+        mux_nexthop_tb_[nh_key] = port_name;
+
+        // Update MUX cable with the new neighbor
+        ptr->updateNeighbor(nh_key, true);
+
+        SWSS_LOG_NOTICE("Successfully converted neighbor %s on %s to MUX neighbor %s",
+                       neighbor_entry.ip_address.to_string().c_str(), 
+                       neighbor_entry.alias.c_str(), context.c_str());
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to convert neighbor %s on %s to MUX neighbor %s",
+                     neighbor_entry.ip_address.to_string().c_str(), 
+                     neighbor_entry.alias.c_str(), context.c_str());
+        return false;
     }
 }
 
@@ -2049,6 +2060,35 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         mux_cable_tb_[port_name] = std::make_unique<MuxCable>
                                    (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type));
         addSkipNeighbors(skip_neighbors);
+
+        // Add neighbors that were learned before this mux port was configured.
+        NeighborTable m_neighbors;
+        gNeighOrch->getMuxNeighborsForPort(port_name, m_neighbors);
+        for (const auto &entry : m_neighbors)
+        {
+            bool nexthop_found = containsNextHop(entry.first);
+            bool is_skip_neighbor = isSkipNeighbor(entry.first.ip_address);
+            if (!nexthop_found && !is_skip_neighbor)
+            {
+                SWSS_LOG_NOTICE("Neighbor %s on %s learned before mux port %s configured. updating...",
+                    entry.first.ip_address.to_string().c_str(),
+                    entry.second.mac.to_string().c_str(),
+                    port_name.c_str()
+                );
+
+                // Convert neighbors to MUX neighbors for no-host-route prefix based handling
+                if (!entry.second.prefix_route)
+                {
+                    convertNeighborToMux(entry.first, port_name, "during mux config");
+                }
+                else
+                {
+                    // Use existing updateNeighbor flow for regular neighbors or already converted MUX neighbors
+                    NeighborUpdate neighbor_update = {entry.first, entry.second.mac, 1};
+                    updateNeighbor(neighbor_update);
+                }
+            }
+        }
 
         SWSS_LOG_NOTICE("Mux entry for port '%s' was added, cable type %d", port_name.c_str(), cable_type);
     }

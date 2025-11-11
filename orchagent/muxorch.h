@@ -275,6 +275,9 @@ private:
     void updateNeighbor(const NeighborUpdate& update);
     void updateFdb(const FdbUpdate&);
 
+    // Helper function to convert neighbor to MUX neighbor
+    bool convertNeighborToMux(const NeighborEntry& neighbor_entry, const string& port_name, const string& context);
+
     /***
      * Methods for managing tunnel routes for neighbor IPs not associated
      * with a specific mux cable

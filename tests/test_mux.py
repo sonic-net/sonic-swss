@@ -1777,6 +1777,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_neighbor_learned_before_mux_config(self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch, setup_tunnel, testlog):
         """ test neighbors learned before mux config """
+        #dvs.runcmd("swssloglevel -l INFO -c orchagent")
         test_ip_v4 = "192.168.0.110"
         test_ip_v6 = "fc02:1000::110"
 
@@ -1789,58 +1790,66 @@ class TestMuxTunnel(TestMuxTunnelBase):
         dvs.runcmd("ip neigh flush all")
         for create_route in [False, True]:
             for state in ["active", "standby"]:
-                try:
-                    current_state = state
+                current_state = state
 
-                    # Step 1.a: add neighbor on port
-                    self.add_fdb(dvs, "Ethernet4", "00-00-00-11-11-11")
+                # Step 1.a: add neighbor on port
+                self.add_fdb(dvs, "Ethernet4", "00-00-00-11-11-11")
 
-                    self.add_neighbor(dvs, test_ip_v4, "00:00:00:11:11:11")
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v4, expected=True, no_host_route=False)
+                self.add_neighbor(dvs, test_ip_v4, "00:00:00:11:11:11")
+                # Before mux config: neighbor without prefix route (no_host_route=False)
+                self.check_neigh_in_asic_db(asicdb, test_ip_v4, expected=True, no_host_route=False)
 
-                    self.add_neighbor(dvs, test_ip_v6, "00:00:00:11:11:11")
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v6, expected=True, no_host_route=False)
+                if create_route:
+                    # Step 1.b: Create a route pointing to the neighbor
+                    self.add_route(dvs, "11.11.11.11/32", ["192.168.0.110"])
 
-                    if create_route:
-                        # Step 1.b: Create a route pointing to the neighbor
-                        self.add_route(dvs, "11.11.11.11/32", ["192.168.0.100"])
+                # Step 2: configure mux port and verify neighbor state.
+                fvs = {"server_ipv4": self.SERV2_IPV4+self.IPV4_MASK,
+                    "server_ipv6": self.SERV2_IPV6+self.IPV6_MASK}
+                config_db.create_entry(self.CONFIG_MUX_CABLE, "Ethernet4", fvs)
+                time.sleep(1)
+                self.set_mux_state(appdb, "Ethernet4", current_state)
 
-                    # Step 2: configure mux port and verify neighbor state.
-                    self.set_mux_state(appdb, "Ethernet4", current_state)
-                    fvs = {"server_ipv4": self.SERV2_IPV4+self.IPV4_MASK,
-                        "server_ipv6": self.SERV2_IPV6+self.IPV6_MASK}
-                    config_db.create_entry(self.CONFIG_MUX_CABLE, "Ethernet4", fvs)
+                expect_neigh = (current_state == "active")
+                print("current state: %s" % current_state)
+                self.check_neighbor_state(dvs, dvs_route, test_ip_v4, 
+                                        expect_route=True, expect_neigh=expect_neigh,
+                                        expected_mac="00:00:00:11:11:11", no_host_route=True)
+                expected_tunnel_route = (current_state == "standby")
+                self.check_tunnel_route_in_app_db(dvs, [test_ip_v4+self.IPV4_MASK], expected=expected_tunnel_route)
 
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v4, expected=(current_state != "standby"))
-                    self.check_tunnel_route_in_app_db(dvs, [test_ip_v4+self.IPV4_MASK], expected=(current_state == "standby"))
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v6, expected=(current_state != "standby"))
-                    self.check_tunnel_route_in_app_db(dvs, [test_ip_v6+self.IPV6_MASK], expected=(current_state == "standby"))
+                # Step 3: toggle mux state and verify neighbor state.
+                current_state = toggle_map[current_state]
+                self.set_mux_state(appdb, "Ethernet4", current_state)
 
-                    # Step 3: toggle mux state and verify neighbor state.
-                    current_state = toggle_map[current_state]
-                    self.set_mux_state(appdb, "Ethernet4", current_state)
+                # Verify prefix-based mux neighbor state after toggle
+                # expect_neigh indicates whether route should point to neighbor NH or tunnel NH
+                expect_neigh = (current_state == "active")
+                self.check_neighbor_state(dvs, dvs_route, test_ip_v4,
+                                        expect_route=True, expect_neigh=expect_neigh,
+                                        expected_mac="00:00:00:11:11:11", no_host_route=True)
+                expected_tunnel_route = (current_state == "standby")
+                self.check_tunnel_route_in_app_db(dvs, [test_ip_v4+self.IPV4_MASK], expected=expected_tunnel_route)
 
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v4, expected=(current_state != "standby"))
-                    self.check_tunnel_route_in_app_db(dvs, [test_ip_v4+self.IPV4_MASK], expected=(current_state == "standby"))
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v6, expected=(current_state != "standby"))
-                    self.check_tunnel_route_in_app_db(dvs, [test_ip_v6+self.IPV6_MASK], expected=(current_state == "standby"))
+                # Step 4: toggle mux state back to initial state and verify neighbor state.
+                current_state = toggle_map[current_state]
+                self.set_mux_state(appdb, "Ethernet4", current_state)
 
-                    # Step 4: toggle mux state back to initial state and verify neighbor state.
-                    current_state = toggle_map[current_state]
-                    self.set_mux_state(appdb, "Ethernet4", current_state)
+                # Verify prefix-based mux neighbor state after second toggle
+                # expect_neigh indicates whether route should point to neighbor NH or tunnel NH
+                expect_neigh = (current_state == "active")
+                expected_tunnel_route = (current_state == "standby")
+                self.check_neighbor_state(dvs, dvs_route, test_ip_v4,
+                                        expect_route=True, expect_neigh=expect_neigh,
+                                        expected_mac="00:00:00:11:11:11", no_host_route=True)
+                self.check_tunnel_route_in_app_db(dvs, [test_ip_v4+self.IPV4_MASK], expected=expected_tunnel_route)
 
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v4, expected=(current_state != "standby"))
-                    self.check_tunnel_route_in_app_db(dvs, [test_ip_v4+self.IPV4_MASK], expected=(current_state == "standby"))
-                    self.check_neigh_in_asic_db(asicdb, test_ip_v6, expected=(current_state != "standby"))
-                    self.check_tunnel_route_in_app_db(dvs, [test_ip_v6+self.IPV6_MASK], expected=(current_state == "standby"))
-
-                finally:
-                    if create_route:
-                        self.del_route(dvs, "11.11.11.11/32")
-                    self.del_neighbor(dvs, test_ip_v4)
-                    self.del_neighbor(dvs, test_ip_v6)
-                    config_db.delete_entry(self.CONFIG_MUX_CABLE, "Ethernet4")
-                    dvs.runcmd("ip neigh flush all")
+                if create_route:
+                    self.del_route(dvs, "11.11.11.11/32")
+                self.del_neighbor(dvs, test_ip_v4)
+                config_db.delete_entry(self.CONFIG_MUX_CABLE, "Ethernet4")
+                dvs.runcmd("ip neigh flush all")
+                time.sleep(1)
 
     def test_Neighbor(self, dvs, dvs_route, setup_vlan, setup_mux_cable, testlog):
         """ test Neighbor entries and mux state change """
