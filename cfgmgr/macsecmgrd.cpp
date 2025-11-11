@@ -17,6 +17,7 @@
 #include <select.h>
 
 #include "macsecmgr.h"
+#include "macsecpost.h"
 
 using namespace std;
 using namespace swss;
@@ -76,9 +77,28 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        bool isPostStateReady = false;
+
         SWSS_LOG_NOTICE("starting main loop");
         while (!received_sigterm)
         {
+            /* Don't process any config until POST state is ready */
+            if (!isPostStateReady)
+            {
+                std::string state = getMacsecPostState(&stateDb);
+                if (state == "pass" || state == "disabled")
+                {
+                    SWSS_LOG_NOTICE("FIPS MACSec POST ready: state %s", state.c_str());
+                    isPostStateReady = true;
+                }
+                else
+                {
+                    /* Yield before retry */
+                    sleep(1);
+                    continue;
+                }
+            }
+
             Selectable *sel;
             int ret;
 

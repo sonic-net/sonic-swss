@@ -131,3 +131,33 @@ void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
 void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id)
 {
 }
+
+void on_switch_macsec_post_status_notify(sai_object_id_t switch_id,
+                                         sai_switch_macsec_post_status_t switch_macsec_post_status)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer macsec_post_status_notify(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_switch_macsec_post_status_ntf(switch_id, switch_macsec_post_status);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward switch_macsec_post_status notification to be handled in macsecorch doTask()
+        macsec_post_status_notify.send("switch_macsec_post_status", sdata, values);
+    }
+}
+
+void on_macsec_post_status_notify(sai_object_id_t macsec_id,
+                                  sai_macsec_post_status_t macsec_post_status)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer macsec_post_status_notify(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_macsec_post_status_ntf(macsec_id, macsec_post_status);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward macsec_post_status notification to be handled in macsecorch doTask()
+        macsec_post_status_notify.send("macsec_post_status", sdata, values);
+    }
+}
