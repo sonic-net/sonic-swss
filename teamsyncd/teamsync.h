@@ -10,7 +10,6 @@
 #include "select.h"
 #include "netmsg.h"
 #include <team.h>
-#include <teamdctl.h>
 
 #define TEAMSYNCD_APP_NAME  "teamsyncd"
 // seconds

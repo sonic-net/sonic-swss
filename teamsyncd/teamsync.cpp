@@ -282,7 +282,7 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
             }
 
             struct teamdctl *m_teamdctl = teamdctl_alloc();
-            if (!m_team)
+            if (!m_teamdctl)
             {
                 team_free(m_team);
                 m_team = NULL;
