@@ -103,6 +103,7 @@ void usage()
     cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
+    cout << "    -D Delay in seconds before flex counter processing begins after orchagent startup (default 0)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -369,7 +370,7 @@ int main(int argc, char **argv)
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:D:")) != -1)
     {
         switch (opt)
         {
@@ -487,6 +488,7 @@ int main(int argc, char **argv)
         case 'R':
             gRingMode = true;
             break;
+        case 'D': { gFlexCounterDelaySec = swss::to_int<int>(optarg); } break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -852,6 +854,14 @@ int main(int argc, char **argv)
     if (!WarmStart::isWarmStart())
     {
         syncd_apply_view();
+    }
+
+    if (zmq_server)
+    {
+        // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
+        // use lazy binding and call bind() only after the handler has been registered.
+        zmq_server->bind();
+        SWSS_LOG_NOTICE("ZMQ channel on the northbound side of Orchagent successfully bound: %s, %s", zmq_server_address.c_str(), vrf.c_str());
     }
 
     orchDaemon->start(heartBeatInterval);
