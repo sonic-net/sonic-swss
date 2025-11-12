@@ -174,7 +174,7 @@ void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
     }
     else
     {
-        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[1]);
+        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[0]);
     }
 }
 
@@ -923,39 +923,17 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
 vector<FieldValueTuple>
 RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (protocol != string()) {
-        fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
-    }
-    if (blackhole != string()) {
-        fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
-    }
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
-    if (nexthop_group != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
-    }
-    if (mpls_nh != string()) {
-        fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
-    }
-    if (weight != string()) {
-        fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
-    }
-    if (vni_label != string()) {
-        fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
-    }
-    if (router_mac != string()) {
-        fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
-    }
-    if (segment != string()) {
-        fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
-    }
-    if (seg_src != string()) {
-        fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+    fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
+    fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
+    fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
+    fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
     // Return value optimization will avoid copy of the following vector
     return fvVector;
 }
@@ -965,24 +943,12 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 LabelRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (protocol != string()) {
-        fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
-    }
-    if (blackhole != string()) {
-        fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
-    }
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
-    if (mpls_nh != string()) {
-        fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
-    }
-    if (mpls_pop != string()) {
-        fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
     return fvVector;
 }
 
@@ -991,12 +957,8 @@ LabelRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 VnetRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
     return fvVector;
 }
 
@@ -1005,9 +967,7 @@ VnetRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (endpoint != string()) {
-        fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
     return fvVector;
 }
 
@@ -1016,15 +976,9 @@ VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 NextHopGroupTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
-    if (weight != string()) {
-        fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
     return fvVector;
 }
 
@@ -1033,15 +987,9 @@ NextHopGroupTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 Srv6MySidTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (action != string()) {
-        fvVector.push_back(FieldValueTuple("action", action.c_str()));
-    }
-    if (vrf != string()) {
-        fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
-    }
-    if (adj != string()) {
-        fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("action", action.c_str()));
+    fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
+    fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
     return fvVector;
 }
 
@@ -1050,9 +998,7 @@ Srv6MySidTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 Srv6SidListTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (path != string()) {
-        fvVector.push_back(FieldValueTuple("path", path.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("path", path.c_str()));
     return fvVector;
 }
 
@@ -1220,13 +1166,38 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
     if (nlmsg_type == RTM_DELROUTE)
     {
         string routeTableKeyStr = string(routeTableKey);
-        string srv6SidListTableKey = routeTableKeyStr;
+        string srv6SidListTableKey = vpn_sid_str;
 
         SWSS_LOG_INFO("SRV6 RouteTable del msg: %s", routeTableKeyStr.c_str());
         delWithWarmRestart(
             RouteTableFieldValueTupleWrapper{std::move(routeTableKeyStr), std::string()},
             *m_routeTable);
-        m_srv6SidListTable.del(srv6SidListTableKey);
+
+        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
+        if (it != m_srv6_sidlist_refcnt.end())
+        {
+            assert (it->second > 0);
+
+            /* Decrement the refcount for this SID list */
+            (it->second)--;
+            SWSS_LOG_INFO("Refcount for SID list '%s' decreased to %u",
+                          srv6SidListTableKey.c_str(), it->second);
+
+            /* If the refcount drops to zero, remove the SID list from ApplDB */
+            if (it->second == 0)
+            {
+                m_srv6SidListTable.del(srv6SidListTableKey);
+                SWSS_LOG_INFO("Refcount for SID list '%s' is zero. SID list removed from ApplDB",
+                              srv6SidListTableKey.c_str());
+
+                m_srv6_sidlist_refcnt.erase(srv6SidListTableKey);
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("SID list '%s' not found in the map.", srv6SidListTableKey.c_str());
+        }
+
         return;
     }
     else if (nlmsg_type == RTM_NEWROUTE)
@@ -1234,14 +1205,30 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         string routeTableKeyStr = string(routeTableKey);
         /* Write SID list to SRV6_SID_LIST_TABLE */
 
-        string srv6SidListTableKey = routeTableKeyStr;
+        string srv6SidListTableKey = vpn_sid_str;
 
-        Srv6SidListTableFieldValueTupleWrapper fvw{srv6SidListTableKey};
-        fvw.path = vpn_sid_str;
+        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
+        if (it != m_srv6_sidlist_refcnt.end())
+        {
+            /* SID list already exists: just bump the refcount */
+            (it->second)++;
+            SWSS_LOG_INFO("Refcount for SID list'%s' increased to %u",
+                          srv6SidListTableKey.c_str(), it->second);
+        }
+        else
+        {
+            /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
+            Srv6SidListTableFieldValueTupleWrapper fvw{srv6SidListTableKey};
+            fvw.path = vpn_sid_str;
 
-        setTable(fvw, m_srv6SidListTable);
-        SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
-                        srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+            setTable(fvw, m_srv6SidListTable);
+            SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
+                           srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+
+            m_srv6_sidlist_refcnt[srv6SidListTableKey] = 1;
+            SWSS_LOG_INFO("SID list '%s' created and refcount initialized to 1",
+                          srv6SidListTableKey.c_str());
+        }
 
         /* Write route to ROUTE_TABLE */
 
