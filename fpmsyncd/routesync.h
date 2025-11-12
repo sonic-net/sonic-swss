@@ -59,7 +59,6 @@ class FieldValueTupleWrapperBase {
         // then we would like to atomically cleanup earlier fields and set the new
         // fields in the hash-set in redis.
         vector<KeyOpFieldsValuesTuple> kfvVector;
-        kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}});
         auto fvVector = fieldValueTupleVector();
         kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "SET", fvVector});
         return kfvVector;
@@ -83,7 +82,7 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
     string protocol = string();
-    string blackhole = string();
+    string blackhole = string("false");
     string nexthop = string();
     string ifname = string();
     string nexthop_group = string();
@@ -107,7 +106,7 @@ class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
     string protocol = string();
-    string blackhole = string();
+    string blackhole = string("false");
     string nexthop = string();
     string ifname = string();
     string mpls_nh = string();
