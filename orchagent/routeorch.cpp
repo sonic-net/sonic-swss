@@ -1858,6 +1858,7 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
             continue;
         }
 
+        // TODO: Form a bulker context and use the bulker set operation
         next_hop_id = m_neighOrch->getNextHopId(nextHop);
         SWSS_LOG_INFO("Updating route %s with nexthop %" PRIu64, (*rt).prefix.to_string().c_str(), (uint64_t)next_hop_id);
 
