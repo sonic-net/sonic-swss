@@ -74,6 +74,8 @@ sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
 sai_icmp_echo_api_t*        sai_icmp_echo_api;
 sai_my_mac_api_t*           sai_my_mac_api;
+sai_ipmc_api_t* sai_ipmc_api;
+sai_rpf_group_api_t* sai_rpf_group_api;
 sai_generic_programmable_api_t* sai_generic_programmable_api;
 sai_dash_appliance_api_t*           sai_dash_appliance_api;
 sai_dash_acl_api_t*                 sai_dash_acl_api;
@@ -232,6 +234,8 @@ void initSaiApi()
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
     sai_api_query(SAI_API_ICMP_ECHO,            (void **)&sai_icmp_echo_api);
     sai_api_query(SAI_API_MY_MAC,               (void **)&sai_my_mac_api);
+    sai_api_query(SAI_API_IPMC, (void**)&sai_ipmc_api);
+    sai_api_query(SAI_API_RPF_GROUP, (void**)&sai_rpf_group_api);
     sai_api_query(SAI_API_GENERIC_PROGRAMMABLE, (void **)&sai_generic_programmable_api);
     sai_api_query((sai_api_t)SAI_API_DASH_APPLIANCE,            (void**)&sai_dash_appliance_api);
     sai_api_query((sai_api_t)SAI_API_DASH_ACL,                  (void**)&sai_dash_acl_api);
@@ -291,6 +295,8 @@ void initSaiApi()
     sai_log_set(SAI_API_ICMP_ECHO,              SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MY_MAC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_GENERIC_PROGRAMMABLE,   SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_IPMC, SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_RPF_GROUP, SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TWAMP,                  SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TAM,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_STP,                    SAI_LOG_LEVEL_NOTICE);
