@@ -117,43 +117,43 @@ impl OtelActor {
         self.export_otel_metrics(&otel_metrics).await;
     }
 
-    /// Print metrics to console
     async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
         self.console_reports += 1;
 
-        println!("   [OTel Report #{}] OpenTelemetry Metrics Export", self.console_reports);
-        println!("   Service: {}", otel_metrics.service_name);
-        println!("   Scope: {} v{}", otel_metrics.scope_name, otel_metrics.scope_version);
-        println!("   Total Gauges: {}", otel_metrics.len());
-        println!("   Messages Received: {}", self.messages_received);
-        println!("   Exports: {} (Failures: {})", self.exports_performed, self.export_failures);
+        info!(
+            "[OTel Report #{}] Service: {}, Scope: {} v{}, Total Gauges: {}, Messages Received: {}, Exports: {} (Failures: {})",
+            self.console_reports,
+            otel_metrics.service_name,
+            otel_metrics.scope_name,
+            otel_metrics.scope_version,
+            otel_metrics.len(),
+            self.messages_received,
+            self.exports_performed,
+            self.export_failures
+        );
 
         if !otel_metrics.is_empty() {
-            println!("Gauge Metrics:");
+            info!("Gauge Metrics:");
             for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
-                let data_point = &gauge.data_points[0]; // Each gauge has one data point
+                let data_point = &gauge.data_points[0];
 
-                // Print the gauge with full details
-                println!("      [{:3}] Gauge: {}", index + 1, gauge.name);
-                println!("           Value: {}", data_point.value);
-                println!("           Unit: {}", gauge.unit);
-                println!("           Time: {}ns", data_point.time_unix_nano);
-                println!("           Description: {}", gauge.description);
+                info!("[{:3}] Gauge: {}", index + 1, gauge.name);
+                info!("Value: {}", data_point.value);
+                info!("Unit: {}", gauge.unit);
+                info!("Time: {}ns", data_point.time_unix_nano);
+                info!("Description: {}", gauge.description);
 
-                // Print attributes
                 if !data_point.attributes.is_empty() {
-                    println!("           Attributes:");
+                    info!("Attributes:");
                     for attr in &data_point.attributes {
-                        println!("             - {}={}", attr.key, attr.value);
+                        info!("  - {}={}", attr.key, attr.value);
                     }
                 }
 
-                // Print the raw OtelGauge struct for debugging
-                println!("           Raw Gauge: {:#?}", gauge);
-                println!();
+                debug!("Raw Gauge: {:#?}", gauge);
             }
         }
-        println!(); // Blank line
+        
     }
 
     /// Export metrics to OpenTelemetry collector
@@ -224,16 +224,15 @@ impl OtelActor {
     }
 
     pub fn print_conversion_report(sai_stats: &SAIStats, otel_metrics: &OtelMetrics) {
-        println!(" [Conversion Report] SAI Stats → OpenTelemetry Gauges");
-        println!("   Conversion timestamp: {}", sai_stats.observation_time);
-        println!("   Input: {} SAI statistics", sai_stats.stats.len());
-        println!("   Output: {} OpenTelemetry gauges", otel_metrics.len());
-        println!();
+        info!("[Conversion Report] SAI Stats → OpenTelemetry Gauges");
+        info!("Conversion timestamp: {}", sai_stats.observation_time);
+        info!("Input: {} SAI statistics", sai_stats.stats.len());
+        info!("Output: {} OpenTelemetry gauges", otel_metrics.len());
 
-        println!("BEFORE - Original SAI Statistics:");
+        info!("BEFORE - Original SAI Statistics:");
         for (index, sai_stat) in sai_stats.stats.iter().enumerate().take(10) {
-            println!(
-                "   [{:2}] Object: {:20} | Type: {:3} | Stat: {:3} | Counter: {:>12}",
+            info!(
+                "[{:2}] Object: {:20} | Type: {:3} | Stat: {:3} | Counter: {:>12}",
                 index + 1,
                 sai_stat.object_name,
                 sai_stat.type_id,
@@ -241,16 +240,12 @@ impl OtelActor {
                 sai_stat.counter
             );
         }
-        if sai_stats.stats.len() > 10 {
-            println!("   ... and {} more SAI statistics", sai_stats.stats.len() - 10);
-        }
-        println!();
 
-        println!("AFTER - Converted OpenTelemetry Gauges:");
+        info!("AFTER - Converted OpenTelemetry Gauges:");
         for (index, gauge) in otel_metrics.gauges.iter().enumerate().take(10) {
             let data_point = &gauge.data_points[0];
-            println!(
-                "   [{:2}] Metric: {:35} | Value: {:>12} | Time: {}ns",
+            info!(
+                "[{:2}] Metric: {:35} | Value: {:>12} | Time: {}ns",
                 index + 1,
                 gauge.name,
                 data_point.value,
@@ -262,18 +257,11 @@ impl OtelActor {
                 .map(|attr| format!("{}={}", attr.key, attr.value))
                 .collect();
             if !attrs.is_empty() {
-                println!("       Attributes: [{}]", attrs.join(", "));
+                info!("Attributes: [{}]", attrs.join(", "));
             }
-            println!("       Description: {}", gauge.description);
-            println!();
+            info!("Description: {}", gauge.description);
         }
-        if otel_metrics.gauges.len() > 10 {
-            println!("   ... and {} more OpenTelemetry gauges", otel_metrics.gauges.len() - 10);
-        }
-
-        println!("Conversion completed successfully!");
-        println!("═══════════════════════════════════════════════════════════════════");
-        println!();
+        info!("Conversion completed successfully!");
     }
 
     /// Shutdown the actor
