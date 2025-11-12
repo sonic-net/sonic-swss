@@ -546,7 +546,7 @@ int main(int argc, char **argv)
     else
     {
         SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
-        zmq_server = create_zmq_server(zmq_server_address, vrf);
+        zmq_server = create_zmq_server(zmq_server_address);
     }
 
     // Get switch_type
