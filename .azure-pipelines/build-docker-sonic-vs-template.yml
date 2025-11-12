@@ -69,7 +69,7 @@ jobs:
   timeoutInMinutes: ${{ parameters.timeout }}
 
   pool:
-    vmImage: 'ubuntu-20.04'
+    vmImage: 'ubuntu-24.04'
 
   steps:
   - task: DownloadPipelineArtifact@2

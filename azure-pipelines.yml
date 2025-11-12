@@ -70,7 +70,7 @@ stages:
     parameters:
       arch: armhf
       timeout: 240
-      pool: sonicbld-armhf
+      pool: sonicso1ES-armhf
       sonic_slave: sonic-slave-bullseye-armhf
       common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common.armhf
@@ -82,7 +82,7 @@ stages:
     parameters:
       arch: arm64
       timeout: 240
-      pool: sonicbld-arm64
+      pool: sonicso1ES-arm64
       sonic_slave: sonic-slave-bullseye-arm64
       common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common.arm64
