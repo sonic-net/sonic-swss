@@ -25,6 +25,8 @@ extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
 
+extern bool isChassisDbInUse();
+
 const int neighorch_pri = 30;
 
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
@@ -46,13 +48,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         gBfdOrch->attach(this);
     }
 
-    // check if this is a single asic voq
-    if (chassisAppDb == nullptr)
-    {
-        m_singleVoq = true;
-    }
-
-    if(gMySwitchType == "voq" && !m_singleVoq)
+    if(isChassisDbInUse())
     {
         //Add subscriber to process VOQ system neigh
         tableName = CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME;
@@ -1212,7 +1208,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Sync the neighbor to add to the CHASSIS_APP_DB
         voqSyncAddNeigh(alias, ip_address, macAddress, neighbor_entry);
@@ -1361,7 +1357,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);
@@ -1932,10 +1928,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                         if (removeNeighbor(ctx))
                         {
                             //neigh successfully deleted from SAI. Set STATE DB to signal to remove entries from kernel
-                            if (!m_singleVoq)
-                            {
-                                m_stateSystemNeighTable->del(state_key);
-                            }
+                            m_stateSystemNeighTable->del(state_key);
                         }
                         else
                         {
@@ -1985,10 +1978,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     vector<FieldValueTuple> fvVector;
                     FieldValueTuple mac("neigh", mac_address.to_string());
                     fvVector.push_back(mac);
-                    if (!m_singleVoq)
-                    {
-                        m_stateSystemNeighTable->set(state_key, fvVector);
-                    }
+                    m_stateSystemNeighTable->set(state_key, fvVector);
 
                     it = consumer.m_toSync.erase(it);
                 }
@@ -2025,10 +2015,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 if (removeNeighbor(ctx))
                 {
                     //neigh successfully deleted from SAI. Set STATE DB to signal to remove entries from kernel
-                    if (!m_singleVoq)
-                    {
-                        m_stateSystemNeighTable->del(state_key);
-                    }
+                    m_stateSystemNeighTable->del(state_key);
 
                     it = consumer.m_toSync.erase(it);
                 }
@@ -2177,10 +2164,6 @@ bool NeighOrch::delInbandNeighbor(string alias, IpAddress ip_address)
 
 bool NeighOrch::getSystemPortNeighEncapIndex(string &alias, IpAddress &ip, uint32_t &encap_index)
 {
-    if (m_singleVoq)
-    {
-        return true;
-    }
 
     string value;
     string key = alias + m_tableVoqSystemNeighTable->getTableNameSeparator().c_str() + ip.to_string();
@@ -2223,10 +2206,6 @@ bool NeighOrch::addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attrib
 
 void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry)
 {
-    if (m_singleVoq)
-    {
-        return;
-    }
 
     sai_attribute_t attr;
     sai_status_t status;
@@ -2298,10 +2277,6 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
 
 void NeighOrch::voqSyncDelNeigh(string &alias, IpAddress &ip_address)
 {
-    if (m_singleVoq)
-    {
-        return;
-    }
 
     //Sync only local neigh. Confirm for the local neigh and
     //get the system port alias for key for syncing to CHASSIS_APP_DB

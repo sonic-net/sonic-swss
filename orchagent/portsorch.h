@@ -260,7 +260,6 @@ public:
 
 private:
     unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
-    bool m_singleVoq = false;
     unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;

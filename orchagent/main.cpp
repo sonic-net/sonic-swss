@@ -78,6 +78,12 @@ string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
 uint32_t create_switch_timeout = 0;
+bool gMultiAsicVoq = false;
+
+bool isChassisDbInUse()
+{
+    return gMySwitchType == "voq" && gMultiAsicVoq;
+}
 
 void usage()
 {
@@ -626,7 +632,9 @@ int main(int argc, char **argv)
         chassis_app_db = nullptr;
         if (isChassisAppDbPresent())
        	{
-            try {
+            gMultiAsicVoq = true;
+            try
+            {
                 chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
             }
             catch (const std::exception& e)

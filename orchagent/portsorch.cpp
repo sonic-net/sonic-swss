@@ -69,6 +69,8 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 extern event_handle_t g_events_handle;
+extern bool isChassisDbInUse();
+extern bool gMultiAsicVoq;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -972,13 +974,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch::addExecutor(portHostTxReadyNotificatier);
     }
 
-    // check if this is a single asic voq
-    if (chassisAppDb == nullptr)
-    {
-        m_singleVoq = true;
-    }
-
-    if (gMySwitchType == "voq" && !m_singleVoq)
+    if (isChassisDbInUse())
     {
         string tableName;
         //Add subscriber to process system LAG (System PortChannel) table
@@ -7561,7 +7557,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
             switch_id = gVoqMySwitchId;
             system_lag_alias = gMyHostName + "|" + gMyAsicName + "|" + lag_alias;
 
-	    if (!m_singleVoq)
+	    if (gMultiAsicVoq)
 	    {
                 // Allocate unique lag id
                 spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
@@ -7682,7 +7678,7 @@ bool PortsOrch::removeLag(Port lag)
 
     m_counterLagTable->hdel("", lag.m_alias);
 
-    if (gMySwitchType == "voq" && !m_singleVoq)
+    if (isChassisDbInUse())
     {
         // Free the lag id, if this is local LAG
 
@@ -9080,7 +9076,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         }
     }
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         if (gIntfsOrch->isLocalSystemPortIntf(port.m_alias))
         {
@@ -10228,7 +10224,7 @@ void PortsOrch::voqSyncAddLag (Port &lag)
     // Sync only local lag add to CHASSIS_APP_DB
 
     if (switch_id != gVoqMySwitchId ||
-       m_singleVoq)
+       !gMultiAsicVoq)
     {
         return;
     }
@@ -10251,8 +10247,7 @@ void PortsOrch::voqSyncAddLag (Port &lag)
 void PortsOrch::voqSyncDelLag(Port &lag)
 {
     // Sync only local lag del to CHASSIS_APP_DB
-    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId ||
-       m_singleVoq)
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
     {
         return;
     }
@@ -10266,7 +10261,7 @@ void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port, string status)
 {
     // Sync only local lag's member add to CHASSIS_APP_DB
     if (lag.m_system_lag_info.switch_id != gVoqMySwitchId ||
-       m_singleVoq)
+       !gMultiAsicVoq)
     {
         return;
     }
@@ -10283,7 +10278,7 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
 {
     // Sync only local lag's member del to CHASSIS_APP_DB
     if (lag.m_system_lag_info.switch_id != gVoqMySwitchId ||
-       m_singleVoq)
+       !gMultiAsicVoq)
     {
         return;
     }
