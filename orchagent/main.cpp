@@ -83,7 +83,7 @@ bool gMultiAsicVoq = false;
 
 bool isChassisDbInUse()
 {
-    return gMySwitchType == "voq" && gMultiAsicVoq;
+    return gMultiAsicVoq;
 }
 
 void usage()
