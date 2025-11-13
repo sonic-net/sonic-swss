@@ -1,13 +1,7 @@
-#ifndef SWSS_RETRY_CACHE_H
-#define SWSS_RETRY_CACHE_H
+#pragma once
 
 #include <unordered_set>
 #include <unordered_map>
-#include <sys/time.h>
-#include <fstream>
-#include <sstream>
-#include <map>
-#include "timestamp.h"
 #include "recorder.h"
 #include "rediscommand.h"
 
@@ -22,7 +16,6 @@ enum ConstraintType
     RETRY_CST_PIC_REF,      // context refcnt nonzero
     RETRY_CST_ECMP          // ecmp resources exhausted
 };
-
 
 static inline std::ostream& operator<<(std::ostream& os, ConstraintType t) {
     switch(t) {
@@ -210,4 +203,3 @@ public:
 
 typedef std::unordered_map<std::string, std::shared_ptr<RetryCache>> RetryCacheMap;
 
-#endif /* SWSS_RETRY_CACHE_H */
