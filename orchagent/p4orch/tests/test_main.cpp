@@ -306,6 +306,7 @@ int main(int argc, char *argv[])
 
 void setFlexCounterGroupParameter(const std::string &group,
                                   const std::string &poll_interval,
+                                  const std::string &secondary_poll_factor,
                                   const std::string &stats_mode,
                                   const std::string &plugin_name,
                                   const std::string &plugins,
@@ -332,6 +333,13 @@ void setFlexCounterGroupOperation(const std::string &group,
 void setFlexCounterGroupStatsMode(const std::string &group,
                                   const std::string &stats_mode,
                                   bool is_gearbox)
+{
+    return;
+}
+
+void setFlexCounterGroupSecondaryPollFactor(const std::string &group,
+                                            const std::string &secondary_poll_factor,
+                                            bool is_gearbox)
 {
     return;
 }
