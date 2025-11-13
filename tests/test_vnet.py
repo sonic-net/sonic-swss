@@ -3142,7 +3142,7 @@ class TestVnetOrch(object):
         # bring up interface
         self.set_admin_status("Ethernet8", "up")
 
-        # add neighbor for direcetly connected endpoint
+        # add neighbor for directly connected endpoint
         self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
 
         vnet_obj.fetch_exist_entries(dvs)
