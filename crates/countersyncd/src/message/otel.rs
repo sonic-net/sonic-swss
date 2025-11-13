@@ -9,6 +9,7 @@ use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value},
     metrics::v1::{NumberDataPoint, number_data_point},
 };
+use log::{info, error, debug, warn};
 
 /// OpenTelemetry Gauge representation for SAI statistics
 ///
@@ -120,8 +121,8 @@ impl OtelGauge {
 
     /// Creates multiple OtelGauges from SAI statistics collection
     pub fn from_sai_stats(sai_stats: &SAIStats) -> Vec<Self> {
-        // 1970-01-01 00:00:00 UTC 
-        let observation_time_nano = 0u64;
+        // Use the observation_time from the SAI statistics
+        let observation_time_nano = sai_stats.observation_time;
 
         sai_stats.stats
             .iter()
@@ -378,41 +379,29 @@ mod tests {
     }
 
 #[test]
-fn test_realistic_sai_to_otel_conversion() {
-    // Create realistic SAI data similar to what would come from IPFIX
-    let realistic_stats = vec![
+fn test_sai_to_otel_gauge_conversion() {
+    let test_stats = vec![
         SAIStat { object_name: "Ethernet0".to_string(), type_id: 1, stat_id: 1, counter: 1000000 },
         SAIStat { object_name: "Ethernet0".to_string(), type_id: 1, stat_id: 2, counter: 2000000 },
         SAIStat { object_name: "Ethernet1".to_string(), type_id: 1, stat_id: 1, counter: 1500000 },
         SAIStat { object_name: "BufferPool_ingress_lossless_pool".to_string(), type_id: 24, stat_id: 1, counter: 500000 },
     ];
 
-    let sai_stats = SAIStats::new(1672531200, realistic_stats);
+    let sai_stats = SAIStats::new(1672531200, test_stats);
     let otel_metrics = OtelMetrics::from_sai_stats(&sai_stats);
 
-    // Print the conversion for debugging
-    println!(" [Test] SAI to OpenTelemetry Conversion Debug Output");
-    println!("   Input: {} SAI statistics", sai_stats.stats.len());
-    println!("   Output: {} OpenTelemetry gauges", otel_metrics.len());
-    println!();
-
-    // Print all converted gauges
     for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
         let data_point = &gauge.data_points[0];
-        println!("   [{}] Gauge: {}", index + 1, gauge.name);
-        println!("       Value: {}", data_point.value);
-        println!("       Unit: {}", gauge.unit);
-        println!("       Time: {}ns", data_point.time_unix_nano);
-        println!("       Description: {}", gauge.description);
+        info!("[{}] Gauge: {}", index + 1, gauge.name);
+        info!("Value: {}, Unit: {}, Timestamp: {}ns", data_point.value, gauge.unit, data_point.time_unix_nano);
+        info!("Description: {}", gauge.description);
 
         if !data_point.attributes.is_empty() {
-            println!("       Attributes:");
             for attr in &data_point.attributes {
-                println!("         - {}={}", attr.key, attr.value);
+                debug!("  - {}={}", attr.key, attr.value);
             }
         }
-        println!("       Raw Debug: {:#?}", gauge);
-        println!();
+        info!("Raw gauge: {:#?}", gauge);
     }
 
     assert_eq!(otel_metrics.len(), 4);
