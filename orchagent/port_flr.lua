@@ -12,6 +12,10 @@ end
 
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
+local poll_interval = tonumber(ARGV[3])                 -- In milli Seconds
+local secondary_poll_factor = tonumber(ARGV[4])
+
+local FEC_FLR_POLL_INTERVAL = (poll_interval/1000) * secondary_poll_factor  -- In Seconds
 
 local APPL_DB         = 0      -- Application database
 local COUNTERS_DB     = 2      -- Counters and statistics
@@ -28,7 +32,6 @@ local rates_table_name = "RATES"
 local bookmark_table_name = "RATES:GLOBAL"
 local BIN_FILTER_VALUE = 10
 local MIN_SIGNIFICANT_BINS = 2
-local FEC_FLR_POLL_INTERVAL = 120
 local MFC = 8
 
 local function get_port_name_from_oid(port)

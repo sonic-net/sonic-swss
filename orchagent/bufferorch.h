@@ -14,6 +14,7 @@
 
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
+#define BUFFER_POOL_WATERMARK_DEFAULT_SECONDARY_POLL_FACTOR "0"
 
 const string buffer_size_field_name         = "size";
 const string buffer_pool_type_field_name    = "type";

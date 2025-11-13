@@ -1388,6 +1388,7 @@ void CoppOrch::initTrapRatePlugin()
 
     setFlexCounterGroupParameter(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP,
                                  "", // Do not touch poll interval
+                                 "",
                                  STATS_MODE_READ,
                                  FLOW_COUNTER_PLUGIN_FIELD,
                                  trapSha);
