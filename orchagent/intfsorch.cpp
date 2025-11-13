@@ -1774,3 +1774,4 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
+
