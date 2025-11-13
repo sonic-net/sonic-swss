@@ -24,7 +24,7 @@ enum ConstraintType
 };
 
 
-inline std::ostream& operator<<(std::ostream& os, ConstraintType t) {
+static inline std::ostream& operator<<(std::ostream& os, ConstraintType t) {
     switch(t) {
         case ConstraintType::RETRY_CST_DUMMY:   return os << "RETRY_CST_DUMMY";
         case ConstraintType::RETRY_CST_NHG:   return os << "RETRY_CST_NHG";
@@ -41,7 +41,7 @@ using Constraint = std::pair<ConstraintType, ConstraintData>;
 
 const Constraint DUMMY_CONSTRAINT{RETRY_CST_DUMMY, ""};
 
-inline Constraint make_constraint(ConstraintType type, ConstraintData data = "") {
+static inline Constraint make_constraint(ConstraintType type, ConstraintData data = "") {
     return {type, data};
 }
 
