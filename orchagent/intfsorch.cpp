@@ -1671,7 +1671,6 @@ bool IntfsOrch::isLocalSystemPortIntf(string alias)
 
 void IntfsOrch::voqSyncAddIntf(string &alias)
 {
-
     //Sync only local interface. Confirm for the local interface and
     //get the system port alias for key for syncing to CHASSIS_APP_DB
     Port port;
@@ -1712,7 +1711,6 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
 
 void IntfsOrch::voqSyncDelIntf(string &alias)
 {
-
     //Sync only local interface. Confirm for the local interface and
     //get the system port alias for key for syncing to CHASSIS_APP_DB
     Port port;
@@ -1746,7 +1744,6 @@ void IntfsOrch::voqSyncDelIntf(string &alias)
 
 void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
 {
-
     Port port;
     string port_alias;
     if(gPortsOrch->getPort(alias, port))

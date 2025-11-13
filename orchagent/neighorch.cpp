@@ -2188,7 +2188,6 @@ bool NeighOrch::delInbandNeighbor(string alias, IpAddress ip_address)
 
 bool NeighOrch::getSystemPortNeighEncapIndex(string &alias, IpAddress &ip, uint32_t &encap_index)
 {
-
     string value;
     string key = alias + m_tableVoqSystemNeighTable->getTableNameSeparator().c_str() + ip.to_string();
 
@@ -2230,7 +2229,6 @@ bool NeighOrch::addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attrib
 
 void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry)
 {
-
     sai_attribute_t attr;
     sai_status_t status;
 
@@ -2301,7 +2299,6 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
 
 void NeighOrch::voqSyncDelNeigh(string &alias, IpAddress &ip_address)
 {
-
     //Sync only local neigh. Confirm for the local neigh and
     //get the system port alias for key for syncing to CHASSIS_APP_DB
     Port port;
