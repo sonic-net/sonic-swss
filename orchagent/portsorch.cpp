@@ -5987,7 +5987,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 }
             }
 
-            if ((gMySwitchType == "voq") && (port.m_type != Port::SYSTEM))
+            if (isChassisDbInUse() && (port.m_type != Port::SYSTEM))
             {
                //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
                voqSyncAddLagMember(lag, port, status);
@@ -7820,7 +7820,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (gMySwitchType == "voq")
+    if (isChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncAddLagMember(lag, port, member_status);
@@ -7868,7 +7868,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (gMySwitchType == "voq")
+    if (isChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncDelLagMember(lag, port);
@@ -10289,8 +10289,7 @@ void PortsOrch::voqSyncDelLag(Port &lag)
 void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port, string status)
 {
     // Sync only local lag's member add to CHASSIS_APP_DB
-    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId ||
-       !gMultiAsicVoq)
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
     {
         return;
     }
@@ -10306,8 +10305,7 @@ void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port, string status)
 void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
 {
     // Sync only local lag's member del to CHASSIS_APP_DB
-    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId ||
-       !gMultiAsicVoq)
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
     {
         return;
     }
