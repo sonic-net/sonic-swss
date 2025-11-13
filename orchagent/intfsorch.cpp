@@ -96,6 +96,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
 
     setFlexCounterGroupParameter(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  RIF_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 RIF_DEFAULT_SECONDARY_POLL_FACTOR,
                                  STATS_MODE_READ,
                                  RIF_PLUGIN_FIELD,
                                  rifRateSha);
