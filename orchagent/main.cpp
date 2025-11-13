@@ -32,6 +32,7 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+#include "macsecpost.h"
 
 using namespace std;
 using namespace swss;
@@ -87,7 +88,7 @@ bool isChassisDbInUse()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -111,6 +112,7 @@ void usage()
     cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
+    cout << "    -M enable SAI MACSec POST" << endl;
     cout << "    -D Delay in seconds before flex counter processing begins after orchagent startup (default 0)" << endl;
 }
 
@@ -390,7 +392,10 @@ int main(int argc, char **argv)
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:D:")) != -1)
+    // Disable SAI MACSec POST by default. Use option -M to enable it.
+    bool macsec_post_enabled = false;
+
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:D:M")) != -1)
     {
         switch (opt)
         {
@@ -508,6 +513,9 @@ int main(int argc, char **argv)
         case 'R':
             gRingMode = true;
             break;
+         case 'M':
+            macsec_post_enabled = true;
+            break;
         case 'D': { gFlexCounterDelaySec = swss::to_int<int>(optarg); } break;
         default: /* '?' */
             exit(EXIT_FAILURE);
@@ -558,7 +566,7 @@ int main(int argc, char **argv)
     else
     {
         SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
-        zmq_server = create_zmq_server(zmq_server_address, vrf);
+        zmq_server = create_zmq_server(zmq_server_address);
     }
 
     // Get switch_type
@@ -677,6 +685,29 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
+    string macsec_post_state;
+    if (gMySwitchType != "fabric" && macsec_post_enabled)
+    {
+        macsec_post_state = "switch-level-post-in-progress";
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_ENABLE_POST;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_switch_macsec_post_status_notify;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_macsec_post_status_notify;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        macsec_post_state = "disabled";
+    }
+    setMacsecPostState(&state_db, macsec_post_state);
+
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
     attr.value.u64 = gSwitchId;
@@ -789,6 +820,36 @@ int main(int argc, char **argv)
 
         gVirtualRouterId = attr.value.oid;
         SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
+
+        /* Query MACSec POST capability and set POST state in state DB accordingly */
+        if (macsec_post_enabled)
+        {
+            sai_attr_capability_t post_capability;
+            if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                               SAI_SWITCH_ATTR_MACSEC_ENABLE_POST,
+                                               &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is supported in switch init, and it was already enabled in switch init.
+                SWSS_LOG_NOTICE("MACSec POST enabled in switch init");
+            }
+            else if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MACSEC,
+                                                    SAI_MACSEC_ATTR_ENABLE_POST,
+                                                    &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is only supported in MACSec init. Set POST state to notify MACSecOrch
+                // to perform POST.
+                setMacsecPostState(&state_db, "macsec-level-post-in-progress");
+                SWSS_LOG_NOTICE("MACSec POST will be enabled in MACSec init");
+            }
+            else
+            {
+                // POST is not supported by SAI. Don't declare that SAI POST fails.
+                setMacsecPostState(&state_db, "disabled");
+                SWSS_LOG_ERROR("MACSec POST is not supported by SAI");
+            }
+        }
 
         /* Get the NAT supported info */
         attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;

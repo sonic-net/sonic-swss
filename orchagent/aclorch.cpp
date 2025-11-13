@@ -112,7 +112,7 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
 };
 
-static acl_rule_attr_lookup_t aclInnerActionLookup = 
+static acl_rule_attr_lookup_t aclInnerActionLookup =
 {
     { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC},
 };
@@ -2186,8 +2186,8 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
             memcpy(actionData.parameter.mac, inner_src_mac_addr.getMac(), sizeof(sai_mac_t));
             action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
             SWSS_LOG_INFO("Converting the Mac address %s to SAI acl action parameter", _attr_value.c_str());
-        }   
-         
+        }
+
         else
         {
             return false;
@@ -2216,7 +2216,7 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
 
  void AclRuleInnerSrcMacRewrite::onUpdate(SubjectType type, void *cntx)
  {
-    //do nothing  
+    //do nothing
  }
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
@@ -2522,7 +2522,7 @@ void AclRuleUnderlaySetDscp::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
-        
+
 AclTable::AclTable(AclOrch *pAclOrch, string id) noexcept : m_pAclOrch(pAclOrch), id(id)
 {
 
@@ -4419,7 +4419,7 @@ EgressSetDscpTableStatus AclOrch::addEgrSetDscpTable(string table_id, AclTable &
         if (!isAclMetaDataSupported())
         {
             SWSS_LOG_ERROR("Platform does not support MARK_META/MARK_METAV6 tables.");
-            return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_SUPPORTED; 
+            return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_SUPPORTED;
         }
         AclTable egrSetDscpTable(this);
 
