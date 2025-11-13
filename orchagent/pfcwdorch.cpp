@@ -2,6 +2,7 @@
 #include <inttypes.h>
 #include <unordered_map>
 #include "pfcwdorch.h"
+#include "flex_counter_manager.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
 #include "converter.h"
@@ -719,7 +720,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     }
 
     this->m_pfcwdFlexCounterManager = make_shared<FlexCounterTaggedCachedManager<sai_object_type_t>>(
-        "PFC_WD", StatsMode::READ, m_pollInterval, true, make_pair(QUEUE_PLUGIN_FIELD, plugins));
+        "PFC_WD", StatsMode::READ, m_pollInterval, true, FLEX_COUNTER_DEFAULT_SECONDARY_POLL_FACTOR, make_pair(QUEUE_PLUGIN_FIELD, plugins));
 
     auto consumer = new swss::NotificationConsumer(
             this->getCountersDb().get(),
