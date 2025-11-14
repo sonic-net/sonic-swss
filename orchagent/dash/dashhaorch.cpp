@@ -651,6 +651,9 @@ bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
     }
     SWSS_LOG_NOTICE("Set HA Scope flow reconcile request for %s", key.c_str());
 
+    std::vector<FieldValueTuple> fvs = {{"flow_reconcile_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
+
     return true;
 }
 
@@ -677,6 +680,9 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
         }
     }
     SWSS_LOG_NOTICE("Set HA Scope activate role request for %s", key.c_str());
+
+    std::vector<FieldValueTuple> fvs = {{"activate_role_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
 
     return true;
 }
@@ -1025,6 +1031,13 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                         {
                             fvs.push_back({"activate_role_pending", "true"});
                             SWSS_LOG_NOTICE("DPU is pending on role activation for %s", key.c_str());
+                        }
+                        else if (in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_STANDALONE,
+                                                                 SAI_DASH_HA_STATE_ACTIVE,
+                                                                 SAI_DASH_HA_STATE_STANDBY}))
+                        {
+                            fvs.push_back({"brainsplit_recover_pending", "false"});
+                            SWSS_LOG_NOTICE("DPU reached stable HA state for %s", key.c_str());
                         }
 
                         fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
