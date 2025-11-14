@@ -367,6 +367,108 @@ namespace sflow_test
             ASSERT_FALSE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
         }
     }
+
+    /* Test enabling/disabling SFLOW drop monitor */
+    TEST_F(SflowOrchTest, SflowDropMonitorEnableDisable)
+    {
+        // SFLOW drop monitor only enable when SFLOW is enabled
+        MockSflowOrch mock_orch;
+        {
+            auto table1 = deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "global",
+                        SET_COMMAND,
+                        {
+                            {"admin_state", "down"},
+                            {"drop_monitor_limit", "100"}
+                        }
+                    }
+                });
+            mock_orch.doSflowTableTask(table1);
+
+            ASSERT_FALSE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+            ASSERT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+        }
+        {
+            auto table2 = deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "global",
+                        SET_COMMAND,
+                        {
+                            {"admin_state", "up"},
+                            {"drop_monitor_limit", "100"}
+                        }
+                    }
+                });
+            mock_orch.doSflowTableTask(table2);
+
+            ASSERT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+            ASSERT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+        }
+        // Disable SFLOW drop monitor by setting rate limit to 0
+        {
+            auto table3 = deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "global",
+                        SET_COMMAND,
+                        {
+                            {"admin_state", "up"},
+                            {"drop_monitor_limit", "0"}
+                        }
+                    }
+                });
+            mock_orch.doSflowTableTask(table3);
+
+            ASSERT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+            ASSERT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+        }
+    }
+
+    /* Test changing SFLOW drop monitor limit rate */
+    TEST_F(SflowOrchTest, SflowDropMonitorChangeLimitRate)
+    {
+        MockSflowOrch mock_orch;
+        {
+            auto table1 = deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "global",
+                        SET_COMMAND,
+                        {
+                            {"admin_state", "up"},
+                            {"drop_monitor_limit", "100"}
+                        }
+                    }
+                });
+            mock_orch.doSflowTableTask(table1);
+
+            ASSERT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+            ASSERT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+            ASSERT_EQ(Portal::SflowOrchInternal::getSflowDropMonitorLimitRate(mock_orch.get()), 100);
+        }
+        {
+            auto table2 = deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "global",
+                        SET_COMMAND,
+                        {
+                            {"admin_state", "up"},
+                            {"drop_monitor_limit", "200"}
+                        }
+                    }
+                });
+            mock_orch.doSflowTableTask(table2);
+
+            ASSERT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+            ASSERT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+            ASSERT_EQ(Portal::SflowOrchInternal::getSflowDropMonitorLimitRate(mock_orch.get()), 200);
+        }
+    }
+
 }
 
 
