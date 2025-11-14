@@ -32,6 +32,8 @@
 #define INVALID_MODE  -1
 
 #define MAX_VLANS 4096
+#define MIN_VLAN_ID 1
+#define MAX_VLAN_ID 4095
 
 // Maximum number of instances supported
 #define L2_INSTANCE_MAX             MAX_VLANS
@@ -73,6 +75,7 @@ typedef enum STP_MSG_TYPE {
     STP_STPCTL_MSG,
     STP_MST_GLOBAL_CONFIG,
     STP_MST_INST_CONFIG,
+    STP_MST_VLAN_PORT_LIST_CONFIG,
     STP_MST_INST_PORT_CONFIG,
     STP_MAX_MSG
 } STP_MSG_TYPE;
@@ -225,6 +228,19 @@ typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     int         priority;       // Port priority
 } __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;
 
+typedef struct PORT_LIST {
+    char        intf_name[IFNAMSIZ];
+    int8_t      tagging_mode;
+} PORT_LIST;
+
+typedef struct STP_MST_VLAN_PORT_MAP {
+    uint16_t    vlan_id;
+    uint16_t    port_count;
+    int8_t      stp_mode;
+    uint8_t     add;    
+    PORT_LIST   port_list[0];
+} __attribute__((aligned(4))) STP_MST_VLAN_PORT_MAP;
+
 namespace swss {
 
 class StpMgr : public Orch
@@ -235,7 +251,7 @@ public:
 
     using Orch::doTask;
     void ipcInitStpd();
-    int  sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data);
+    int  sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data, L2_PROTO_MODE protocol);
     MacAddress macAddress;
     bool isPortInitDone(DBConnector *app_db);
     uint16_t getStpMaxInstances(void);    

@@ -73,7 +73,7 @@ int main(int argc, char **argv)
         STP_INIT_READY_MSG msg;
         memset(&msg, 0, sizeof(STP_INIT_READY_MSG));
         msg.max_stp_instances = stpmgr.getStpMaxInstances();
-        stpmgr.sendMsgStpd(STP_INIT_READY, sizeof(msg), (void *)&msg);
+        stpmgr.sendMsgStpd(STP_INIT_READY, sizeof(msg), (void *)&msg, L2_NONE);
 
         // Get Base MAC
         Table table(&conf_db, "DEVICE_METADATA");
