@@ -163,7 +163,7 @@ typedef struct VLAN_ATTR {
     uint8_t padding[3];  // Explicit padding for alignment
     int   inst_id;
     int   vlan_id;
-} __attribute__((packed)) VLAN_ATTR;
+} VLAN_ATTR;
 
 typedef struct VLAN_LIST{
     uint16_t    vlan_id;
@@ -197,7 +197,7 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
     char    intf_name[IFNAMSIZ];
     int     path_cost;
     int     priority;
-} __attribute__((packed))  STP_VLAN_MEM_CONFIG_MSG;
+} STP_VLAN_MEM_CONFIG_MSG;
 
 typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
