@@ -617,8 +617,6 @@ void StpMgr::processStpPortAttr(const string op,
 
     // If there are VLANs, copy them into the message structure.
     if (msg->count > 0)
-    // If there are VLANs, copy them into the message structure.
-    if (msg->count > 0)
     {
         for (int i = 0; i < msg->count; i++)
         {
@@ -763,6 +761,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         STP_VLAN_MEM_CONFIG_MSG msg;
+        int8_t tagging_mode = TAGGED_MODE;
         memset(&msg, 0, sizeof(STP_VLAN_MEM_CONFIG_MSG));
 
         KeyOpFieldsValuesTuple t = it->second;
@@ -786,52 +785,84 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
             continue;
         }
-
-        SWSS_LOG_INFO("STP vlan mem key:%s op:%s inst:%d", key.c_str(), op.c_str(), m_vlanInstMap[vlan_id]);
-        // If STP is running on this VLAN, notify STPd
-        if (m_vlanInstMap[vlan_id] != INVALID_INSTANCE && !isLagEmpty(intfName))
+        if (op == SET_COMMAND)
         {
-            int8_t tagging_mode = TAGGED_MODE;
-
-            if (op == SET_COMMAND)
+            tagging_mode = getVlanMemMode(key);
+            if (tagging_mode == INVALID_MODE)
             {
-                tagging_mode = getVlanMemMode(key);
-                if (tagging_mode == INVALID_MODE)
+                SWSS_LOG_ERROR("invalid mode %s", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
+        SWSS_LOG_DEBUG("mode %d key %s", tagging_mode, key.c_str());
+
+
+        if(l2ProtoEnabled == L2_MSTP)
+        {
+            STP_MST_VLAN_PORT_MAP *vlan_msg;
+            int len;
+            PORT_LIST *attr;
+      
+            if(!isLagEmpty(intfName))
+            {
+                len = (uint32_t)(sizeof(STP_MST_VLAN_PORT_MAP) + (1 * sizeof(PORT_LIST)));
+      
+                vlan_msg = (STP_MST_VLAN_PORT_MAP*)calloc(1, len);
+                if (!vlan_msg)
                 {
-                    SWSS_LOG_ERROR("invalid mode %s", key.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                SWSS_LOG_DEBUG("mode %d key %s", tagging_mode, key.c_str());
-
-                msg.enabled = isStpEnabled(intfName);
-
-                vector<FieldValueTuple> stpVlanPortEntry;
-                if (m_cfgStpVlanPortTable.get(key, stpVlanPortEntry))
+                    SWSS_LOG_ERROR("calloc failed for vlan %d", vlan_id);
+                    return;
+            }
+  
+            attr = vlan_msg->port_list;
+            strncpy(attr[0].intf_name, intfName.c_str(), IFNAMSIZ-1);
+            attr[0].tagging_mode = tagging_mode;
+            vlan_msg->port_count = 1;
+            vlan_msg->vlan_id = (uint16_t)  vlan_id;
+            vlan_msg->stp_mode = l2ProtoEnabled;
+            vlan_msg->add = (op == SET_COMMAND) ? true : false;
+  
+            sendMsgStpd(STP_MST_VLAN_PORT_LIST_CONFIG, len, (void *)vlan_msg, (L2_PROTO_MODE)vlan_msg->stp_mode);
+            if (vlan_msg)
+                free(vlan_msg);              
+            }          
+        }
+        else
+        {
+            SWSS_LOG_INFO("STP vlan mem key:%s op:%s inst:%d", key.c_str(), op.c_str(), m_vlanInstMap[vlan_id]);
+            // If STP is running on this VLAN, notify STPd
+            if (m_vlanInstMap[vlan_id] != INVALID_INSTANCE && !isLagEmpty(intfName))
+            {
+                if (op == SET_COMMAND)
                 {
-                    for (auto entry : stpVlanPortEntry)
+                    msg.enabled = isStpEnabled(intfName);
+
+                    vector<FieldValueTuple> stpVlanPortEntry;
+                    if (m_cfgStpVlanPortTable.get(key, stpVlanPortEntry))
                     {
-                        if (entry.first == "priority")
-                            msg.priority = stoi(entry.second);
-                        else if (entry.first == "path_cost")
-                            msg.path_cost = stoi(entry.second);
+                        for (auto entry : stpVlanPortEntry)
+                        {
+                            if (entry.first == "priority")
+                                msg.priority = stoi(entry.second);
+                            else if (entry.first == "path_cost")
+                                msg.path_cost = stoi(entry.second);
+                        }
                     }
                 }
+
+                msg.opcode  = (op == SET_COMMAND) ? STP_SET_COMMAND : STP_DEL_COMMAND;
+                msg.vlan_id = vlan_id;
+                msg.inst_id = m_vlanInstMap[vlan_id];
+                msg.mode    = tagging_mode;
+                msg.priority  = -1;
+                msg.path_cost = 0;
+
+                strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ-1);
+
+                sendMsgStpd(STP_VLAN_MEM_CONFIG, sizeof(msg), (void *)&msg, l2ProtoEnabled);
             }
-
-            msg.opcode  = (op == SET_COMMAND) ? STP_SET_COMMAND : STP_DEL_COMMAND;
-            msg.vlan_id = vlan_id;
-            msg.inst_id = m_vlanInstMap[vlan_id];
-            msg.mode    = tagging_mode;
-            msg.priority  = -1;
-            msg.path_cost = 0;
-
-            strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ-1);
-
-            sendMsgStpd(STP_VLAN_MEM_CONFIG, sizeof(msg), (void *)&msg, l2ProtoEnabled);
-        }
-
+       }
         it = consumer.m_toSync.erase(it);
     }
 }
