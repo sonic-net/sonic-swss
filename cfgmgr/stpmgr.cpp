@@ -198,6 +198,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     for (auto p = port_list.begin(); p != port_list.end(); p++)
                     {
                         strncpy(attr[i].intf_name, p->intf_name, IFNAMSIZ-1);
+                        attr[i].intf_name[IFNAMSIZ - 1] = '\0';
                         attr[i].tagging_mode = p->mode;
                         SWSS_LOG_DEBUG("  Port[%u]: %s Mode %d", i, p->intf_name, p->mode);
                         i++;
@@ -374,6 +375,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
                     attr[i].mode    = p->mode;
                     attr[i].enabled = p->enabled;
                     strncpy(attr[i].intf_name, p->intf_name, IFNAMSIZ - 1);
+                    attr[i].intf_name[IFNAMSIZ - 1] = '\0';
                     SWSS_LOG_DEBUG("MemIntf: %s", p->intf_name);
                     i++;
                 }
