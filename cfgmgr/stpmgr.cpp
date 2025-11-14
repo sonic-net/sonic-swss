@@ -72,8 +72,6 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
-    else if (table == CFG_STP_PORT_TABLE_NAME)
-         doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -90,6 +88,8 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
     {
         STP_BRIDGE_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_BRIDGE_CONFIG_MSG));
+
+        enum L2_PROTO_MODE old_l2ProtoEnabled = l2ProtoEnabled;
 
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -143,11 +143,82 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
             }
 
             memcpy(msg.base_mac_addr, macAddress.getMac(), 6);
+
+            /* Send once when PVST/MSTP is enabled first time */
+            if ((l2ProtoEnabled == L2_MSTP) && (old_l2ProtoEnabled == L2_NONE))
+            {
+                SWSS_LOG_INFO("Populating VLANs for STP mode change: %d -> %d", old_l2ProtoEnabled, l2ProtoEnabled);
+                
+                // Get all existing VLANs from state table instead of iterating 1-4095
+                vector<string> vlanKeys;
+                m_stateVlanTable.getKeys(vlanKeys);
+                
+                SWSS_LOG_INFO("Found %zu configured VLANs to populate", vlanKeys.size());
+                
+                for (auto vlanKey : vlanKeys)
+                {
+                    STP_MST_VLAN_PORT_MAP *vlan_msg = NULL;
+                    vector<PORT_ATTR> port_list;
+                    uint16_t portCnt = 0;
+                    int len;
+                    
+                    // Extract VLAN ID from key (e.g., "Vlan100" -> 100)
+                    string vlanIdStr = vlanKey.substr(4); // Remove Vlan prefix
+                    
+                    int vlan_id;
+                    try
+                    {
+                        vlan_id = stoi(vlanIdStr);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        SWSS_LOG_ERROR("Invalid VLAN ID in key '%s': %s", vlanKey.c_str(), e.what());
+                        continue;
+                    }
+                    
+                    
+                    // Get all port members for this VLAN
+                    portCnt = (uint16_t)getAllVlanMem(vlanKey, port_list);
+                    if (!portCnt)
+                        continue;
+                    
+                    SWSS_LOG_DEBUG("VLAN %d has %d ports", vlan_id, portCnt);
+                    len = (int)(sizeof(STP_MST_VLAN_PORT_MAP) + (portCnt * sizeof(PORT_LIST)));
+                    
+                    vlan_msg = (STP_MST_VLAN_PORT_MAP *)calloc(1, len);
+                    if (!vlan_msg)
+                    {
+                        SWSS_LOG_ERROR("calloc failed for vlan %d", vlan_id);
+                        // Continue processing other VLANs instead of returning
+                        continue;
+                    }
+                    
+                    // Populate port list
+                    PORT_LIST *attr = vlan_msg->port_list;
+                    for (size_t i = 0; i < port_list.size(); i++)
+                    {
+                        snprintf(attr[i].intf_name, IFNAMSIZ, "%s", port_list[i].intf_name);
+                        attr[i].tagging_mode = port_list[i].mode;
+                        SWSS_LOG_DEBUG("  Port[%zu]: %s Mode %d", i, port_list[i].intf_name, port_list[i].mode);
+                    }
+                    
+                    // Fill in VLAN message
+                    vlan_msg->port_count = portCnt;
+                    vlan_msg->vlan_id = (uint16_t)vlan_id;
+                    vlan_msg->stp_mode = l2ProtoEnabled;
+                    vlan_msg->add = true;
+                    
+                    // Send message to STP daemon
+                    sendMsgStpd(STP_MST_VLAN_PORT_LIST_CONFIG, len, (void *)vlan_msg, (L2_PROTO_MODE)vlan_msg->stp_mode);
+                    
+                    free(vlan_msg);
+                }
+            }
         }
         else if (op == DEL_COMMAND)
         {
             msg.opcode = STP_DEL_COMMAND;
-
+            msg.stp_mode = l2ProtoEnabled;
             // Free Up all instances
             FREE_ALL_INST_ID();
 
@@ -165,10 +236,11 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
             }
             l2ProtoEnabled = L2_NONE;
+            
         }
 
         // Send the message to the daemon
-        sendMsgStpd(STP_BRIDGE_CONFIG, sizeof(msg), (void *)&msg);
+        sendMsgStpd(STP_BRIDGE_CONFIG, sizeof(msg), (void *)&msg, (L2_PROTO_MODE)msg.stp_mode);
 
         // Move to the next item
         it = consumer.m_toSync.erase(it);
@@ -329,7 +401,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
             deallocL2Instance(vlan_id);
         }
 
-        sendMsgStpd(STP_VLAN_CONFIG, len, (void *)msg);
+        sendMsgStpd(STP_VLAN_CONFIG, len, (void *)msg, l2ProtoEnabled);
         if (msg)
             free(msg);
 
@@ -399,7 +471,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
             msg.opcode = STP_DEL_COMMAND;
         }
 
-        sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
+        sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg, l2ProtoEnabled);
 
         it = consumer.m_toSync.erase(it);
     }
@@ -438,7 +510,7 @@ void StpMgr::processStpVlanPortAttr(const string op, uint32_t vlan_id, const str
         msg.opcode = STP_DEL_COMMAND;
     }
 
-    sendMsgStpd(STP_VLAN_PORT_CONFIG, sizeof(msg), (void *)&msg);
+    sendMsgStpd(STP_VLAN_PORT_CONFIG, sizeof(msg), (void *)&msg, l2ProtoEnabled);
 }
 
 void StpMgr::doStpVlanPortTask(Consumer &consumer)
@@ -610,7 +682,14 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field== "link_type" && l2ProtoEnabled == L2_MSTP)
             {
-                msg->link_type = static_cast<LinkType>(stoi(field.c_str()));
+                if (value == "auto")
+                    msg->link_type = AUTO;
+                else if (value == "point_to_point" || value == "point-to-point")
+                    msg->link_type = POINT_TO_POINT;
+                else if (value == "shared")
+                    msg->link_type = SHARED;
+                else
+                    SWSS_LOG_ERROR("Invalid link_type value: %s", value.c_str());
             }
         }
     }
@@ -621,7 +700,7 @@ void StpMgr::processStpPortAttr(const string op,
     }
 
     // Send the fully prepared message to the STP daemon.
-    sendMsgStpd(STP_PORT_CONFIG, len, reinterpret_cast<void *>(msg));
+    sendMsgStpd(STP_PORT_CONFIG, len, reinterpret_cast<void *>(msg), l2ProtoEnabled);
 
     // Clean up.
     free(msg);
@@ -750,7 +829,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
 
             strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ-1);
 
-            sendMsgStpd(STP_VLAN_MEM_CONFIG, sizeof(msg), (void *)&msg);
+            sendMsgStpd(STP_VLAN_MEM_CONFIG, sizeof(msg), (void *)&msg, l2ProtoEnabled);
         }
 
         it = consumer.m_toSync.erase(it);
@@ -1041,8 +1120,18 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        string instance = key.substr(13); // Remove "MST_INSTANCE|" prefix
-        uint16_t instance_id = static_cast<uint16_t>(stoi(instance.c_str()));
+        // Key is just the instance ID (e.g., "0", "1", "2")
+        uint16_t instance_id;
+        try
+        {
+            instance_id = static_cast<uint16_t>(stoi(key.c_str()));
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid instance ID in key '%s': %s", key.c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         uint16_t priority = 32768; // Default bridge priority
         string vlan_list_str;
@@ -1105,7 +1194,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             updateVlanInstanceMap(instance_id, vlan_ids, false);
         }
 
-        sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
+        sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg, l2ProtoEnabled);
         if (msg)
             free(msg);
 
@@ -1149,7 +1238,7 @@ void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const s
     }
 
     // Send the message to the daemon
-    sendMsgStpd(STP_MST_INST_PORT_CONFIG, sizeof(msg), (void *)&msg);
+    sendMsgStpd(STP_MST_INST_PORT_CONFIG, sizeof(msg), (void *)&msg, l2ProtoEnabled);
 }
 
 
@@ -1215,7 +1304,7 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
 }
 
 // Send Message to STPd
-int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
+int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data, L2_PROTO_MODE protocol)
 {
     STP_IPC_MSG *tx_msg;
     size_t len = 0;
@@ -1228,12 +1317,13 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     tx_msg = (STP_IPC_MSG *)calloc(1, len);
     if (tx_msg == NULL)
     {
-		SWSS_LOG_ERROR("tx_msg mem alloc error\n");
+	SWSS_LOG_ERROR("tx_msg mem alloc error\n");
         return -1;
     }
 
     tx_msg->msg_type = msgType;
     tx_msg->msg_len  = msgLen;
+    tx_msg->proto_mode = protocol;
     memcpy(tx_msg->data, data, msgLen);
 
     bzero(&addr, sizeof(addr));
@@ -1243,11 +1333,11 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     rc = (int)sendto(stpd_fd, (void*)tx_msg, len, 0, (struct sockaddr *)&addr, sizeof(addr));
     if (rc == -1)
     {
-		SWSS_LOG_ERROR("tx_msg send error\n");
+	SWSS_LOG_ERROR("tx_msg send error\n");
     }
     else
     {
-        SWSS_LOG_INFO("tx_msg sent %d", rc);
+        SWSS_LOG_INFO("tx_msg sent %d, proto_mode %d", rc, protocol);
     }
 
     free(tx_msg);
