@@ -7587,7 +7587,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
             system_lag_alias = gMyHostName + "|" + gMyAsicName + "|" + lag_alias;
 
             if (gMultiAsicVoq)
-	    {
+            {
                 // Allocate unique lag id
                 spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
 
@@ -7596,7 +7596,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
                     SWSS_LOG_ERROR("Failed to allocate unique LAG id for local lag %s rv:%d", lag_alias.c_str(), spa_id);
                     return false;
                 }
-	    }
+            }
         }
 
         sai_attribute_t attr;
