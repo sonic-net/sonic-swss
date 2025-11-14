@@ -160,7 +160,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     STP_MST_VLAN_PORT_MAP *vlan_msg = NULL;
                     vector<PORT_ATTR> port_list;
                     uint16_t portCnt = 0;
-                    int len;
+                    int len, i = 0;
                     
                     // Extract VLAN ID from key (e.g., "Vlan100" -> 100)
                     string vlanIdStr = vlanKey.substr(4); // Remove Vlan prefix
@@ -195,11 +195,12 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     
                     // Populate port list
                     PORT_LIST *attr = vlan_msg->port_list;
-                    for (size_t i = 0; i < port_list.size(); i++)
+                    for (auto p = port_list.begin(); p != port_list.end(); p++)
                     {
-                        snprintf(attr[i].intf_name, IFNAMSIZ, "%s", port_list[i].intf_name);
-                        attr[i].tagging_mode = port_list[i].mode;
-                        SWSS_LOG_DEBUG("  Port[%zu]: %s Mode %d", i, port_list[i].intf_name, port_list[i].mode);
+                        strncpy(attr[i].intf_name, p->intf_name, IFNAMSIZ-1);
+                        attr[i].tagging_mode = p->mode;
+                        SWSS_LOG_DEBUG("  Port[%u]: %s Mode %d", i, p->intf_name, p->mode);
+                        i++;
                     }
                     
                     // Fill in VLAN message
@@ -372,7 +373,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
                 {
                     attr[i].mode    = p->mode;
                     attr[i].enabled = p->enabled;
-                    strncpy(attr[i].intf_name, p->intf_name, IFNAMSIZ);
+                    strncpy(attr[i].intf_name, p->intf_name, IFNAMSIZ - 1);
                     SWSS_LOG_DEBUG("MemIntf: %s", p->intf_name);
                     i++;
                 }
@@ -613,7 +614,6 @@ void StpMgr::processStpPortAttr(const string op,
     strncpy(msg->intf_name, intfName.c_str(), IFNAMSIZ - 1);
     msg->count = vlanCnt;
     SWSS_LOG_INFO("VLAN count for %s is %d", intfName.c_str(), vlanCnt);
-    SWSS_LOG_INFO("VLAN count for %s is %d", intfName.c_str(), vlanCnt);
 
     // If there are VLANs, copy them into the message structure.
     if (msg->count > 0)
@@ -800,9 +800,8 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
 
         if(l2ProtoEnabled == L2_MSTP)
         {
-            STP_MST_VLAN_PORT_MAP *vlan_msg;
+            STP_MST_VLAN_PORT_MAP *vlan_msg = nullptr;
             int len;
-            PORT_LIST *attr;
       
             if(!isLagEmpty(intfName))
             {
@@ -813,20 +812,19 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("calloc failed for vlan %d", vlan_id);
                     return;
+                }
+  
+                strncpy(vlan_msg->port_list[0].intf_name, intfName.c_str(), IFNAMSIZ-1);
+                vlan_msg->port_list[0].tagging_mode = tagging_mode;
+                vlan_msg->port_count = 1;
+                vlan_msg->vlan_id = (uint16_t)  vlan_id;
+                vlan_msg->stp_mode = l2ProtoEnabled;
+                vlan_msg->add = (op == SET_COMMAND) ? true : false;
+    
+                sendMsgStpd(STP_MST_VLAN_PORT_LIST_CONFIG, len, (void *)vlan_msg, (L2_PROTO_MODE)vlan_msg->stp_mode);
+                if (vlan_msg)
+                    free(vlan_msg);              
             }
-  
-            attr = vlan_msg->port_list;
-            strncpy(attr[0].intf_name, intfName.c_str(), IFNAMSIZ-1);
-            attr[0].tagging_mode = tagging_mode;
-            vlan_msg->port_count = 1;
-            vlan_msg->vlan_id = (uint16_t)  vlan_id;
-            vlan_msg->stp_mode = l2ProtoEnabled;
-            vlan_msg->add = (op == SET_COMMAND) ? true : false;
-  
-            sendMsgStpd(STP_MST_VLAN_PORT_LIST_CONFIG, len, (void *)vlan_msg, (L2_PROTO_MODE)vlan_msg->stp_mode);
-            if (vlan_msg)
-                free(vlan_msg);              
-            }          
         }
         else
         {
@@ -862,7 +860,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
 
                 sendMsgStpd(STP_VLAN_MEM_CONFIG, sizeof(msg), (void *)&msg, l2ProtoEnabled);
             }
-       }
+        }
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -1337,7 +1335,7 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
 // Send Message to STPd
 int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data, L2_PROTO_MODE protocol)
 {
-    STP_IPC_MSG *tx_msg;
+    STP_IPC_MSG *tx_msg = nullptr;
     size_t len = 0;
     struct sockaddr_un addr;
     int rc;
@@ -1348,7 +1346,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data, L2_PR
     tx_msg = (STP_IPC_MSG *)calloc(1, len);
     if (tx_msg == NULL)
     {
-	SWSS_LOG_ERROR("tx_msg mem alloc error\n");
+	    SWSS_LOG_ERROR("tx_msg mem alloc error\n");
         return -1;
     }
 
@@ -1364,7 +1362,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data, L2_PR
     rc = (int)sendto(stpd_fd, (void*)tx_msg, len, 0, (struct sockaddr *)&addr, sizeof(addr));
     if (rc == -1)
     {
-	SWSS_LOG_ERROR("tx_msg send error\n");
+	    SWSS_LOG_ERROR("tx_msg send error\n");
     }
     else
     {
