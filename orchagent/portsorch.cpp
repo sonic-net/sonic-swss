@@ -7586,7 +7586,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
             switch_id = gVoqMySwitchId;
             system_lag_alias = gMyHostName + "|" + gMyAsicName + "|" + lag_alias;
 
-	    if (gMultiAsicVoq)
+            if (gMultiAsicVoq)
 	    {
                 // Allocate unique lag id
                 spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
