@@ -291,6 +291,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
             if (exists && state_changed) {
                 // Publish to STATE_DB if any mirrored field changed
                 setDecapTunnelStatus(key);
+                SWSS_LOG_NOTICE("Fields for TUNNEL_DECAP_TABLE entry '%s' have been synchronised in STATE_DB", key.c_str());
             }
 
             if (task_status == task_process_status::task_need_retry)
