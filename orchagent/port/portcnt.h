@@ -190,6 +190,11 @@ public:
             bool is_set = false;
         } unreliable_los; // Port unreliable_los
 
+        struct {
+            std::string value;
+            bool is_set = false;
+        } custom_collection; // Port serdes custom_collection
+
     } serdes; // Port serdes
 
     struct {
