@@ -304,6 +304,14 @@ namespace routeorch_test
                 srv6_my_sid_cfg_table
             };
             gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
+            ASSERT_EQ(gArsOrch, nullptr);
+            vector<string> ars_tables = {
+                CFG_ARS_PROFILE,                 
+                CFG_ARS_INTERFACE,               
+                CFG_ARS_OBJECT,               
+                CFG_ARS_NEXTHOP           
+            };
+            gArsOrch = new ArsOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), ars_tables, gVrfOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
             const int routeorch_pri = 5;
@@ -311,7 +319,7 @@ namespace routeorch_test
                 { APP_ROUTE_TABLE_NAME,        routeorch_pri },
                 { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
             };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch, gArsOrch);
             gNhgOrch = new NhgOrch(m_app_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
 
             // Recreate buffer orch to read populated data
@@ -407,6 +415,9 @@ namespace routeorch_test
 
             delete gSrv6Orch;
             gSrv6Orch = nullptr;
+
+            delete gArsOrch;
+            gArsOrch = nullptr;
 
             delete gNeighOrch;
             gNeighOrch = nullptr;

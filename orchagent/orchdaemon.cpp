@@ -60,6 +60,7 @@ CoppOrch *gCoppOrch;
 P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
+ArsOrch *gArsOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
@@ -308,7 +309,17 @@ bool OrchDaemon::init()
     auto enable_route_zmq = get_feature_status(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false);
     auto route_zmq_sever = enable_route_zmq ? m_zmqServer : nullptr;
 
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_sever);
+    vector<string> ars_tables = {
+        CFG_ARS_PROFILE,                 
+        CFG_ARS_INTERFACE,               
+        CFG_ARS_OBJECT,               
+        CFG_ARS_NEXTHOP           
+    };
+
+    gArsOrch = new ArsOrch(m_configDb, m_applDb, m_stateDb, ars_tables, vrf_orch);
+    gDirectory.set(gArsOrch);
+
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, gArsOrch, route_zmq_sever);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
@@ -568,6 +579,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(gNatOrch);
     m_orchList.push_back(gMlagOrch);
     m_orchList.push_back(gIsoGrpOrch);
+    m_orchList.push_back(gArsOrch);
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
@@ -866,24 +878,9 @@ void OrchDaemon::flush()
         handleSaiFailure(SAI_API_SWITCH, "set", status);
     }
 
-    /*
-     * Don't flush if ringbuffer is enable and it is not empty or Idle. Ring buffer thread
-     * could trigger notification update.
-     *
-     * Flush would be triggered later after SELECT_TIMEOUT in main thread again
-     * for avoiding race condition.
-     */
-    if (gRingBuffer &&(!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()))
+    for (auto* orch: m_orchList)
     {
-        gRingBuffer->notify();
-        SWSS_LOG_WARN("Skip Flush waiting for RingBuffer empty");
-    }
-    else
-    {
-        for (auto* orch: m_orchList)
-        {
-            orch->flushResponses();
-        }
+        orch->flushResponses();
     }
 }
 

@@ -21,6 +21,7 @@
 #include "pfcwdorch.h"
 #undef protected
 #undef private
+#include "arsorch.h"
 #include "vrforch.h"
 #include "vnetorch.h"
 #include "vxlanorch.h"
@@ -37,6 +38,7 @@
 #define private public
 #include "stporch.h"
 #undef private 
+#include "arsorch.h"
 #include "directory.h"
 #include "dashvnetorch.h"
 #include "dashhaorch.h"
@@ -69,6 +71,7 @@ template <typename DropHandler, typename ForwardHandler> PfcWdSwOrch<DropHandler
 extern VRFOrch *gVrfOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch  *gSrv6Orch;
+extern ArsOrch  *gArsOrch;
 extern BfdOrch *gBfdOrch;
 extern AclOrch *gAclOrch;
 extern PolicerOrch *gPolicerOrch;
