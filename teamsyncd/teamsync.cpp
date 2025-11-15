@@ -164,10 +164,18 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         auto tsync = m_teamSelectables[lagName];
         if (tsync->admin_state == admin_state && tsync->oper_state == oper_state && tsync->mtu == mtu)
             return;
+
+        bool oper_state_changed = (tsync->oper_state != oper_state);
         tsync->admin_state = admin_state;
         tsync->oper_state = oper_state;
         tsync->mtu = mtu;
         lag_update = false;
+
+        /* If oper state changed, trigger member status update immediately */
+        if (oper_state_changed)
+        {
+            tsync->onChange();
+        }
     }
 
     FieldValueTuple s("state", "ok");
@@ -338,6 +346,16 @@ int TeamSync::TeamPortSync::onChange()
         }
 
         team_get_port_enabled(m_team, ifindex, &enabled);
+
+        /* If LAG is operationally down, force all members to disabled
+         * to ensure traffic is not forwarded through any member */
+        if (!oper_state && enabled)
+        {
+            SWSS_LOG_NOTICE("LAG %s is oper down, forcing member %s to disabled",
+                            m_lagName.c_str(), ifname);
+            enabled = false;
+        }
+
         tmp_lag_members[string(ifname)] = enabled;
     }
 
