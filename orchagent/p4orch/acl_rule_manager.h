@@ -52,6 +52,10 @@ class AclRuleManager : public ObjectManagerInterface
     // counters are enabled in rules.
     void doAclCounterStatsTask();
 
+
+    // Add default ACL rule in PRE_INGRESS table
+    ReturnCode addDefaultAclRuleInPreIngressTable(const std::string& table_name);
+
   private:
     // Deserializes an entry in a dynamically created ACL table.
     ReturnCodeOr<P4AclRuleAppDbEntry> deserializeAclRuleAppDbEntry(
