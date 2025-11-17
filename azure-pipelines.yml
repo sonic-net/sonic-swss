@@ -46,7 +46,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      pool: sonicbld-1es
+      pool: sonicso1ES-amd64
       sonic_slave: sonic-slave-${{ parameters.debian_version }}
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
@@ -61,7 +61,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      pool: sonicbld-1es
+      pool: sonicso1ES-amd64
       sonic_slave: sonic-slave-${{ parameters.debian_version }}
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
@@ -77,7 +77,7 @@ stages:
     parameters:
       arch: armhf
       timeout: 240
-      pool: sonicbld-armhf
+      pool: sonicso1ES-armhf
       sonic_slave: sonic-slave-${{ parameters.debian_version }}-armhf
       common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.armhf
@@ -89,7 +89,7 @@ stages:
     parameters:
       arch: arm64
       timeout: 240
-      pool: sonicbld-arm64
+      pool: sonicso1ES-arm64
       sonic_slave: sonic-slave-${{ parameters.debian_version }}-arm64
       common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.arm64
