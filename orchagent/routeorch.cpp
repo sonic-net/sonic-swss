@@ -2964,11 +2964,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     return true;
 }
 
-bool RouteOrch::isRouteExists(const IpPrefix& prefix)
+bool RouteOrch::isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix)
 {
     SWSS_LOG_ENTER();
-
-    sai_object_id_t& vrf_id = gVirtualRouterId;
 
     sai_route_entry_t route_entry;
     route_entry.vr_id = vrf_id;
