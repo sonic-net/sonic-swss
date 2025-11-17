@@ -71,12 +71,12 @@ jobs:
     inputs:
       source: specific
       project: build
-      pipeline: sonic-net.sonic-buildimage-ubuntu20.04
+      pipeline: sonic-net.sonic-buildimage-ubuntu22.04
       artifact: sonic-buildimage.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.sonic_buildimage_ubuntu20_04 }}'
       path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download sonic buildimage ubuntu20.04 deb packages"
+    displayName: "Download sonic buildimage ubuntu22.04 deb packages"
 
   - script: |
       set -ex

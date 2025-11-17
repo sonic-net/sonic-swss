@@ -8,7 +8,7 @@ parameters:
 - name: pool
   type: string
   values:
-  - sonicbld-1es
+  - sonicso1ES-amd64
   - default
   default: default
 
@@ -44,7 +44,7 @@ jobs:
     ${{ if ne(parameters.pool, 'default') }}:
       name: ${{ parameters.pool }}
     ${{ if eq(parameters.pool, 'default') }}:
-      vmImage: 'ubuntu-20.04'
+      vmImage: 'ubuntu-24.04'
 
   variables:
     DIFF_COVER_CHECK_THRESHOLD: 80
