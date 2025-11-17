@@ -118,3 +118,13 @@ std::shared_ptr<SaiSpyFunctor<n, objtype, sai_status_t, sai_object_id_t, uint32_
 
     return std::make_shared<SaiSpyGetAttrFunctor>(fn_ptr);
 }
+
+// get bulk entry attribute
+template <int n, int objtype>
+std::shared_ptr<SaiSpyFunctor<n, objtype, sai_status_t, uint32_t, const sai_object_id_t*, const uint32_t*, sai_attribute_t**, sai_bulk_op_error_mode_t, sai_status_t*>>
+    SpyOn(sai_status_t (**fn_ptr)(uint32_t, const sai_object_id_t*, const uint32_t*, sai_attribute_t**, sai_bulk_op_error_mode_t, sai_status_t*))
+{
+    using SaiSpyGetAttrFunctor = SaiSpyFunctor<n, objtype, sai_status_t, uint32_t, const sai_object_id_t*, const uint32_t*, sai_attribute_t**, sai_bulk_op_error_mode_t, sai_status_t*>;
+
+    return std::make_shared<SaiSpyGetAttrFunctor>(fn_ptr);
+}
