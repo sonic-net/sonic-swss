@@ -110,12 +110,12 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
         gFlowCounterRouteOrch->onAddVR(router_id);
-        if (gRouteOrch != nullptr) {
-            IpPrefix default_link_local_prefix("fe80::/10");
-            gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
-            SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu for VRF '%s'",
-                           default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
-        }
+
+        IpPrefix default_link_local_prefix("fe80::/10");
+        gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu for VRF '%s'",
+                        default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
+
         if (vni != 0)
         {
             SWSS_LOG_INFO("VRF '%s' vni %d add", vrf_name.c_str(), vni);
@@ -179,10 +179,9 @@ bool VRFOrch::delOperation(const Request& request)
 
     sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
     // Delete link-local routes before removing VRF
-    if (gRouteOrch != nullptr) {
-        IpPrefix default_link_local_prefix("fe80::/10");
-        gRouteOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
-    }
+    IpPrefix default_link_local_prefix("fe80::/10");
+    gRouteOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
+
     sai_status_t status = sai_virtual_router_api->remove_virtual_router(router_id);
     if (status != SAI_STATUS_SUCCESS)
     {
