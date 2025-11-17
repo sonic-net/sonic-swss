@@ -446,3 +446,85 @@ class TestBuffer(object):
             else:
                 self.config_db.delete_entry("PORT_QOS_MAP", self.INTF)
 
+    def test_update_buffer_pg_for_cable_len_change(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        Test to verify that buffermgrd correctly updated the buffer_pg entry of a given port when cable length is
+        updated.
+        """
+
+        orig_port_qos_map = None
+        orig_cable_len = None
+        orig_fvs_port = None
+
+        # Test parameters
+        test_cable_len = "300m"
+        test_speed = "100000"
+        test_port_pfc_enable = "3,4"
+
+        try:
+            ##################################
+            ## Save original configurations ##
+            ##################################
+
+            # Save original cable length
+            fvs_cable_len = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
+            orig_cable_len = fvs_cable_len.get(self.INTF) if fvs_cable_len else None
+
+            # Save original port speed and admin status
+            orig_fvs_port = self.config_db.get_entry("PORT", self.INTF)
+            orig_port_speed = orig_fvs_port.get("speed") if orig_fvs_port else None
+            orig_port_status = orig_fvs_port.get("admin_status") if orig_fvs_port else None
+
+            # Save original port qos map
+            fvs_qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
+            orig_port_qos_map = fvs_qos_map if fvs_qos_map else None
+
+            ######################################
+            ## Send configurations to CONFIG_DB ##
+            ######################################
+
+            # Configure PFC enable
+            self.set_port_qos_table(self.INTF, test_port_pfc_enable)
+
+            # Configure cable length
+            self.change_cable_len(test_cable_len)
+
+            # Wait for buffermgrd to process the changes
+            time.sleep(2)
+
+            ##################
+            ## Verification ##
+            ##################
+
+            # Verify BUFFER_PG table entry in CONFIG_DB without port qos map entry
+            pg_field_key = "{}|{}".format(self.INTF, test_port_pfc_enable.replace(',', '-'))
+            fvs_buffer_pg = self.config_db.get_entry("BUFFER_PG", pg_field_key)
+
+            # Check if fvs_buffer_pg profile is not equal to expected dynamic profile
+            expected_profile = "pg_lossless_{}_{}_profile".format(test_speed, test_cable_len)
+            if fvs_buffer_pg.get("profile") != expected_profile:
+                assert False, "BUFFER_PG profile {} is not {}".format(fvs_buffer_pg.get("profile"), expected_profile)
+
+        finally:
+            ###############################
+            ## Revert to original values ##
+            ###############################
+
+            # Revert cable length
+            if orig_cable_len:
+                self.change_cable_len(orig_cable_len)
+            else:
+                self.config_db.delete_entry("CABLE_LENGTH", "AZURE")
+
+            # Revert to original PORT configuration
+            if orig_fvs_port:
+                self.config_db.update_entry("PORT", self.INTF, orig_fvs_port)
+            else:
+                self.config_db.delete_entry("PORT", self.INTF)
+
+            # Revert port qos map
+            if orig_port_qos_map:
+                self.config_db.update_entry("PORT_QOS_MAP", self.INTF, orig_port_qos_map)
+            else:
+                self.config_db.delete_entry("PORT_QOS_MAP", self.INTF)
+
