@@ -1219,7 +1219,8 @@ namespace portsorch_test
                 { "obnlev",        "0x5f,0x61,0x60,0x62"         },
                 { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
                 { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
-                { "custom_serdes_attrs", custom_serdes_attrs     }
+                { "custom_serdes_attrs", custom_serdes_attrs     },
+                { "media_type",    "backplane"                   }
             }
         }};
 
@@ -1304,6 +1305,10 @@ namespace portsorch_test
 
         // Verify custom_serdes_attrs
         ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION), SerdesValue(custom_serdes_attrs));
+
+        // Verify media_type
+        std::string media_type = "backplane";
+        ASSERT_EQ(p.m_media_type, media_type);
 
         // Verify unreliablelos
         ASSERT_EQ(p.m_unreliable_los, false);
