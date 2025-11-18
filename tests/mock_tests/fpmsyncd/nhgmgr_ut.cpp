@@ -74,6 +74,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(nexthop, "192.100.1.1");
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonic_obj_id), "ifname", ifname), true);
         ASSERT_EQ(ifname, nhg_obj.ifname);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), true);
 
         /* Delete entry and check the APP_DB */
         ASSERT_EQ(m_nhgmgr->delNHGFull(nhg_obj.id), 0);
@@ -81,6 +82,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(entry, nullptr);
         std::vector<FieldValueTuple> fvs;
         ASSERT_EQ(m_nextHopTable->get(to_string(sonic_obj_id), fvs), false);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), false);
     }
 
     /* Test add and remove a single ipv6 nexthop */
@@ -100,6 +102,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(nexthop, "fc00::1");
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonic_obj_id), "ifname", ifname), true);
         ASSERT_EQ(ifname, nhg_obj.ifname);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), true);
 
         /* Delete entry and check the APP_DB */
         ASSERT_EQ(m_nhgmgr->delNHGFull(nhg_obj.id), 0);
@@ -107,6 +110,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(entry, nullptr);
         std::vector<FieldValueTuple> fvs;
         ASSERT_EQ(m_nextHopTable->get(to_string(sonic_obj_id), fvs), false);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), false);
     }
 
     /* Test add and remove a multi ipv4 nexthop */
@@ -133,6 +137,13 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
+        uint32_t sonicObjIDC = entryC->getSoincObjID();
+        uint32_t sonicObjIDB1 = entryB1->getSoincObjID();
+        uint32_t sonicObjIDB2 = entryB2->getSoincObjID();
+
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -172,6 +183,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
         uint32_t sonicObjIDB = entryB->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB), true);
         std::string nexthops, weights;
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "nexthop", nexthops), true);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "weight", weights), true);
@@ -193,6 +205,7 @@ namespace ut_fpmsyncd
         uint32_t sonicObjIDA = entryA->getSoincObjID();
         nexthops = "";
         weights = "";
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "weight", weights), true);
         nexthopResults.clear();
@@ -210,6 +223,7 @@ namespace ut_fpmsyncd
         std::vector<FieldValueTuple> fvs;
         ASSERT_EQ(m_nextHopTable->get(to_string(sonicObjIDA), fvs), false);
         ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA), nullptr);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), false);
     }
 
     /* Test add and remove a multi ipv6 nexthop */
@@ -236,6 +250,13 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
+        uint32_t sonicObjIDC = entryC->getSoincObjID();
+        uint32_t sonicObjIDB1 = entryB1->getSoincObjID();
+        uint32_t sonicObjIDB2 = entryB2->getSoincObjID();
+
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -275,6 +296,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
         uint32_t sonicObjIDB = entryB->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB), true);
         std::string nexthops, weights;
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "nexthop", nexthops), true);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "weight", weights), true);
@@ -294,6 +316,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
         uint32_t sonicObjIDA = entryA->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
         nexthops = "";
         weights = "";
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
@@ -313,6 +336,7 @@ namespace ut_fpmsyncd
         std::vector<FieldValueTuple> fvs;
         ASSERT_EQ(m_nextHopTable->get(to_string(sonicObjIDA), fvs), false);
         ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA), nullptr);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), false);
     }
 
     /* Test update a single ipv4 nexthop */
@@ -326,6 +350,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
         uint32_t sonicObjID = entry->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
         std::string nexthop;
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         ASSERT_EQ(nexthop, "192.100.1.1");
@@ -333,6 +358,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         ASSERT_EQ(nexthop, "122.0.0.1");
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
     }
 
     /* Test update a single ipv6 nexthop */
@@ -346,6 +372,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
         uint32_t sonicObjID = entry->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
         std::string nexthop;
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         ASSERT_EQ(nexthop, "fc00::1");
@@ -353,6 +380,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         ASSERT_EQ(nexthop, "fc00::2");
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
     }
 
     /* Test update a multi ipv4 nexthop */
@@ -380,6 +408,13 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
+        uint32_t sonicObjIDC = entryC->getSoincObjID();
+        uint32_t sonicObjIDB1 = entryB1->getSoincObjID();
+        uint32_t sonicObjIDB2 = entryB2->getSoincObjID();
+
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -417,6 +452,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
         uint32_t sonicObjIDB = entryB->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB), true);
         std::string nexthops, weights;
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "nexthop", nexthops), true);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "weight", weights), true);
@@ -436,6 +472,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
         uint32_t sonicObjIDA = entryA->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
         nexthops = "";
         weights = "";
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
@@ -464,6 +501,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjANew), 0);
         RIBNHGEntry *entryANew = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryANew, nullptr);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
         nexthops = "";
         weights = "";
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
@@ -510,6 +548,13 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
+        uint32_t sonicObjIDC = entryC->getSoincObjID();
+        uint32_t sonicObjIDB1 = entryB1->getSoincObjID();
+        uint32_t sonicObjIDB2 = entryB2->getSoincObjID();
+
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -547,6 +592,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
         uint32_t sonicObjIDB = entryB->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB), true);
         std::string nexthops, weights;
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "nexthop", nexthops), true);
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "weight", weights), true);
@@ -566,6 +612,7 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
         uint32_t sonicObjIDA = entryA->getSoincObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
         nexthops = "";
         weights = "";
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
@@ -594,6 +641,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjANew), 0);
         RIBNHGEntry *entryANew = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryANew, nullptr);
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
         nexthops = "";
         weights = "";
         ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
@@ -614,5 +662,4 @@ namespace ut_fpmsyncd
             ASSERT_EQ(weightResults[i], expectedNexthopofA.find(nexthopResults[i])->second);
         }
     }
-    /* Test update a multi ipv6 nexthop */
 }
