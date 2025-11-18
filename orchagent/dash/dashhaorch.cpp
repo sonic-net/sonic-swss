@@ -208,6 +208,37 @@ HaScopeEntry DashHaOrch::getHaScopeForEni(const std::string& eni)
     return m_ha_scope_entries.begin()->second;
 }
 
+static bool updateExistingHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry, sai_object_id_t sai_ha_set_oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+    sai_attribute_t ha_set_attr_list[8]={};
+    sai_ip_address_t sai_peer_ip;
+
+    if (!to_sai(entry.peer_ip(), sai_peer_ip))
+    {
+        SWSS_LOG_WARN("HA Set entry already exists for %s", key.c_str());
+        return true;
+    }
+
+    ha_set_attr_list[0].id = SAI_HA_SET_ATTR_PEER_IP;
+    ha_set_attr_list[0].value.ipaddr = sai_peer_ip;
+    status = sai_dash_ha_api->set_ha_set_attribute(sai_ha_set_oid,
+                                                   &ha_set_attr_list[0]);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to update HA Set object in SAI for %s", key.c_str());
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_INFO("HA Set entry updated for %s", key.c_str());
+    return true;
+}
+
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
 {
     SWSS_LOG_ENTER();
@@ -216,8 +247,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     if (it != m_ha_set_entries.end())
     {
-        SWSS_LOG_WARN("HA Set entry already exists for %s", key.c_str());
-        return true;
+        return updateExistingHaSetEntry(key, entry, it->second.ha_set_id);
     }
 
     uint32_t attr_count = 8;
