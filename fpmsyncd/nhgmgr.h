@@ -4,9 +4,9 @@
 
 #include "dbconnector.h"
 #include "ipprefix.h"
+#include "producerstatetable.h"
 #include <nexthopgroup/nexthopgroupfull.h>
 #include <nexthopgroup/nexthopgroupfull_json.h>
-#include "producerstatetable.h"
 
 #include <string.h>
 
@@ -19,12 +19,13 @@ namespace swss {
         NEXTHOP_KEY_TYPE_ZEBRA,
         NEXTHOP_KEY_TYPE_SONIC,
     };
-    class MockSonicIDMgr {
+
+    class mockSonicIdMgr {
     public:
-        MockSonicIDMgr() {
+        mockSonicIdMgr() {
             g_id = 1;
         };
-        int allocateID() {
+        uint32_t allocateID() {
             while (m_id_map.find(g_id) != m_id_map.end()) {
                 if (g_id == 0) {
                     g_id = 1;
@@ -41,19 +42,27 @@ namespace swss {
             }
         }
 
+        bool isInUsed(uint32_t id) {
+            if (m_id_map.find(id) != m_id_map.end()) {
+                return true;
+            }
+            return false;
+        }
+
     private:
         map<uint32_t, uint32_t> m_id_map;
         uint32_t g_id;
     };
+
     class NexthopKey {
 
     public:
         NexthopKey();
         NexthopKey(const NextHopGroupFull *nhg);
-        string getNhgKey() { return m_address_key; };
+        string getNHGKey() { return m_address_key; };
         string getRIBKey(enum NEXTHOP_KEY_TYPE type);
         string getSonicKey() { return m_address_key; };
-        string getNhgKey(enum NEXTHOP_KEY_TYPE m_address_key);
+        string getNHGKey(enum NEXTHOP_KEY_TYPE m_address_key);
 
     private:
         string m_address_key;
@@ -65,7 +74,7 @@ namespace swss {
 
     public:
         SonicNHGEntry();
-        void create_nhg_entry();
+        void createNHGEntry();
 
     private:
         NexthopKey m_key;
@@ -79,8 +88,8 @@ namespace swss {
     public:
         SonicNHGTable();
         ~SonicNHGTable();
-        int addNhg();
-        int delNhg();
+        int addEntry();
+        int delEntry();
         SonicNHGEntry *getEntry(std::string key);
         SonicNHGEntry *getEntry(uint32_t id);
 
@@ -88,76 +97,94 @@ namespace swss {
         map<uint32_t, SonicNHGEntry *> m_nhg_map;
         ProducerStateTable m_nexthop_groupTable;
     };
-    class RIBNhgTable;
-    class RIBNhgEntry {
+
+    class RIBNHGTable;
+
+    class RIBNHGEntry {
     public:
-        RIBNhgEntry(RIBNhgTable *table, NextHopGroupFull nhg);
-        ~RIBNhgEntry();
-        vector<RIBNhgEntry *> getDependsID();
-        vector<RIBNhgEntry *> getDependentsID();
-        vector<pair<uint32_t, uint8_t>> getGroup();
-        vector<pair<uint32_t, uint8_t>> getResolvedGroup();
+        RIBNHGEntry(RIBNHGTable *table, NextHopGroupFull nhg);
+        ~RIBNHGEntry();
+
+        /* static creation func */
+        static RIBNHGEntry *createNHGEntry(NextHopGroupFull nhg, RIBNHGTable *mTable);
+
+        /* getter */
+        set<uint32_t> getDependsID();
+        set<uint32_t> getDependentsID();
+        unordered_map<uint32_t, uint8_t> getGroup();
+        unordered_map<uint32_t, uint8_t> getResolvedGroup();
         vector<FieldValueTuple> getFvVector();
-        int updateEntryFromNHGFull(NextHopGroupFull new_nhg, bool &updated);
-        bool compareDependsAndDependents(const NextHopGroupFull *new_nhg, const NextHopGroupFull *old_nhg);
-        int syncFvVector();
         NexthopKey getKey();
-        NextHopGroupFull getNhg();
+        NextHopGroupFull getNHG();
+        uint32_t getSoincObjID();
+        uint32_t getRIBID();
+        string getNextHopStr();
+
+        /* setter */
+        void
+        setSonicObjId(uint32_t id);
         int setEntry(NextHopGroupFull nhg);
-        static RIBNhgEntry *create_nhg_entry(NextHopGroupFull nhg, RIBNhgTable *m_table);
-        int getNextHopGroupFields(string &nexthops, string &ifnames, string &weights, uint8_t af);
-        string getNexthop();
-        void setNHGFull(NextHopGroupFull nhg);
+        void addDependentsMember(uint32_t id);
+        void removeDependentsMember(uint32_t id);
+        int updateEntryFromNHGFull(NextHopGroupFull newNHG, bool &updated, bool &updatedDependency);
 
     private:
-        RIBNhgTable *m_table;
-        bool isInstall;
+        uint32_t m_rib_id = -1;
+        RIBNHGTable *m_table;
+        string m_nexthop;
         vector<FieldValueTuple> m_fvVector;
         NexthopKey m_key;
-        string m_nexthop;
-        uint8_t m_af;
         NextHopGroupFull m_nhg;
-        vector<pair<uint32_t, uint8_t>> m_group;
-        vector<pair<uint32_t, uint8_t>> m_resolved_group;
-        vector<RIBNhgEntry *> m_depends;
-        vector<RIBNhgEntry *> m_dependents;
-        uint32_t m_sonic_id = -1;
+        unordered_map<uint32_t, uint8_t> m_group;
+        unordered_map<uint32_t, uint8_t> m_resolved_group;
+        set<uint32_t> m_depends;
+        set<uint32_t> m_dependents;
+        uint32_t m_sonic_obj_id = -1;
         uint32_t m_sonic_gateway_nhg_id = -1;
+        int getNextHopGroupFields(NextHopGroupFull nhg, string &nexthops, string &weights);
+        int getNextHopFields(NextHopGroupFull nhg, string &nexthops, string &ifnames, uint8_t af);
+        int getNHGFields(NextHopGroupFull nhg, string &nexthop, string &ifnames, string &weights, uint8_t &af);
+        bool compareDependsAndDependents(const NextHopGroupFull *newNHG, const NextHopGroupFull *oldNHG);
+        int syncFvVector();
+        unordered_map<uint32_t, uint8_t> getResolvedGroupFromNHGFull(NextHopGroupFull nhg);
+        // void sortDependencyList(NextHopGroupFull nhg);
+        void setNHGFull(NextHopGroupFull nhg);
     };
 
-    class RIBNhgTable {
+    class RIBNHGTable {
 
     public:
-        RIBNhgTable(RedisPipeline *pipeline, const std::string &tableName, bool is_state_table);
-        ~RIBNhgTable(){
+        RIBNHGTable(RedisPipeline *pipeline, const std::string &tableName, bool isStateTable);
+        ~RIBNHGTable(){
 
         };
-        int addNhg(NextHopGroupFull nhg);
-        int delNhg(uint32_t id);
-        int updateNhg(NextHopGroupFull nhg);
-        RIBNhgEntry *getEntry(uint32_t id);
-        RIBNhgEntry *getEntry(std::string key);
-        void add_nhg_dependents(RIBNhgEntry *entry);
-        void remove_nhg_dependents(RIBNhgEntry *entry);
-        bool isNhgExist(string key);
-        bool isNhgExist(uint32_t id);
-        int writeToDB(RIBNhgEntry *entry);
-        void removeFromDB(RIBNhgEntry *entry);
+        int addEntry(NextHopGroupFull nhg);
+        int delEntry(uint32_t id);
+        int updateEntry(NextHopGroupFull nhg);
+        RIBNHGEntry *getEntry(uint32_t id);
+        RIBNHGEntry *getEntry(std::string key);
+        int addNHGDependents(set<uint32_t> depends, uint32_t id);
+        void removeNHGDependents(set<uint32_t> depends, uint32_t id);
+        bool isNHGExist(string key);
+        bool isNHGExist(uint32_t id);
+        int writeToDB(RIBNHGEntry *entry);
+        void removeFromDB(RIBNHGEntry *entry);
         void dump_table(string &ret);
+        void diffDependency(set<uint32_t> oldSet, set<uint32_t> newSet, set<uint32_t> &addSet, set<uint32_t> &removeSet);
 
         // Not implemented
-        vector<RIBNhgEntry *> getDepends(std::string key);
-        vector<RIBNhgEntry *> getDependents(uint32_t id);
+        vector<RIBNHGEntry *> getDepends(std::string key);
+        vector<RIBNHGEntry *> getDependents(uint32_t id);
 
     private:
-        map<uint32_t, RIBNhgEntry *> m_nhg_map;
+        map<uint32_t, RIBNHGEntry *> m_nhg_map;
         ProducerStateTable m_nexthop_groupTable;
     };
 
 
     class NHGMgr {
     public:
-        NHGMgr(RedisPipeline *pipeline, const std::string &tableName, bool is_state_table);
+        NHGMgr(RedisPipeline *pipeline, const std::string &tableName, bool isStateTable);
         ~NHGMgr() {
             if (m_rib_nhg_table != nullptr) {
                 delete m_rib_nhg_table;
@@ -165,8 +192,8 @@ namespace swss {
         };
         int addNHGFull(NextHopGroupFull nhg);
         int delNHGFull(uint32_t id);
-        RIBNhgEntry *getRIBNhgEntryByKey(string key);
-        RIBNhgEntry *getRIBNhgEntryByRIBID(uint32_t id);
+        RIBNHGEntry *getRIBNHGEntryByKey(string key);
+        RIBNHGEntry *getRIBNHGEntryByRIBID(uint32_t id);
         //bool getIfName(int if_index, char *if_name, size_t name_len);
         void dump_zebra_nhg_table(string &ret);
 
@@ -178,7 +205,7 @@ namespace swss {
     private:
         DBConnector *m_db;
         // Map zebra NHG id to received zebra_dplane_ctx + SONIC Context (a.k.a SONIC ZEBRA NHG)
-        RIBNhgTable *m_rib_nhg_table;
+        RIBNHGTable *m_rib_nhg_table;
         // Map SONiC NHG id to SONiC created NHG
         SonicNHGTable *m_sonic_nhg_table;
         // Map nexthops in zebra_dplane_ctx to zebra NHG ID
@@ -187,7 +214,7 @@ namespace swss {
         //map<NexthofpKey, uint32_t> nexthop_key_2_sonic_id_map;
 
         // Mock Sonic ID Allocator
-        MockSonicIDMgr m_sonic_id_manager;
+        mockSonicIdMgr m_sonic_id_manager;
     };
 
 }// namespace swss
