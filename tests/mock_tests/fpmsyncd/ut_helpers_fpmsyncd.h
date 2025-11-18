@@ -17,9 +17,9 @@ using namespace swss;
 #define NH_ENCAP_SRV6_ROUTE         101
 
 enum {  /* Values copied from fpmsyncd/routesync.cpp */
-    ROUTE_ENCAP_SRV6_UNSPEC            = 0,
-    ROUTE_ENCAP_SRV6_VPN_SID           = 1,
-    ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
+	ROUTE_ENCAP_SRV6_UNSPEC            = 0,
+	ROUTE_ENCAP_SRV6_VPN_SID           = 1,
+	ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
 };
 
 enum srv6_localsid_action {  /* Values copied from fpmsyncd/routesync.cpp */
@@ -98,13 +98,13 @@ namespace ut_fpmsyncd
     /* Build a Netlink object containing an SRv6 VPN Route */
     struct nlmsg *create_srv6_vpn_route_nlmsg(uint16_t cmd, IpPrefix *dst, IpAddress *encap_src_addr,
                                               IpAddress *vpn_sid, uint16_t table_id = 10, uint8_t prefixlen = 0,
-											  uint8_t address_family = 0, uint8_t rtm_type = 0);
+                                              uint8_t address_family = 0, uint8_t rtm_type = 0);
     /* Build a Netlink object containing an SRv6 My SID */
     struct nlmsg *create_srv6_mysid_nlmsg(uint16_t cmd, IpAddress *mysid, int8_t block_len,
-                                             int8_t node_len, int8_t func_len, int8_t arg_len,
-                                             uint32_t action, char *vrf = NULL, IpAddress *nh = NULL,
-											 uint16_t table_id = 10, uint8_t prefixlen = 0,
-											 uint8_t address_family = 0);
+                                          int8_t node_len, int8_t func_len, int8_t arg_len,
+                                          uint32_t action, char *vrf = NULL, IpAddress *nh = NULL,
+                                          uint16_t table_id = 10, uint8_t prefixlen = 0,
+                                          uint8_t address_family = 0);
     /* Free the memory allocated for a Netlink object */
     inline void free_nlobj(struct nlmsg *msg)
     {
@@ -113,6 +113,20 @@ namespace ut_fpmsyncd
 
     /* Create ipv4 singleton NextHopGroupFull */
     NextHopGroupFull createSingleIPv4NextHopNHGFull(
-        const char *gateway, const char *src_addr);
+        const char *gateway, const char *src_addr, uint32_t id_in);
 
+    /* Create ipv4 multi NextHopGroupFull */
+    NextHopGroupFull createMultiNextHopNHGFull(
+        const std::map<uint32_t, NextHopGroupFull> nhGrpFullListIn,
+        const std::map<uint32_t, uint32_t> weights,
+        const std::map<uint32_t, uint32_t> numDirects,
+        const std::vector<uint32_t> depends,
+        const std::vector<uint32_t> dependents,
+        uint32_t id_in);
+
+    /* Create ipv6 singleton NextHopGroupFull */
+    NextHopGroupFull createSingleIPv6NextHopNHGFull(
+        const char *gateway, const char *src_addr, uint32_t id_in = 0);
+
+    vector<string> splitResults(string result, string delimiter);
 }
