@@ -371,11 +371,13 @@ class TestPortAddRemoveInvalidSerdesParam(object):
     def verify_add_remove(self, attr, qualifiers):
         # add port
         self.dvs_port.create_port_generic(attr["port"], attr["lanes"], attr["speed"], qualifiers)
+        time.sleep(1)
         self.dvs_port.verify_port_count(attr["port_appdb_count"]+1, self.dvs_port.APPL_DB)
         self.dvs_port.verify_port_count(attr["port_asicdb_count"], self.dvs_port.ASIC_DB)
 
         # remove port
         self.dvs_port.remove_port_generic(attr["port"])
+        time.sleep(1)
         self.dvs_port.verify_port_count(attr["port_appdb_count"], self.dvs_port.APPL_DB)
         self.dvs_port.verify_port_count(attr["port_asicdb_count"], self.dvs_port.ASIC_DB)
 
