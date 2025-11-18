@@ -1204,7 +1204,8 @@ namespace portsorch_test
                 { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
                 { "obnlev",        "0x5f,0x61,0x60,0x62"         },
                 { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
-                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         }
+                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
+                { "media_type",    "backplane"                   }
             }
         }};
 
@@ -1286,6 +1287,10 @@ namespace portsorch_test
         // Verify regn_bfm1n
         std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
         ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
+
+        // Verify media_type
+        std::string media_type = "backplane";
+        ASSERT_EQ(p.m_media_type, media_type);
 
         // Verify unreliablelos
         ASSERT_EQ(p.m_unreliable_los, false);
