@@ -22,6 +22,7 @@ class TestMuxTunnelBase():
     ASIC_TUNNEL_TABLE           = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
     ASIC_TUNNEL_TERM_ENTRIES    = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
     ASIC_RIF_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
+    ASIC_VLAN_TABLE             = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
     ASIC_VRF_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
     ASIC_NEIGH_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
     ASIC_NEXTHOP_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
@@ -47,105 +48,112 @@ class TestMuxTunnelBase():
     SERV2_IPV6                  = "fc02:1000::101"
     SERV3_IPV4                  = "192.168.0.102"
     SERV3_IPV6                  = "fc02:1000::102"
+    SERV4_IPV4                  = "192.168.100.100"
+    SERV4_IPV6                  = "fc02:1000:100::100"
     NEIGH1_IPV4                 = "192.168.0.200"
     NEIGH1_IPV6                 = "fc02:1000::200"
     NEIGH2_IPV4                 = "192.168.0.201"
     NEIGH2_IPV6                 = "fc02:1000::201"
     NEIGH3_IPV4                 = "192.168.0.202"
     NEIGH3_IPV6                 = "fc02:1000::202"
-    IPV4_MASK                   = "/32"
-    IPV6_MASK                   = "/128"
-    TUNNEL_NH_ID                = 0
-    ACL_PRIORITY                = "999"
-    VLAN_1000                   = "Vlan1000"
+    def test_mac_move_vlan(
+        self, dvs, setup, setup_vlan, setup_mux_cable, setup_peer_switch,
+        setup_tunnel, setup_mac_move_vlan_test, neighbor_cleanup, testlog
+    ):
+        """Validate neighbor move behavior between Vlan1000 and Vlan2000 mux ports"""
 
-    PING_CMD                    = "timeout 0.5 ping -c1 -W1 -i0 -n -q {ip}"
+        appdb_conn = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
 
-    SAI_ROUTER_INTERFACE_ATTR_TYPE = "SAI_ROUTER_INTERFACE_ATTR_TYPE"
-    SAI_ROUTER_INTERFACE_TYPE_VLAN = "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+        mac_hyphen = "00-00-00-00-aa-aa"
+        mac_colon = mac_hyphen.replace('-', ':')
+        vlan1000_id = int(self.VLAN_1000_ID)
+        vlan2000_id = int(self.VLAN_2000_ID)
 
-    DEFAULT_TUNNEL_PARAMS = {
-        "tunnel_type": "IPINIP",
-        "dst_ip": SELF_IPV4,
-        "src_ip": PEER_IPV4,
-        "dscp_mode": "pipe",
-        "ecn_mode": "standard",
-        "ttl_mode": "pipe",
-        "encap_tc_to_queue_map": TUNNEL_QOS_MAP_NAME,
-        "encap_tc_to_dscp_map": TUNNEL_QOS_MAP_NAME,
-        "decap_dscp_to_tc_map": TUNNEL_QOS_MAP_NAME,
-        "decap_tc_to_pg_map": TUNNEL_QOS_MAP_NAME
-    }
+        ip_test_data = [
+            ("192.168.0.250", self.IPV4_MASK),
+            ("fc02:1000::250", self.IPV6_MASK)
+        ]
 
-    DEFAULT_PEER_SWITCH_PARAMS = {
-        "address_ipv4": PEER_IPV4
-    }
+        def verify_neighbor(ip_addr, mask, vlan_id, mux_state):
+            prefix = ip_addr + mask
+            if mux_state == ACTIVE:
+                self.check_neigh_in_asic_db(asicdb, ip_addr, vlan_id=vlan_id)
+                self.check_tunnel_route_in_app_db(dvs, [prefix], expected=False)
+            else:
+                self.check_tunnel_route_in_app_db(dvs, [prefix], expected=True)
+                for _ in range(10):
+                    if not self.neigh_exists_in_asic(asicdb, ip_addr, vlan_id):
+                        break
+                    time.sleep(0.2)
+                else:
+                    pytest.fail(f"Neighbor {ip_addr} unexpectedly present in ASIC for VLAN {vlan_id}")
 
-    ecn_modes_map = {
-        "standard"       : "SAI_TUNNEL_DECAP_ECN_MODE_STANDARD",
-        "copy_from_outer": "SAI_TUNNEL_DECAP_ECN_MODE_COPY_FROM_OUTER"
-    }
+        def cleanup_entries(ip_addr, mask):
+            self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+            self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_2000)
+            self.del_fdb(dvs, mac_hyphen)
+            self.del_fdb(dvs, mac_hyphen, vlan=self.VLAN_2000)
+            self.check_tunnel_route_in_app_db(dvs, [ip_addr + mask], expected=False)
 
-    dscp_modes_map = {
-        "pipe"    : "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL",
-        "uniform" : "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL"
-    }
+        self.set_mux_state(appdb_conn, "Ethernet0", ACTIVE)
+        self.wait_for_mux_state(dvs, "Ethernet0", ACTIVE)
+        self.set_mux_state(appdb_conn, "Ethernet8", ACTIVE)
+        self.wait_for_mux_state(dvs, "Ethernet8", ACTIVE)
 
-    ttl_modes_map = {
-        "pipe"    : "SAI_TUNNEL_TTL_MODE_PIPE_MODEL",
-        "uniform" : "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
-    }
-    
-    TC_TO_DSCP_MAP = {str(i):str(i) for i in range(0, 8)}
-    TC_TO_QUEUE_MAP = {str(i):str(i) for i in range(0, 8)}
-    DSCP_TO_TC_MAP = {str(i):str(1) for i in range(0, 64)}
-    TC_TO_PRIORITY_GROUP_MAP = {str(i):str(i) for i in range(0, 8)}
+        for ip_addr, mask in ip_test_data:
+            cleanup_entries(ip_addr, mask)
 
-    BULK_NEIGHBOR_COUNT = 254
+        for state_eth4, state_eth12 in itertools.product([ACTIVE, STANDBY], repeat=2):
+            self.set_mux_state(appdb_conn, "Ethernet4", state_eth4)
+            self.wait_for_mux_state(dvs, "Ethernet4", state_eth4)
+            self.set_mux_state(appdb_conn, "Ethernet12", state_eth12)
+            self.wait_for_mux_state(dvs, "Ethernet12", state_eth12)
 
-    def check_syslog(self, dvs, marker, err_log, expected_cnt):
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
-        assert num.strip() >= str(expected_cnt)
+            for ip_addr, mask in ip_test_data:
+                # Step 2: learn on Ethernet4 / Vlan1000
+                self.add_fdb(dvs, "Ethernet4", mac_hyphen)
+                self.add_neighbor(dvs, ip_addr, mac_colon)
+                verify_neighbor(ip_addr, mask, vlan1000_id, state_eth4)
 
-    def create_vlan_interface(self, dvs):
-        confdb = dvs.get_config_db()
+                # Step 3: move to Ethernet12 / Vlan2000
+                self.del_fdb(dvs, mac_hyphen)
+                self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+                self.add_fdb(dvs, "Ethernet12", mac_hyphen, vlan=self.VLAN_2000)
+                self.add_neighbor(dvs, ip_addr, mac_colon, vlan=self.VLAN_2000)
+                verify_neighbor(ip_addr, mask, vlan2000_id, state_eth12)
 
-        fvs = {"vlanid": "1000"}
-        confdb.create_entry("VLAN", self.VLAN_1000, fvs)
+                # Step 4: move back to Ethernet4 / Vlan1000
+                self.del_fdb(dvs, mac_hyphen, vlan=self.VLAN_2000)
+                self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_2000)
+                self.add_fdb(dvs, "Ethernet4", mac_hyphen)
+                self.add_neighbor(dvs, ip_addr, mac_colon)
+                verify_neighbor(ip_addr, mask, vlan1000_id, state_eth4)
 
-        fvs = {"tagging_mode": "untagged"}
-        confdb.create_entry("VLAN_MEMBER", "Vlan1000|Ethernet0", fvs)
-        confdb.create_entry("VLAN_MEMBER", "Vlan1000|Ethernet4", fvs)
-        confdb.create_entry("VLAN_MEMBER", "Vlan1000|Ethernet8", fvs)
+                toggle_eth4 = [STANDBY, ACTIVE] if state_eth4 == ACTIVE else [ACTIVE, STANDBY]
+                for new_state in toggle_eth4:
+                    self.set_mux_state(appdb_conn, "Ethernet4", new_state)
+                    self.wait_for_mux_state(dvs, "Ethernet4", new_state)
+                    verify_neighbor(ip_addr, mask, vlan1000_id, new_state)
 
-        fvs = {"NULL": "NULL"}
-        confdb.create_entry("VLAN_INTERFACE", self.VLAN_1000, fvs)
-        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|192.168.0.1/24", fvs)
-        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|fc02:1000::1/64", fvs)
+                # Re-learn on Vlan2000 for Ethernet12 toggling
+                self.del_fdb(dvs, mac_hyphen)
+                self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+                self.add_fdb(dvs, "Ethernet12", mac_hyphen, vlan=self.VLAN_2000)
+                self.add_neighbor(dvs, ip_addr, mac_colon, vlan=self.VLAN_2000)
 
-        dvs.port_admin_set("Ethernet0", "up")
-        dvs.port_admin_set("Ethernet4", "up")
-        dvs.port_admin_set("Ethernet8", "up")
+                toggle_eth12 = [STANDBY, ACTIVE] if state_eth12 == ACTIVE else [ACTIVE, STANDBY]
+                for new_state in toggle_eth12:
+                    self.set_mux_state(appdb_conn, "Ethernet12", new_state)
+                    self.wait_for_mux_state(dvs, "Ethernet12", new_state)
+                    verify_neighbor(ip_addr, mask, vlan2000_id, new_state)
 
-    def create_mux_cable(self, confdb):
-        fvs = {
-            "server_ipv4":self.SERV1_IPV4 + self.IPV4_MASK,
-            "server_ipv6":self.SERV1_IPV6 + self.IPV6_MASK,
-            "soc_ipv4": self.SERV1_SOC_IPV4 + self.IPV4_MASK,
-            "cable_type": "active-active" # "cable_type" is not used by orchagent, this is a dummy value
-        }
-        confdb.create_entry(self.CONFIG_MUX_CABLE, "Ethernet0", fvs)
+                cleanup_entries(ip_addr, mask)
 
-        fvs = {"server_ipv4": self.SERV2_IPV4+self.IPV4_MASK,
-               "server_ipv6": self.SERV2_IPV6+self.IPV6_MASK}
-        confdb.create_entry(self.CONFIG_MUX_CABLE, "Ethernet4", fvs)
-
-        fvs = {"server_ipv4": self.SERV3_IPV4+self.IPV4_MASK,
-               "server_ipv6": self.SERV3_IPV6+self.IPV6_MASK}
-        confdb.create_entry(self.CONFIG_MUX_CABLE, "Ethernet8", fvs)
-
-    def set_mux_state(self, appdb, ifname, state_change):
-
+        self.set_mux_state(appdb_conn, "Ethernet4", ACTIVE)
+        self.wait_for_mux_state(dvs, "Ethernet4", ACTIVE)
+        self.set_mux_state(appdb_conn, "Ethernet12", ACTIVE)
+        self.wait_for_mux_state(dvs, "Ethernet12", ACTIVE)
         ps = swsscommon.ProducerStateTable(appdb, self.APP_MUX_CABLE)
 
         fvs = create_fvs(state=state_change)
@@ -155,70 +163,102 @@ class TestMuxTunnelBase():
         time.sleep(1)
 
     def get_switch_oid(self, asicdb):
-        # Assumes only one switch is ever present
-        keys = asicdb.wait_for_n_keys(self.ASIC_SWITCH_TABLE, 1)
-        return keys[0]
+        def test_mac_move_vlan(
+            self, dvs, setup, setup_vlan, setup_mux_cable, setup_peer_switch,
+            setup_tunnel, setup_mac_move_vlan_test, neighbor_cleanup, testlog
+        ):
+            """Validate neighbor move behavior between Vlan1000 and Vlan2000 mux ports"""
 
-    def get_vlan_rif_oid(self, asicdb):
-        # create_vlan_interface should be called before this method
-        # Assumes only one VLAN RIF is present
-        rifs = asicdb.get_keys(self.ASIC_RIF_TABLE)
+            appdb_conn = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+            asicdb = dvs.get_asic_db()
 
-        vlan_oid = ''
-        for rif_key in rifs:
-            entry = asicdb.get_entry(self.ASIC_RIF_TABLE, rif_key)
-            if entry[self.SAI_ROUTER_INTERFACE_ATTR_TYPE] == self.SAI_ROUTER_INTERFACE_TYPE_VLAN:
-                vlan_oid = rif_key
-                break
+            mac_hyphen = "00-00-00-00-aa-aa"
+            mac_colon = mac_hyphen.replace('-', ':')
+            vlan1000_id = int(self.VLAN_1000_ID)
+            vlan2000_id = int(self.VLAN_2000_ID)
 
-        return vlan_oid
-    
-    def get_nexthop_oid(self, asicdb, nexthop):
-        # gets nexthop oid
-        nexthop_keys = asicdb.get_keys(self.ASIC_NEXTHOP_TABLE)
+            ip_test_data = [
+                ("192.168.0.250", self.IPV4_MASK),
+                ("fc02:1000::250", self.IPV6_MASK)
+            ]
 
-        nexthop_oid = ''
-        for nexthop_key in nexthop_keys:
-            entry = asicdb.get_entry(self.ASIC_NEXTHOP_TABLE, nexthop_key)
-            if entry["SAI_NEXT_HOP_ATTR_IP"] == nexthop:
-                nexthop_oid = nexthop_key
-                break
+            def verify_neighbor(ip_addr, mask, vlan_id, mux_state):
+                prefix = ip_addr + mask
+                if mux_state == ACTIVE:
+                    self.check_neigh_in_asic_db(asicdb, ip_addr, vlan_id=vlan_id)
+                    self.check_tunnel_route_in_app_db(dvs, [prefix], expected=False)
+                else:
+                    self.check_tunnel_route_in_app_db(dvs, [prefix], expected=True)
+                    for _ in range(10):
+                        if not self.neigh_exists_in_asic(asicdb, ip_addr, vlan_id):
+                            break
+                        time.sleep(0.2)
+                    else:
+                        pytest.fail(f"Neighbor {ip_addr} unexpectedly present in ASIC for VLAN {vlan_id}")
 
-        return nexthop_oid
-    
-    def get_route_nexthop_oid(self, route_key, asicdb):
-        # gets nexthop oid
-        entry = asicdb.get_entry(self.ASIC_ROUTE_TABLE, route_key)
-        assert 'SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID' in entry
+            def cleanup_entries(ip_addr, mask):
+                self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+                self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_2000)
+                self.del_fdb(dvs, mac_hyphen)
+                self.del_fdb(dvs, mac_hyphen, vlan=self.VLAN_2000)
+                self.check_tunnel_route_in_app_db(dvs, [ip_addr + mask], expected=False)
 
-        return entry['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
+            self.set_mux_state(appdb_conn, "Ethernet0", ACTIVE)
+            self.wait_for_mux_state(dvs, "Ethernet0", ACTIVE)
+            self.set_mux_state(appdb_conn, "Ethernet8", ACTIVE)
+            self.wait_for_mux_state(dvs, "Ethernet8", ACTIVE)
 
-    def check_tunnel_route_in_app_db(self, dvs, destinations, expected=True):
-        appdb = dvs.get_app_db()
+            for ip_addr, mask in ip_test_data:
+                cleanup_entries(ip_addr, mask)
 
-        if expected:
-            appdb.wait_for_matching_keys(self.APP_TUNNEL_ROUTE_TABLE_NAME, destinations)
-        else:
-            appdb.wait_for_deleted_keys(self.APP_TUNNEL_ROUTE_TABLE_NAME, destinations)
+            for state_eth4, state_eth12 in itertools.product([ACTIVE, STANDBY], repeat=2):
+                self.set_mux_state(appdb_conn, "Ethernet4", state_eth4)
+                self.wait_for_mux_state(dvs, "Ethernet4", state_eth4)
+                self.set_mux_state(appdb_conn, "Ethernet12", state_eth12)
+                self.wait_for_mux_state(dvs, "Ethernet12", state_eth12)
 
-    def check_neigh_in_asic_db(self, asicdb, ip, expected=True):
-        rif_oid = self.get_vlan_rif_oid(asicdb)
-        switch_oid = self.get_switch_oid(asicdb)
-        neigh_key_map = {
-            "ip": ip,
-            "rif": rif_oid,
-            "switch_id": switch_oid
-        }
-        expected_key = json.dumps(neigh_key_map, sort_keys=True, separators=(',', ':'))
+                for ip_addr, mask in ip_test_data:
+                    cleanup_entries(ip_addr, mask)
 
-        if expected:
-            nbr_keys = asicdb.wait_for_matching_keys(self.ASIC_NEIGH_TABLE, [expected_key])
+                    self.add_fdb(dvs, "Ethernet4", mac_hyphen)
+                    self.add_neighbor(dvs, ip_addr, mac_colon)
+                    verify_neighbor(ip_addr, mask, vlan1000_id, state_eth4)
 
-            for key in nbr_keys:
-                if ip in key:
-                    return key
+                    self.del_fdb(dvs, mac_hyphen)
+                    self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+                    self.add_fdb(dvs, "Ethernet12", mac_hyphen, vlan=self.VLAN_2000)
+                    self.add_neighbor(dvs, ip_addr, mac_colon, vlan=self.VLAN_2000)
+                    verify_neighbor(ip_addr, mask, vlan2000_id, state_eth12)
 
-        else:
+                    self.del_fdb(dvs, mac_hyphen, vlan=self.VLAN_2000)
+                    self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_2000)
+                    self.add_fdb(dvs, "Ethernet4", mac_hyphen)
+                    self.add_neighbor(dvs, ip_addr, mac_colon)
+                    verify_neighbor(ip_addr, mask, vlan1000_id, state_eth4)
+
+                    toggle_eth4 = [STANDBY, ACTIVE] if state_eth4 == ACTIVE else [ACTIVE, STANDBY]
+                    for new_state in toggle_eth4:
+                        self.set_mux_state(appdb_conn, "Ethernet4", new_state)
+                        self.wait_for_mux_state(dvs, "Ethernet4", new_state)
+                        verify_neighbor(ip_addr, mask, vlan1000_id, new_state)
+
+                    self.del_fdb(dvs, mac_hyphen)
+                    self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+                    self.add_fdb(dvs, "Ethernet12", mac_hyphen, vlan=self.VLAN_2000)
+                    self.add_neighbor(dvs, ip_addr, mac_colon, vlan=self.VLAN_2000)
+
+                    toggle_eth12 = [STANDBY, ACTIVE] if state_eth12 == ACTIVE else [ACTIVE, STANDBY]
+                    for new_state in toggle_eth12:
+                        self.set_mux_state(appdb_conn, "Ethernet12", new_state)
+                        self.wait_for_mux_state(dvs, "Ethernet12", new_state)
+                        verify_neighbor(ip_addr, mask, vlan2000_id, new_state)
+
+                    cleanup_entries(ip_addr, mask)
+
+            self.set_mux_state(appdb_conn, "Ethernet4", ACTIVE)
+            self.wait_for_mux_state(dvs, "Ethernet4", ACTIVE)
+            self.set_mux_state(appdb_conn, "Ethernet12", ACTIVE)
+            self.wait_for_mux_state(dvs, "Ethernet12", ACTIVE)
             asicdb.wait_for_deleted_keys(self.ASIC_NEIGH_TABLE, [expected_key])
 
         return ''
@@ -288,31 +328,35 @@ class TestMuxTunnelBase():
 
         return route_nexthop_oid == nexthop_oid
 
-    def add_neighbor(self, dvs, ip, mac):
+    def add_neighbor(self, dvs, ip, mac, vlan=None):
+        vlan_name = vlan if vlan else self.VLAN_1000
         if ip_address(ip).version == 6:
-            dvs.runcmd("ip -6 neigh replace " + ip + " lladdr " + mac + " dev Vlan1000")
+            dvs.runcmd("ip -6 neigh replace " + ip + " lladdr " + mac + " dev " + vlan_name)
         else:
-            dvs.runcmd("ip -4 neigh replace " + ip + " lladdr " + mac + " dev Vlan1000")
+            dvs.runcmd("ip -4 neigh replace " + ip + " lladdr " + mac + " dev " + vlan_name)
 
-    def del_neighbor(self, dvs, ip):
-        cmd = 'ip neigh del {} dev {}'.format(ip, self.VLAN_1000)
+    def del_neighbor(self, dvs, ip, vlan=None):
+        vlan_name = vlan if vlan else self.VLAN_1000
+        cmd = 'ip neigh del {} dev {}'.format(ip, vlan_name)
         dvs.runcmd(cmd)
 
-    def add_fdb(self, dvs, port, mac):
+    def add_fdb(self, dvs, port, mac, vlan=None):
+        vlan_name = vlan if vlan else self.VLAN_1000
 
         appdb = dvs.get_app_db()
         ps = swsscommon.ProducerStateTable(appdb.db_connection, "FDB_TABLE")
         fvs = swsscommon.FieldValuePairs([("port", port), ("type", "dynamic")])
 
-        ps.set("Vlan1000:"+mac, fvs)
+        ps.set(vlan_name+":"+mac, fvs)
 
         time.sleep(1)
 
-    def del_fdb(self, dvs, mac):
+    def del_fdb(self, dvs, mac, vlan=None):
+        vlan_name = vlan if vlan else self.VLAN_1000
 
         appdb = dvs.get_app_db()
         ps = swsscommon.ProducerStateTable(appdb.db_connection, "FDB_TABLE")
-        ps._del("Vlan1000:"+mac)
+        ps._del(vlan_name+":"+mac)
 
         time.sleep(1)
 
@@ -1484,6 +1528,37 @@ class TestMuxTunnelBase():
             self.DEFAULT_TUNNEL_PARAMS
         )
 
+    @pytest.fixture(scope='module')
+    def setup_mac_move_vlan_test(self, dvs):
+        config_db = dvs.get_config_db()
+        vlan_name = self.VLAN_2000
+        port = self.VLAN_2000_MEMBER
+
+        try:
+            config_db.create_entry("VLAN", vlan_name, {"vlanid": self.VLAN_2000_ID})
+            config_db.create_entry("VLAN_MEMBER", f"{vlan_name}|{port}", {"tagging_mode": "untagged"})
+            config_db.create_entry("VLAN_INTERFACE", vlan_name, {"NULL": "NULL"})
+            config_db.create_entry("VLAN_INTERFACE", f"{vlan_name}|{self.VLAN_2000_IPV4}", {"NULL": "NULL"})
+            config_db.create_entry("VLAN_INTERFACE", f"{vlan_name}|{self.VLAN_2000_IPV6}", {"NULL": "NULL"})
+            config_db.create_entry(
+                self.CONFIG_MUX_CABLE,
+                port,
+                {
+                    "server_ipv4": self.SERV4_IPV4 + self.IPV4_MASK,
+                    "server_ipv6": self.SERV4_IPV6 + self.IPV6_MASK
+                }
+            )
+            dvs.port_admin_set(port, "up")
+            yield
+        finally:
+            dvs.port_admin_set(port, "down")
+            config_db.delete_entry(self.CONFIG_MUX_CABLE, port)
+            config_db.delete_entry("VLAN_INTERFACE", f"{vlan_name}|{self.VLAN_2000_IPV6}")
+            config_db.delete_entry("VLAN_INTERFACE", f"{vlan_name}|{self.VLAN_2000_IPV4}")
+            config_db.delete_entry("VLAN_INTERFACE", vlan_name)
+            config_db.delete_entry("VLAN_MEMBER", f"{vlan_name}|{port}")
+            config_db.delete_entry("VLAN", vlan_name)
+
     @pytest.fixture
     def restore_tunnel(self, dvs):
         yield
@@ -1514,10 +1589,20 @@ class TestMuxTunnelBase():
 
     def clear_neighbors(self, dvs):
         _, neighs_str = dvs.runcmd('ip neigh show all')
-        neighs = [entry.split()[0] for entry in neighs_str.split('\n')[:-1]]
+        entries = [entry for entry in neighs_str.split('\n') if entry]
 
-        for neigh in neighs:
-            self.del_neighbor(dvs, neigh)
+        for entry in entries:
+            parts = entry.split()
+            if not parts:
+                continue
+            ip = parts[0]
+            dev = None
+            if 'dev' in parts:
+                try:
+                    dev = parts[parts.index('dev') + 1]
+                except (ValueError, IndexError):
+                    dev = None
+            self.del_neighbor(dvs, ip, vlan=dev)
 
     @pytest.fixture
     def neighbor_cleanup(self, dvs):
@@ -1725,6 +1810,111 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         self.create_and_test_fdb(appdb, asicdb, dvs, dvs_route)
 
+    def test_mac_move_vlan(
+        self, dvs, setup, setup_vlan, setup_mux_cable, setup_peer_switch,
+        setup_tunnel, setup_mac_move_vlan_test, neighbor_cleanup, testlog
+    ):
+        """Validate neighbor move behavior between Vlan1000 and Vlan2000 mux ports"""
+
+        appdb_conn = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        mac_hyphen = "00-00-00-00-aa-aa"
+        mac_colon = mac_hyphen.replace('-', ':')
+        vlan1000_id = int(self.VLAN_1000_ID)
+        vlan2000_id = int(self.VLAN_2000_ID)
+
+        ip_test_data = [
+            ("192.168.0.250", self.IPV4_MASK),
+            ("fc02:1000::250", self.IPV6_MASK)
+        ]
+
+        def verify_neighbor(ip_addr, mask, vlan_id, mux_state):
+            prefix = ip_addr + mask
+            if mux_state == ACTIVE:
+                self.check_neigh_in_asic_db(asicdb, ip_addr, vlan_id=vlan_id)
+                self.check_tunnel_route_in_app_db(dvs, [prefix], expected=False)
+            else:
+                self.check_tunnel_route_in_app_db(dvs, [prefix], expected=True)
+                # Allow orchestration to withdraw any lingering neighbor entries
+                for _ in range(10):
+                    if not self.neigh_exists_in_asic(asicdb, ip_addr, vlan_id):
+                        break
+                    time.sleep(0.2)
+                else:
+                    pytest.fail(f"Neighbor {ip_addr} unexpectedly present in ASIC for VLAN {vlan_id}")
+
+        def cleanup_entries(ip_addr, mask):
+            self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+            self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_2000)
+            self.del_fdb(dvs, mac_hyphen)
+            self.del_fdb(dvs, mac_hyphen, vlan=self.VLAN_2000)
+            self.check_tunnel_route_in_app_db(dvs, [ip_addr + mask], expected=False)
+
+        # Ensure baseline mux state for ports not under test
+        self.set_mux_state(appdb_conn, "Ethernet0", ACTIVE)
+        self.wait_for_mux_state(dvs, "Ethernet0", ACTIVE)
+        self.set_mux_state(appdb_conn, "Ethernet8", ACTIVE)
+        self.wait_for_mux_state(dvs, "Ethernet8", ACTIVE)
+
+        for ip_addr, mask in ip_test_data:
+            cleanup_entries(ip_addr, mask)
+
+        try:
+            for state_eth4, state_eth12 in itertools.product([ACTIVE, STANDBY], repeat=2):
+                self.set_mux_state(appdb_conn, "Ethernet4", state_eth4)
+                self.wait_for_mux_state(dvs, "Ethernet4", state_eth4)
+                self.set_mux_state(appdb_conn, "Ethernet12", state_eth12)
+                self.wait_for_mux_state(dvs, "Ethernet12", state_eth12)
+
+                for ip_addr, mask in ip_test_data:
+                    cleanup_entries(ip_addr, mask)
+                    try:
+                        # Step 2: learn on Ethernet4 / Vlan1000
+                        self.add_fdb(dvs, "Ethernet4", mac_hyphen)
+                        self.add_neighbor(dvs, ip_addr, mac_colon)
+                        verify_neighbor(ip_addr, mask, vlan1000_id, state_eth4)
+
+                        # Step 3: move to Ethernet12 / Vlan2000
+                        self.del_fdb(dvs, mac_hyphen)
+                        self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+                        self.add_fdb(dvs, "Ethernet12", mac_hyphen, vlan=self.VLAN_2000)
+                        self.add_neighbor(dvs, ip_addr, mac_colon, vlan=self.VLAN_2000)
+                        verify_neighbor(ip_addr, mask, vlan2000_id, state_eth12)
+
+                        # Step 4: move back to Ethernet4 / Vlan1000
+                        self.del_fdb(dvs, mac_hyphen, vlan=self.VLAN_2000)
+                        self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_2000)
+                        self.add_fdb(dvs, "Ethernet4", mac_hyphen)
+                        self.add_neighbor(dvs, ip_addr, mac_colon)
+                        verify_neighbor(ip_addr, mask, vlan1000_id, state_eth4)
+
+                        # Step 5: toggle Ethernet4 state
+                        toggle_eth4 = [STANDBY, ACTIVE] if state_eth4 == ACTIVE else [ACTIVE, STANDBY]
+                        for new_state in toggle_eth4:
+                            self.set_mux_state(appdb_conn, "Ethernet4", new_state)
+                            self.wait_for_mux_state(dvs, "Ethernet4", new_state)
+                            verify_neighbor(ip_addr, mask, vlan1000_id, new_state)
+
+                        # Step 6: toggle Ethernet12 (re-learn on Vlan2000 first)
+                        self.del_fdb(dvs, mac_hyphen)
+                        self.del_neighbor(dvs, ip_addr, vlan=self.VLAN_1000)
+                        self.add_fdb(dvs, "Ethernet12", mac_hyphen, vlan=self.VLAN_2000)
+                        self.add_neighbor(dvs, ip_addr, mac_colon, vlan=self.VLAN_2000)
+
+                        toggle_eth12 = [STANDBY, ACTIVE] if state_eth12 == ACTIVE else [ACTIVE, STANDBY]
+                        for new_state in toggle_eth12:
+                            self.set_mux_state(appdb_conn, "Ethernet12", new_state)
+                            self.wait_for_mux_state(dvs, "Ethernet12", new_state)
+                            verify_neighbor(ip_addr, mask, vlan2000_id, new_state)
+                    finally:
+                        cleanup_entries(ip_addr, mask)
+        finally:
+            self.set_mux_state(appdb_conn, "Ethernet4", ACTIVE)
+            self.wait_for_mux_state(dvs, "Ethernet4", ACTIVE)
+            self.set_mux_state(appdb_conn, "Ethernet12", ACTIVE)
+            self.wait_for_mux_state(dvs, "Ethernet12", ACTIVE)
+
     def test_Route(self, dvs, intf_fdb_map, dvs_route, setup, setup_vlan, setup_peer_switch, setup_tunnel, setup_mux_cable, testlog):
         """ test Route entries and mux state change """
 
@@ -1805,8 +1995,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
             self, dvs, dvs_route, setup_vlan, setup_tunnel, setup,
             setup_peer_switch, neighbor_cleanup, testlog
     ):
-        config_db = dvs.get_config_db()
-        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         test_ip = self.SERV1_SOC_IPV4
         self.ping_ip(dvs, test_ip)

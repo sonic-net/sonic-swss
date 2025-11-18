@@ -615,18 +615,6 @@ bool MuxCable::aclHandler(sai_object_id_t port, string alias, bool add)
     return true;
 }
 
-bool MuxCable::isIpInSubnet(IpAddress ip)
-{
-    if (ip.isV4())
-    {
-        return (srv_ip4_.isAddressInSubnet(ip));
-    }
-    else
-    {
-        return (srv_ip6_.isAddressInSubnet(ip));
-    }
-}
-
 bool MuxCable::nbrHandler(bool enable, bool update_rt)
 {
     bool ret;
@@ -1369,11 +1357,8 @@ MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
 {
     for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
     {
-       MuxCable* ptr = it->second.get();
-       if (ptr->isIpInSubnet(ip))
-       {
-           return ptr;
-       }
+        MuxCable* ptr = it->second.get();
+        return ptr;
     }
 
     return nullptr;
@@ -1472,10 +1457,6 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
             if (!nh->second.empty() && isMuxExists(nh->second))
             {
                 ptr = getMuxCable(nh->second);
-                if (ptr->isIpInSubnet(nh->first.ip_address))
-                {
-                    continue;
-                }
                 nh->second = update.entry.port_name;
                 ptr->updateNeighbor(nh->first, false);
             }
@@ -1530,11 +1511,8 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
     {
         MuxCable* ptr = it->second.get();
-        if (ptr->isIpInSubnet(update.entry.ip_address))
-        {
-            ptr->updateNeighbor(update.entry, update.add);
-            return;
-        }
+        ptr->updateNeighbor(update.entry, update.add);
+        return;
     }
 
     string port, old_port;
