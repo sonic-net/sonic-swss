@@ -1,3 +1,4 @@
+#include "schema.h"
 #define private public // make Directory::m_values available to clean it.
 #include "directory.h"
 #undef private
@@ -109,6 +110,11 @@ namespace flexcounter_test
         if (flexCounterGroupParam->poll_interval.list != nullptr)
         {
             entries.push_back({POLL_INTERVAL_FIELD, (const char*)flexCounterGroupParam->poll_interval.list});
+        }
+
+        if (flexCounterGroupParam->secondary_poll_factor.list != nullptr)
+        {
+            entries.push_back({SECONDARY_POLL_FACTOR_FIELD, (const char*)flexCounterGroupParam->secondary_poll_factor.list});
         }
 
         if (flexCounterGroupParam->stats_mode.list != nullptr)
@@ -508,12 +514,14 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, "60000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {FLEX_COUNTER_STATUS_FIELD, "disable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {POLL_INTERVAL_FIELD, QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {QUEUE_PLUGIN_FIELD, ""}
                                           }));
@@ -521,6 +529,7 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {POLL_INTERVAL_FIELD, PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {PG_PLUGIN_FIELD, ""}
                                           }));
@@ -528,6 +537,7 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {PORT_PLUGIN_FIELD, ""}
                                           }));
@@ -535,11 +545,13 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {FLEX_COUNTER_STATUS_FIELD, "disable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {POLL_INTERVAL_FIELD, "1000"},
                                               {RIF_PLUGIN_FIELD, ""},
                                           }));
@@ -660,12 +672,14 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                               {BUFFER_POOL_PLUGIN_FIELD, ""}
@@ -673,6 +687,7 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                               {QUEUE_PLUGIN_FIELD, ""}
@@ -680,6 +695,7 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                               {PG_PLUGIN_FIELD, ""}
@@ -687,18 +703,21 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "10000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"}
                                           }));
         ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "1000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                               {PORT_PLUGIN_FIELD, ""}
@@ -706,6 +725,7 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "10000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "0"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                           }));
@@ -924,8 +944,9 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(PFC_WD_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "200"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "1"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
-                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {QUEUE_PLUGIN_FIELD, ""}
                                           }));
 
