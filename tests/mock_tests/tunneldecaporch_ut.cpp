@@ -1,7 +1,5 @@
 #include "ut_helper.h"
-#define private public
 #include "mock_orchagent_main.h"
-#undef private
 
 namespace tunneldecaporch_test
 {
@@ -374,6 +372,7 @@ namespace tunneldecaporch_test
         });
     }
 
+#define private public
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_SetTunnelAttribute)
     {
         vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
@@ -415,6 +414,7 @@ namespace tunneldecaporch_test
             EXPECT_TRUE(result);
         });
     }
+#undef private
 
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_StateDbVerification)
     {
