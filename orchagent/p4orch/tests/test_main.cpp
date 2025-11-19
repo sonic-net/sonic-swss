@@ -44,7 +44,6 @@ bool isChassisDbInUse()
     return gMultiAsicVoq;
 }
 
-
 #define DEFAULT_BATCH_SIZE 128
 #define DEFAULT_MAX_BULK_SIZE 1000
 extern int gBatchSize;
