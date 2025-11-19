@@ -1,5 +1,7 @@
 #include "ut_helper.h"
+#define private public
 #include "mock_orchagent_main.h"
+#undef private
 
 namespace tunneldecaporch_test
 {
