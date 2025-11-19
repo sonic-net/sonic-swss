@@ -132,6 +132,7 @@ orchagent_SOURCES = \
             twamporch.cpp \
             stporch.cpp \
             nexthopkey.cpp \
+            macsecpost.cpp \
             high_frequency_telemetry/hftelorch.cpp \
             high_frequency_telemetry/hftelprofile.cpp \
             high_frequency_telemetry/counternameupdater.cpp \
