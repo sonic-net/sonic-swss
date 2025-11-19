@@ -372,4 +372,192 @@ namespace tunneldecaporch_test
         });
     }
 
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_SetTunnelAttribute)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        sai_object_id_t test_tunnel_id = 0x123;
+        
+        EXPECT_NO_THROW({
+            bool result = tunnelDecapOrch->setTunnelAttribute("dscp_mode", "uniform", test_tunnel_id);
+            EXPECT_TRUE(result);
+        });
+
+        EXPECT_NO_THROW({
+            bool result = tunnelDecapOrch->setTunnelAttribute("dscp_mode", "pipe", test_tunnel_id);
+            EXPECT_TRUE(result);
+        });
+
+        EXPECT_NO_THROW({
+            bool result = tunnelDecapOrch->setTunnelAttribute("ttl_mode", "uniform", test_tunnel_id);
+            EXPECT_TRUE(result);
+        });
+
+        EXPECT_NO_THROW({
+            bool result = tunnelDecapOrch->setTunnelAttribute("ttl_mode", "pipe", test_tunnel_id);
+            EXPECT_TRUE(result);
+        });
+
+        sai_object_id_t test_qos_map_id = 0x456;
+        
+        EXPECT_NO_THROW({
+            bool result = tunnelDecapOrch->setTunnelAttribute("decap_dscp_to_tc_map", test_qos_map_id, test_tunnel_id);
+            EXPECT_TRUE(result);
+        });
+
+        EXPECT_NO_THROW({
+            bool result = tunnelDecapOrch->setTunnelAttribute("decap_tc_to_pg_map", test_qos_map_id, test_tunnel_id);
+            EXPECT_TRUE(result);
+        });
+    }
+
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_StateDbVerification)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        Table tunnelDecapTable(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+        Table stateTable(m_state_db.get(), STATE_TUNNEL_DECAP_TABLE_NAME);
+        
+        vector<FieldValueTuple> tunnelData = {
+            {"tunnel_type", "IPINIP"},
+            {"dscp_mode", "uniform"},
+            {"ecn_mode", "copy_from_outer"},
+            {"ttl_mode", "pipe"},
+            {"src_ip", "10.0.0.1"}
+        };
+        tunnelDecapTable.set("state_test_tunnel", tunnelData);
+
+        EXPECT_NO_THROW({
+            vector<FieldValueTuple> values;
+            bool result = tunnelDecapTable.get("state_test_tunnel", values);
+            EXPECT_TRUE(result);
+            EXPECT_EQ(values.size(), 5);
+        });
+
+        EXPECT_NO_THROW({
+            vector<FieldValueTuple> stateValues;
+            stateTable.get("state_test_tunnel", stateValues);
+        });
+
+        tunnelDecapTable.del("state_test_tunnel");
+        
+        vector<FieldValueTuple> modifiedData = {
+            {"tunnel_type", "IPINIP"},
+            {"dscp_mode", "pipe"},
+            {"ecn_mode", "standard"},
+            {"ttl_mode", "uniform"}
+        };
+        tunnelDecapTable.set("state_test_tunnel", modifiedData);
+
+        EXPECT_NO_THROW({
+            vector<FieldValueTuple> values;
+            bool result = tunnelDecapTable.get("state_test_tunnel", values);
+            EXPECT_TRUE(result);
+            EXPECT_EQ(values.size(), 4);
+            
+            bool foundDscpMode = false;
+            bool foundEcnMode = false;
+            for (const auto& fv : values) {
+                if (fvField(fv) == "dscp_mode") {
+                    EXPECT_EQ(fvValue(fv), "pipe");
+                    foundDscpMode = true;
+                }
+                if (fvField(fv) == "ecn_mode") {
+                    EXPECT_EQ(fvValue(fv), "standard");
+                    foundEcnMode = true;
+                }
+            }
+            EXPECT_TRUE(foundDscpMode);
+            EXPECT_TRUE(foundEcnMode);
+        });
+
+        tunnelDecapTable.del("state_test_tunnel");
+        
+        EXPECT_NO_THROW({
+            vector<FieldValueTuple> values;
+            bool result = tunnelDecapTable.get("state_test_tunnel", values);
+            EXPECT_FALSE(result);
+        });
+    }
+
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_StateDbTermTable)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        Table tunnelTermTable(m_app_db.get(), APP_TUNNEL_DECAP_TERM_TABLE_NAME);
+        Table stateTermTable(m_state_db.get(), STATE_TUNNEL_DECAP_TERM_TABLE_NAME);
+        
+        vector<FieldValueTuple> termData = {
+            {"term_type", "P2MP"},
+            {"dst_ip", "192.168.1.0/24"},
+            {"src_ip", "10.0.0.1"},
+            {"subnet_type", "vnet"}
+        };
+        tunnelTermTable.set("test_tunnel|192.168.1.0/24", termData);
+
+        EXPECT_NO_THROW({
+            vector<FieldValueTuple> values;
+            bool result = tunnelTermTable.get("test_tunnel|192.168.1.0/24", values);
+            EXPECT_TRUE(result);
+            EXPECT_EQ(values.size(), 4);
+        });
+
+        EXPECT_NO_THROW({
+            vector<FieldValueTuple> stateValues;
+            stateTermTable.get("test_tunnel|192.168.1.0/24", stateValues);
+        });
+
+        tunnelTermTable.del("test_tunnel|192.168.1.0/24");
+        
+        EXPECT_NO_THROW({
+            vector<FieldValueTuple> values;
+            bool result = tunnelTermTable.get("test_tunnel|192.168.1.0/24", values);
+            EXPECT_FALSE(result);
+        });
+    }
+
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_GettersWithStateDb)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        EXPECT_NO_THROW({
+            string dscp_mode = tunnelDecapOrch->getDscpMode("test_tunnel_with_state");
+            EXPECT_TRUE(dscp_mode.empty());
+        });
+
+        EXPECT_NO_THROW({
+            auto dst_ips = tunnelDecapOrch->getDstIpAddresses("test_tunnel_with_state");
+            EXPECT_EQ(dst_ips.getSize(), 0);
+        });
+
+        EXPECT_NO_THROW({
+            sai_object_id_t qos_map_id;
+            bool result = tunnelDecapOrch->getQosMapId("test_tunnel_with_state", "encap_tc_to_dscp_map", qos_map_id);
+            EXPECT_FALSE(result);
+        });
+
+        EXPECT_NO_THROW({
+            sai_object_id_t qos_map_id;
+            bool result = tunnelDecapOrch->getQosMapId("test_tunnel_with_state", "encap_tc_to_queue_map", qos_map_id);
+            EXPECT_FALSE(result);
+        });
+
+        EXPECT_NO_THROW({
+            const auto& config = tunnelDecapOrch->getSubnetDecapConfig();
+            EXPECT_FALSE(config.enable);
+        });
+    }
+
 } // namespace tunneldecaporch_test
