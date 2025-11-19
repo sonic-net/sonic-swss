@@ -288,8 +288,7 @@ mod tests {
         assert!(first_gauge.description.contains("Ethernet0"));
         assert_eq!(first_gauge.data_points[0].value, 500);
 
-        // All should have same timestamp 
-        let expected_time_nano = 0u64; 
+        let expected_time_nano = 1672531200u64; 
         for gauge in &gauges {
             assert_eq!(gauge.data_points[0].time_unix_nano, expected_time_nano);
         }
@@ -419,7 +418,7 @@ fn test_sai_to_otel_gauge_conversion() {
     assert_eq!(buffer_stats.len(), 1);
 
     // Check that all metrics have proper timestamps 
-    let expected_time = 0u64; 
+    let expected_time = 1672531200u64; 
     for gauge in &otel_metrics.gauges {
         assert_eq!(gauge.data_points[0].time_unix_nano, expected_time);
     }
