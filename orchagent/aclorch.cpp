@@ -1035,10 +1035,42 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 matchData.mask.u8 = 0x3F;
             }
         }
-        else if (attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
+        else if (attr_name == MATCH_ETHER_TYPE)
         {
             matchData.data.u16 = to_uint<uint16_t>(attr_value);
             matchData.mask.u16 = 0xFFFF;
+        }
+        else if (attr_name == MATCH_L4_DST_PORT)
+        {
+            // Support both exact value match and value/mask match
+            auto flag_data = tokenize(attr_value, '/');
+
+            matchData.data.u16 = to_uint<uint16_t>(flag_data[0], 0, 0xFFFF);
+
+            if (flag_data.size() == 2)
+            {
+                matchData.mask.u16 = to_uint<uint16_t>(flag_data[1], 0, 0xFFFF);
+            }
+            else
+            {
+                matchData.mask.u16 = 0xFFFF;
+            }
+        }
+        else if (attr_name == MATCH_L4_SRC_PORT)
+        {
+            // Support both exact value match and value/mask match
+            auto flag_data = tokenize(attr_value, '/');
+
+            matchData.data.u16 = to_uint<uint16_t>(flag_data[0], 0, 0xFFFF);
+
+            if (flag_data.size() == 2)
+            {
+                matchData.mask.u16 = to_uint<uint16_t>(flag_data[1], 0, 0xFFFF);
+            }
+            else
+            {
+                matchData.mask.u16 = 0xFFFF;
+            }
         }
         else if (attr_name == MATCH_VLAN_ID)
         {
