@@ -109,8 +109,6 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
 
         sai_object_id_t tunnel_id = SAI_NULL_OBJECT_ID;
 
-        // track whether any oper fields changed on this key
-        bool state_changed = false;
         // checking to see if the tunnel already exists
         bool exists = (tunnelTable.find(key) != tunnelTable.end());
         if (exists)
@@ -165,7 +163,6 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                         // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), dscp_mode, tunnel_id);
                         tunnelTable[key].dscp_mode = dscp_mode;
-                        state_changed = true;
                     }
                 }
                 else if (fvField(i) == "ecn_mode")
@@ -213,7 +210,6 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     {
                         // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), ttl_mode, tunnel_id);
-                        state_changed = true;
                     }
                 }
                 else if (fvField(i) == decap_dscp_to_tc_field_name)
@@ -229,7 +225,6 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     {
                         // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), dscp_to_tc_map_id, tunnel_id);
-                        state_changed = true;
                     }
                 }
                 else if (fvField(i) == decap_tc_to_pg_field_name)
@@ -245,7 +240,6 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     {
                         // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
-                        state_changed = true;
                     }
                 }
                 else if (fvField(i) == encap_tc_to_dscp_field_name)
@@ -261,7 +255,6 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     {
                         // Record only
                         tunnelTable[key].encap_tc_to_dscp_map_id = tc_to_dscp_map_id;
-                        state_changed = true;
                     }
                 }
                 else if (fvField(i) == encap_tc_to_queue_field_name)
@@ -277,7 +270,6 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     {
                         // Record only
                         tunnelTable[key].encap_tc_to_queue_map_id = tc_to_queue_map_id;
-                        state_changed = true;
                     }
                 }
                 else
@@ -288,7 +280,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                 }
             }
 
-            if (exists && state_changed) {
+            if (exists) {
                 // Publish to STATE_DB if any mirrored field changed
                 setDecapTunnelStatus(key);
                 SWSS_LOG_NOTICE("Fields for TUNNEL_DECAP_TABLE entry '%s' have been synchronised in STATE_DB", key.c_str());
