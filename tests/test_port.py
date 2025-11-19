@@ -544,12 +544,10 @@ class TestPort(object):
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
-        tbl = swsscommon.Table(db, "PORT_TABLE")
         ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
 
         ptbl.set("Ethernet0", fvs)
-
 
         time.sleep(1)
 
