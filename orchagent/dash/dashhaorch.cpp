@@ -208,7 +208,7 @@ HaScopeEntry DashHaOrch::getHaScopeForEni(const std::string& eni)
     return m_ha_scope_entries.begin()->second;
 }
 
-static bool updateExistingHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry, sai_object_id_t sai_ha_set_oid)
+bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry, sai_object_id_t sai_ha_set_oid)
 {
     SWSS_LOG_ENTER();
 
@@ -235,7 +235,10 @@ static bool updateExistingHaSetEntry(const std::string &key, const dash::ha_set:
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_INFO("HA Set entry updated for %s", key.c_str());
+
+    SWSS_LOG_INFO("HA Set entry updated for %s, peer_ip is updated to %s", key.c_str(), to_string(entry.peer_ip()).c_str());
+    *m_ha_set_entries[key].metadata.mutable_peer_ip() = entry.peer_ip();
+
     return true;
 }
 
