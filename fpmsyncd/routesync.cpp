@@ -174,7 +174,7 @@ void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
     }
     else
     {
-        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[1]);
+        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[0]);
     }
 }
 
@@ -923,39 +923,17 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
 vector<FieldValueTuple>
 RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (protocol != string()) {
-        fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
-    }
-    if (blackhole != string()) {
-        fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
-    }
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
-    if (nexthop_group != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
-    }
-    if (mpls_nh != string()) {
-        fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
-    }
-    if (weight != string()) {
-        fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
-    }
-    if (vni_label != string()) {
-        fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
-    }
-    if (router_mac != string()) {
-        fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
-    }
-    if (segment != string()) {
-        fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
-    }
-    if (seg_src != string()) {
-        fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+    fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
+    fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
+    fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
+    fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
     // Return value optimization will avoid copy of the following vector
     return fvVector;
 }
@@ -965,24 +943,12 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 LabelRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (protocol != string()) {
-        fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
-    }
-    if (blackhole != string()) {
-        fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
-    }
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
-    if (mpls_nh != string()) {
-        fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
-    }
-    if (mpls_pop != string()) {
-        fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
     return fvVector;
 }
 
@@ -991,12 +957,8 @@ LabelRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 VnetRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
     return fvVector;
 }
 
@@ -1005,9 +967,7 @@ VnetRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (endpoint != string()) {
-        fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
     return fvVector;
 }
 
@@ -1016,15 +976,9 @@ VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 NextHopGroupTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (nexthop != string()) {
-        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    }
-    if (ifname != string()) {
-        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    }
-    if (weight != string()) {
-        fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
     return fvVector;
 }
 
@@ -1033,15 +987,9 @@ NextHopGroupTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 Srv6MySidTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (action != string()) {
-        fvVector.push_back(FieldValueTuple("action", action.c_str()));
-    }
-    if (vrf != string()) {
-        fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
-    }
-    if (adj != string()) {
-        fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("action", action.c_str()));
+    fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
+    fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
     return fvVector;
 }
 
@@ -1050,9 +998,7 @@ Srv6MySidTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 Srv6SidListTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    if (path != string()) {
-        fvVector.push_back(FieldValueTuple("path", path.c_str()));
-    }
+    fvVector.push_back(FieldValueTuple("path", path.c_str()));
     return fvVector;
 }
 
@@ -1841,11 +1787,11 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
         if (alsv.size() == 1)
         {
-            if (alsv[0] == "eth0" || alsv[0] == "docker0")
+            if (alsv[0] == "eth0" || alsv[0] == "docker0" || alsv[0] == "eth1-midplane")
             {
-                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0 or eth1-midplane: %s %s %s",
                             destipprefix, gw_list.c_str(), intf_list.c_str());
-                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0 route: %s", destipprefix);
+                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0/eth1-midplane route: %s", destipprefix);
                 delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), ""},
                                    *m_routeTable);
                 return;
@@ -1859,9 +1805,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                 * A change in FRR behavior from version 7.2 to 7.5 causes the default route to be updated to eth0
                 * during interface up/down events. This skips routes to eth0 or docker0 to avoid such behavior.
                 */
-                if (alias == "eth0" || alias == "docker0")
+                if (alias == "eth0" || alias == "docker0" || alias == "eth1-midplane")
                 {
-                    SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                    SWSS_LOG_DEBUG("Skip routes to eth0 or docker0 or eth1-midplane: %s %s %s",
                                 destipprefix, gw_list.c_str(), intf_list.c_str());
                     continue;
                 }
@@ -2000,7 +1946,7 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
                     strcpy(if_name, ifname_unknown);
                 }
                 ifname = string(if_name);
-                if (ifname == "eth0" || ifname == "docker0")
+                if (ifname == "eth0" || ifname == "docker0" || ifname =="eth1-midplane")
                 {
                     SWSS_LOG_DEBUG("Skip routes to interface: %s id[%d]", ifname.c_str(), id);
                     return;

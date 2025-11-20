@@ -779,6 +779,12 @@ public:
         return removing_entries.find(entry) != removing_entries.end();
     }
 
+    bool bulk_entry_pending_removal_or_set(const Te& entry) const
+    {
+        return removing_entries.find(entry) != removing_entries.end() ||
+               setting_entries.find(entry) != setting_entries.end();
+    }
+
 private:
     std::unordered_map<                                     // A map of
             Te,                                             // entry ->
