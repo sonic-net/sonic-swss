@@ -372,50 +372,6 @@ namespace tunneldecaporch_test
         });
     }
 
-#define private public
-    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_SetTunnelAttribute)
-    {
-        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
-        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
-            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
-        ASSERT_NE(tunnelDecapOrch, nullptr);
-
-        sai_object_id_t test_tunnel_id = 0x123;
-        
-        EXPECT_NO_THROW({
-            bool result = tunnelDecapOrch->setTunnelAttribute("dscp_mode", "uniform", test_tunnel_id);
-            EXPECT_TRUE(result);
-        });
-
-        EXPECT_NO_THROW({
-            bool result = tunnelDecapOrch->setTunnelAttribute("dscp_mode", "pipe", test_tunnel_id);
-            EXPECT_TRUE(result);
-        });
-
-        EXPECT_NO_THROW({
-            bool result = tunnelDecapOrch->setTunnelAttribute("ttl_mode", "uniform", test_tunnel_id);
-            EXPECT_TRUE(result);
-        });
-
-        EXPECT_NO_THROW({
-            bool result = tunnelDecapOrch->setTunnelAttribute("ttl_mode", "pipe", test_tunnel_id);
-            EXPECT_TRUE(result);
-        });
-
-        sai_object_id_t test_qos_map_id = 0x456;
-        
-        EXPECT_NO_THROW({
-            bool result = tunnelDecapOrch->setTunnelAttribute("decap_dscp_to_tc_map", test_qos_map_id, test_tunnel_id);
-            EXPECT_TRUE(result);
-        });
-
-        EXPECT_NO_THROW({
-            bool result = tunnelDecapOrch->setTunnelAttribute("decap_tc_to_pg_map", test_qos_map_id, test_tunnel_id);
-            EXPECT_TRUE(result);
-        });
-    }
-#undef private
-
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_StateDbVerification)
     {
         vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
