@@ -106,7 +106,9 @@ namespace ut_fpmsyncd
         uint16_t table_id,
         uint8_t prefixlen,
         uint8_t address_family,
-        uint8_t rtm_type)
+        uint8_t rtm_type,
+        uint32_t nhg_id,
+        uint32_t pic_id)
     {
         struct rtattr *nest;
 
@@ -189,6 +191,16 @@ namespace ut_fpmsyncd
         /* Add the VPN SID */
         if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj), ROUTE_ENCAP_SRV6_VPN_SID,
                          vpn_sid->getV6Addr(), 16))
+            return NULL;
+
+        /* Add PIC_ID */
+        if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj), ROUTE_ENCAP_SRV6_PIC_ID,
+                           pic_id))
+            return NULL;
+
+        /* Add NHG_ID */
+        if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj), ROUTE_ENCAP_SRV6_NH_ID,
+                           nhg_id))
             return NULL;
 
         nl_attr_nest_end(&nl_obj->n, nest);

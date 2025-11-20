@@ -19,6 +19,8 @@ enum {  /* Values copied from fpmsyncd/routesync.cpp */
     ROUTE_ENCAP_SRV6_UNSPEC            = 0,
     ROUTE_ENCAP_SRV6_VPN_SID           = 1,
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
+    ROUTE_ENCAP_SRV6_PIC_ID            = 3,
+    ROUTE_ENCAP_SRV6_NH_ID             = 4,
 };
 
 enum srv6_localsid_action {  /* Values copied from fpmsyncd/routesync.cpp */
@@ -97,7 +99,8 @@ namespace ut_fpmsyncd
     /* Build a Netlink object containing an SRv6 VPN Route */
     struct nlmsg *create_srv6_vpn_route_nlmsg(uint16_t cmd, IpPrefix *dst, IpAddress *encap_src_addr,
                                               IpAddress *vpn_sid, uint16_t table_id = 10, uint8_t prefixlen = 0,
-											  uint8_t address_family = 0, uint8_t rtm_type = 0);
+											  uint8_t address_family = 0, uint8_t rtm_type = 0,
+											  uint32_t nhg_id = 0, uint32_t pic_id = 0);
     /* Build a Netlink object containing an SRv6 My SID */
     struct nlmsg *create_srv6_mysid_nlmsg(uint16_t cmd, IpAddress *mysid, int8_t block_len,
                                              int8_t node_len, int8_t func_len, int8_t arg_len,
