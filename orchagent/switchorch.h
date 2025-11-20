@@ -89,6 +89,7 @@ private:
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+    void querySwitchMirrorOnDropCapability();
 
     // Statistics
     void generateSwitchCounterNameMap() const;
