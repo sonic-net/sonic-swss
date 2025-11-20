@@ -41,6 +41,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 sfloworh_ut.cpp \
+                tunneldecaporch_ut.cpp \
                 ut_saihelper.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
