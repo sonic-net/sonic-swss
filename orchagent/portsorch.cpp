@@ -306,7 +306,20 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
     SAI_PORT_STAT_TRIM_PACKETS,
     SAI_PORT_STAT_DROPPED_TRIM_PACKETS,
-    SAI_PORT_STAT_TX_TRIM_PACKETS
+    SAI_PORT_STAT_TX_TRIM_PACKETS,
+    SAI_PORT_STAT_DOT3_STATS_ALIGNMENT_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_FCS_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_SINGLE_COLLISION_FRAMES,
+    SAI_PORT_STAT_DOT3_STATS_MULTIPLE_COLLISION_FRAMES,
+    SAI_PORT_STAT_DOT3_STATS_SQE_TEST_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_DEFERRED_TRANSMISSIONS,
+    SAI_PORT_STAT_DOT3_STATS_LATE_COLLISIONS,
+    SAI_PORT_STAT_DOT3_STATS_EXCESSIVE_COLLISIONS,
+    SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_TRANSMIT_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_CARRIER_SENSE_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_FRAME_TOO_LONGS,
+    SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_RECEIVE_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_SYMBOL_ERRORS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -6501,10 +6514,16 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
-        for (size_t idx = 0; idx < portCount; idx++)
+        size_t idx = 0;
+        for (const auto& port: ports)
         {
-            const auto& port = ports[idx];
+            if (port.m_priority_group_ids.size() == 0)
+            {
+                continue;
+            }
+
             const auto status = bulker.statuses[idx];
+            idx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -6579,10 +6598,16 @@ void PortsOrch::initializeQueuesBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
-        for (size_t idx = 0; idx < portCount; idx++)
+        size_t idx = 0;
+        for (const auto& port: ports)
         {
-            const auto& port = ports[idx];
+            if (port.m_queue_ids.size() == 0)
+            {
+                continue;
+            }
+
             const auto status = bulker.statuses[idx];
+            idx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -6659,10 +6684,17 @@ void PortsOrch::initializeSchedulerGroupsBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
+        size_t bulkIdx = 0;
         for (size_t idx = 0; idx < portCount; idx++)
         {
             const auto& port = ports[idx];
-            const auto status = bulker.statuses[idx];
+            if (scheduler_group_ids[idx].size() == 0)
+            {
+                continue;
+            }
+
+            const auto status = bulker.statuses[bulkIdx];
+            bulkIdx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {

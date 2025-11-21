@@ -2998,14 +2998,42 @@ namespace portsorch_test
         }
     }
 
-    TEST_F(PortsOrchTest, PortHostIfCreateFailed)
+    TEST_F(PortsOrchTest, PortsWithNoPGsQueuesSchedulerGroups)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
-        auto original_api = sai_hostif_api->create_hostif;
-        auto hostIfSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->create_hostif);
-        hostIfSpy->callFake([&](sai_object_id_t*, sai_object_id_t, uint32_t, const sai_attribute_t*) -> sai_status_t {
-                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        auto original_api = sai_port_api->get_ports_attribute;
+        // Mock SAI port API to return 0 number of PGs, queues and scheduler groups
+        auto spy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(&sai_port_api->get_ports_attribute);
+        spy->callFake([&](
+                    uint32_t object_count,
+                    const sai_object_id_t *object_id,
+                    const uint32_t *attr_count,
+                    sai_attribute_t **attr_list,
+                    sai_bulk_op_error_mode_t mode,
+                    sai_status_t *object_statuses) -> sai_status_t
+            {
+                assert(object_count > 1);
+                assert(attr_count[0] > 1);
+                switch (attr_list[0]->id)
+                {
+                case SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS:
+                case SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES:
+                case SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS:
+                    for (size_t i = 0; i < object_count; i++)
+                    {
+                        attr_list[i]->value.u32 = 0;
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }
+                return original_api(
+                        object_count,
+                        object_id,
+                        attr_count,
+                        attr_list,
+                        mode,
+                        object_statuses);
             }
         );
 
@@ -3029,13 +3057,14 @@ namespace portsorch_test
 
         static_cast<Orch *>(gPortsOrch)->doTask();
 
-        sai_hostif_api->create_hostif = original_api;
-
         Port port;
         gPortsOrch->getPort("Ethernet0", port);
 
-        ASSERT_FALSE(port.m_init);
+        ASSERT_TRUE(port.m_init);
+        ASSERT_EQ(port.m_priority_group_ids.size(), 0);
+        ASSERT_EQ(port.m_queue_ids.size(), 0);
     }
+
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
     {
@@ -3981,4 +4010,48 @@ namespace portsorch_test
         stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
         ASSERT_TRUE(stateDbSet);
     }
+
+    struct PortsOrchNegativeTests : PortsOrchTest
+    {
+    };
+
+    TEST_F(PortsOrchNegativeTests, PortHostIfCreateFailed)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto original_api = sai_hostif_api->create_hostif;
+        auto hostIfSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->create_hostif);
+        hostIfSpy->callFake([&](sai_object_id_t*, sai_object_id_t, uint32_t, const sai_attribute_t*) -> sai_status_t {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+        );
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        sai_hostif_api->create_hostif = original_api;
+
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        ASSERT_FALSE(port.m_init);
+    }
+
 }
