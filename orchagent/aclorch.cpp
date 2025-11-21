@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <unordered_map>
 #include <algorithm>
+#include <sstream>
 #include "aclorch.h"
 #include "logger.h"
 #include "schema.h"
@@ -641,7 +642,7 @@ void AclRule::TunnelNH::load(const std::string& target)
 
 void AclRule::TunnelNH::parse(const std::string& target)
 {
-    /* Supported Format: endpoint_ip@tunnel_name */
+    /* Expected Format: endpoint_ip@tunnel_name[,vni][,mac] */
     auto at_pos = target.find('@');
     if (at_pos == std::string::npos)
     {
@@ -649,7 +650,29 @@ void AclRule::TunnelNH::parse(const std::string& target)
     }
 
     endpoint_ip = swss::IpAddress(target.substr(0, at_pos));
-    tunnel_name = target.substr(at_pos + 1);
+    std::stringstream ss(target.substr(at_pos + 1));
+
+    vector<string> components;
+    while (ss.good())
+    {
+        std::string substr;
+        getline(ss, substr, ',');
+        components.push_back(substr);
+    }
+    if (components.empty())
+    {
+        throw std::logic_error("Invalid format for Tunnel Next Hop");
+    }
+
+    tunnel_name = components[0];
+    if (components.size() >= 2)
+    {
+        vni = static_cast<uint32_t>(std::stoul(components[1]));
+    }
+    if (components.size() == 3)
+    {
+        mac = swss::MacAddress(components[2]);
+    }
 }
 
 void AclRule::TunnelNH::clear()
