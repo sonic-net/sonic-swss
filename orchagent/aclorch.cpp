@@ -3341,9 +3341,10 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
         // work around to avoid syncd termination on SAI error due to max count of ranges reached
         // can be removed when syncd start passing errors to the SAI callers
         char *platform = getenv("platform");
-        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+        if (platform)
         {
-            if (m_ranges.size() >= MLNX_MAX_RANGES_COUNT)
+            if ((strstr(platform, MLNX_PLATFORM_SUBSTRING) && m_ranges.size() >= MLNX_MAX_RANGES_COUNT) ||
+                (strstr(platform, CLX_PLATFORM_SUBSTRING) && m_ranges.size() >= CLNX_MAX_RANGES_COUNT))
             {
                 SWSS_LOG_ERROR("Maximum numbers of ACL ranges reached");
                 return NULL;
@@ -3466,6 +3467,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == MRVL_TL_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
+            platform == CLX_PLATFORM_SUBSTRING ||
             platform == VS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -3520,6 +3522,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
         platform == MRVL_PRST_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
+        platform == CLX_PLATFORM_SUBSTRING ||
         (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
     {
         m_isCombinedMirrorV6Table = false;
