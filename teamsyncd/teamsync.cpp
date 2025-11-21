@@ -254,7 +254,13 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
     {
         try
         {
-            m_team = team_alloc();
+	    m_nl = team_netlink_alloc();
+	    if (!m_nl)
+            {
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to allocate team netlink socket");
+            }
+            m_team = team_alloc(m_nl);
             if (!m_team)
             {
                 throw system_error(make_error_code(errc::address_not_available),
@@ -265,7 +271,9 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
             if (err)
             {
                 team_free(m_team);
+		team_netlink_free(m_nl);
                 m_team = NULL;
+		m_nl = NULL;
                 throw system_error(make_error_code(errc::address_not_available),
                                    "Unable to initialize team socket");
             }
@@ -274,6 +282,8 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
             if (err)
             {
                 team_free(m_team);
+		team_netlink_free(m_nl);
+		m_nl = NULL;
                 m_team = NULL;
                 throw system_error(make_error_code(errc::address_not_available),
                                    "Unable to register port change event");
@@ -307,6 +317,7 @@ TeamSync::TeamPortSync::~TeamPortSync()
     {
         team_change_handler_unregister(m_team, &gPortChangeHandler, this);
         team_free(m_team);
+	team_netlink_free(m_nl);
     }
 }
 
@@ -382,11 +393,11 @@ int TeamSync::TeamPortSync::teamdHandler(struct team_handle *team, void *arg,
 
 int TeamSync::TeamPortSync::getFd()
 {
-    return team_get_event_fd(m_team);
+    return team_get_event_fd(m_team, NULL);
 }
 
 uint64_t TeamSync::TeamPortSync::readData()
 {
-    team_handle_events(m_team);
+    team_handle_events(m_team, NULL);
     return 0;
 }
