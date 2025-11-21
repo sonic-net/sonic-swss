@@ -6546,6 +6546,11 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
             const auto status = bulker.statuses[idx];
             idx++;
 
+            if (port.m_priority_group_ids.size() == 0)
+            {
+                continue;
+            }
+
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Fail to get priority group list for port %s rv:%d", port.m_alias.c_str(), status);
