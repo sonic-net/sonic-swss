@@ -77,13 +77,14 @@ MirrorEntry::MirrorEntry(const string& platform) :
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
-        PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch) :
+        PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch, SwitchOrch *switchOrch) :
         Orch(confDbConnector.first, confDbConnector.second),
         m_portsOrch(portOrch),
         m_routeOrch(routeOrch),
         m_neighOrch(neighOrch),
         m_fdbOrch(fdbOrch),
         m_policerOrch(policerOrch),
+        m_switchOrch(switchOrch),
         m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
 {
     sai_status_t status;
@@ -812,6 +813,18 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
                                     bool set,
                                     sai_object_id_t sessionId)
 {
+    // Check if the mirror direction is supported by the ASIC
+    if (ingress && !m_switchOrch->isPortIngressMirrorSupported())
+    {
+        SWSS_LOG_ERROR("Port ingress mirror is not supported by the ASIC");
+        return false;
+    }
+    if (!ingress && !m_switchOrch->isPortEgressMirrorSupported())
+    {
+        SWSS_LOG_ERROR("Port egress mirror is not supported by the ASIC");
+        return false;
+    }
+
     sai_status_t status;
     sai_attribute_t port_attr;
     port_attr.id = ingress ? SAI_PORT_ATTR_INGRESS_MIRROR_SESSION:

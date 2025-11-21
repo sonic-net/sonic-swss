@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
+#include "switchorch.h"
 
 extern void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                             sai_switch_asic_sdk_health_severity_t severity,
@@ -287,6 +288,13 @@ namespace switchorch_test
         ASSERT_EQ(value, "true");
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY, value);
         ASSERT_EQ(value, "true");
+
+        // Test that mirror capabilities are also queried and stored
+        // The actual values depend on the SAI implementation, but we can verify the entries exist
+        bool ingress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(ingress_exists);
+        bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(egress_exists);
     }
 
     TEST_F(SwitchOrchTest, SwitchOrchTestCheckCapabilityUnsupported)
@@ -306,6 +314,13 @@ namespace switchorch_test
         ASSERT_EQ(value, "false");
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY, value);
         ASSERT_EQ(value, "false");
+
+        // Test that mirror capabilities are also queried and stored
+        // The actual values depend on the SAI implementation, but we can verify the entries exist
+        bool ingress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(ingress_exists);
+        bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(egress_exists);
 
         // case: unsupported severity. To satisfy coverage.
         vector<string> ts;
