@@ -4882,6 +4882,16 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         m_portStateTable.hset(p.m_alias, "phy_ctrl_unreliable_los", p.m_unreliable_los ? "true":"false");
                 } 
 
+                if (pCfg.apply_port_unreliable_los.is_set)
+		{       
+			/* after the unreliable_los apply flag is set in APPL_DB, mark the m_apply_unreliable_los flag to set the unlos setting upon
+                         * a Port flap */
+                        p.m_apply_unreliable_los = true;
+                        p.m_apply_unreliable_los_interface_type = pCfg.apply_port_unreliable_los.intf_type;
+                        m_portList[p.m_alias] = p;
+
+		}
+
                 if (pCfg.adv_interface_types.is_set)
                 {
                     if (!p.m_adv_intf_cfg || p.m_adv_interface_types != pCfg.adv_interface_types.value)
@@ -9080,6 +9090,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
             port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
             oper_status_strings.at(status).c_str());
+
     if (status == port.m_oper_status)
     {
         return;
@@ -9112,6 +9123,40 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     if(port.m_type == Port::TUNNEL)
     {
         return;
+    }
+
+
+    if(port.m_apply_unreliable_los == true && !port.m_unreliable_los)
+    {
+        SWSS_LOG_NOTICE(
+	    "Going to apply unlos settings  %s unreliable from %d to %d",
+	    port.m_alias.c_str(), port.m_unreliable_los, port.m_apply_unreliable_los
+	);
+	auto status = setPortUnreliableLOS(port, port.m_apply_unreliable_los);
+	if (status != task_success)
+	{
+	    SWSS_LOG_ERROR(
+		"Failed to set port %s unreliable from %d to %d",
+		port.m_alias.c_str(), port.m_unreliable_los, port.m_apply_unreliable_los
+	    );
+	    port.m_unreliable_los = false;
+	} else {
+
+	    port.m_unreliable_los = port.m_apply_unreliable_los;
+	    SWSS_LOG_INFO(
+		"Set port %s unreliable los to %d",
+		port.m_alias.c_str(), port.m_apply_unreliable_los
+	    );
+	}
+	m_portStateTable.hset(port.m_alias, "phy_ctrl_unreliable_los", port.m_unreliable_los ? "true":"false");
+	status = setPortInterfaceType(port, port.m_apply_unreliable_los_interface_type);
+	if (status != task_success)
+	{
+	    SWSS_LOG_ERROR(
+		"Failed to set port %s interface type to SR4",
+		port.m_alias.c_str()
+	    );
+	}
     }
 
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
