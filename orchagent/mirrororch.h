@@ -77,7 +77,7 @@ class MirrorOrch : public Orch, public Observer, public Subject
 {
 public:
     MirrorOrch(TableConnector appDbConnector, TableConnector confDbConnector,
-               PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch);
+               PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch, SwitchOrch *switchOrch);
 
     bool bake() override;
     void update(SubjectType, void *);
@@ -95,6 +95,7 @@ private:
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
     PolicerOrch *m_policerOrch;
+    SwitchOrch *m_switchOrch;
     // Maximum number of traffic classes starting at 0, thus queue can be 0 - m_maxNumTC-1
     uint8_t m_maxNumTC;
 
