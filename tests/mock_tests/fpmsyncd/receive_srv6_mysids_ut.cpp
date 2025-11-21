@@ -1290,7 +1290,7 @@ namespace ut_fpmsyncd
         string my_sid_table_key = get_srv6_my_sid_table_key(&_mysid, _block_len, _node_len, _func_len, _arg_len);
 
         /* Create a Netlink object containing an SRv6 My SID with missing node length */
-        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, -1, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, NULL, 10, AF_INET6, 200);
+        nl_obj = create_srv6_mysid_nlmsg(RTM_NEWSRV6LOCALSID, &_mysid, 32, 16, -1, 0, SRV6_LOCALSID_ACTION_END, NULL, NULL, NULL, 10, 200, AF_INET6);
 
         /* Send the Netlink object to the FpmLink */
         ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
