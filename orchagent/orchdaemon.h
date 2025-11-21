@@ -60,6 +60,7 @@
 #include "dash/dashportmaporch.h"
 #include "high_frequency_telemetry/hftelorch.h"
 #include <sairedis.h>
+#include "shlorch.h"
 
 using namespace swss;
 
