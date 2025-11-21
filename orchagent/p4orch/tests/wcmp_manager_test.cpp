@@ -265,7 +265,7 @@ class WcmpManagerTest : public ::testing::Test
     {
         // init copp orch
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
 
