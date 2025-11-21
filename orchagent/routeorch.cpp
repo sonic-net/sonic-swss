@@ -1060,11 +1060,15 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                  * Check if the route does not exist or needs to be updated or
                  * if the route is using a temporary next hop group owned by
                  * NhgOrch.
+                 * With default routes, there may be a setting_entries present in the
+                 * bulker due to a previous DEL event, where we automatically add a 
+                 * DROP action. So one of the check below (bulk_entry_pending_removal_or_set)
+                 * checks for both removal and set entries.
                  */
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
-                    gRouteBulker.bulk_entry_pending_removal(route_entry) ||
+                    gRouteBulker.bulk_entry_pending_removal_or_set(route_entry) ||
                     ctx.using_temp_nhg)
                 {
                     if (addRoute(ctx, nhg))
@@ -1854,8 +1858,8 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
             continue;
         }
 
-        SWSS_LOG_INFO("Updating route %s", (*rt).prefix.to_string().c_str());
         next_hop_id = m_neighOrch->getNextHopId(nextHop);
+        SWSS_LOG_INFO("Updating route %s with nexthop %" PRIu64, (*rt).prefix.to_string().c_str(), (uint64_t)next_hop_id);
 
         route_entry.vr_id = (*rt).vrf_id;
         route_entry.switch_id = gSwitchId;
