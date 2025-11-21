@@ -219,6 +219,7 @@ namespace ut_fpmsyncd
         uint32_t action,
         char *vrf,
         IpAddress *adj,
+        char *intf,
         uint16_t table_id,
         uint8_t prefixlen,
         uint8_t address_family    
@@ -355,6 +356,13 @@ namespace ut_fpmsyncd
                                     adj->getV6Addr(), 16))
                         return NULL;
                 }
+                if (intf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_IFNAME,
+                                    intf, (uint32_t)strlen(intf)))
+                        return NULL;
+                }
 				break;
 			case SRV6_LOCALSID_ACTION_END_T:
 				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
@@ -450,6 +458,13 @@ namespace ut_fpmsyncd
                     if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
                                     SRV6_LOCALSID_NH6,
                                     adj->getV6Addr(), 16))
+                        return NULL;
+                }
+                if (intf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_IFNAME,
+                                    intf, (uint32_t)strlen(intf)))
                         return NULL;
                 }
 				break;
