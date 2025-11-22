@@ -344,23 +344,23 @@ void RIBNhgTable::dump_table(string &ret) {
 
         switch (nhg.type)
         {
-            case NEXTHOP_TYPE_IFINDEX:
-                ret += indent + "type: " + "NEXTHOP_TYPE_IFINDEX" + "\n";
+            case fib::NEXTHOP_TYPE_IFINDEX:
+                ret += indent + "type: " + "fib::NEXTHOP_TYPE_IFINDEX" + "\n";
                 ret += indent + "interface: " + it->second->ifindex + "\n";
                 break ;
-            case NEXTHOP_TYPE_IPV4:
-                ret += indent + "type: " + "NEXTHOP_TYPE_IPV4" + "\n";
+            case fib::NEXTHOP_TYPE_IPV4:
+                ret += indent + "type: " + "fib::NEXTHOP_TYPE_IPV4" + "\n";
                 break;
-            case NEXTHOP_TYPE_IPV4_IFINDEX:
-                ret += indent + "type: " + "NEXTHOP_TYPE_IPV4_IFINDEX" + "\n";
+            case fib::NEXTHOP_TYPE_IPV4_IFINDEX:
+                ret += indent + "type: " + "fib::NEXTHOP_TYPE_IPV4_IFINDEX" + "\n";
                 ret += indent + "interface: " + it->second->ifindex + "\n";
                 break;
-            case NEXTHOP_TYPE_IPV6_IFINDEX:
-                ret += indent + "type: " + "NEXTHOP_TYPE_IPV6_IFINDEX" + "\n";
+            case fib::NEXTHOP_TYPE_IPV6_IFINDEX:
+                ret += indent + "type: " + "fib::NEXTHOP_TYPE_IPV6_IFINDEX" + "\n";
                 ret += indent + "interface: " + it->second->ifindex + "\n";
                 break;
-            case NEXTHOP_TYPE_IPV6:
-                ret += indent + "type: " + "NEXTHOP_TYPE_IPV6" + "\n";
+            case fib::NEXTHOP_TYPE_IPV6:
+                ret += indent + "type: " + "fib::NEXTHOP_TYPE_IPV6" + "\n";
                 break;
             default:
                 SWSS_LOG_ERROR("Unknown NextHop type %d", nhg.type);
@@ -436,37 +436,37 @@ int RIBNhgEntry::setEntry(NextHopGroupFull nhg) {
         }
 
         // update resolved group
-        // if (nhg.depends[i].type != NEXTHOP_TYPE_RECURSIVED)
+        // if (nhg.depends[i].type != fib::NEXTHOP_TYPE_RECURSIVED)
         // {
         //    this->resolved_group.push_back(nhg.depends[i]);
         //}
     }
     switch (nhg.type) {
-        case NEXTHOP_TYPE_IFINDEX:
+        case fib::NEXTHOP_TYPE_IFINDEX:
             m_nexthop = "";
             break;
-        case NEXTHOP_TYPE_IPV4: {
+        case fib::NEXTHOP_TYPE_IPV4: {
             char gate_str[INET_ADDRSTRLEN];
             m_af = AF_INET;
             inet_ntop(AF_INET, &nhg.gate.ipv4, gate_str, INET_ADDRSTRLEN);
             m_nexthop = string(gate_str);
             break;
         }
-        case NEXTHOP_TYPE_IPV4_IFINDEX: {
+        case fib::NEXTHOP_TYPE_IPV4_IFINDEX: {
             char gate_str[INET_ADDRSTRLEN];
             m_af = AF_INET;
             inet_ntop(AF_INET, &nhg.gate.ipv4, gate_str, INET_ADDRSTRLEN);
             m_nexthop = gate_str;
             break;
         }
-        case NEXTHOP_TYPE_IPV6_IFINDEX: {
+        case fib::NEXTHOP_TYPE_IPV6_IFINDEX: {
             char gate_str[INET6_ADDRSTRLEN];
             m_af = AF_INET6;
             m_nexthop = inet_ntop(AF_INET6, &nhg.gate.ipv6, gate_str, INET6_ADDRSTRLEN);
             m_nexthop = string(gate_str);
             break;
         }
-        case NEXTHOP_TYPE_IPV6: {
+        case fib::NEXTHOP_TYPE_IPV6: {
             char gate_str[INET6_ADDRSTRLEN];
             m_af = AF_INET6;
             inet_ntop(AF_INET6, &nhg.gate.ipv6, gate_str, INET6_ADDRSTRLEN);
@@ -563,23 +563,14 @@ NexthopKey::NexthopKey(const NextHopGroupFull *nhg) {
     }
     switch (nhg->type)
     {
-    case NEXTHOP_TYPE_IFINDEX:
+    case fib::NEXTHOP_TYPE_IFINDEX:
     {
         key = key + "type:" + nhg->type;
         key = key + "ifindex:" + nhg->ifindex;
         key = key + "vrf_id" + nhg->vrf_id;
         break ;
     }
-    case NEXTHOP_TYPE_IPV4:
-    {
-        key = key + "type:" + nhg->type;
-        key = key + "ifindex:" + nhg->ifindex;
-        key = key + "vrf_id" + nhg->vrf_id;
-        key = key + "gate" + nhg->gate.ipv4;
-        break ;
-
-    }
-    case NEXTHOP_TYPE_IPV4_IFINDEX:
+    case fib::NEXTHOP_TYPE_IPV4:
     {
         key = key + "type:" + nhg->type;
         key = key + "ifindex:" + nhg->ifindex;
@@ -588,7 +579,16 @@ NexthopKey::NexthopKey(const NextHopGroupFull *nhg) {
         break ;
 
     }
-    case NEXTHOP_TYPE_IPV6:
+    case fib::NEXTHOP_TYPE_IPV4_IFINDEX:
+    {
+        key = key + "type:" + nhg->type;
+        key = key + "ifindex:" + nhg->ifindex;
+        key = key + "vrf_id" + nhg->vrf_id;
+        key = key + "gate" + nhg->gate.ipv4;
+        break ;
+
+    }
+    case fib::NEXTHOP_TYPE_IPV6:
     {
         key = key + "type:" + nhg->type;
         key = key + "ifindex:" + nhg->ifindex;
@@ -597,7 +597,7 @@ NexthopKey::NexthopKey(const NextHopGroupFull *nhg) {
         break ;
 
     }
-    case NEXTHOP_TYPE_IPV6_IFINDEX:
+    case fib::NEXTHOP_TYPE_IPV6_IFINDEX:
     {
         key = key + "type:" + nhg->type;
         key = key + "ifindex:" + nhg->ifindex;
@@ -606,7 +606,7 @@ NexthopKey::NexthopKey(const NextHopGroupFull *nhg) {
         break ;
 
     }
-    case NEXTHOP_TYPE_BLACKHOLE:
+    case fib::NEXTHOP_TYPE_BLACKHOLE:
     {
         key = key + "type:" + nhg->type;
         //key = key + "blackhole_type:" + nhg->type;

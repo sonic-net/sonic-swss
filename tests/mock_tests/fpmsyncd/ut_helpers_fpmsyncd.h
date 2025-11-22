@@ -112,7 +112,7 @@ namespace ut_fpmsyncd
     }
 
     /* Create ipv4 singleton NextHopGroupFull */
-    struct swss::NextHopGroupFull createSingleIPv4NextHopNHGFull(
+    NextHopGroupFull createSingleIPv4NextHopNHGFull(
         const char *gateway, const char *src_addr);
 
 }

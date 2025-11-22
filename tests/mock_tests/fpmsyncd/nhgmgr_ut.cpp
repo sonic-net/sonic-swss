@@ -60,7 +60,7 @@ namespace ut_fpmsyncd
     TEST_F(FpmSyncdNhgMgr, RecevingSingleNexthop)
     {
         /* Create a NextHopGroupFull object containing single ipv4 nexthop*/
-        struct NextHopGroupFull nhg_obj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1");
+        NextHopGroupFull nhg_obj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1");
         /* Send the object to the NhgMgr Add function */
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
