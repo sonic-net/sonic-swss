@@ -4,13 +4,16 @@
 
 #include "dbconnector.h"
 #include "ipprefix.h"
-#include "nexthopgroupfull.h"
+#include <nexthopgroup/nexthopgroupfull.h>
+#include <nexthopgroup/nexthopgroupfull_json.h>
 #include "producerstatetable.h"
 
 #include <string.h>
 
 using namespace std;
 namespace swss {
+    using NextHopGroupFull = fib::NextHopGroupFull;
+    using nh_grp_full = fib::nh_grp_full;
 
     enum NEXTHOP_KEY_TYPE {
         NEXTHOP_KEY_TYPE_ZEBRA,
