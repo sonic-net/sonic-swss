@@ -318,18 +318,19 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         return false;
     }
 
+    uint32_t routing_type_tunnel_key = 0;
+    sai_dash_encapsulation_t encap_type = SAI_DASH_ENCAPSULATION_INVALID;
     for (auto action: route_type_actions.items())
     {
         if (action.action_type() == dash::route_type::ACTION_TYPE_STATICENCAP)
         {
-            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION;
             if (action.encap_type() == dash::route_type::ENCAP_TYPE_VXLAN)
             {
-                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_VXLAN;
+                encap_type = SAI_DASH_ENCAPSULATION_VXLAN;
             }
             else if (action.encap_type() == dash::route_type::ENCAP_TYPE_NVGRE)
             {
-                outbound_ca_to_pa_attr.value.u32 = SAI_DASH_ENCAPSULATION_NVGRE;
+                encap_type = SAI_DASH_ENCAPSULATION_NVGRE;
             }
             else
             {
@@ -338,9 +339,10 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             }
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
-            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY;
-            outbound_ca_to_pa_attr.value.u32 = action.vni();
-            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+            if (action.has_vni())
+            {
+                routing_type_tunnel_key = action.vni();
+            }
 
             outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
             to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
@@ -349,6 +351,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         }
     }
 
+    // Setting SAI attributes that are valid for all values of SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION
     if (ctxt.metadata.has_tunnel())
     {
         auto tunnel_oid = gDirectory.get<DashTunnelOrch*>()->getTunnelOid(ctxt.metadata.tunnel());
@@ -362,10 +365,23 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
     }
 
+    if (ctxt.metadata.has_metering_class_or())
+    {
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_METER_CLASS_OR;
+        outbound_ca_to_pa_attr.value.u32 = ctxt.metadata.metering_class_or();
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+    }
+
     if (ctxt.metadata.routing_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
     {
+        SWSS_LOG_DEBUG("Creating private link outbound CA to PA entry for %s", key.c_str());
+        // Setting SAI attributes specific to private link routing type
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
         outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING;
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION;
+        outbound_ca_to_pa_attr.value.u32 = encap_type;
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DIP;
@@ -376,7 +392,6 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         to_sai(ctxt.metadata.overlay_dip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
-
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP;
         to_sai(ctxt.metadata.overlay_sip_prefix().ip(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
@@ -384,6 +399,13 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_SIP_MASK;
         to_sai(ctxt.metadata.overlay_sip_prefix().mask(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
+        if (routing_type_tunnel_key != 0)
+        {
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_TUNNEL_KEY;
+            outbound_ca_to_pa_attr.value.u32 = routing_type_tunnel_key;
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        }
 
         if (ctxt.metadata.has_port_map())
         {
@@ -400,26 +422,22 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
         }
     }
-
-    if (ctxt.metadata.has_metering_class_or())
+    else
     {
-        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_METER_CLASS_OR;
-        outbound_ca_to_pa_attr.value.u32 = ctxt.metadata.metering_class_or();
-        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
-    }
+        // Setting SAI attributes specific to non-private link routing types
+        if (ctxt.metadata.has_mac_address())
+        {
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
+            memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        }
 
-    if (ctxt.metadata.has_mac_address())
-    {
-        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
-        memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
-        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
-    }
-
-    if (ctxt.metadata.has_use_dst_vni())
-    {
-        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
-        outbound_ca_to_pa_attr.value.booldata = ctxt.metadata.use_dst_vni();
-        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        if (ctxt.metadata.has_use_dst_vni())
+        {
+            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
+            outbound_ca_to_pa_attr.value.booldata = ctxt.metadata.use_dst_vni();
+            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+        }
     }
 
     object_statuses.emplace_back();
