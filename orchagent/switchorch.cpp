@@ -711,11 +711,17 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
     }
 }
 
-bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const
+sai_status_t SwitchOrch::setSwitchHashAttributeSai(sai_attr_id_t attrType, sai_object_id_t oid) const
 {
-    const auto &oid = isEcmpHash ? m_switchHashDefaults.ecmpHash.oid : m_switchHashDefaults.lagHash.oid;
-    const auto &hfSet = isEcmpHash ? hash.ecmp_hash.value : hash.lag_hash.value;
+    sai_attribute_t attr;
+    attr.id = attrType;
+    attr.value.oid = oid;
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status;
+}
 
+sai_status_t SwitchOrch::setSwitchHashFieldListSai(const sai_object_id_t oid, const std::set<sai_native_hash_field_t> &hfSet) const
+{
     std::vector<sai_int32_t> hfList;
     std::transform(
         hfSet.cbegin(), hfSet.cend(), std::back_inserter(hfList),
@@ -729,6 +735,104 @@ bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHa
     attr.value.s32list.count = static_cast<sai_uint32_t>(hfList.size());
 
     auto status = sai_hash_api->set_hash_attribute(oid, &attr);
+    return status;
+}
+
+sai_status_t SwitchOrch::createHashObjectSai(sai_object_id_t &oid, const std::set<sai_native_hash_field_t> &hfSet) const
+{
+    std::vector<sai_int32_t> hfList;
+    std::transform(
+        hfSet.cbegin(), hfSet.cend(), std::back_inserter(hfList),
+        [](sai_native_hash_field_t value) { return static_cast<sai_int32_t>(value); }
+    );
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST;
+    attr.value.s32list.list = hfList.data();
+    attr.value.s32list.count = static_cast<sai_uint32_t>(hfList.size());
+
+    auto status = sai_hash_api->create_hash(&oid, gSwitchId, 1, &attr);
+    return status;
+}
+
+bool SwitchOrch::setSwitchHashFieldList(const SwitchHash &hash, bool isEcmpHash)
+{
+    SWSS_LOG_ENTER();
+
+    const auto &hfSet = isEcmpHash ? hash.ecmp_hash.value : hash.lag_hash.value;
+    const auto &oid = isEcmpHash ? m_switchHashDefaults.ecmpHash.oid : m_switchHashDefaults.lagHash.oid;
+    const auto &platformSupportsOnlyV4V6 = isEcmpHash ? m_switchHashDefaults.ecmpHash.platformSupportsOnlyV4V6 : m_switchHashDefaults.lagHash.platformSupportsOnlyV4V6;
+    auto &v4Oid = isEcmpHash ? m_switchHashDefaults.ecmpHash.v4Oid : m_switchHashDefaults.lagHash.v4Oid;
+    auto &v6Oid = isEcmpHash ? m_switchHashDefaults.ecmpHash.v6Oid : m_switchHashDefaults.lagHash.v6Oid;
+
+    sai_attr_id_t v4HashType = isEcmpHash ? SAI_SWITCH_ATTR_ECMP_HASH_IPV4 : SAI_SWITCH_ATTR_LAG_HASH_IPV4;
+    sai_attr_id_t v6HashType = isEcmpHash ? SAI_SWITCH_ATTR_ECMP_HASH_IPV6 : SAI_SWITCH_ATTR_LAG_HASH_IPV6;
+
+    sai_status_t status;
+
+    if (!platformSupportsOnlyV4V6)
+    {
+        // oid == SAI_NULL_OBJECT_ID is acceptable for non-platformSupportsOnlyV4V6 platforms
+        status = setSwitchHashFieldListSai(oid, hfSet);
+        return status == SAI_STATUS_SUCCESS;
+    }
+
+    // platform (broadcom) supports only V4/V6 attribute type, v4Oid/v6Oid can not be NULL for modifying hash-fields
+    if (v4Oid == SAI_NULL_OBJECT_ID || v6Oid == SAI_NULL_OBJECT_ID)
+    {
+        sai_object_id_t v4OidAllotted, v6OidAllotted;
+
+        // clear out the existing default fields which are associated with SAI_NULL_OBJECT_ID
+        // this step is necessary for broadcom chips
+        SWSS_LOG_DEBUG("Creating new oids for IPv4 and IPv6 Hash-fields");
+        status = setSwitchHashAttributeSai(v4HashType, SAI_NULL_OBJECT_ID);
+        if( status == SAI_STATUS_SUCCESS)
+        {
+            status = setSwitchHashAttributeSai(v6HashType, SAI_NULL_OBJECT_ID);
+        }
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to reset hash parameters during initialization");
+            return status == SAI_STATUS_SUCCESS;
+        }
+
+        // create a new Hash object with given set of hash-fields
+        status = createHashObjectSai(v4OidAllotted, hfSet);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            status = createHashObjectSai(v6OidAllotted, hfSet);
+        }
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create hash object, status=%d", status);
+            return false;
+        }
+
+        // set the hash attribute to new object oid
+        status = setSwitchHashAttributeSai(v4HashType, v4OidAllotted);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            status = setSwitchHashAttributeSai(v6HashType, v6OidAllotted);
+        }
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            v4Oid = v4OidAllotted;
+            v6Oid = v6OidAllotted;
+        }
+
+        return status == SAI_STATUS_SUCCESS;
+    }
+
+    SWSS_LOG_DEBUG("Re-using IPv4 and IPv6 Hash-field oids");
+
+    // oids are allotted previously, use them now
+    status = setSwitchHashFieldListSai(v4Oid, hfSet);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        status = setSwitchHashFieldListSai(v6Oid, hfSet);
+    }
+
     return status == SAI_STATUS_SUCCESS;
 }
 
@@ -762,7 +866,7 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
                     return false;
                 }
 
-                if (!setSwitchHashFieldListSai(hash, true))
+                if (!setSwitchHashFieldList(hash, true))
                 {
                     SWSS_LOG_ERROR("Failed to set switch ECMP hash in SAI");
                     return false;
@@ -797,7 +901,7 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
                     return false;
                 }
 
-                if (!setSwitchHashFieldListSai(hash, false))
+                if (!setSwitchHashFieldList(hash, false))
                 {
                     SWSS_LOG_ERROR("Failed to set switch LAG hash in SAI");
                     return false;
@@ -1970,15 +2074,16 @@ void SwitchOrch::querySwitchTpidCapability()
     }
 }
 
-bool SwitchOrch::getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const
+bool SwitchOrch::getSwitchHashOidSai(sai_object_id_t &oid, sai_attr_id_t attr_id) const
 {
     sai_attribute_t attr;
-    attr.id = isEcmpHash ? SAI_SWITCH_ATTR_ECMP_HASH : SAI_SWITCH_ATTR_LAG_HASH;
+    attr.id = attr_id;
     attr.value.oid = SAI_NULL_OBJECT_ID;
 
     auto status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
+        SWSS_LOG_WARN("Failed to get switch hash OID");
         return false;
     }
 
@@ -1990,15 +2095,40 @@ bool SwitchOrch::getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) cons
 void SwitchOrch::querySwitchHashDefaults()
 {
     SWSS_LOG_ENTER();
-
-    if (!getSwitchHashOidSai(m_switchHashDefaults.ecmpHash.oid, true))
+    if (!getSwitchHashOidSai(m_switchHashDefaults.ecmpHash.oid, SAI_SWITCH_ATTR_ECMP_HASH) )
     {
-        SWSS_LOG_WARN("Failed to get switch ECMP hash OID");
+        auto rv4 = getSwitchHashOidSai(
+            m_switchHashDefaults.ecmpHash.v4Oid, SAI_SWITCH_ATTR_ECMP_HASH_IPV4);
+
+        auto rv6 = getSwitchHashOidSai(
+            m_switchHashDefaults.ecmpHash.v6Oid, SAI_SWITCH_ATTR_ECMP_HASH_IPV6);
+
+        if (!rv4 && !rv6)
+        {
+            SWSS_LOG_WARN("Failed to get switch ECMP hash OID");
+        }
+        else
+        {
+            m_switchHashDefaults.ecmpHash.platformSupportsOnlyV4V6 = true;
+        }
     }
 
-    if (!getSwitchHashOidSai(m_switchHashDefaults.lagHash.oid, false))
+    if (!getSwitchHashOidSai(m_switchHashDefaults.lagHash.oid, SAI_SWITCH_ATTR_LAG_HASH))
     {
-        SWSS_LOG_WARN("Failed to get switch LAG hash OID");
+        auto rv4 = getSwitchHashOidSai(
+            m_switchHashDefaults.lagHash.v4Oid, SAI_SWITCH_ATTR_LAG_HASH_IPV4);
+
+        auto rv6 = getSwitchHashOidSai(
+            m_switchHashDefaults.lagHash.v6Oid, SAI_SWITCH_ATTR_LAG_HASH_IPV6);
+
+        if (!rv4 && !rv6)
+        {
+            SWSS_LOG_WARN("Failed to get switch LAG hash OID");
+        }
+        else
+        {
+            m_switchHashDefaults.lagHash.platformSupportsOnlyV4V6 = true;
+        }
     }
 }
 
