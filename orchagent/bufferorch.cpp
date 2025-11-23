@@ -195,7 +195,7 @@ void BufferOrch::initVoqBufferReadyList(Table& table, bool isConfigDb)
         }
 
         // We need transform the key from config db format to appl db format
-        auto appldb_key = tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2] + delimiter + tokens[3];
+        auto appldb_key = tokens[0] + delimiter + tokens[1] + delimiter + tokens[2] + delimiter + tokens[3]
         m_ready_list[appldb_key] = false;
 
         auto &&port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
@@ -1130,30 +1130,34 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
              * so we added a map that will help us to know what was the last command for this port and priority -
              * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
              * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
-            if (op == SET_COMMAND)
+            /* for voq switches the buffer configuration is applied on the VOQ which is applicable on the systen ports
+             * system ports are not dynamically created/deleted so no need to maintain ref counter */
+            if (gMySwitchType != "voq")
             {
-                if (queue_port_flags[port_name][ind] != SET_COMMAND)
+                if (op == SET_COMMAND)
                 {
-                    /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
-                    gPortsOrch->increasePortRefCount(port_name);
+                    if (queue_port_flags[port_name][ind] != SET_COMMAND)
+                    {
+                        /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
+                        gPortsOrch->increasePortRefCount(port_name);
+                    }
                 }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (queue_port_flags[port_name][ind] == SET_COMMAND)
-		{
-                    /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
-                    gPortsOrch->decreasePortRefCount(port_name);
+                else if (op == DEL_COMMAND)
+                {
+                    if (queue_port_flags[port_name][ind] == SET_COMMAND)
+                    {
+                        /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
+                        gPortsOrch->decreasePortRefCount(port_name);
+                    }
                 }
+                else
+                {
+                    SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                /* save the last command (set or delete) */
+                queue_port_flags[port_name][ind] = op;
             }
-            else
-            {
-                SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
-                return task_process_status::task_invalid_entry;
-            }
-            /* save the last command (set or delete) */
-            queue_port_flags[port_name][ind] = op;
-
         }
     }
 
