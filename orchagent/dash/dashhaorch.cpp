@@ -17,6 +17,15 @@
 using namespace std;
 using namespace swss;
 
+namespace
+{
+    template <typename T>
+    bool ProtoEquals(const T &lhs, const T &rhs)
+    {
+        return lhs.SerializeAsString() == rhs.SerializeAsString();
+    }
+}
+
 extern sai_dash_ha_api_t*   sai_dash_ha_api;
 extern sai_dash_eni_api_t*  sai_dash_eni_api;
 extern sai_object_id_t      gSwitchId;
@@ -216,8 +225,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     if (it != m_ha_set_entries.end())
     {
-        SWSS_LOG_WARN("HA Set entry already exists for %s", key.c_str());
-        return true;
+        return updateHaSetEntry(key, entry);
     }
 
     uint32_t attr_count = 8;
@@ -311,6 +319,112 @@ bool DashHaOrch::removeHaSetEntry(const std::string &key)
     return true;
 }
 
+bool DashHaOrch::updateHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_ha_set_entries.find(key);
+
+    if (it == m_ha_set_entries.end())
+    {
+        SWSS_LOG_ERROR("HA Set entry does not exist for %s", key.c_str());
+        return false;
+    }
+
+    auto &current_entry = it->second;
+    vector<sai_attribute_t> attrs;
+
+    auto enqueueIpUpdate = [&](const dash::types::IpAddress &desired,
+                               const dash::types::IpAddress &cached,
+                               sai_attr_id_t attr_id,
+                               const char *field_name) -> bool
+    {
+        if (ProtoEquals(desired, cached))
+        {
+            return true;
+        }
+
+        sai_ip_address_t sai_ip;
+        if (!to_sai(desired, sai_ip))
+        {
+            SWSS_LOG_ERROR("Failed to convert %s for HA Set %s", field_name, key.c_str());
+            return false;
+        }
+
+        sai_attribute_t attr = {};
+        attr.id = attr_id;
+        attr.value.ipaddr = sai_ip;
+        attrs.push_back(attr);
+        return true;
+    };
+
+    auto enqueueU16Update = [&](uint32_t desired, uint32_t cached, sai_attr_id_t attr_id) {
+        if (desired == cached)
+        {
+            return;
+        }
+        sai_attribute_t attr = {};
+        attr.id = attr_id;
+        attr.value.u16 = static_cast<sai_uint16_t>(desired);
+        attrs.push_back(attr);
+    };
+
+    auto enqueueU32Update = [&](uint32_t desired, uint32_t cached, sai_attr_id_t attr_id) {
+        if (desired == cached)
+        {
+            return;
+        }
+        sai_attribute_t attr = {};
+        attr.id = attr_id;
+        attr.value.u32 = desired;
+        attrs.push_back(attr);
+    };
+
+    if (!enqueueIpUpdate(entry.local_ip(), current_entry.metadata.local_ip(), SAI_HA_SET_ATTR_LOCAL_IP, "local_ip"))
+    {
+        return false;
+    }
+
+    if (!enqueueIpUpdate(entry.peer_ip(), current_entry.metadata.peer_ip(), SAI_HA_SET_ATTR_PEER_IP, "peer_ip"))
+    {
+        return false;
+    }
+
+    enqueueU16Update(entry.cp_data_channel_port(), current_entry.metadata.cp_data_channel_port(), SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT);
+    enqueueU16Update(entry.dp_channel_dst_port(), current_entry.metadata.dp_channel_dst_port(), SAI_HA_SET_ATTR_DP_CHANNEL_DST_PORT);
+    enqueueU16Update(entry.dp_channel_src_port_min(), current_entry.metadata.dp_channel_src_port_min(), SAI_HA_SET_ATTR_DP_CHANNEL_MIN_SRC_PORT);
+    enqueueU16Update(entry.dp_channel_src_port_max(), current_entry.metadata.dp_channel_src_port_max(), SAI_HA_SET_ATTR_DP_CHANNEL_MAX_SRC_PORT);
+    enqueueU32Update(entry.dp_channel_probe_interval_ms(), current_entry.metadata.dp_channel_probe_interval_ms(), SAI_HA_SET_ATTR_DP_CHANNEL_PROBE_INTERVAL_MS);
+    enqueueU32Update(entry.dp_channel_probe_fail_threshold(), current_entry.metadata.dp_channel_probe_fail_threshold(), SAI_HA_SET_ATTR_DP_CHANNEL_PROBE_FAIL_THRESHOLD);
+
+    for (auto &attr : attrs)
+    {
+        sai_status_t status = sai_dash_ha_api->set_ha_set_attribute(current_entry.ha_set_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update HA Set attribute %d for %s", attr.id, key.c_str());
+            task_process_status handle_status = handleSaiSetStatus((sai_api_t)SAI_API_DASH_HA, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
+
+    current_entry.metadata.CopyFrom(entry);
+
+    if (attrs.empty())
+    {
+        SWSS_LOG_INFO("HA Set entry %s already up to date", key.c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Updated HA Set object for %s", key.c_str());
+    }
+
+    return true;
+}
+
 void DashHaOrch::doTaskHaSetTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
@@ -329,6 +443,11 @@ void DashHaOrch::doTaskHaSetTable(ConsumerBase &consumer)
         if (op == SET_COMMAND)
         {
             dash::ha_set::HaSet entry;
+            auto existing_haset = m_ha_set_entries.find(key);
+            if (existing_haset != m_ha_set_entries.end())
+            {
+                entry.CopyFrom(existing_haset->second.metadata);
+            }
 
             /*
             * For HA internal tables, kfv format was used instead of serialized pb objects in the end.

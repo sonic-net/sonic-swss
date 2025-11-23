@@ -65,6 +65,7 @@ protected:
 
     bool addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry);
     bool removeHaSetEntry(const std::string &key);
+    bool updateHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry);
     bool addHaScopeEntry(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool removeHaScopeEntry(const std::string &key);
     bool setHaScopeHaRole(const std::string &key, const dash::ha_scope::HaScope &entry);

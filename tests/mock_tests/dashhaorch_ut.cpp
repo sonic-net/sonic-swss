@@ -52,7 +52,12 @@ namespace dashhaorch_ut
     class DashHaOrchTestable : public DashHaOrch
     {
     public:
+        using DashHaOrch::DashHaOrch;
         void doTask(swss::NotificationConsumer &consumer) { DashHaOrch::doTask(consumer); }
+        bool updateHaSetEntryPublic(const std::string &key, const dash::ha_set::HaSet &entry)
+        {
+            return DashHaOrch::updateHaSetEntry(key, entry);
+        }
     };
 
     class DashHaOrchTest : public MockOrchTest
@@ -68,7 +73,7 @@ namespace dashhaorch_ut
                 APP_DASH_HA_SET_TABLE_NAME,
                 APP_DASH_HA_SCOPE_TABLE_NAME
             };
-            m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
+            m_dashHaOrch = new DashHaOrchTestable(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
             gDirectory.set(m_dashHaOrch);
             ut_orch_list.push_back((Orch **)&m_dashHaOrch);
         }
@@ -83,6 +88,11 @@ namespace dashhaorch_ut
         {
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(dash_ha);
+        }
+
+        DashHaOrchTestable* getDashHaOrchTestable() const
+        {
+            return static_cast<DashHaOrchTestable*>(m_dashHaOrch);
         }
 
         dash::ha_set::HaSet HaSetPbObject()
@@ -267,6 +277,26 @@ namespace dashhaorch_ut
                             "HA_SET_1",
                             DEL_COMMAND,
                             { }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void UpdateHaSet(const std::vector<FieldValueTuple> &fields)
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            fields
                         }
                     }
                 )
@@ -708,6 +738,140 @@ namespace dashhaorch_ut
         .Times(0);
 
         CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdateHaSetAttributes)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaSet();
+
+        InSequence seq;
+
+        EXPECT_CALL(*mock_sai_dash_ha_api,
+                    set_ha_set_attribute(_, Pointee(Field(&sai_attribute_t::id, SAI_HA_SET_ATTR_LOCAL_IP))))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_CALL(*mock_sai_dash_ha_api,
+                    set_ha_set_attribute(_, Pointee(Field(&sai_attribute_t::id, SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT))))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_CALL(*mock_sai_dash_ha_api,
+                    set_ha_set_attribute(_, Pointee(Field(&sai_attribute_t::id, SAI_HA_SET_ATTR_DP_CHANNEL_PROBE_INTERVAL_MS))))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        UpdateHaSet({
+            {"version", "1"},
+            {"local_ip", "192.168.2.100"},
+            {"cp_data_channel_port", "5001"},
+            {"dp_channel_probe_interval_ms", "2000"}
+        });
+
+        auto it = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        ASSERT_NE(it, m_dashHaOrch->getHaSetEntries().end());
+        swss::IpAddress expected_ip("192.168.2.100");
+        EXPECT_TRUE(it->second.metadata.local_ip().has_ipv4());
+        EXPECT_EQ(it->second.metadata.local_ip().ipv4(), expected_ip.getV4Addr());
+        EXPECT_EQ(it->second.metadata.cp_data_channel_port(), 5001u);
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdateHaSetMissingEntryFails)
+    {
+        dash::ha_set::HaSet empty_entry;
+        EXPECT_FALSE(getDashHaOrchTestable()->updateHaSetEntryPublic("UNKNOWN", empty_entry));
+    }
+
+    TEST_F(DashHaOrchTest, UpdateHaSetInvalidLocalIp)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaSet();
+
+        auto entry = getDashHaOrchTestable()->getHaSetEntries().find("HA_SET_1")->second.metadata;
+        entry.mutable_local_ip()->Clear();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_set_attribute).Times(0);
+        EXPECT_FALSE(getDashHaOrchTestable()->updateHaSetEntryPublic("HA_SET_1", entry));
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdateHaSetInvalidPeerIp)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaSet();
+
+        auto entry = getDashHaOrchTestable()->getHaSetEntries().find("HA_SET_1")->second.metadata;
+        entry.mutable_peer_ip()->Clear();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_set_attribute).Times(0);
+        EXPECT_FALSE(getDashHaOrchTestable()->updateHaSetEntryPublic("HA_SET_1", entry));
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdateHaSetNoChanges)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_set_attribute).Times(0);
+        UpdateHaSet({});
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdateHaSetSaiFailure)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(1)
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        CreateHaSet();
+
+        InSequence seq;
+        EXPECT_CALL(*mock_sai_dash_ha_api,
+                    set_ha_set_attribute(_, Pointee(Field(&sai_attribute_t::id, SAI_HA_SET_ATTR_CP_DATA_CHANNEL_PORT))))
+        .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        UpdateHaSet({
+            {"version", "1"},
+            {"cp_data_channel_port", "5002"}
+        });
 
         EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
         .Times(1)
