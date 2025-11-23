@@ -32,6 +32,7 @@ local is_8lane = (ARGV[5] == "8")
 local appl_db = "0"
 local config_db = "4"
 local state_db = "6"
+local profile_db = "15"
 
 local ret = {}
 
@@ -106,7 +107,14 @@ local default_lossless_param_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_
 local over_subscribe_ratio = tonumber(redis.call('HGET', default_lossless_param_keys[1], 'over_subscribe_ratio'))
 
 -- Fetch the shared headroom pool size
-local shp_size = tonumber(redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff'))
+-- POC, HUA: Fetch from both config DB and static config DB.
+local shp_size_val = redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff')
+if not shp_size_val then
+    redis.call('SELECT', profile_db)
+    shp_size_val = redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff')
+    redis.call('SELECT', config_db)
+end
+local shp_size = tonumber(shp_size_val)
 
 local shp_enabled
 if shp_size ~= nil and shp_size ~= 0 or over_subscribe_ratio ~= nil and over_subscribe_ratio ~= 0 then

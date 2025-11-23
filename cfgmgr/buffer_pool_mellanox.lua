@@ -4,6 +4,7 @@
 local appl_db = "0"
 local config_db = "4"
 local state_db = "6"
+local profile_db = "15"
 
 -- Number of ports with 8 lanes (whose pipeline latency should be doubled)
 local port_count_8lanes = 0
@@ -28,6 +29,24 @@ local modification_descriptors_pool_size = 0
 local port_set_8lanes = {}
 -- Number of ports with lossless profiles
 local lossless_port_count = 0
+
+-- POC: check table contains key
+local function contains(table, val)
+   for i=1,#table do
+      if table[i] == val then 
+         return true
+      end
+   end
+   return false
+end
+
+-- POC: merge table
+function merge(ltable,rtable)
+    for i=1,#rtable do
+        ltable[#ltable+1] = rtable[i]
+    end
+    return ltable
+end
 
 local function iterate_all_items(all_items, check_lossless)
     -- Iterates all items in all_items, check the buffer profile each item referencing, and update reference count accordingly
@@ -149,6 +168,20 @@ local function fetch_buffer_pool_size_from_appldb(shp_enabled)
          end
     end
 
+    -- POC, HUA: also read and merge from static config db
+    -- TODO: improve the dupe code.
+    redis.call('SELECT', profile_db)
+    local buffer_pool_keys_static = redis.call('KEYS', 'BUFFER_POOL|*')
+    for i = 1, #buffer_pool_keys_static, 1 do
+         if not contains(buffer_pool_keys, buffer_pool_keys_static[i]) then
+             local size = redis.call('HGET', buffer_pool_keys_static[i], 'size')
+             if not size then
+                 pool_name = string.match(buffer_pool_keys_static[i], "BUFFER_POOL|([^%s]+)$")
+                 table.insert(buffer_pools, pool_name)
+             end
+         end
+    end
+
     redis.call('SELECT', appl_db)
     buffer_pool_keys = redis.call('KEYS', 'BUFFER_POOL_TABLE:*')
     local size
@@ -254,7 +287,13 @@ for i = 1, total_port, 1 do
     number_of_lanes = 0
 end
 
+-- POC, HUA: Fetch from both config DB and static config DB.
 local egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
+if not egress_lossless_pool_size then
+    redis.call('SELECT', profile_db)
+    egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
+    redis.call('SELECT', config_db)
+end
 
 -- Whether shared headroom pool is enabled?
 local default_lossless_param_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
@@ -266,7 +305,14 @@ else
 end
 
 -- Fetch the shared headroom pool size
-local shp_size = tonumber(redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff'))
+-- POC, HUA: Fetch from both config DB and static config DB.
+local shp_size_val = redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff')
+if not shp_size_val then
+    redis.call('SELECT', profile_db)
+    shp_size_val = redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff')
+    redis.call('SELECT', config_db)
+end
+local shp_size = tonumber(shp_size_val)
 
 local shp_enabled = false
 if over_subscribe_ratio ~= nil and over_subscribe_ratio ~= 0 then
@@ -300,6 +346,7 @@ local ceiling_mmu_size = number_of_cells * cell_size
 redis.call('SELECT', appl_db)
 
 -- Fetch names of all profiles and insert them into the look up table
+-- POC, HUA: Question: What's the data of BUFFER_PROFILE in appl_db?
 local all_profiles = redis.call('KEYS', 'BUFFER_PROFILE*')
 for i = 1, #all_profiles, 1 do
     if all_profiles[i] ~= "BUFFER_PROFILE_TABLE_KEY_SET" and all_profiles[i] ~= "BUFFER_PROFILE_TABLE_DEL_SET" then
@@ -428,6 +475,36 @@ for i = 1, #epools, 1 do
         table.insert(pools_need_update, epools[i])
     end
 end
+
+-- POC: merge those static config pools
+redis.call('SELECT', profile_db)
+local ipools_static = redis.call('KEYS', 'BUFFER_POOL|ingress*')
+for i = 1, #ipools_static, 1 do
+-- POC: if config already exist in config DB, means user already has a customize config, ignore static config.
+    if not contains(ipools, ipools_static[i]) then
+        local size = tonumber(redis.call('HGET', ipools_static[i], 'size'))
+        if not size then
+            table.insert(pools_need_update, ipools_static[i])
+            ingress_pool_count = ingress_pool_count + 1
+        else
+            if ipools_static[i] == 'BUFFER_POOL|ingress_lossless_pool' and shp_enabled and shp_size == 0 then
+                ingress_lossless_pool_size = size
+            end
+        end
+    end
+end
+
+local epools_static = redis.call('KEYS', 'BUFFER_POOL|egress*')
+for i = 1, #epools_static, 1 do
+-- POC: if config already exist in config DB, means user already has a customize config, ignore static config.
+    if not contains(epools, epools_static[i]) then
+        local size = redis.call('HGET', epools_static[i], 'size')
+        if not size then
+            table.insert(pools_need_update, epools_static[i])
+        end
+    end
+end
+redis.call('SELECT', config_db)
 
 if shp_enabled and shp_size == 0 then
     shp_size = math.ceil(accumulative_xoff / over_subscribe_ratio)
