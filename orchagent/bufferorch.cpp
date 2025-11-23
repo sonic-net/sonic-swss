@@ -1130,7 +1130,7 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
              * so we added a map that will help us to know what was the last command for this port and priority -
              * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
              * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
-            /* for voq switches the buffer configuration is applied on the VOQ which is applicable on the systen ports
+            /* for voq switches the buffer configuration is applied on the VOQ which is applicable on the system ports
              * system ports are not dynamically created/deleted so no need to maintain ref counter */
             if (gMySwitchType != "voq")
             {
