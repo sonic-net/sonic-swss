@@ -26,6 +26,8 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 
+extern bool isChassisDbInUse();
+
 const int neighorch_pri = 30;
 
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
@@ -45,7 +47,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         gBfdOrch->attach(this);
     }
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Add subscriber to process VOQ system neigh
         tableName = CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME;
@@ -1213,7 +1215,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Sync the neighbor to add to the CHASSIS_APP_DB
         voqSyncAddNeigh(alias, ip_address, macAddress, neighbor_entry);
@@ -1385,7 +1387,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);
