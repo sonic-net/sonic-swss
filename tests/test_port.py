@@ -538,15 +538,45 @@ class TestPort(object):
 
     def test_media_type(self, dvs, testlog):
 
-        media_name = 'media_type'
-        media_val = "backplane"
-        fvs = swsscommon.FieldValuePairs([(media_name, media_val)])
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
+        tbl = swsscommon.Table(db, "PORT_TABLE")
         ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
 
+        media_name = 'media_type'
+        media_val = ""
+
+        fvs = swsscommon.FieldValuePairs([(media_name, media_val)])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        # get media_type
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+        #empty media_type should be rejected
+        for fv in fvs:
+            assert fv[0] != "SAI_PORT_ATTR_MEDIA_TYPE"
+
+        media_name = 'media_type'
+        media_val = "none"
+        fvs = swsscommon.FieldValuePairs([(media_name, media_val)])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        # get media_type
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+        #"none" media_type should be rejected
+        for fv in fvs:
+            assert fv[0] != "SAI_PORT_ATTR_MEDIA_TYPE"
+
+        media_name = 'media_type'
+        media_val = "backplane"
+        fvs = swsscommon.FieldValuePairs([(media_name, media_val)])
         ptbl.set("Ethernet0", fvs)
 
         time.sleep(1)
@@ -555,9 +585,13 @@ class TestPort(object):
         (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
         assert status == True
 
+        found = False
+        #check the media_type is added in ASIC_DB
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_MEDIA_TYPE":
-                assert fv[1] == SAI_PORT_MEDIA_TYPE_BACKPLANE
+                assert fv[1] == "SAI_PORT_MEDIA_TYPE_BACKPLANE"
+                found = True
+        assert found == True
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
