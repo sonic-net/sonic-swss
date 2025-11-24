@@ -99,6 +99,7 @@ enum {
 	SRV6_LOCALSID_BPF				= 9,
 	SRV6_LOCALSID_SIDLIST			= 10,
 	SRV6_LOCALSID_ENCAP_SRC_ADDR	= 11,
+	SRV6_LOCALSID_IFNAME			= 12,
 };
 
 enum {
@@ -447,11 +448,12 @@ bool RouteSync::parseSrv6MySidFormat(struct rtattr *tb,
 bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
                                   string &node_len, string &func_len,
                                   string &arg_len, string &action,
-                                  string &vrf, string &adj)
+                                  string &vrf, string &adj, string &intf)
 {
     uint32_t action_buf = SRV6_LOCALSID_ACTION_UNSPEC;
     char vrf_buf[IFNAMSIZ + 1] = {0};
     char adj_buf[MAX_ADDR_SIZE + 1] = {0};
+    char intf_buf[IFNAMSIZ + 1] = {0};
 
     if (tb[SRV6_LOCALSID_FORMAT])
     {
@@ -493,9 +495,16 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
                strlen((char *)RTA_DATA(tb[SRV6_LOCALSID_VRFNAME])));
     }
 
+    if (tb[SRV6_LOCALSID_IFNAME])
+    {
+        memcpy(intf_buf, (char *)RTA_DATA(tb[SRV6_LOCALSID_IFNAME]),
+               strlen((char *)RTA_DATA(tb[SRV6_LOCALSID_IFNAME])));
+    }
+
     action = mySidAction2Str(action_buf);
     vrf = vrf_buf;
     adj = adj_buf;
+    intf = intf_buf;
 
     if (action == "unknown")
     {
@@ -504,9 +513,9 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
     }
 
     SWSS_LOG_INFO("Rx block_len:%s node_len:%s func_len:%s arg_len:%s "
-                  "action:%s vrf:%s adj:%s",
+                  "action:%s vrf:%s adj:%s intf:%s",
                   block_len.c_str(), node_len.c_str(), func_len.c_str(),
-                  arg_len.c_str(), action.c_str(), vrf.c_str(), adj.c_str());
+                  arg_len.c_str(), action.c_str(), vrf.c_str(), adj.c_str(), intf.c_str());
 
     return true;
 }
@@ -1384,11 +1393,12 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
     string action_str;
     string vrf_str;
     string adj_str;
+    string intf_str;
     string my_sid_table_key;
 
     if (!parseSrv6MySid(tb, block_len_str, node_len_str,
                       func_len_str, arg_len_str, action_str, vrf_str,
-                      adj_str))
+                      adj_str, intf_str))
     {
         SWSS_LOG_ERROR("Invalid Srv6 MySid");
         return;
@@ -1490,6 +1500,13 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
         return;
     }
 
+    if (!(action_str.compare("ua")) && adj_str.empty())
+    {
+        SWSS_LOG_NOTICE("MySid uA IP Prefix: %s adj is empty",
+                        sid_value_str);
+        return;
+    }
+
     if (!(action_str.compare("end.dx6")) && adj_str.empty())
     {
         SWSS_LOG_NOTICE("MySid End.DX6 IP Prefix: %s adj is empty",
@@ -1513,6 +1530,11 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
     if (!adj_str.empty())
     {
         fvw.adj = std::move(adj_str);
+        // Append the interface name to the adjacency if one is provided
+        if (!intf_str.empty())
+        {
+            fvw.adj += "@" + intf_str;
+        }
     }
 
     setTable(fvw, m_srv6MySidTable);
