@@ -369,11 +369,11 @@ public:
     CustomBfdRequest() : Request(custom_bfd_request_description, '|') { }
 };
 
-class CustomBfdMonitorOrch : public Orch2
+class BfdMonitorOrch : public Orch2
 {
 public:
-    CustomBfdMonitorOrch(swss::DBConnector *db, std::string tableName);
-    virtual ~CustomBfdMonitorOrch(void);
+    BfdMonitorOrch(swss::DBConnector *db, std::string tableName);
+    virtual ~BfdMonitorOrch(void);
 
 private:
     virtual bool addOperation(const Request& request);

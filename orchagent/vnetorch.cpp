@@ -2064,9 +2064,7 @@ void VNetRouteOrch::removeBfdSession(const string& vnet, const NextHopKey& endpo
     nexthop_info_[vnet].erase(endpoint_addr);
 
     string key = "default:default:" + monitor_addr.to_string();
-
     bfd_session_producer_.del(key);
-
     bfd_sessions_.erase(monitor_addr);
 }
 
@@ -2190,15 +2188,12 @@ void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey
     if (monitor_info_[vnet][ipPrefix][monitor_addr].monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD)
     {
         string key = "default:default:" + monitor_addr.to_string();
-
         bfd_session_producer_.del(key);
-
         bfd_sessions_.erase(monitor_addr);
     }
     else
     {
         string key = monitor_addr.to_string() + ":" + ipPrefix.to_string();
-
         monitor_session_producer_->del(key);
     }
 
@@ -2875,7 +2870,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
             {
                 if (!createNextHopGroup(vnet, nhg_custom_secondary, vrf_obj, monitoring_type))
                 {
-                    SWSS_LOG_WARN("Failed to create primary based custom next hop group. Cannot proceed.");
+                    SWSS_LOG_WARN("Failed to create secondary based custom next hop group. Cannot proceed.");
                     return;
                 }
             }
@@ -3469,18 +3464,18 @@ bool MonitorOrch::delOperation(const Request& request)
     return true;
 }
 
-CustomBfdMonitorOrch::CustomBfdMonitorOrch(DBConnector *db, std::string tableName):
+BfdMonitorOrch::BfdMonitorOrch(DBConnector *db, std::string tableName):
     Orch2(db, tableName, request_)
 {
     SWSS_LOG_ENTER();
 }
 
-CustomBfdMonitorOrch::~CustomBfdMonitorOrch(void)
+BfdMonitorOrch::~BfdMonitorOrch(void)
 {
     SWSS_LOG_ENTER();
 }
 
-bool CustomBfdMonitorOrch::addOperation(const Request& request)
+bool BfdMonitorOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -3493,7 +3488,7 @@ bool CustomBfdMonitorOrch::addOperation(const Request& request)
     return true;
 }
 
-bool CustomBfdMonitorOrch::delOperation(const Request& request)
+bool BfdMonitorOrch::delOperation(const Request& request)
 {
     return true;
 }

@@ -3113,14 +3113,14 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vxlan_tunnel(dvs)
 
     '''
-    Test 32 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover & custom_bfd.
+    Test 33 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover & custom_bfd.
     '''
-    def test_vnet_orch_32(self, dvs, testlog):
+    def test_vnet_orch_33(self, dvs, testlog):
         self.setup_db(dvs)
 
         vnet_obj = self.get_vnet_obj()
-        tunnel_name = 'tunnel_32'
-        vnet_name = 'vnet32'
+        tunnel_name = 'tunnel_33'
+        vnet_name = 'vnet33'
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vnet_obj.fetch_exist_entries(dvs)
@@ -3168,7 +3168,7 @@ class TestVnetOrch(object):
         # The default Vnet setting does not advertise prefix
         check_routes_advertisement(dvs, "100.100.1.0/24")
 
-        # Remove first primary endpoint from group.
+        # Remove second primary endpoint from group.
         update_bfd_session_state(dvs, '9.1.0.2', 'Down')
 
         time.sleep(2)
