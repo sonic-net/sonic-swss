@@ -38,6 +38,12 @@ sai_object_id_t gUnderlayIfId = 0x101;
 string gMyAsicName = "";
 event_handle_t g_events_handle;
 
+bool gMultiAsicVoq = false;
+bool isChassisDbInUse()
+{
+    return gMultiAsicVoq;
+}
+
 #define DEFAULT_BATCH_SIZE 128
 #define DEFAULT_MAX_BULK_SIZE 1000
 extern int gBatchSize;

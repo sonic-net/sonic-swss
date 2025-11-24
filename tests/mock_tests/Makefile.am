@@ -41,6 +41,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 sfloworh_ut.cpp \
+                tunneldecaporch_ut.cpp \
                 ut_saihelper.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
@@ -78,6 +79,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
                 mock_saihelper.cpp \
+                mirrororch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
