@@ -285,7 +285,7 @@ private:
     bool parseSrv6MySid(struct rtattr *tb[], string &block_len,
                            string &node_len, string &func_len,
                            string &arg_len, string &action, string &vrf,
-                           string &adj);
+                           string &adj, string &intf);
 
     bool parseSrv6MySidFormat(struct rtattr *tb, string &block_len,
                                  string &node_len, string &func_len,
