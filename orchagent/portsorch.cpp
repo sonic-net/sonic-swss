@@ -5195,21 +5195,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             it++;
                             continue;
                         }
-                        if (pCfg.media_type.is_set)
-                        {
-                            if (setPortMediaType(p, pCfg.media_type.value))
-                            {
-                                SWSS_LOG_NOTICE("Set port %s Media Type %s is successful",
-                                                 p.m_alias.c_str(), pCfg.media_type.value.c_str());
-                            }
-                            else
-                            {
-                                SWSS_LOG_ERROR("Failed to set port %s Media Type %s",
-                                                p.m_alias.c_str(), pCfg.media_type.value.c_str());
-                                it++;
-                                continue;
-                            }
-                        }
+                    }
+                }
+                if (pCfg.media_type.is_set)
+                {
+                    if (setPortMediaType(p, pCfg.media_type.value))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s Media Type %s is successful",
+                                         p.m_alias.c_str(), pCfg.media_type.value.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s Media Type %s",
+                                        p.m_alias.c_str(), pCfg.media_type.value.c_str());
+                        it++;
+                        continue;
                     }
                 }
 

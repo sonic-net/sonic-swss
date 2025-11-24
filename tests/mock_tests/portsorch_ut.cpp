@@ -1223,16 +1223,47 @@ namespace portsorch_test
                 { "media_type",    "backplane"                   }
             }
         }};
+        std::deque<KeyOpFieldsValuesTuple> kfvList1 = {{"Ethernet0", SET_COMMAND, {{ "media_type",    "" }}}};
+        std::deque<KeyOpFieldsValuesTuple> kfvList2 = {{"Ethernet0", SET_COMMAND, {{ "media_type",    "none" }}}};
+        std::deque<KeyOpFieldsValuesTuple> kfvListDel = {{"Ethernet0", "DEL" , {}}};
+
+        auto fvs = ports.begin()->second;
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> kfvListAdd= {{"Ethernet0", SET_COMMAND , fvs}};
+
+        Port p;
+        //empty media_type should not be processed
+        consumer->addToSync(kfvList1);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_EQ(p.m_media_type, "unknown");
+
+        consumer->addToSync(kfvListDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        consumer->addToSync(kfvListAdd);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        consumer->addToSync(kfvList2);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_EQ(p.m_media_type, "unknown");
+
+        consumer->addToSync(kfvListDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        consumer->addToSync(kfvListAdd);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
 
         // Refill consumer
-        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(kfvList);
 
         // Apply configuration
         static_cast<Orch*>(gPortsOrch)->doTask();
 
         // Get port
-        Port p;
+       // Port p;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
 
         // Verify preemphasis
@@ -1312,6 +1343,7 @@ namespace portsorch_test
 
         // Verify unreliablelos
         ASSERT_EQ(p.m_unreliable_los, false);
+
 
         // Dump pending tasks
         std::vector<std::string> taskList;
@@ -4076,5 +4108,4 @@ namespace portsorch_test
 
         ASSERT_FALSE(port.m_init);
     }
-
 }
