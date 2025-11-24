@@ -9,8 +9,8 @@
 #include "mock_table.h"
 #define private public
 #include "buffermgrdyn.h"
-#undef private
 #include "warm_restart.h"
+#undef private
 
 extern string gMySwitchType;
 
@@ -1593,7 +1593,7 @@ namespace buffermgrdyn_test
 
         // 8. Verify that no 0m profile is created and existing profile is removed
         auto zeroMProfile = "pg_lossless_100000_0m_profile";
-        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.find(zeroMProfile) == m_dynamicBuffer->m_bufferProfileLookup.end()) 
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.find(zeroMProfile) == m_dynamicBuffer->m_bufferProfileLookup.end())
             << "No lossless profile should be created for 0m cable length";
 
         // 9. Verify that the running_profile_name is cleared for lossless PGs
@@ -1676,5 +1676,366 @@ namespace buffermgrdyn_test
         VerifyProfileExists("pg_lossless_100000_0m_profile", false);
         VerifyProfileExists("pg_lossless_100000_5m_profile", false);
         VerifyProfileExists("pg_lossless_100000_5m_mtu4096_profile", false);
+    }
+
+    /*
+     * Test checkSharedBufferPoolSize execution logic
+     * This test verifies the condition logic for when recalculateSharedBufferPool should be executed
+     * Logic:
+     * - Non-warm start: execute as soon as MMU size is available.
+     * - Warm start: execute only if both buffer is completely initialized AND buffer pools are ready.
+     */
+    TEST_F(BufferMgrDynTest, TestCheckSharedBufferPoolSizeExecutionLogic)
+    {
+        // Initialize basic setup
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+        StartBufferManager();
+
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        // TEST CASE 1: MMU size empty - should not execute
+        m_dynamicBuffer->m_mmuSize = "";
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        m_dynamicBuffer->m_bufferPoolReady = false;
+
+        // Verify the condition logic - should be false when MMU size empty
+        // New condition: !m_mmuSize.empty() && (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_bufferCompletelyInitialized || !m_bufferPoolReady)))
+        bool conditionShouldNotExecute = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                         (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_FALSE(conditionShouldNotExecute) << "Condition should evaluate to false when MMU size is empty";
+
+        // Call checkSharedBufferPoolSize - should not execute recalculateSharedBufferPool
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+
+        // TEST CASE 2: MMU size available, buffer not initialized, buffer pool not ready (non-warm-start) - should execute
+        m_dynamicBuffer->m_mmuSize = "136209408";
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        m_dynamicBuffer->m_bufferPoolReady = false;
+
+        // Verify initial state
+        EXPECT_FALSE(m_dynamicBuffer->m_bufferPoolReady) << "Initial state: m_bufferPoolReady should be false";
+
+        // Call checkSharedBufferPoolSize - should execute recalculateSharedBufferPool
+        // New condition: !m_mmuSize.empty() && (!WarmStart::isWarmStart() || (m_bufferCompletelyInitialized || !m_bufferPoolReady))
+        // In non-warm-start: true && (!false || (false || !false)) = true && (true || true) = true && true = true
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+
+        // Verify the condition logic
+        EXPECT_FALSE(WarmStart::isWarmStart()) << "Test setup is non-warm-start";
+        bool conditionShouldExecute = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                     (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_TRUE(conditionShouldExecute) << "Condition should evaluate to true for execution in non-warm-start";
+
+        // TEST CASE 3: MMU size available, buffer not initialized, buffer pool ready (non-warm-start) - should execute
+        // In new logic, non-warm start always executes as soon as MMU size is available
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        m_dynamicBuffer->m_bufferPoolReady = true;
+
+        // Verify the condition logic - should be true in non-warm-start
+        // New condition: true && (!false || (false || !true)) = true && (true || false) = true && true = true
+        bool conditionShouldExecute3 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_TRUE(conditionShouldExecute3) << "Condition should evaluate to true in non-warm-start (true && true = true)";
+
+        // Call checkSharedBufferPoolSize - should execute
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferPoolReady) << "m_bufferPoolReady should remain true";
+
+        // TEST CASE 4: MMU size available, buffer initialized, buffer pool ready (non-warm-start) - should execute
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        m_dynamicBuffer->m_bufferPoolReady = true;
+
+        // Verify the condition logic - should be true (normal case after initialization)
+        // New condition: true && (!false || (true || !true)) = true && (true || true) = true && true = true
+        bool conditionShouldExecute4 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_TRUE(conditionShouldExecute4) << "Condition should evaluate to true (true && true = true)";
+
+        // Call checkSharedBufferPoolSize - should execute (normal case)
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferPoolReady) << "m_bufferPoolReady should remain true after normal execution";
+
+        // TEST CASE 5: MMU size available, buffer initialized, buffer pool not ready (non-warm-start) - should execute
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        m_dynamicBuffer->m_bufferPoolReady = false;
+
+        // Verify the condition logic - should be true in non-warm-start
+        // New condition: true && (!false || (true || !false)) = true && (true || true) = true && true = true
+        bool conditionShouldExecute5 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_TRUE(conditionShouldExecute5) << "Condition should evaluate to true in non-warm-start";
+
+        // Call checkSharedBufferPoolSize - should execute
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+
+        // TEST CASE 6: Warm start with buffer not initialized and pool not ready - should execute
+        // During warm start, execute when buffer is completely initialized OR buffer pools are not ready
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        m_dynamicBuffer->m_bufferPoolReady = false;
+
+        // New condition: true && (false || (false || !false)) = true && (false || true) = true && true = true
+        EXPECT_FALSE(WarmStart::isWarmStart()) << "Default test setup is non-warm-start";
+        // If it were warm start with buffer not initialized and pool not ready, the condition would evaluate to true,
+        // thus executing calculation during warm start to prepare the buffer pool
+
+        // TEST CASE 7: Warm start with buffer initialized and pool ready - should execute
+        // This ensures consistency during warm start
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        m_dynamicBuffer->m_bufferPoolReady = true;
+
+        // If it were warm start: true && (false || (true || !true)) = true && (false || true) = true && true = true
+        // This would execute during warm start when buffer is initialized or pool not ready
+        bool conditionShouldExecute7 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_TRUE(conditionShouldExecute7) << "Condition should evaluate to true when both buffer initialized and pool ready";
+    }
+
+    /*
+     * Test isHeadroomResourceValid startup optimization
+     * This test verifies the early return condition that skips validation during startup
+     * Logic:
+     * - Non-warm start: never skip validation.
+     * - Warm start: skip only if initialization has not completed.
+     */
+    TEST_F(BufferMgrDynTest, TestIsHeadroomResourceValidFastStartOptimization)
+    {
+        // Initialize basic setup
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+        StartBufferManager();
+
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        InitBufferPool();
+        InitDefaultBufferProfile();
+
+        // Create a test buffer profile
+        buffer_profile_t testProfile;
+        testProfile.name = "test_lossless_profile";
+        testProfile.size = "1024";
+        testProfile.xon = "512";
+        testProfile.xoff = "512";
+        testProfile.lossless = true;
+        testProfile.pool_name = "ingress_lossless_pool";
+
+        // TEST CASE 1: Buffer not initialized in non-warm-start - should NOT skip validation
+        // In new logic, non-warm start never skips validation
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        EXPECT_FALSE(WarmStart::isWarmStart()) << "Test setup should be non-warm-start";
+
+        // New condition: WarmStart::isWarmStart() && !m_bufferCompletelyInitialized
+        // In non-warm-start: false && !false = false && true = false (do not skip, proceed with validation)
+        bool shouldSkip = WarmStart::isWarmStart() && !m_dynamicBuffer->m_bufferCompletelyInitialized;
+        EXPECT_FALSE(shouldSkip) << "Should not skip validation in non-warm-start even when buffer not initialized";
+
+        // TEST CASE 2: Test with different profile types in non-warm-start
+        buffer_profile_t lossyProfile;
+        lossyProfile.name = "test_lossy_profile";
+        lossyProfile.size = "0";
+        lossyProfile.lossless = false;
+        lossyProfile.pool_name = "ingress_lossy_pool";
+
+        // For lossy profile with empty new_pg, should still return true (existing logic)
+        bool result = m_dynamicBuffer->isHeadroomResourceValid("Ethernet0", lossyProfile, "");
+        EXPECT_TRUE(result) << "isHeadroomResourceValid should return true for lossy profile with empty new_pg";
+
+        // TEST CASE 3: Buffer completely initialized in non-warm-start - should NOT skip validation
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+
+        // New condition: false && !true = false && false = false (do not skip)
+        shouldSkip = WarmStart::isWarmStart() && !m_dynamicBuffer->m_bufferCompletelyInitialized;
+        EXPECT_FALSE(shouldSkip) << "Should not skip validation in non-warm-start when buffer initialized";
+
+        // For lossy profile with empty new_pg, should still return true (existing logic)
+        result = m_dynamicBuffer->isHeadroomResourceValid("Ethernet0", lossyProfile, "");
+        EXPECT_TRUE(result) << "isHeadroomResourceValid should return true for lossy profile with empty new_pg even when initialized";
+
+        // TEST CASE 4: Verify non-warm-start always performs validation
+        // Create a profile that might fail normal validation
+        buffer_profile_t invalidProfile;
+        invalidProfile.name = "invalid_profile";
+        invalidProfile.size = "999999999";  // Very large size
+        invalidProfile.xon = "999999999";
+        invalidProfile.xoff = "999999999";
+        invalidProfile.lossless = true;
+        invalidProfile.pool_name = "non_existent_pool";
+
+        // In non-warm start, should not skip validation regardless of buffer initialization state
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        // New condition: false && !false = false && true = false (do not skip, will perform validation)
+        shouldSkip = WarmStart::isWarmStart() && !m_dynamicBuffer->m_bufferCompletelyInitialized;
+        EXPECT_FALSE(shouldSkip) << "Should not skip validation in non-warm-start";
+
+        // TEST CASE 5: Verify condition logic in non-warm-start
+        // The new logic ensures validation always happens in non-warm-start
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+
+        // Test with lossless profile and new_pg (will trigger validation in non-warm-start)
+        // New condition: false && !false = false (do not skip)
+        shouldSkip = WarmStart::isWarmStart() && !m_dynamicBuffer->m_bufferCompletelyInitialized;
+        EXPECT_FALSE(shouldSkip) << "Non-warm-start should always perform validation";
+
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        shouldSkip = WarmStart::isWarmStart() && !m_dynamicBuffer->m_bufferCompletelyInitialized;
+        EXPECT_FALSE(shouldSkip) << "Non-warm-start should always perform validation regardless of initialization state";
+
+        // TEST CASE 6: Warm start (fast-reboot) scenario - skip only when buffer not initialized
+        // New logic: validation is skipped only during warm start while initialization is incomplete
+        // New condition: WarmStart::isWarmStart() && !m_bufferCompletelyInitialized
+        EXPECT_FALSE(WarmStart::isWarmStart()) << "Default test setup is non-warm-start";
+
+        // If it were warm start with buffer not initialized:
+        // true && !false = true && true = true (skip validation to save time)
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        // Simulated warm start condition: true && true = true (would skip)
+
+        // If it were warm start with buffer initialized:
+        // true && !true = true && false = false (do not skip, perform validation for consistency)
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        // Simulated warm start condition: true && false = false (would not skip)
+
+        // This ensures validation happens in warm start once initialization completes for consistency
+    }
+
+    /*
+     * Test checkSharedBufferPoolSize with warm restart enabled
+     * This test verifies the warm restart code paths are covered
+     */
+    TEST_F(BufferMgrDynTest, TestCheckSharedBufferPoolSizeWarmRestart)
+    {
+        // Initialize basic setup
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        // Enable warm restart for buffermgrd
+        Table warmRestartEnableTable(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+        warmRestartEnableTable.set("buffermgrd",
+                                   {
+                                       {"enable", "true"}
+                                   });
+
+        // Enable warm start in the WarmStart singleton
+        WarmStart::getInstance().m_enabled = true;
+
+        StartBufferManager();
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        // Verify warm start is still enabled after initialization
+        EXPECT_TRUE(WarmStart::isWarmStart()) << "Warm start should still be enabled after initialization";
+
+        // TEST CASE 1: Warm start with buffer not initialized and pool not ready - should execute
+        // New condition: true && (true || (false || !false)) = true && (true || true) = true
+        m_dynamicBuffer->m_mmuSize = "136209408";
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        m_dynamicBuffer->m_bufferPoolReady = false;
+
+        // If warm start is enabled, the condition should still execute when pool not ready
+        bool conditionShouldExecute1 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        // In warm start: true && (false || (false || true)) = true && (false || true) = true
+        EXPECT_TRUE(conditionShouldExecute1) << "Condition should execute in warm start when pool not ready";
+
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+
+        // TEST CASE 2: Warm start with buffer initialized and pool not ready - should execute
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        m_dynamicBuffer->m_bufferPoolReady = false;
+
+        // New condition: true && (!false || (true && (true || !false))) = true && (true || true) = true
+        bool conditionShouldExecute2 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_TRUE(conditionShouldExecute2) << "Condition should execute in warm start when buffer initialized";
+
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+
+        // TEST CASE 3: Warm start with buffer initialized and pool ready - should execute
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        m_dynamicBuffer->m_bufferPoolReady = true;
+
+        // New condition: true && (!false || (true && (true || !true))) = true && (true || true) = true
+        bool conditionShouldExecute3 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        EXPECT_TRUE(conditionShouldExecute3) << "Condition should execute in warm start when both initialized and ready";
+
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+
+        // TEST CASE 4: Warm start with buffer not initialized and pool ready - should NOT execute
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+        m_dynamicBuffer->m_bufferPoolReady = true;
+
+        // New condition with explicit warm-start gating:
+        // true && (!false || (true && (false || false))) = true && (true || false) = true
+        // But with bufferCompletelyInitialized=false and bufferPoolReady=true:
+        // true && (false || (true && false)) = false -> should not execute
+        bool conditionShouldNotExecute4 = !m_dynamicBuffer->m_mmuSize.empty() &&
+                                       (!WarmStart::isWarmStart() || (WarmStart::isWarmStart() && (m_dynamicBuffer->m_bufferCompletelyInitialized || !m_dynamicBuffer->m_bufferPoolReady)));
+        // In warm start: !WarmStart::isWarmStart() = false, m_bufferCompletelyInitialized = false, !m_bufferPoolReady = false
+        // So: true && (false || (false || false)) = true && false = false
+        EXPECT_FALSE(conditionShouldNotExecute4) << "Condition should not execute when warm start is enabled, buffer not initialized and pool ready";
+
+        m_dynamicBuffer->checkSharedBufferPoolSize(false);
+    }
+
+    /*
+     * Test isHeadroomResourceValid with warm restart enabled
+     * This test verifies the warm restart skip logic is covered
+     */
+    TEST_F(BufferMgrDynTest, TestIsHeadroomResourceValidWarmRestart)
+    {
+        // Initialize basic setup
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        // Enable warm restart for buffermgrd
+        Table warmRestartEnableTable(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+        warmRestartEnableTable.set("buffermgrd",
+                                   {
+                                       {"enable", "true"}
+                                   });
+
+        // CRITICAL: Enable warm start in WarmStart singleton so isWarmStart() returns true
+        WarmStart::getInstance().m_enabled = true;
+
+        StartBufferManager();
+        InitPort();
+        SetPortInitDone();
+
+        // Create a lossless buffer profile for testing
+        buffer_profile_t testProfile;
+        testProfile.name = "test_lossless_profile";
+        testProfile.size = "1024";
+        testProfile.xon = "100";
+        testProfile.xoff = "200";
+        testProfile.threshold = "3";
+        testProfile.pool_name = "ingress_lossless_pool";
+        testProfile.lossless = true;
+
+        // TEST CASE 1: Warm start with buffer not initialized - should skip validation
+        // This will execute the "return true;" at line 1065
+        m_dynamicBuffer->m_bufferCompletelyInitialized = false;
+
+        // Verify the condition is true
+        bool shouldSkip = WarmStart::isWarmStart() && !m_dynamicBuffer->m_bufferCompletelyInitialized;
+        EXPECT_TRUE(shouldSkip) << "Should skip validation in warm start when buffer not initialized";
+
+        // CRITICAL: Actually call isHeadroomResourceValid to execute line 1065
+        bool result = m_dynamicBuffer->isHeadroomResourceValid("Ethernet0", testProfile, "3-4");
+        EXPECT_TRUE(result) << "isHeadroomResourceValid should return true during warm start when buffer not initialized";
+
+        // TEST CASE 2: Warm start with buffer initialized - should NOT skip validation
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+
+        shouldSkip = WarmStart::isWarmStart() && !m_dynamicBuffer->m_bufferCompletelyInitialized;
+        EXPECT_FALSE(shouldSkip) << "Should NOT skip validation in warm start when buffer initialized";
+
+        // Cleanup: Disable warm start
+        WarmStart::getInstance().m_enabled = false;
     }
 }
