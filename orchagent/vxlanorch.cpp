@@ -1063,10 +1063,8 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
 
         SWSS_LOG_DEBUG("Decrementing remote end point %s reference to %d", remote_vtep.c_str(),
                        it->second.ip_refcnt);
-        if (it->second.ip_refcnt == 0)
-        {
-             tnl_users_.erase(remote_vtep);
-        }
+        // tnl_users_.erase should be done by the caller after checking
+        // related cleanup dependencies
     }
 }
 
