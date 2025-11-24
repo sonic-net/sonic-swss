@@ -195,7 +195,7 @@ void BufferOrch::initVoqBufferReadyList(Table& table, bool isConfigDb)
         }
 
         // We need transform the key from config db format to appl db format
-        auto appldb_key = tokens[0] + delimiter + tokens[1] + delimiter + tokens[2] + delimiter + tokens[3];
+        auto appldb_key = tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2] + delimiter + tokens[3];
         m_ready_list[appldb_key] = false;
 
         auto &&port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
