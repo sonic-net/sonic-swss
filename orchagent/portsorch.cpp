@@ -69,6 +69,8 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 extern event_handle_t g_events_handle;
+extern bool isChassisDbInUse();
+extern bool gMultiAsicVoq;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -306,7 +308,20 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS,
     SAI_PORT_STAT_TRIM_PACKETS,
     SAI_PORT_STAT_DROPPED_TRIM_PACKETS,
-    SAI_PORT_STAT_TX_TRIM_PACKETS
+    SAI_PORT_STAT_TX_TRIM_PACKETS,
+    SAI_PORT_STAT_DOT3_STATS_ALIGNMENT_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_FCS_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_SINGLE_COLLISION_FRAMES,
+    SAI_PORT_STAT_DOT3_STATS_MULTIPLE_COLLISION_FRAMES,
+    SAI_PORT_STAT_DOT3_STATS_SQE_TEST_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_DEFERRED_TRANSMISSIONS,
+    SAI_PORT_STAT_DOT3_STATS_LATE_COLLISIONS,
+    SAI_PORT_STAT_DOT3_STATS_EXCESSIVE_COLLISIONS,
+    SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_TRANSMIT_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_CARRIER_SENSE_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_FRAME_TOO_LONGS,
+    SAI_PORT_STAT_DOT3_STATS_INTERNAL_MAC_RECEIVE_ERRORS,
+    SAI_PORT_STAT_DOT3_STATS_SYMBOL_ERRORS
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -727,11 +742,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha;
+    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha, portFlrSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
     string nvdaPortTrimPluginName = "nvda_port_trim_drop.lua";
+    string portFlrPluginName = "port_flr.lua";
 
     try
     {
@@ -746,13 +762,29 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         string nvdaPortTrimLuaScript = swss::loadLuaScript(nvdaPortTrimPluginName);
         nvdaPortTrimSha = swss::loadRedisScript(m_counter_db.get(), nvdaPortTrimLuaScript);
+
+        string portFlrLuaScript = swss::loadLuaScript(portFlrPluginName);
+        portFlrSha = swss::loadRedisScript(m_counter_db.get(), portFlrLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
     }
 
-    std::string portStatPlugins = portRateSha;
+    // Build portStatPlugins string, only adding non-empty plugin SHAs
+    std::string portStatPlugins;
+    if (!portRateSha.empty())
+    {
+        portStatPlugins = portRateSha;
+    }
+    if (!portFlrSha.empty())
+    {
+        if (!portStatPlugins.empty())
+        {
+            portStatPlugins += ",";
+        }
+        portStatPlugins += portFlrSha;
+    }
 
     // Nvidia custom trim stat calculation
     if (isMlnxPlatform() && \
@@ -972,7 +1004,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch::addExecutor(portHostTxReadyNotificatier);
     }
 
-    if (gMySwitchType == "voq")
+    if (isChassisDbInUse())
     {
         string tableName;
         //Add subscriber to process system LAG (System PortChannel) table
@@ -4314,7 +4346,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 return true;
             };
 
-            if (m_portList.find(key) == m_portList.end())
+            const bool portExists = m_portList.count(key) > 0;
+            if (!portExists)
             {
                 // Aggregate configuration while the port is not created.
                 auto &fvMap = m_portConfigMap[key];
@@ -4346,18 +4379,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
             }
 
-            // TODO:
-            // Fix the issue below
-            // After PortConfigDone, while waiting for "PortInitDone" and the first gBufferOrch->isPortReady(alias),
-            // the complete m_lanesAliasSpeedMap may be populated again, so initExistingPort() will be called more than once
-            // for the same port.
-
             /* Once all ports received, go through the each port and perform appropriate actions:
              * 1. Remove ports which don't exist anymore
              * 2. Create new ports
              * 3. Initialize all ports
              */
-            if (getPortConfigState() != PORT_CONFIG_MISSING)
+            if (getPortConfigState() == PORT_CONFIG_RECEIVED)
             {
                 std::vector<PortConfig> portsToAddList;
                 std::vector<sai_object_id_t> portsToRemoveList;
@@ -4418,8 +4445,25 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 setPortConfigState(PORT_CONFIG_DONE);
             }
+            else if (getPortConfigState() == PORT_CONFIG_DONE)
+            {
+                // Add and initialize the port
+                if (!portExists)
+                {
+                    std::vector<PortConfig> portsToAddList { pCfg };
+                    std::vector<Port> addedPorts;
 
-            if (getPortConfigState() != PORT_CONFIG_DONE)
+                    if (!addPortBulk(portsToAddList, addedPorts))
+                    {
+                        SWSS_LOG_ERROR("Failed to add port %s", pCfg.key.c_str());
+                        it++;
+                        continue;
+                    }
+
+                    initPortsBulk(addedPorts);
+                }
+            }
+            else
             {
                 // Not yet receive PortConfigDone. Save it for future retry
                 it++;
@@ -5956,7 +6000,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 }
             }
 
-            if ((gMySwitchType == "voq") && (port.m_type != Port::SYSTEM))
+            if (isChassisDbInUse() && (port.m_type != Port::SYSTEM))
             {
                //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
                voqSyncAddLagMember(lag, port, status);
@@ -6435,10 +6479,16 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
-        for (size_t idx = 0; idx < portCount; idx++)
+        size_t idx = 0;
+        for (const auto& port: ports)
         {
-            const auto& port = ports[idx];
+            if (port.m_priority_group_ids.size() == 0)
+            {
+                continue;
+            }
+
             const auto status = bulker.statuses[idx];
+            idx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -6513,10 +6563,16 @@ void PortsOrch::initializeQueuesBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
-        for (size_t idx = 0; idx < portCount; idx++)
+        size_t idx = 0;
+        for (const auto& port: ports)
         {
-            const auto& port = ports[idx];
+            if (port.m_queue_ids.size() == 0)
+            {
+                continue;
+            }
+
             const auto status = bulker.statuses[idx];
+            idx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -6593,10 +6649,17 @@ void PortsOrch::initializeSchedulerGroupsBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
+        size_t bulkIdx = 0;
         for (size_t idx = 0; idx < portCount; idx++)
         {
             const auto& port = ports[idx];
-            const auto status = bulker.statuses[idx];
+            if (scheduler_group_ids[idx].size() == 0)
+            {
+                continue;
+            }
+
+            const auto status = bulker.statuses[bulkIdx];
+            bulkIdx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -7555,13 +7618,16 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
             switch_id = gVoqMySwitchId;
             system_lag_alias = gMyHostName + "|" + gMyAsicName + "|" + lag_alias;
 
-            // Allocate unique lag id
-            spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
-
-            if ((int32_t)spa_id <= 0)
+            if (gMultiAsicVoq)
             {
-                SWSS_LOG_ERROR("Failed to allocate unique LAG id for local lag %s rv:%d", lag_alias.c_str(), spa_id);
-                return false;
+                // Allocate unique lag id
+                spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
+
+                if ((int32_t)spa_id <= 0)
+                {
+                    SWSS_LOG_ERROR("Failed to allocate unique LAG id for local lag %s rv:%d", lag_alias.c_str(), spa_id);
+                    return false;
+                }
             }
         }
 
@@ -7673,7 +7739,7 @@ bool PortsOrch::removeLag(Port lag)
 
     m_counterLagTable->hdel("", lag.m_alias);
 
-    if (gMySwitchType == "voq")
+    if (isChassisDbInUse())
     {
         // Free the lag id, if this is local LAG
 
@@ -7786,7 +7852,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (gMySwitchType == "voq")
+    if (isChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncAddLagMember(lag, port, member_status);
@@ -7834,7 +7900,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (gMySwitchType == "voq")
+    if (isChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncDelLagMember(lag, port);
@@ -9071,7 +9137,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         }
     }
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         if (gIntfsOrch->isLocalSystemPortIntf(port.m_alias))
         {
@@ -10218,7 +10284,8 @@ void PortsOrch::voqSyncAddLag (Port &lag)
 
     // Sync only local lag add to CHASSIS_APP_DB
 
-    if (switch_id != gVoqMySwitchId)
+    if (switch_id != gVoqMySwitchId ||
+       !gMultiAsicVoq)
     {
         return;
     }
