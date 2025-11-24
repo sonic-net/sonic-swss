@@ -537,6 +537,7 @@ namespace flexcounter_test
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
         auto firstPortName = ports.begin()->first;
+        auto firstPortValues = ports.begin()->second;
 
         // Create test buffer pool
         poolTable.set(
@@ -742,8 +743,23 @@ namespace flexcounter_test
         // Do not check the content of port counter since it's large and varies among platforms.
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
 
-        // create a routing interface
+        //Verify the Port Stats counter after DEL
         std::deque<KeyOpFieldsValuesTuple> entries;
+        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.push_back({firstPort.m_alias, "DEL", { {} }});
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
+
+        //Verify the Port Stats counter after re-ADD
+        entries.clear();
+        entries.push_back({firstPort.m_alias, "SET", firstPortValues});
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
+
+        // create a routing interface
+        entries.clear();
         entries.push_back({firstPort.m_alias, "SET", { {"mtu", "9100"}}});
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
