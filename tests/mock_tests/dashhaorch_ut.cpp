@@ -148,7 +148,7 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
-        void UpdatePeerIp()
+        void UpdatePeerIp(std::string peer_ip)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
@@ -162,7 +162,7 @@ namespace dashhaorch_ut
                             SET_COMMAND,
                             {
                                 {"version", "2"},
-                                {"peer_ip", "192.168.2.100"},
+                                {"peer_ip", peer_ip},
                             }
                         }
                     }
@@ -710,11 +710,14 @@ namespace dashhaorch_ut
     TEST_F(DashHaOrchTest, UpdatePeerIp)
     {
         CreateHaSet();
-        UpdatePeerIp();
+        UpdatePeerIp("192.168.2.100");
 
         auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
         dash::types::IpAddress peer_ip;
         to_pb("192.168.2.100", peer_ip);
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("300:300:300:300");
         EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
     }
 

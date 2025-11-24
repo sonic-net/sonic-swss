@@ -228,7 +228,7 @@ bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha
                                                    &ha_set_attr_list[0]);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to update HA Set object in SAI for %s", key.c_str());
+        SWSS_LOG_ERROR("Failed to update peer ip for HA Set object in SAI for %s", key.c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_HA, status);
         if (handle_status != task_success)
         {
@@ -236,7 +236,10 @@ bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha
         }
     }
 
-    SWSS_LOG_INFO("HA Set entry updated for %s, peer_ip is updated to %s", key.c_str(), to_string(entry.peer_ip()).c_str());
+    SWSS_LOG_INFO("HA Set entry updated for %s, peer_ip is updated to %s",
+                    key.c_str(),
+                    to_string(entry.peer_ip()).c_str());
+
     *m_ha_set_entries[key].metadata.mutable_peer_ip() = entry.peer_ip();
 
     return true;
