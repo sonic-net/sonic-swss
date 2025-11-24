@@ -1,9 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, collections::HashMap};
 use tokio::{sync::mpsc::Receiver, sync::oneshot, select};
 use opentelemetry::metrics::MetricsError;
 use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value, InstrumentationScope},
-    metrics::v1::{Metric, Gauge as ProtoGauge, ResourceMetrics, ScopeMetrics},
+    metrics::v1::{Metric, Gauge as ProtoGauge, ResourceMetrics, ScopeMetrics, NumberDataPoint},
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
@@ -40,6 +40,10 @@ pub struct OtelActor {
     shutdown_notifier: Option<oneshot::Sender<()>>,
     client: MetricsServiceClient<tonic::transport::Channel>,
 
+    // Pre-allocated reusable structures
+    resource: ProtoResource,
+    instrumentation_scope: InstrumentationScope,
+    
     // Statistics tracking
     messages_received: u64,
     exports_performed: u64,
@@ -57,6 +61,25 @@ impl OtelActor {
         let endpoint = config.collector_endpoint.parse::<Endpoint>()?;
         let client = MetricsServiceClient::connect(endpoint).await?;
 
+        // Pre-create reusable resource
+        let resource = ProtoResource {
+            attributes: vec![ProtoKeyValue {
+                key: "service.name".to_string(),
+                value: Some(AnyValue {
+                    value: Some(Value::StringValue("countersyncd".to_string())),
+                }),
+            }],
+            dropped_attributes_count: 0,
+        };
+
+        // Pre-create reusable instrumentation scope
+        let instrumentation_scope = InstrumentationScope {
+            name: "countersyncd".to_string(),
+            version: "1.0".to_string(),
+            attributes: vec![],
+            dropped_attributes_count: 0,
+        };
+
         info!(
             "OtelActor initialized - console: {}, endpoint: {}",
             config.print_to_console,
@@ -68,6 +91,8 @@ impl OtelActor {
             config,
             shutdown_notifier: Some(shutdown_notifier),
             client,
+            resource,
+            instrumentation_scope,
             messages_received: 0,
             exports_performed: 0,
             export_failures: 0,
@@ -156,7 +181,7 @@ impl OtelActor {
         
     }
 
-    /// Export metrics to OpenTelemetry collector
+    // Export metrics to OpenTelemetry collector 
     async fn export_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
         if otel_metrics.is_empty() {
             return;
@@ -181,28 +206,15 @@ impl OtelActor {
             }
         }).collect();
 
-        // Create resource metrics
+        // Reuse pre-allocated resource and scope, only create new ScopeMetrics with updated metrics
         let resource_metrics = ResourceMetrics {
-            resource: Some(ProtoResource {
-                attributes: vec![ProtoKeyValue {
-                    key: "service.name".to_string(),
-                    value: Some(AnyValue {
-                        value: Some(Value::StringValue(otel_metrics.service_name.clone())),
-                    }),
-                }],
-                dropped_attributes_count: 0,
-            }),
+            resource: Some(self.resource.clone()), // Reuse pre-created resource
             scope_metrics: vec![ScopeMetrics {
-                scope: Some(InstrumentationScope {
-                    name: otel_metrics.scope_name.clone(),
-                    version: otel_metrics.scope_version.clone(),
-                    attributes: vec![],
-                    dropped_attributes_count: 0,
-                }),
-                schema_url: "".to_string(),
-                metrics: proto_metrics,
+                scope: Some(self.instrumentation_scope.clone()), 
+                schema_url: String::new(),
+                metrics: proto_metrics, 
             }],
-            schema_url: "".to_string(),
+            schema_url: String::new(),
         };
 
         // Create export request
@@ -214,7 +226,7 @@ impl OtelActor {
         match self.client.export(request).await {
             Ok(_) => {
                 self.exports_performed += 1;
-                info!("Exported {} metrics to collector", otel_metrics.len());
+                debug!("Exported {} metrics to collector", otel_metrics.len());
             }
             Err(e) => {
                 self.export_failures += 1;
