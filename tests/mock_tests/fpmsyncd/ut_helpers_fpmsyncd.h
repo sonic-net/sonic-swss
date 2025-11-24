@@ -61,6 +61,7 @@ enum {  /* Values copied from fpmsyncd/routesync.cpp */
 	SRV6_LOCALSID_BPF				= 9,
 	SRV6_LOCALSID_SIDLIST			= 10,
 	SRV6_LOCALSID_ENCAP_SRC_ADDR	= 11,
+	SRV6_LOCALSID_IFNAME			= 12,
 };
 
 enum {  /* Values copied from fpmsyncd/routesync.cpp */
@@ -105,7 +106,7 @@ namespace ut_fpmsyncd
     struct nlmsg *create_srv6_mysid_nlmsg(uint16_t cmd, IpAddress *mysid, int8_t block_len,
                                              int8_t node_len, int8_t func_len, int8_t arg_len,
                                              uint32_t action, char *vrf = NULL, IpAddress *nh = NULL,
-											 uint16_t table_id = 10, uint8_t prefixlen = 0,
+											 char *intf = NULL, uint16_t table_id = 10, uint8_t prefixlen = 0,
 											 uint8_t address_family = 0);
     /* Free the memory allocated for a Netlink object */
     inline void free_nlobj(struct nlmsg *msg)
