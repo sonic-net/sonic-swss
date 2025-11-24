@@ -2211,35 +2211,28 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
         set<NextHopKey> next_hop_set = nexthops.getNextHops();
         if (next_hop_set.find(nh) != next_hop_set.end())
         {
-            if (monitoring == VNET_MONITORING_TYPE_CUSTOM)
+            if (!monitoring.empty())
             {
                 if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
                     monitor_info_[vnet][ipPrefix].find(monitor_ip) == monitor_info_[vnet][ipPrefix].end())
                 {
-                    createMonitoringSession(vnet, nh, monitor_ip, ipPrefix);
+                    if (monitoring == VNET_MONITORING_TYPE_CUSTOM)
+                    {
+                        createMonitoringSession(vnet, nh, monitor_ip, ipPrefix);
+                    }
+                    else if (monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD)
+                    {
+                        /*
+                        * Current BFD monitoring doesn't support the failover between primary and secondary NHG.
+                        * To avoid the complexity/regression, we temporarily introduce custom_bfd monitoring type.
+                        * It will be same behavior as custom monitoring type, except that it will create BFD session.
+                        */
+                        createCustomBFDMonitoringSession(vnet, nh, monitor_ip, ipPrefix, rx_monitor_timer, tx_monitor_timer);
+                    }
                 }
                 else
                 {
                     SWSS_LOG_INFO("Monitoring session for prefix %s endpoint %s, monitor %s already exists", ipPrefix.to_string().c_str(),
-                        nh.to_string().c_str(), monitor_ip.to_string().c_str());
-                    monitor_info_[vnet][ipPrefix][monitor_ip].ref_count += 1;
-                }
-            }
-            else if (monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD)
-            {
-                /*
-                * Current BFD monitoring doesn't support the failover between primary and secondary NHG.
-                * To avoid the complexity/regression, we temporarily introduce custom_bfd monitoring type.
-                * It will be same behavior as custom monitoring type, except that it will create BFD session.
-                */
-                if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
-                    monitor_info_[vnet][ipPrefix].find(monitor_ip) == monitor_info_[vnet][ipPrefix].end())
-                {
-                    createCustomBFDMonitoringSession(vnet, nh, monitor_ip, ipPrefix, rx_monitor_timer, tx_monitor_timer);
-                }
-                else
-                {
-                    SWSS_LOG_INFO("Custom BFD monitoring session for prefix %s endpoint %s, monitor %s already exists", ipPrefix.to_string().c_str(),
                         nh.to_string().c_str(), monitor_ip.to_string().c_str());
                     monitor_info_[vnet][ipPrefix][monitor_ip].ref_count += 1;
                 }
