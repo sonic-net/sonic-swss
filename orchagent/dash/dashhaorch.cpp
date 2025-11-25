@@ -208,6 +208,43 @@ HaScopeEntry DashHaOrch::getHaScopeForEni(const std::string& eni)
     return m_ha_scope_entries.begin()->second;
 }
 
+bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry, sai_object_id_t sai_ha_set_oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+    sai_attribute_t ha_set_attr_list[8]={};
+    sai_ip_address_t sai_peer_ip;
+
+    if (!to_sai(entry.peer_ip(), sai_peer_ip))
+    {
+        SWSS_LOG_WARN("HA Set entry already exists for %s", key.c_str());
+        return true;
+    }
+
+    ha_set_attr_list[0].id = SAI_HA_SET_ATTR_PEER_IP;
+    ha_set_attr_list[0].value.ipaddr = sai_peer_ip;
+    status = sai_dash_ha_api->set_ha_set_attribute(sai_ha_set_oid,
+                                                   &ha_set_attr_list[0]);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to update peer ip for HA Set object in SAI for %s", key.c_str());
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_HA, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_INFO("HA Set entry updated for %s, peer_ip is updated to %s",
+                    key.c_str(),
+                    to_string(entry.peer_ip()).c_str());
+
+    *m_ha_set_entries[key].metadata.mutable_peer_ip() = entry.peer_ip();
+
+    return true;
+}
+
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
 {
     SWSS_LOG_ENTER();
@@ -216,8 +253,9 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     if (it != m_ha_set_entries.end())
     {
-        SWSS_LOG_WARN("HA Set entry already exists for %s", key.c_str());
-        return true;
+        SWSS_LOG_DEBUG("HA Set entry already exists for %s, updating it", key.c_str());
+
+        return updateExistingHaSetEntry(key, entry, it->second.ha_set_id);
     }
 
     uint32_t attr_count = 8;
@@ -651,6 +689,9 @@ bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
     }
     SWSS_LOG_NOTICE("Set HA Scope flow reconcile request for %s", key.c_str());
 
+    std::vector<FieldValueTuple> fvs = {{"flow_reconcile_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
+
     return true;
 }
 
@@ -677,6 +718,9 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
         }
     }
     SWSS_LOG_NOTICE("Set HA Scope activate role request for %s", key.c_str());
+
+    std::vector<FieldValueTuple> fvs = {{"activate_role_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
 
     return true;
 }
@@ -1025,6 +1069,11 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                         {
                             fvs.push_back({"activate_role_pending", "true"});
                             SWSS_LOG_NOTICE("DPU is pending on role activation for %s", key.c_str());
+                        }
+                        else if (in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                                 SAI_DASH_HA_STATE_STANDBY}))
+                        {
+                            fvs.push_back({"brainsplit_recover_pending", "false"});
                         }
 
                         fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
