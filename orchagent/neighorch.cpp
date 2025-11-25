@@ -25,6 +25,8 @@ extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
 
+extern bool isChassisDbInUse();
+
 const int neighorch_pri = 30;
 
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
@@ -46,7 +48,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         gBfdOrch->attach(this);
     }
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Add subscriber to process VOQ system neigh
         tableName = CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME;
@@ -1006,6 +1008,30 @@ void NeighOrch::doTask(Consumer &consumer)
     }
 }
 
+/* Gets all neighbor entries tied to a given mux port */
+void NeighOrch::getMuxNeighborsForPort(string port_name, NeighborTable& m_neighbors)
+{
+    SWSS_LOG_INFO("Getting mux neighbors on %s", port_name.c_str());
+
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    string mux_port_name;
+    for (const auto &entry : m_syncdNeighbors)
+    {
+        // Check if mux port exists for given neighbor entry
+        mux_port_name = "";
+        if (!mux_orch->getMuxPort(entry.second.mac, entry.first.alias, mux_port_name) || mux_port_name.empty())
+        {
+            continue;
+        }
+
+        // Add to m_neighbors if entry found
+        if (mux_port_name == port_name)
+        {
+            m_neighbors.insert(entry);
+        }
+    }
+}
+
 bool NeighOrch::addNeighbor(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
@@ -1206,7 +1232,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Sync the neighbor to add to the CHASSIS_APP_DB
         voqSyncAddNeigh(alias, ip_address, macAddress, neighbor_entry);
@@ -1355,7 +1381,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);

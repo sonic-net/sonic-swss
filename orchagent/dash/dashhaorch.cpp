@@ -86,6 +86,9 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
 
     register_ha_set_notifier();
     register_ha_scope_notifier();
+
+    // Register this DashHaOrch instance with DashOrch
+    m_dash_orch->setDashHaOrch(this);
 }
 
 bool DashHaOrch::register_ha_set_notifier()
@@ -188,6 +191,21 @@ std::string DashHaOrch::getHaScopeObjectKey(const sai_object_id_t ha_scope_oid)
     }
 
     return "";
+}
+
+HaScopeEntry DashHaOrch::getHaScopeForEni(const std::string& eni)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_ha_scope_entries.empty())
+    {
+        HaScopeEntry emptyEntry;
+        emptyEntry.ha_scope_id = SAI_NULL_OBJECT_ID;
+        return emptyEntry;
+    }
+
+    /* Return the first entry. This logic only applies to DPU Scope HA */
+    return m_ha_scope_entries.begin()->second;
 }
 
 bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry)
@@ -633,6 +651,9 @@ bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
     }
     SWSS_LOG_NOTICE("Set HA Scope flow reconcile request for %s", key.c_str());
 
+    std::vector<FieldValueTuple> fvs = {{"flow_reconcile_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
+
     return true;
 }
 
@@ -659,6 +680,9 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
         }
     }
     SWSS_LOG_NOTICE("Set HA Scope activate role request for %s", key.c_str());
+
+    std::vector<FieldValueTuple> fvs = {{"activate_role_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
 
     return true;
 }
@@ -1007,6 +1031,11 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
                         {
                             fvs.push_back({"activate_role_pending", "true"});
                             SWSS_LOG_NOTICE("DPU is pending on role activation for %s", key.c_str());
+                        }
+                        else if (in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                                 SAI_DASH_HA_STATE_STANDBY}))
+                        {
+                            fvs.push_back({"brainsplit_recover_pending", "false"});
                         }
 
                         fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
