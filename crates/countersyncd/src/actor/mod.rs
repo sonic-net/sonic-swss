@@ -4,3 +4,4 @@ pub mod data_netlink;
 pub mod ipfix;
 pub mod stats_reporter;
 pub mod swss;
+pub mod otel;
