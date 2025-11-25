@@ -148,6 +148,31 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
+        void UpdatePeerIp(std::string peer_ip)
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            std::vector<std::pair<std::string, std::string>> fields = {{"version", "2"}};
+            if (!peer_ip.empty()) {
+                fields.push_back({"peer_ip", peer_ip});
+            }
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            fields
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
         void InvalidIpAddresses()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
@@ -682,6 +707,23 @@ namespace dashhaorch_ut
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
         RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdatePeerIp)
+    {
+        CreateHaSet();
+        UpdatePeerIp("192.168.2.100");
+
+        auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        dash::types::IpAddress peer_ip;
+        to_pb("192.168.2.100", peer_ip);
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("invalid_ip");
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("");
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
     }
 
     TEST_F(DashHaOrchTest, InvalidIpAddresses)
