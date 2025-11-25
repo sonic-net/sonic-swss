@@ -199,6 +199,7 @@ if platform then
         -- Reserve 32MB for modification descriptors pool
         if model_number and model_number >= 6000 then
             modification_descriptors_pool_size = 32 * 1024 * 1024
+            egress_mirror_headroom  = 0
         end
     end
 end
