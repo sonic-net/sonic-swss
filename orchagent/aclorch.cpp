@@ -3423,19 +3423,23 @@ bool AclRange::remove(sai_acl_range_type_t type, int min, int max)
 bool AclRange::remove(sai_object_id_t *oids, int oidsCnt)
 {
     SWSS_LOG_ENTER();
+    int removed = 0;
 
-    for (int oidIdx = 0; oidIdx < oidsCnt; oidsCnt++)
+    for (int oidIdx = 0; oidIdx < oidsCnt; oidIdx++)
     {
         for (auto it : m_ranges)
         {
-            if (it.second->m_oid == oids[oidsCnt])
+            if (it.second->m_oid == oids[oidIdx])
             {
-                return it.second->remove();
+                if (it.second->remove())
+                    removed++;
             }
         }
     }
 
-    return false;
+    SWSS_LOG_INFO("ACL remove OK=%d (%d vs %d)", (removed == oidsCnt), removed, oidsCnt);
+
+    return (removed == oidsCnt);
 }
 
 bool AclRange::remove()
