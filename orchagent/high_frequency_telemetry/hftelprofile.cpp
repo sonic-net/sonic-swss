@@ -722,6 +722,10 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     attr.value.booldata = true;
     attrs.push_back(attr);
 
+    attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
     attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE ;
     attr.value.s32 = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
     attrs.push_back(attr);
