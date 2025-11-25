@@ -70,6 +70,7 @@ extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
+extern FlexCounterOrch *gFlexCounterOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
