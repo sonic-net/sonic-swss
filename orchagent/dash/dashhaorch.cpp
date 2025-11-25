@@ -253,6 +253,8 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     if (it != m_ha_set_entries.end())
     {
+        SWSS_LOG_DEBUG("HA Set entry already exists for %s, updating it", key.c_str());
+
         return updateExistingHaSetEntry(key, entry, it->second.ha_set_id);
     }
 

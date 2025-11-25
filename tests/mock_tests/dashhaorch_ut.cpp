@@ -154,16 +154,18 @@ namespace dashhaorch_ut
                 new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
+            std::vector<std::pair<std::string, std::string>> fields = {{"version", "2"}};
+            if (!peer_ip.empty()) {
+                fields.push_back({"peer_ip", peer_ip});
+            }
+
             consumer->addToSync(
                 deque<KeyOpFieldsValuesTuple>(
                     {
                         {
                             "HA_SET_1",
                             SET_COMMAND,
-                            {
-                                {"version", "2"},
-                                {"peer_ip", peer_ip},
-                            }
+                            fields
                         }
                     }
                 )
@@ -717,7 +719,10 @@ namespace dashhaorch_ut
         to_pb("192.168.2.100", peer_ip);
         EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
 
-        UpdatePeerIp("300:300:300:300");
+        UpdatePeerIp("invalid_ip");
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("");
         EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
     }
 
