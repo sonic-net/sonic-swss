@@ -523,6 +523,86 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
 
 }
 
+static void getLinePortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
+{
+
+    if (port.serdes.line_tx_fir_pre1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1] = port.serdes.line_tx_fir_pre1.value;
+    }
+
+    if (port.serdes.line_tx_fir_pre2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2] = port.serdes.line_tx_fir_pre2.value;
+    }
+
+    if (port.serdes.line_tx_fir_pre3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3] = port.serdes.line_tx_fir_pre3.value;
+    }
+
+    if (port.serdes.line_tx_fir_main.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN] = port.serdes.line_tx_fir_main.value;
+    }
+
+    if (port.serdes.line_tx_fir_post1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST1] = port.serdes.line_tx_fir_post1.value;
+    }
+
+    if (port.serdes.line_tx_fir_post2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST2] = port.serdes.line_tx_fir_post2.value;
+    }
+
+    if (port.serdes.line_tx_fir_post3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST3] = port.serdes.line_tx_fir_post3.value;
+    }
+
+}
+
+static void getSystemPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
+{
+
+    if (port.serdes.system_tx_fir_pre1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1] = port.serdes.system_tx_fir_pre1.value;
+    }
+
+    if (port.serdes.system_tx_fir_pre2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2] = port.serdes.system_tx_fir_pre2.value;
+    }
+
+    if (port.serdes.system_tx_fir_pre3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3] = port.serdes.system_tx_fir_pre3.value;
+    }
+
+    if (port.serdes.system_tx_fir_main.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN] = port.serdes.system_tx_fir_main.value;
+    }
+
+    if (port.serdes.system_tx_fir_post1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST1] = port.serdes.system_tx_fir_post1.value;
+    }
+
+    if (port.serdes.system_tx_fir_post2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST2] = port.serdes.system_tx_fir_post2.value;
+    }
+
+    if (port.serdes.system_tx_fir_post3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST3] = port.serdes.system_tx_fir_post3.value;
+    }
+
+}
+
 static bool isPathTracingSupported()
 {
     /*
@@ -4490,7 +4570,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             else
             {
                 PortSerdesAttrMap_t serdes_attr;
+                PortSerdesAttrMap_t line_serdes_attr;
+                PortSerdesAttrMap_t system_serdes_attr;
                 getPortSerdesAttr(serdes_attr, pCfg);
+                getLinePortSerdesAttr(line_serdes_attr, pCfg);
+                getSystemPortSerdesAttr(system_serdes_attr, pCfg);
 
                 // Saved configured admin status
                 bool admin_status = p.m_admin_state_up;
@@ -5152,6 +5236,34 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             it++;
                             continue;
                         }
+                    }
+                }
+
+                if (!line_serdes_attr.empty())
+                {
+                    if (setPortSerdesAttribute(p.m_line_side_id, p.m_switch_id, line_serdes_attr))
+                    {
+                        SWSS_LOG_NOTICE("Successfully set line-side gearbox tunings for port %s", p.m_alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set line-side gearbox tunings for port %s", p.m_alias.c_str());
+                        it++;
+                        continue;
+                    }
+                }
+
+                if (!system_serdes_attr.empty())
+                {
+                    if (setPortSerdesAttribute(p.m_system_side_id, p.m_switch_id, system_serdes_attr))
+                    {
+                        SWSS_LOG_NOTICE("Successfully set system-side gearbox tunings for port %s", p.m_alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set system-side gearbox tunings for port %s", p.m_alias.c_str());
+                        it++;
+                        continue;
                     }
                 }
 
@@ -9874,50 +9986,6 @@ bool PortsOrch::initGearboxPort(Port &port)
 
             fields[0] = FieldValueTuple(port.m_alias + "_line", sai_serialize_object_id(linePort));
             m_gbcounterTable->set("", fields);
-
-            /* Set serdes tx taps on system and line side */
-            map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
-            typedef pair<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr_pair;
-            vector<uint32_t> attr_val;
-            for (auto pair: tx_fir_strings_system_side) {
-                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
-                    attr_val.clear();
-                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
-                    serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
-                }
-            }
-            if (serdes_attr.size() != 0)
-            {
-                if (setPortSerdesAttribute(systemPort, phyOid, serdes_attr))
-                {
-                    SWSS_LOG_NOTICE("Set port %s system side preemphasis is success", port.m_alias.c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to set port %s system side pre-emphasis", port.m_alias.c_str());
-                    return false;
-                }
-            }
-            serdes_attr.clear();
-            for (auto pair: tx_fir_strings_line_side) {
-                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
-                    attr_val.clear();
-                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
-                    serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
-                }
-            }
-            if (serdes_attr.size() != 0)
-            {
-                if (setPortSerdesAttribute(linePort, phyOid, serdes_attr))
-                {
-                    SWSS_LOG_NOTICE("Set port %s line side preemphasis is success", port.m_alias.c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to set port %s line side pre-emphasis", port.m_alias.c_str());
-                    return false;
-                }
-            }
         }
     }
 

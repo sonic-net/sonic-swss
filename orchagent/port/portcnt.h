@@ -153,6 +153,76 @@ public:
         struct {
             std::vector<std::uint32_t> value;
             bool is_set = false;
+        } line_tx_fir_pre1; // Gearbox line-side port serdes pre1
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } line_tx_fir_pre2; // Gearbox line-side port serdes pre2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } line_tx_fir_pre3; // Gearbox line-side port serdes pre3
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } line_tx_fir_main; // Gearbox line-side port serdes main
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } line_tx_fir_post1; // Gearbox line-side port serdes post1
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } line_tx_fir_post2; // Gearbox line-side port serdes post2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } line_tx_fir_post3; // Gearbox line-side port serdes post3
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } system_tx_fir_pre1; // Gearbox system-side port serdes pre1
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } system_tx_fir_pre2; // Gearbox system-side port serdes pre2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } system_tx_fir_pre3; // Gearbox system-side port serdes pre3
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } system_tx_fir_main; // Gearbox system-side port serdes main
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } system_tx_fir_post1; // Gearbox system-side port serdes post1
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } system_tx_fir_post2; // Gearbox system-side port serdes post2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } system_tx_fir_post3; // Gearbox system-side port serdes post3
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
         } attn; // Port serdes attn
 
         struct {
