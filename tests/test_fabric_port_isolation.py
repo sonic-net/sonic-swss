@@ -22,7 +22,7 @@ class TestVirtualChassis(object):
             cfg_switch_type = metatbl.get("switch_type")
             if cfg_switch_type == "fabric":
 
-               max_poll = PollingConfig(polling_interval=60, timeout=600, strict=True)
+               max_poll = PollingConfig(polling_interval=15, timeout=600, strict=True)
                config_db.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'enable'})
                adb = dvs.get_app_db()
                adb.wait_for_field_match("FABRIC_MONITOR_TABLE","FABRIC_MONITOR_DATA", {'monState': 'enable'}, polling_config=max_poll)
@@ -45,6 +45,17 @@ class TestVirtualChassis(object):
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS":"0"})
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "0"})
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {'PORT_DOWN_COUNT': "0"})
+                       # ====
+                       # force unisolate this link to clear all the status
+                       configKey = "Fabric"+str(portNum)
+                       curForceStatus = int( config_db.get_entry( "FABRIC_PORT", configKey)['forceUnisolateStatus'] )
+                       curForceStatus += 1
+                       config_db.update_entry("FABRIC_PORT", configKey, {'forceUnisolateStatus': str(curForceStatus)})
+                       config_db.wait_for_field_match("FABRIC_PORT", configKey, {'forceUnisolateStatus': str(curForceStatus)},
+                                                      polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)
+
+                       # ======
                        # inject testing errors and wait for link get isolated.
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "2"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
@@ -66,6 +77,11 @@ class TestVirtualChassis(object):
                        # inject testing errors and wait for link get isolated again.
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "2"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
+
+                       # check if the link get permanently isolated as the link get isolate/unisolated more than 3 times
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"PRM_ISOLATED": "1"}, polling_config=max_poll)
+
+
                        # now test force unisolate this link
                        configKey = "Fabric"+str(portNum)
                        curForceStatus = int( config_db.get_entry( "FABRIC_PORT", configKey)['forceUnisolateStatus'] )
