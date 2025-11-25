@@ -253,6 +253,7 @@ void P4Orch::handleP4rtNotification(
   if (!prev_op.empty() && status.ok()) {
     drain(prev_op);
   }
+  m_publisher.flush();
 }
 
 void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std::string &data)
