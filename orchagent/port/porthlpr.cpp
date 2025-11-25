@@ -411,9 +411,15 @@ bool PortHelper::parsePortUnreliableLos(PortConfig &port, const std::string &fie
         SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
         return false;
     }
+    if (field == PORT_UNRELIABLE_LOS) {
+        port.serdes.unreliable_los.value = cit->second;
+        port.serdes.unreliable_los.is_set = true;
 
-    port.serdes.unreliable_los.value = cit->second;
-    port.serdes.unreliable_los.is_set = true;
+    } else if (field == PORT_APPLY_UNRELIABLE_LOS) {
+        port.apply_port_unreliable_los.value = cit->second;
+        port.apply_port_unreliable_los.is_set = true;
+        port.apply_port_unreliable_los.intf_type = SAI_PORT_INTERFACE_TYPE_SR4;
+    }
 
     return true;
 }
@@ -1056,7 +1062,7 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-        else if (field == PORT_UNRELIABLE_LOS)
+        else if (field == PORT_UNRELIABLE_LOS || field == PORT_APPLY_UNRELIABLE_LOS)
         {
             if (!this->parsePortUnreliableLos(port, field, value))
             {
