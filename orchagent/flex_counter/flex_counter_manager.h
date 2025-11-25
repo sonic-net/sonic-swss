@@ -26,7 +26,7 @@ enum class StatsMode
 enum class CounterType
 {
     PORT,
-    PORT_SERDES_ATTR,
+    PORT_ATTR,
     QUEUE,
     QUEUE_ATTR,
     PRIORITY_GROUP,

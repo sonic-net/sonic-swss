@@ -27,7 +27,7 @@
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
-#define PORT_SERDES_ATTR_FLEX_COUNTER_GROUP "PORT_SERDES_ATTR"
+#define PORT_ATTR_FLEX_COUNTER_GROUP "PORT_ATTR"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -125,13 +125,13 @@ struct PortCapability
 
 typedef PortCapability<PortSupportedFecModes> PortFecModeCapability_t;
 
-extern const std::vector<sai_port_attr_t> port_serdes_attr_ids;
+extern const std::vector<sai_port_attr_t> port_attr_ids;
 
 // Forward declaration for unit test friend class
-namespace portserdesattr_test
+namespace portphyattr_test
 {
-class PortSerdesAttrTest;
-} // namespace portserdesattr_test
+class PortAttrTest;
+} // namespace portphyattr_test
 
 class PortsOrch : public Orch, public Subject
 {
@@ -213,11 +213,11 @@ public:
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
 
-    void generatePortSerdesAttrCounterMap();
-    void clearPortSerdesAttrCounterMap();
-    const std::vector<sai_port_attr_t>& getPortSerdesAttrIds() const;
-    void queryPortSerdesAttrCapabilities();
-    bool supportsPortSerdesAttr(sai_object_id_t port_id, const char* port_name);
+    void generatePortAttrCounterMap();
+    void clearPortAttrCounterMap();
+    const std::vector<sai_port_attr_t>& getPortAttrIds() const;
+    void queryPortAttrCapabilities();
+    bool supportsPortAttr(sai_object_id_t port_id, const char* port_name);
 
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
@@ -301,7 +301,7 @@ private:
     shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterTaggedCachedManager<void> port_stat_manager;
-    FlexCounterTaggedCachedManager<void> port_serdes_attr_manager;
+    FlexCounterTaggedCachedManager<void> port_attr_manager;
     FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
@@ -500,9 +500,9 @@ private:
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
-    bool m_isPortSerdesAttrCounterMapGenerated = false;
-    bool m_serdes_attr_capability_checked = false;
-    std::vector<sai_port_attr_t> m_supported_serdes_attrs;
+    bool m_isPortAttrCounterMapGenerated = false;
+    bool m_phy_attr_capability_checked = false;
+    std::vector<sai_port_attr_t> m_supported_phy_attrs;
 
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
@@ -617,6 +617,6 @@ private:
     bool m_isWarmRestoreStage = false;
 
     // Friend declaration for unit tests
-    friend class portserdesattr_test::PortSerdesAttrTest;
+    friend class portphyattr_test::PortAttrTest;
 };
 #endif /* SWSS_PORTSORCH_H */

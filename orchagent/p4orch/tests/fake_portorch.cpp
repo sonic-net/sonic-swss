@@ -24,7 +24,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
       m_portOpErrTable(stateDb, STATE_PORT_OPER_ERR_TABLE_NAME),
       port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                         PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
-      port_serdes_attr_manager(PORT_SERDES_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+      port_attr_manager(PORT_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
       port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ,
                                     PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
       queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
@@ -707,7 +707,7 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> 
     return {};
 }
 
-const std::vector<sai_port_attr_t>& PortsOrch::getPortSerdesAttrIds() const
+const std::vector<sai_port_attr_t>& PortsOrch::getPortAttrIds() const
 {
     static const std::vector<sai_port_attr_t> empty_vector = {};
     return empty_vector;

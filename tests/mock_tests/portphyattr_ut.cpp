@@ -1,8 +1,8 @@
 /**
- * @file portserdesattr_ut.cpp
- * @brief Unit tests for PORT_SERDES_ATTR flex counter orchestration
+ * @file portphyattr_ut.cpp
+ * @brief Unit tests for PORT_ATTR flex counter orchestration
  *
- * Tests the end-to-end integration of SERDES attribute collection from
+ * Tests the end-to-end integration of PHY attribute collection from
  * FlexCounterOrch through PortsOrch to the FlexCounter infrastructure.
  */
 
@@ -18,13 +18,13 @@ extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 extern BufferOrch *gBufferOrch;
 
-namespace portserdesattr_test
+namespace portphyattr_test
 {
     using namespace std;
 
-    struct PortSerdesAttrTest : public ::testing::Test
+    struct PortAttrTest : public ::testing::Test
     {
-        PortSerdesAttrTest() {}
+        PortAttrTest() {}
 
         void SetUp() override
         {
@@ -161,14 +161,14 @@ namespace portserdesattr_test
     };
 
     /**
-     * PORT_SERDES_ATTR flex counter enable/disable via doTask
+     * PORT_ATTR flex counter enable/disable via doTask
      */
-    TEST_F(PortSerdesAttrTest, EnablePortSerdesAttrFlexCounterDoTask)
+    TEST_F(PortAttrTest, EnablePortAttrFlexCounterDoTask)
     {
         ASSERT_NE(m_flexCounterOrch, nullptr);
         ASSERT_NE(gPortsOrch, nullptr); 
 
-        bool initialState = m_flexCounterOrch->getPortSerdesAttrCountersState();
+        bool initialState = m_flexCounterOrch->getPortAttrCountersState();
         EXPECT_FALSE(initialState);
 
         auto consumer = dynamic_cast<Consumer *>(m_flexCounterOrch->getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
@@ -178,11 +178,11 @@ namespace portserdesattr_test
         vector<FieldValueTuple> fvs;
         fvs.push_back(FieldValueTuple("FLEX_COUNTER_STATUS", "enable"));
         fvs.push_back(FieldValueTuple("POLL_INTERVAL", "1000"));
-        flexCounterTable.set("PORT_SERDES_ATTR", fvs);
+        flexCounterTable.set("PORT_ATTR", fvs);
         std::cout << " CONFIG_DB configured: FLEX_COUNTER_STATUS=enable, POLL_INTERVAL=1000" << std::endl;
 
         std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"PORT_SERDES_ATTR", "SET", {
+        entries.push_back({"PORT_ATTR", "SET", {
             {"FLEX_COUNTER_STATUS", "enable"},
             {"POLL_INTERVAL", "1000"}
         }});
@@ -190,53 +190,53 @@ namespace portserdesattr_test
         consumer->addToSync(entries);
         static_cast<Orch *>(m_flexCounterOrch)->doTask(*consumer);
 
-        bool state = m_flexCounterOrch->getPortSerdesAttrCountersState();
+        bool state = m_flexCounterOrch->getPortAttrCountersState();
         EXPECT_TRUE(state);
-        std::cout << " PORT_SERDES_ATTR enablement verified: state = " << (state ? "ENABLED" : "DISABLED") << std::endl;
+        std::cout << " PORT_ATTR enablement verified: state = " << (state ? "ENABLED" : "DISABLED") << std::endl;
 
         entries.clear();
-        entries.push_back({"PORT_SERDES_ATTR", "SET", {{"FLEX_COUNTER_STATUS", "disable"}}});
+        entries.push_back({"PORT_ATTR", "SET", {{"FLEX_COUNTER_STATUS", "disable"}}});
 
         consumer->addToSync(entries);
         static_cast<Orch *>(m_flexCounterOrch)->doTask(*consumer);
 
-        bool disabledState = m_flexCounterOrch->getPortSerdesAttrCountersState();
+        bool disabledState = m_flexCounterOrch->getPortAttrCountersState();
         EXPECT_FALSE(disabledState);
-        std::cout << " PORT_SERDES_ATTR disablement verified: state = " << (disabledState ? "ENABLED" : "DISABLED") << std::endl;
+        std::cout << " PORT_ATTR disablement verified: state = " << (disabledState ? "ENABLED" : "DISABLED") << std::endl;
     }
 
     /**
-     * Validates that generatePortSerdesAttrCounterMap works with PORT_SERDES_ATTR counter type
+     * Validates that generatePortAttrCounterMap works with PORT_ATTR counter type
      */
-    TEST_F(PortSerdesAttrTest, generatePortSerdesAttrCounterMap)
+    TEST_F(PortAttrTest, generatePortAttrCounterMap)
     {
       	// Directly set private members via friend access
-      	gPortsOrch->m_supported_serdes_attrs = {
+      	gPortsOrch->m_supported_phy_attrs = {
             SAI_PORT_ATTR_RX_SIGNAL_DETECT,
             SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK,
             SAI_PORT_ATTR_RX_SNR
       	};
-      	gPortsOrch->m_serdes_attr_capability_checked = true;
+      	gPortsOrch->m_phy_attr_capability_checked = true;
 
         // should complete without exceptions
         try {
-            gPortsOrch->generatePortSerdesAttrCounterMap();
-            EXPECT_TRUE(gPortsOrch->m_isPortSerdesAttrCounterMapGenerated);
-            std::cout << " generatePortSerdesAttrCounterMap() completed successfully" << std::endl;
+            gPortsOrch->generatePortAttrCounterMap();
+            EXPECT_TRUE(gPortsOrch->m_isPortAttrCounterMapGenerated);
+            std::cout << " generatePortAttrCounterMap() completed successfully" << std::endl;
         } catch (const std::exception& e) {
-            FAIL() << "generatePortSerdesAttrCounterMap() threw exception: " << e.what();
+            FAIL() << "generatePortAttrCounterMap() threw exception: " << e.what();
         } catch (...) {
-            FAIL() << "generatePortSerdesAttrCounterMap() threw unknown exception";
+            FAIL() << "generatePortAttrCounterMap() threw unknown exception";
         }
 
         // Test clear and regenerate 
         try {
-            gPortsOrch->clearPortSerdesAttrCounterMap();
-            EXPECT_FALSE(gPortsOrch->m_isPortSerdesAttrCounterMapGenerated);
-            std::cout << " clearPortSerdesAttrCounterMap() completed successfully" << std::endl;
+            gPortsOrch->clearPortAttrCounterMap();
+            EXPECT_FALSE(gPortsOrch->m_isPortAttrCounterMapGenerated);
+            std::cout << " clearPortAttrCounterMap() completed successfully" << std::endl;
 
-            gPortsOrch->generatePortSerdesAttrCounterMap();
-            EXPECT_TRUE(gPortsOrch->m_isPortSerdesAttrCounterMapGenerated);
+            gPortsOrch->generatePortAttrCounterMap();
+            EXPECT_TRUE(gPortsOrch->m_isPortAttrCounterMapGenerated);
             std::cout << " Regenerate after clear completed successfully" << std::endl;
         } catch (const std::exception& e) {
             FAIL() << "Clear/regenerate cycle threw exception: " << e.what();
@@ -245,6 +245,6 @@ namespace portserdesattr_test
         }
 
         // Verify the operations completed without crashes
-        SUCCEED() << "All PORT_SERDES_ATTR counter map operations completed successfully";
+        SUCCEED() << "All PORT_ATTR counter map operations completed successfully";
     }
-} // namespace portserdesattr_test
+} // namespace portphyattr_test
