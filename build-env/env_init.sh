@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "UID=$(id -u)" >> ./.env
+echo "UID=$(id -u)" > ./.env
 echo "GID=$(id -g)" >> ./.env
 
 if [ ! -f custom-setup.sh ]; then
