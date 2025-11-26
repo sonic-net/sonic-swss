@@ -12,7 +12,7 @@ From this directory (`sonic-swss/build-env`):
 3. Enter the container either with `docker exec -it -u ${USER} swss-bookworm-master bash` or via SSH `ssh ${USER}@172.19.0.10`.
 4. Once inside the container, navigate to the repository root directory `sonic-swss`.
 5. Run `./autogen.sh` and then `./configure` to generate Makefiles for the repository.
-6. Navigate to the unit test directory `sonic-swss/tests/mock_test` 
+6. Navigate to the unit test directory `sonic-swss/tests/mock_tests` 
 7. From here, you can build and run all unit tests using `make check`. You can also build a run a specific test binary, e.g. `make tests` and then `./tests`.
     ```
     lawlee@e77fd85f06b6:~/repos/sonic-swss/tests/mock_tests$ make check
