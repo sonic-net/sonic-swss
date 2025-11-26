@@ -145,7 +145,8 @@ local function compute_rate(port)
     logit(initialized)
 
     -- FEC BER
-    local fec_corr_bits, fec_uncorr_frames, maxT
+    local fec_corr_bits, fec_uncorr_frames
+    local maxT = -1
     local fec_corr_bits_ber_new, fec_uncorr_bits_ber_new = -1, -1
     -- HLD review suggest to use the statistical average when calculate the post fec ber
     local rs_average_frame_ber = 1e-8
