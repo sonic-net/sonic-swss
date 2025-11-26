@@ -751,10 +751,28 @@ namespace flexcounter_test
         ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
         auto second_oid = secondPort.m_port_id;
 
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.push_back({secondPortName, "SET", {{"fec", "rs"}}});
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_EQ(secondPort.m_fec_mode, SAI_PORT_FEC_MODE_RS);
+        ASSERT_EQ(secondPort.m_fec_cfg, true);
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        entries.clear();
+        entries.push_back({secondPortName, "SET", {{"fec", "none"}}});
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_EQ(secondPort.m_fec_mode, SAI_PORT_FEC_MODE_NONE);
+        ASSERT_EQ(secondPort.m_fec_cfg, true);
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
 
         //Verify the Port Stats counter after DEL
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.clear();
         entries.push_back({secondPortName, "DEL",  {} });
         port_consumer->addToSync(entries);
         static_cast<Orch *>(gPortsOrch)->doTask();
@@ -773,6 +791,15 @@ namespace flexcounter_test
         }
         ASSERT_FALSE(gPortsOrch->getPort(secondPortName, secondPort));
         ASSERT_FALSE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        //Verify the Port Stats counter after re-ADD
+        entries.clear();
+        entries.push_back({secondPortName, "SET", secondPortValues});
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        second_oid = secondPort.m_port_id;
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
 
         // create a routing interface
         entries.clear();
