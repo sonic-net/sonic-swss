@@ -40,6 +40,7 @@ namespace
 
 constexpr char *kIpv4Prefix = "10.11.12.0/24";
 constexpr char *kIpv4Prefix2 = "10.12.12.0/24";
+constexpr char* kIpv4Prefix3 = "10.13.12.0/24";
 constexpr char *kIpv6Prefix = "2001:db8:1::/32";
 constexpr char* kIpv6Prefix2 = "2001:db8:2::/32";
 constexpr char *kNexthopId1 = "ju1u32m1.atl11:qe-3/7";
@@ -3521,13 +3522,27 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
     auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix);
     SetupNexthopIdRouteEntry(gVrfName, swss_ipv6_route_prefix, kNexthopId1, kNexthopOid1, kMetadata1);
 
+    auto swss_ipv6_route_prefix2 = swss::IpPrefix(kIpv6Prefix2);
+    SetupNexthopIdRouteEntry(gVrfName, swss_ipv6_route_prefix2, kNexthopId1,
+                             kNexthopOid1, "0x00");
+
     auto swss_ipv4_route_prefix2 = swss::IpPrefix(kIpv4Prefix2);
     auto route_entry =
-        GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix2, p4orch::kSetMetadataAndDrop, "", kMetadata2);
-
+        GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix2,
+                             p4orch::kSetMetadataAndDrop, "", kMetadata2);
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_THAT(CreateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+    auto swss_ipv4_route_prefix3 = swss::IpPrefix(kIpv4Prefix3);
+    route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix3,
+                                       p4orch::kSetMetadataAndDrop, "", "0");
+    EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(CreateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
@@ -3538,16 +3553,29 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"},
                   swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "oid:0x0"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.12.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION",
+                                  "SAI_PACKET_ACTION_DROP"},
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+            "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"}});
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:1::/"
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "oid:0x1"},
                                                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "1"}});
-
-    table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.12.12.0/"
-              "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"},
-                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:2::/"
+        "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID",
+                                  "oid:0x1"},
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "0"}});
 
     nlohmann::json j_1;
     j_1[prependMatchField(p4orch::kVrfId)] = gVrfName;
@@ -3556,6 +3584,7 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
                                  kTableKeyDelimiter + j_1.dump();
     std::vector<swss::FieldValueTuple> attributes_1;
     attributes_1.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kDrop});
+
     nlohmann::json j_2;
     j_2[prependMatchField(p4orch::kVrfId)] = gVrfName;
     j_2[prependMatchField(p4orch::kIpv6Dst)] = kIpv6Prefix;
@@ -3575,10 +3604,38 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
     attributes_3.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMetadataAndDrop});
     attributes_3.push_back(swss::FieldValueTuple{prependParamField(p4orch::kRouteMetadata), kMetadata2});
 
+    nlohmann::json j_4;
+    j_4[prependMatchField(p4orch::kVrfId)] = gVrfName;
+    j_4[prependMatchField(p4orch::kIpv6Dst)] = kIpv4Prefix3;
+    const std::string db_key_4 = std::string(APP_P4RT_TABLE_NAME) +
+                                 kTableKeyDelimiter + APP_P4RT_IPV6_TABLE_NAME +
+                                 kTableKeyDelimiter + j_4.dump();
+    std::vector<swss::FieldValueTuple> attributes_4;
+    attributes_4.push_back(
+        swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMetadataAndDrop});
+    attributes_4.push_back(
+        swss::FieldValueTuple{prependParamField(p4orch::kRouteMetadata), "0"});
+
+    nlohmann::json j_5;
+    j_5[prependMatchField(p4orch::kVrfId)] = gVrfName;
+    j_5[prependMatchField(p4orch::kIpv6Dst)] = kIpv6Prefix2;
+    const std::string db_key_5 = std::string(APP_P4RT_TABLE_NAME) +
+                                 kTableKeyDelimiter + APP_P4RT_IPV6_TABLE_NAME +
+                                 kTableKeyDelimiter + j_5.dump();
+    std::vector<swss::FieldValueTuple> attributes_5;
+    attributes_5.push_back(swss::FieldValueTuple{
+        p4orch::kAction, p4orch::kSetNexthopIdAndMetadata});
+    attributes_5.push_back(swss::FieldValueTuple{
+        prependParamField(p4orch::kNexthopId), kNexthopId1});
+    attributes_5.push_back(swss::FieldValueTuple{
+        prependParamField(p4orch::kRouteMetadata), "0x00"});
+
     // Verification should succeed with correct ASIC DB values.
     EXPECT_EQ(VerifyState(db_key_1, attributes_1), "");
     EXPECT_EQ(VerifyState(db_key_2, attributes_2), "");
     EXPECT_EQ(VerifyState(db_key_3, attributes_3), "");
+    EXPECT_EQ(VerifyState(db_key_4, attributes_4), "");
+    EXPECT_EQ(VerifyState(db_key_5, attributes_5), "");
 
     // Verification should fail if ASIC DB values mismatch.
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.11.12.0/"
@@ -3588,16 +3645,26 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:1::/"
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
     EXPECT_FALSE(VerifyState(db_key_1, attributes_1).empty());
     EXPECT_FALSE(VerifyState(db_key_2, attributes_2).empty());
+    EXPECT_FALSE(VerifyState(db_key_4, attributes_4).empty());
 
     // Verification should fail if ASIC DB table is missing.
     table.del("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.11.12.0/"
               "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}");
     table.del("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:1::/"
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}");
+    table.del(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}");
     EXPECT_FALSE(VerifyState(db_key_1, attributes_1).empty());
     EXPECT_FALSE(VerifyState(db_key_2, attributes_2).empty());
+    EXPECT_FALSE(VerifyState(db_key_4, attributes_4).empty());
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.11.12.0/"
               "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{
@@ -3607,4 +3674,9 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "oid:0x1"},
                                                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "1"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+            "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"}});
 }

@@ -1161,7 +1161,13 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         exp_attrs.push_back(attr);
         attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
         attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
-        exp_attrs.push_back(attr);
+        if (attr.value.u32 == 0) {
+          // OA might not set the metadata if it is zero since it is the
+          // default.
+          opt_attrs.push_back(attr);
+        } else {
+          exp_attrs.push_back(attr);
+        }
     }
     else
     {
@@ -1173,7 +1179,13 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         {
             attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
             attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
-            exp_attrs.push_back(attr);
+            if (attr.value.u32 == 0) {
+              // OA might not set the metadata if it is zero since it is the
+              // default.
+              opt_attrs.push_back(attr);
+            } else {
+              exp_attrs.push_back(attr);
+            }
         }
     }
 
