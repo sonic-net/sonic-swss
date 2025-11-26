@@ -90,7 +90,9 @@ def download_artifact(pipeline, filename, branch, debian_version):
     print("URL: {}".format(download_url))
 
     with open(filename, 'wb') as out_file:
-        content = requests.get(download_url, stream=True).content
+        res = requests.get(download_url, stream=True)
+        res.raise_for_status()
+        content = res.content
         out_file.write(content)
 
 
@@ -103,33 +105,30 @@ def get_all_artifacts(dest_dir, branch, debian_version):
 
 
 def main(branch, debian_version):
-    try:
-        work_dir = Path("/tmp/sonic/")
-        work_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = Path("/tmp/sonic/")
+    work_dir.mkdir(parents=True, exist_ok=True)
 
-        get_all_artifacts(str(work_dir), branch, debian_version)
+    get_all_artifacts(str(work_dir), branch, debian_version)
 
-        for filename in pipeline_out_file_map.values():
-            print("Extracting {}".format(filename))
-            if "common-lib" in filename:
-                cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/{debian_version}.*deb$' | xargs unzip -o -j {filename}"]
-            else:
-                cmd = ['unzip', '-o', '-j', filename]
+    for filename in pipeline_out_file_map.values():
+        print("Extracting {}".format(filename))
+        if "common-lib" in filename:
+            cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/{debian_version}.*deb$' | xargs unzip -o -j {filename}"]
+        else:
+            cmd = ['unzip', '-o', '-j', filename]
 
+        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
+
+        if "common-lib" in filename:
+            cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/bullseye/libproto.*deb$' | xargs unzip -o -j {filename}"]
             subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
 
-            if "common-lib" in filename:
-                cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/bullseye/libproto.*deb$' | xargs unzip -o -j {filename}"]
-                subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
+    debs_to_install = []
+    for pattern in deb_files_regex:
+        debs_to_install += glob.glob(pattern, root_dir=work_dir)
 
-        debs_to_install = []
-        for pattern in deb_files_regex:
-            debs_to_install += glob.glob(pattern, root_dir=work_dir)
-
-        cmd = ["sudo", "env", "VPP_INSTALL_SKIP_SYSCTL=1", "/usr/bin/dpkg", "-i"] + debs_to_install
-        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
-    except Exception:
-        raise
+    cmd = ["sudo", "env", "VPP_INSTALL_SKIP_SYSCTL=1", "/usr/bin/dpkg", "-i"] + debs_to_install
+    subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
 
 
 if __name__ == '__main__':
