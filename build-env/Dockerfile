@@ -1,11 +1,11 @@
 ARG DEBIAN="bookworm"
-FROM sonicdev-microsoft.azurecr.io:443/sonic-slave-${DEBIAN}:latest
+ARG BRANCH="master"
+FROM sonicdev-microsoft.azurecr.io:443/sonic-slave-${DEBIAN}:${BRANCH}
 ARG USER
 ARG UID
 ARG GID
 ARG HOME
 
-ARG BRANCH="master"
 
 COPY container-setup.py custom-setup.sh /tmp/
 
