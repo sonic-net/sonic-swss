@@ -116,18 +116,18 @@ def main(branch, debian_version):
             else:
                 cmd = ['unzip', '-o', '-j', filename]
 
-            subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
+            subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
 
             if "common-lib" in filename:
-                cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/{debian_version}/libproto.*deb$' | xargs unzip -o -j {filename}"]
-                subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
+                cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/bullseye/libproto.*deb$' | xargs unzip -o -j {filename}"]
+                subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
 
         debs_to_install = []
         for pattern in deb_files_regex:
             debs_to_install += glob.glob(pattern, root_dir=work_dir)
 
         cmd = ["sudo", "env", "VPP_INSTALL_SKIP_SYSCTL=1", "/usr/bin/dpkg", "-i"] + debs_to_install
-        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
+        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL, check=True)
     except Exception:
         raise
 
