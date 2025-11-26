@@ -2,6 +2,9 @@
 
 This directory contains scripts to create a docker image which serves as a build environment for SWSS. The image is designed to closely mimic the build environment used for SWSS in Azure Pipelines. The primary motivation behind this container is to provide an easy way to run the C++ unit tests (`tests/mock_tests`) locally.
 
+## Security Notice
+This container should be used for local development only and should not be considered secure. Do not use this container in production environments or with untrusted networks.
+
 ## Getting Started
 
 Note: Your home directory on the host machine will be mounted to the home directory inside the container. This means that any settings in your home directory (e.g. authorized SSH keys or `.bashrc` settings) will also apply in the container and files inside your host home directory will be accessible inside the container.
