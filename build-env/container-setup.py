@@ -57,13 +57,18 @@ def get_latest_build(pipeline, branch):
     url = build_url.format(pipeline_id_map[pipeline], target_branch)
     print(url)
     res = requests.get(url)
+    if res.status_code != 200:
+        raise Exception(f"Failed to fetch build info for {pipeline} on branch {target_branch}: HTTP {res.status_code}")
     build_info = json.loads(res.content)
-    if not build_info['value'] and target_branch == "master":
+    if not build_info.get('value') and target_branch == "master":
         url = build_url.format(pipeline_id_map[pipeline], "main")
         print(url)
         res = requests.get(url)
+        if res.status_code != 200:
+            raise Exception(f"Failed to fetch build info for {pipeline} on branch main: HTTP {res.status_code}")
         build_info = json.loads(res.content)
-
+    if not build_info.get('value'):
+        raise Exception(f"No successful builds found for {pipeline} on branch {target_branch}")
     return build_info['value'][0]['id']
 
 
