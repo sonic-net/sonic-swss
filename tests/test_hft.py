@@ -514,6 +514,45 @@ class TestHFT(object):
         # Clean up profile
         self.delete_hft_profile(dvs)
 
+    def test_hft_empty_default_config(self, dvs, testlog):
+        """Test HFT with empty default configuration."""
+        # Create default HFT profile
+        self.create_hft_profile(dvs, name="default", status="enabled")
+        
+        # Create HFT group with empty object_names and object_counters
+        self.create_hft_group(dvs,
+                              profile_name="default",
+                              group_name="PORT",
+                              object_names="",
+                              object_counters="")
+
+        # Wait for processing
+        time.sleep(3)
+
+        # Get ASIC DB objects and verify TAM_TELEMETRY exists
+        asic_db = self.get_asic_db_objects(dvs)
+        assert len(asic_db["tam_telemetry"]) > 0, \
+            "Expected TAM_TELEMETRY object to exist before deletion"
+
+        # Delete profile first
+        self.delete_hft_profile(dvs, name="default")
+        
+        # Sleep for 1 second
+        time.sleep(1)
+        
+        # Delete group
+        self.delete_hft_group(dvs, profile_name="default", group_name="PORT")
+
+        # Wait for cleanup
+        time.sleep(2)
+
+        # Verify TAM_TELEMETRY object is deleted
+        asic_db = self.get_asic_db_objects(dvs)
+        assert len(asic_db["tam_telemetry"]) == 0, \
+            "Expected TAM_TELEMETRY object to be deleted after profile and group deletion"
+
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
