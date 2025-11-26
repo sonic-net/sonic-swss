@@ -1907,6 +1907,121 @@ class TestSrv6VpnFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+    def test_AddRemoveSrv6SteeringRouteSidlistSharing(self, dvs, testlog):
+
+        _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
+        if 'dplane_fpm_sonic' not in output:
+            pytest.skip("'dplane_fpm_sonic' required for this test is not available, skipping", allow_module_level=True)
+
+        self.setup_srv6(dvs)
+
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"interface lo\" -c \"ip address fcbb:bbbb:1::1/128\"")
+
+        # save exist asic db entries
+        tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        nexthop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        route_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        sidlist_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_SRV6_SIDLIST")
+
+        # configure routes to steer prefixes over the SID list
+        dvs.runcmd("vtysh -c \"configure terminal\" vtysh -c \"ip route 192.0.2.0/24 sr0 vrf Vrf13 nexthop-vrf default segments fcbb:bbbb:2:3:e000::\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" vtysh -c \"ip route 192.0.3.0/24 sr0 vrf Vrf13 nexthop-vrf default segments fcbb:bbbb:2:3:e000::\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" vtysh -c \"ipv6 route 2001:db8:2:2::/64 sr0 vrf Vrf13 nexthop-vrf default segments fcbb:bbbb:2:3:e000::\"")
+
+        time.sleep(3)
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
+        expected_fields = {"segment": "fcbb:bbbb:2:3:e000::", "seg_src": "fcbb:bbbb:1::1"}
+        self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:192.0.2.0/24", expected_fields)
+
+        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fcbb:bbbb:2:3:e000::")
+        expected_fields = {"path": "fcbb:bbbb:2:3:e000::"}
+        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fcbb:bbbb:2:3:e000::", expected_fields)
+
+        # verify that the route has been programmed into the ASIC
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries) + 1)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SRV6_SIDLIST", len(sidlist_entries) + 1)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", len(route_entries) + 3)
+
+        # get created entries
+        route_keys = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", route_entries, 3)
+        nexthop_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_entries, 1)
+        tunnel_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries, 1)
+        sidlist_ids = get_created_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_SRV6_SIDLIST", sidlist_entries, 1)
+
+        nexthop_id = nexthop_ids[0]
+        tunnel_id = tunnel_ids[0]
+        sidlist_id = sidlist_ids[0]
+
+        # check ASIC SAI_OBJECT_TYPE_SRV6_SIDLIST database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_SRV6_SIDLIST")
+        (status, fvs) = tbl.get(sidlist_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_SRV6_SIDLIST_ATTR_SEGMENT_LIST":
+                assert fv[1] == "1:fcbb:bbbb:2:3:e000::"
+            elif fv[0] == "SAI_SRV6_SIDLIST_ATTR_TYPE":
+                assert fv[1] == "SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED"
+
+        # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for route_key in route_keys:
+            (status, fvs) = tbl.get(route_key)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                    assert fv[1] == nexthop_id
+
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        (status, fvs) = tbl.get(nexthop_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEXT_HOP_ATTR_TYPE":
+                assert fv[1] == "SAI_NEXT_HOP_TYPE_SRV6_SIDLIST"
+            if fv[0] == "SAI_NEXT_HOP_ATTR_SRV6_SIDLIST_ID":
+                assert fv[1] == sidlist_id
+            elif fv[0] == "SAI_NEXT_HOP_ATTR_TUNNEL_ID":
+                assert fv[1] == tunnel_id
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        (status, fvs) = tbl.get(tunnel_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_TUNNEL_ATTR_TYPE":
+                assert fv[1] == "SAI_TUNNEL_TYPE_SRV6"
+            elif fv[0] == "SAI_TUNNEL_ATTR_ENCAP_SRC_IP":
+                assert fv[1] == "fcbb:bbbb:1::1"
+
+        # remove routes
+        dvs.runcmd("vtysh -c \"configure terminal\" vtysh -c \"no ip route 192.0.2.0/24 sr0 vrf Vrf13 nexthop-vrf default segments fcbb:bbbb:2:3:e000::\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" vtysh -c \"no ip route 192.0.3.0/24 sr0 vrf Vrf13 nexthop-vrf default segments fcbb:bbbb:2:3:e000::\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" vtysh -c \"no ipv6 route 2001:db8:2:2::/64 sr0 vrf Vrf13 nexthop-vrf default segments fcbb:bbbb:2:3:e000::\"")
+
+        time.sleep(3)
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:192.0.3.0/24")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:2001:db8:2:2::/64")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fcbb:bbbb:1:e000::")
+
+        # verify that the route has been removed from the ASIC
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries))
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", len(route_entries))
+
+        # unconfigure srv6 locator
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
+
+        # unconfigure loopback source address
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"interface lo\" -c \"no ip address fcbb:bbbb:1::1/128\"")
+
+        self.teardown_srv6(dvs)
+
 class TestSrv6Vpn(object):
     def setup_db(self, dvs):
         self.pdb = dvs.get_app_db()
