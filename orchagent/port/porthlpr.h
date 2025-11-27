@@ -39,6 +39,14 @@ private:
     template<typename T>
     bool parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const;
 
+    template<typename T>
+    typename std::enable_if<std::is_same<decltype(T::value), std::string>::value, bool>::type
+    parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const;
+
+    template<typename T>
+    typename std::enable_if<std::is_same<decltype(T::value), std::vector<std::uint32_t>>::value, bool>::type
+    parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const;
+
     bool parsePortLinkEventDampingAlgorithm(PortConfig &port, const std::string &field, const std::string &value) const;
     template<typename T>
     bool parsePortLinkEventDampingConfig(T &damping_config_attr, const std::string &field, const std::string &value) const;
