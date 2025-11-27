@@ -390,11 +390,14 @@ private:
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
 
-    bool initializePort(Port &port);
-    void initializePriorityGroups(Port &port);
-    void initializePortBufferMaximumParameters(Port &port);
-    void initializeQueues(Port &port);
-    void initializeSchedulerGroups(Port &port);
+    bool initializePorts(std::vector<Port>& ports);
+    void initializePriorityGroupsBulk(std::vector<Port>& ports);
+    void initializeQueuesBulk(std::vector<Port>& ports);
+    void initializeSchedulerGroupsBulk(std::vector<Port>& ports);
+    void initializePortHostTxReadyBulk(std::vector<Port>& ports);
+    void initializePortMtuBulk(std::vector<Port>& ports);
+
+    void initializePortBufferMaximumParameters(const Port &port);
     void initializeVoqs(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
@@ -414,7 +417,10 @@ private:
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
 
     sai_status_t removePort(sai_object_id_t port_id);
-    bool initPort(const PortConfig &port);
+    bool initExistingPort(const PortConfig &port);
+    bool initPortsBulk(std::vector<Port>& ports);
+    void registerPort(Port &p);
+    
     void deInitPort(string alias, sai_object_id_t port_id);
 
     void initPortCapAutoNeg(Port &port);
@@ -519,8 +525,7 @@ private:
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values, int base = 16);
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
-                                std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
-
+                                std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     void removePortSerdesAttribute(sai_object_id_t port_id);
 
@@ -566,7 +571,7 @@ private:
     auto getPortConfigState() const -> port_config_state_t;
     void setPortConfigState(port_config_state_t value);
 
-    bool addPortBulk(const std::vector<PortConfig> &portList);
+    bool addPortBulk(const std::vector<PortConfig> &portList, std::vector<Port>& addedPorts);
     bool removePortBulk(const std::vector<sai_object_id_t> &portList);
 
     /* Prototypes for Path Tracing */

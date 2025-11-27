@@ -4,6 +4,7 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "portsorch.h"
+#include "debugcounterorch.h"
 #include "routeorch.h"
 #include "flowcounterrouteorch.h"
 #include "intfsorch.h"
@@ -32,6 +33,7 @@
 #include "copporch.h"
 #include "twamporch.h"
 #include "mlagorch.h"
+#include "high_frequency_telemetry/hftelorch.h"
 #define private public
 #include "stporch.h"
 #undef private 
@@ -53,6 +55,7 @@ extern sai_object_id_t gUnderlayIfId;
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+extern DebugCounterOrch *gDebugCounterOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
@@ -72,6 +75,7 @@ extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
+extern HFTelOrch *gHFTOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;

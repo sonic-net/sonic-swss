@@ -754,6 +754,8 @@ class DVSAcl:
             elif "SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT" in k:
                 assert action == "DO_NOT_NAT"
                 assert v == "true"
+            elif "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_TERMINATED" in k:
+                assert v == "true"
             elif k in qualifiers:
                 assert qualifiers[k](v)
             else:

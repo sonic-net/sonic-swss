@@ -14,6 +14,7 @@ extern "C" {
 #include <unordered_set>
 #include <iomanip>
 #include <sstream>
+#include <boost/variant.hpp>
 #include <macaddress.h>
 #include <sairedis.h>
 
@@ -32,6 +33,28 @@ extern "C" {
 #define DEFAULT_TPID             0x8100
 
 #define VNID_NONE               0xFFFFFFFF
+
+// SerdesValue using boost::variant to support both vector<uint32_t> and string values
+using SerdesValue = boost::variant<std::vector<uint32_t>, std::string>;
+
+// Visitor class for processing SerdesValue in SAI attribute setting
+class SerdesValueVisitor : public boost::static_visitor<void> {
+public:
+    explicit SerdesValueVisitor(sai_attribute_t& attr) : attr_(attr) {}
+
+    void operator()(const std::vector<uint32_t>& values) const {
+        attr_.value.u32list.count = static_cast<uint32_t>(values.size());
+        attr_.value.u32list.list = const_cast<uint32_t*>(values.data());
+    }
+
+    void operator()(const std::string& str_value) const {
+        attr_.value.json.json.count = static_cast<uint32_t>(str_value.size());
+        attr_.value.json.json.list = reinterpret_cast<int8_t*>(const_cast<char*>(str_value.data()));
+    }
+
+private:
+    sai_attribute_t& attr_;
+};
 
 namespace swss {
 
@@ -211,7 +234,6 @@ public:
     uint32_t  m_fdb_count = 0;
     uint64_t  m_flap_count = 0;
     uint32_t  m_up_member_count = 0;
-    uint32_t  m_maximum_headroom = 0;
     std::set<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
     std::set<sai_port_interface_type_t> m_adv_interface_types;
@@ -241,8 +263,8 @@ public:
     /* Port oper error status to event map*/
     std::unordered_map<sai_port_error_status_t, PortOperErrorEvent> m_portOperErrorToEvent;
 
-    /* pre-emphasis */
-    std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
+    /* serdes attributes */
+    std::map<sai_port_serdes_attr_t, SerdesValue> m_serdes_attrs;
 
     /* Force initial parameter configuration flags */
     bool m_an_cfg = false;        // Auto-negotiation (AN)
@@ -251,7 +273,6 @@ public:
     bool m_adv_intf_cfg = false;  // Advertised interface type
     bool m_fec_cfg = false;       // Forward Error Correction (FEC)
     bool m_override_fec = false;  // Enable Override FEC
-    bool m_pfc_asym_cfg = false;  // Asymmetric Priority Flow Control (PFC)
     bool m_lm_cfg = false;        // Forwarding Database (FDB) Learning Mode (LM)
     bool m_lt_cfg = false;        // Link Training (LT)
 
@@ -269,6 +290,8 @@ public:
     uint32_t m_suppress_threshold = 0;
     uint32_t m_reuse_threshold = 0;
     uint32_t m_flap_penalty = 0;
+
+    Role m_role;
 };
 
 }

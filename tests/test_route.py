@@ -134,6 +134,7 @@ class TestRouteBase(object):
 
 class TestRoute(TestRouteBase):
     """ Functionality tests for route """
+    @pytest.mark.skip(reason="Covered by mock test: RouteOrch_AddRemoveIPv4_And_DefaultRoute_State (GTest)")
     def test_RouteAddRemoveIpv4Route(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -213,6 +214,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[1].runcmd("ip route del default dev eth0")
         dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
+    @pytest.mark.skip(reason="Covered by mock test: RouteOrch_AddRemoveIPv6_And_DefaultRoute_State (GTest)")
     def test_RouteAddRemoveIpv6Route(self, dvs, testlog):
         self.setup_db(dvs)
 
