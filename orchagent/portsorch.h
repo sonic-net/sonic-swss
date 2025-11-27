@@ -533,8 +533,7 @@ private:
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values, int base = 16);
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
-                                std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
-
+                                std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     void removePortSerdesAttribute(sai_object_id_t port_id);
 
