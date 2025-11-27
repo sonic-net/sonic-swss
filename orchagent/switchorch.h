@@ -95,6 +95,7 @@ private:
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+    void querySwitchMirrorOnDropCapability();
     void querySwitchPortMirrorCapability();
 
     // Statistics
