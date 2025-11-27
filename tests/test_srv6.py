@@ -1632,6 +1632,8 @@ class TestSrv6VpnFpmsyncd(object):
                         assert False, "Sidlist %s not expected" % fv[1]
                 elif fv[0] == "SAI_SRV6_SIDLIST_ATTR_TYPE":
                     assert fv[1] == "SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED"
+        assert sidlist_id_1 is not None
+        assert sidlist_id_2 is not None
 
         # check ASIC SAI_OBJECT_TYPE_NEXT_HOP database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
@@ -1650,6 +1652,8 @@ class TestSrv6VpnFpmsyncd(object):
                         assert False, "Nexthop with sidlist %s not expected" % fv[1]
                 elif fv[0] == "SAI_NEXT_HOP_ATTR_TUNNEL_ID":
                     assert fv[1] == tunnel_id
+        assert nexthop_id_1 is not None
+        assert nexthop_id_2 is not None
 
         # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
@@ -1674,6 +1678,8 @@ class TestSrv6VpnFpmsyncd(object):
                         nexthop_group_member_id_2 = nexthop_group_member_id
                     else:
                         assert False, "Nexthop group member for nexthop id %s not expected" % fv[1]
+        assert nexthop_group_member_id_1 is not None
+        assert nexthop_group_member_id_2 is not None
 
         # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -1689,6 +1695,8 @@ class TestSrv6VpnFpmsyncd(object):
                         assert fv[1] == nexthop_group_id
                     else:
                         assert False, "Route with destination %s not expected" % route_dest
+        assert nexthop_id_1 is not None
+        assert nexthop_group_id is not None
 
         # check ASIC SAI_OBJECT_TYPE_TUNNEL database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
@@ -1811,6 +1819,8 @@ class TestSrv6VpnFpmsyncd(object):
                         assert False, "Sidlist %s not expected" % fv[1]
                 elif fv[0] == "SAI_SRV6_SIDLIST_ATTR_TYPE":
                     assert fv[1] == "SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED"
+        assert sidlist_id_1 is not None
+        assert sidlist_id_2 is not None
 
         # check ASIC SAI_OBJECT_TYPE_NEXT_HOP database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
@@ -1829,6 +1839,8 @@ class TestSrv6VpnFpmsyncd(object):
                         assert False, "Nexthop with sidlist %s not expected" % fv[1]
                 elif fv[0] == "SAI_NEXT_HOP_ATTR_TUNNEL_ID":
                     assert fv[1] == tunnel_id
+        assert nexthop_id_1 is not None
+        assert nexthop_id_2 is not None
 
         # check ASIC SAI_OBJECT_TYPE_NEXT_HOP_GROUP database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
@@ -1853,6 +1865,8 @@ class TestSrv6VpnFpmsyncd(object):
                         nexthop_group_member_id_2 = nexthop_group_member_id
                     else:
                         assert False, "Nexthop group member for nexthop id %s not expected" % fv[1]
+        assert nexthop_group_member_id_1 is not None
+        assert nexthop_group_member_id_2 is not None
 
         # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -1868,6 +1882,8 @@ class TestSrv6VpnFpmsyncd(object):
                         assert fv[1] == nexthop_group_id
                     else:
                         assert False, "Route with destination %s not expected" % route_dest
+        assert nexthop_id_1 is not None
+        assert nexthop_group_id is not None
 
         # check ASIC SAI_OBJECT_TYPE_TUNNEL database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
