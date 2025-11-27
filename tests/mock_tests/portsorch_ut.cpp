@@ -20,6 +20,19 @@
 
 #include <sstream>
 
+// Add operator<< for vector<uint32_t> to support boost::variant printing in tests for SerdesValue
+namespace std {
+    inline ostream& operator<<(ostream& os, const vector<uint32_t>& vec) {
+        os << "[";
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << vec[i];  // Decimal format
+        }
+        os << "]";
+        return os;
+    }
+}
+
 extern redisReply *mockReply;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 using ::testing::_;
@@ -1183,6 +1196,7 @@ namespace portsorch_test
         // Port count: 32 Data + 1 CPU
         ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
 
+        std::string custom_serdes_attrs = "{'attributes':[{'attr_xyz':{'value':[1,2,3,4]}}]}";
         // Generate port serdes config
         std::deque<KeyOpFieldsValuesTuple> kfvList = {{
             "Ethernet0",
@@ -1204,7 +1218,8 @@ namespace portsorch_test
                 { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
                 { "obnlev",        "0x5f,0x61,0x60,0x62"         },
                 { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
-                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         }
+                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
+                { "custom_serdes_attrs", custom_serdes_attrs     }
             }
         }};
 
@@ -1221,71 +1236,74 @@ namespace portsorch_test
 
         // Verify preemphasis
         std::vector<std::uint32_t> preemphasis = { 0xcad0, 0xc6e0, 0xc6e0, 0xd2b0 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_PREEMPHASIS), preemphasis);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_PREEMPHASIS), SerdesValue(preemphasis));
 
         // Verify idriver
         std::vector<std::uint32_t> idriver = { 0x5, 0x3, 0x4, 0x1 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
 
         // Verify ipredriver
         std::vector<std::uint32_t> ipredriver = { 0x1, 0x4, 0x3, 0x5 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IPREDRIVER), ipredriver);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IPREDRIVER), SerdesValue(ipredriver));
 
         // Verify pre1
         std::vector<std::uint32_t> pre1 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1), pre1);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1), SerdesValue(pre1));
 
         // Verify pre2
         std::vector<std::uint32_t> pre2 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2), pre2);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2), SerdesValue(pre2));
 
         // Verify pre3
         std::vector<std::uint32_t> pre3 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3), pre3);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3), SerdesValue(pre3));
 
         // Verify main
         std::vector<std::uint32_t> main = { 0x90, 0x92, 0x91, 0x93 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN), main);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN), SerdesValue(main));
 
         // Verify post1
         std::vector<std::uint32_t> post1 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST1), post1);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST1), SerdesValue(post1));
 
         // Verify post2
         std::vector<std::uint32_t> post2 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST2), post2);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST2), SerdesValue(post2));
 
         // Verify post3
         std::vector<std::uint32_t> post3 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST3), post3);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST3), SerdesValue(post3));
 
         // Verify attn
         std::vector<std::uint32_t> attn = { 0x80, 0x82, 0x81, 0x83 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), attn);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), SerdesValue(attn));
 
         // Verify ob_m2lp
         std::vector<std::uint32_t> ob_m2lp = { 0x4, 0x6, 0x5, 0x7 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO), ob_m2lp);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO), SerdesValue(ob_m2lp));
 
         // Verify ob_alev_out
         std::vector<std::uint32_t> ob_alev_out = { 0xf, 0x11, 0x10, 0x12 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE), ob_alev_out);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE), SerdesValue(ob_alev_out));
 
         // Verify obplev
         std::vector<std::uint32_t> obplev = { 0x69, 0x6b, 0x6a, 0x6c };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE), obplev);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE), SerdesValue(obplev));
 
         // Verify obnlev
         std::vector<std::uint32_t> obnlev = { 0x5f, 0x61, 0x60, 0x62 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE), obnlev);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE), SerdesValue(obnlev));
 
         // Verify regn_bfm1p
         std::vector<std::uint32_t> regn_bfm1p = { 0x1e, 0x20, 0x1f, 0x21 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG), regn_bfm1p);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG), SerdesValue(regn_bfm1p));
 
         // Verify regn_bfm1n
         std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), SerdesValue(regn_bfm1n));
+
+        // Verify custom_serdes_attrs
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION), SerdesValue(custom_serdes_attrs));
 
         // Verify unreliablelos
         ASSERT_EQ(p.m_unreliable_los, false);
@@ -1373,7 +1391,7 @@ namespace portsorch_test
 
         // Verify idriver
         std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
 
         // Verify admin-disable then admin-enable
         ASSERT_EQ(_sai_set_admin_state_down_count, ++down_call_count);
@@ -2925,14 +2943,42 @@ namespace portsorch_test
         }
     }
 
-    TEST_F(PortsOrchTest, PortHostIfCreateFailed)
+    TEST_F(PortsOrchTest, PortsWithNoPGsQueuesSchedulerGroups)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
-        auto original_api = sai_hostif_api->create_hostif;
-        auto hostIfSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->create_hostif);
-        hostIfSpy->callFake([&](sai_object_id_t*, sai_object_id_t, uint32_t, const sai_attribute_t*) -> sai_status_t {
-                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        auto original_api = sai_port_api->get_ports_attribute;
+        // Mock SAI port API to return 0 number of PGs, queues and scheduler groups
+        auto spy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(&sai_port_api->get_ports_attribute);
+        spy->callFake([&](
+                    uint32_t object_count,
+                    const sai_object_id_t *object_id,
+                    const uint32_t *attr_count,
+                    sai_attribute_t **attr_list,
+                    sai_bulk_op_error_mode_t mode,
+                    sai_status_t *object_statuses) -> sai_status_t
+            {
+                assert(object_count > 1);
+                assert(attr_count[0] > 1);
+                switch (attr_list[0]->id)
+                {
+                case SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS:
+                case SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES:
+                case SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS:
+                    for (size_t i = 0; i < object_count; i++)
+                    {
+                        attr_list[i]->value.u32 = 0;
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }
+                return original_api(
+                        object_count,
+                        object_id,
+                        attr_count,
+                        attr_list,
+                        mode,
+                        object_statuses);
             }
         );
 
@@ -2956,13 +3002,14 @@ namespace portsorch_test
 
         static_cast<Orch *>(gPortsOrch)->doTask();
 
-        sai_hostif_api->create_hostif = original_api;
-
         Port port;
         gPortsOrch->getPort("Ethernet0", port);
 
-        ASSERT_FALSE(port.m_init);
+        ASSERT_TRUE(port.m_init);
+        ASSERT_EQ(port.m_priority_group_ids.size(), 0);
+        ASSERT_EQ(port.m_queue_ids.size(), 0);
     }
+
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
     {
@@ -3908,4 +3955,48 @@ namespace portsorch_test
         stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
         ASSERT_TRUE(stateDbSet);
     }
+
+    struct PortsOrchNegativeTests : PortsOrchTest
+    {
+    };
+
+    TEST_F(PortsOrchNegativeTests, PortHostIfCreateFailed)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto original_api = sai_hostif_api->create_hostif;
+        auto hostIfSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->create_hostif);
+        hostIfSpy->callFake([&](sai_object_id_t*, sai_object_id_t, uint32_t, const sai_attribute_t*) -> sai_status_t {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+        );
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        sai_hostif_api->create_hostif = original_api;
+
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        ASSERT_FALSE(port.m_init);
+    }
+
 }
