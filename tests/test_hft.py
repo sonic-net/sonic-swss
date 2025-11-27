@@ -514,8 +514,9 @@ class TestHFT(object):
         # Clean up profile
         self.delete_hft_profile(dvs)
 
-    def test_hft_empty_default_config(self, dvs, testlog):
-        """Test HFT with empty default configuration."""
+    def test_hft_empty_default_config_cleanup(self, dvs, testlog):
+        """Test that TAM_TELEMETRY objects are properly cleaned up when deleting 
+        a default HFT profile with empty object_names and object_counters."""  
         # Create default HFT profile
         self.create_hft_profile(dvs, name="default", status="enabled")
         
@@ -550,7 +551,6 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         assert len(asic_db["tam_telemetry"]) == 0, \
             "Expected TAM_TELEMETRY object to be deleted after profile and group deletion"
-
 
 
 # Add Dummy always-pass test at end as workaroud
