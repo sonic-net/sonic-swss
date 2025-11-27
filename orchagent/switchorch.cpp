@@ -2014,7 +2014,7 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     }
 
     // Check capability for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP
-    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF,
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
                                             SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP, &capability);
     if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
     {

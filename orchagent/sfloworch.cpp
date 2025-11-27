@@ -19,6 +19,7 @@ extern PortsOrch*              gPortsOrch;
 
 bool SflowDropMonitor::enableDropMonitor(int32_t limit_rate)
 {
+    // Check drop monitor limit rate
     if (isEnabled())
     {
         if (getLimitRate() == limit_rate)
@@ -27,7 +28,11 @@ bool SflowDropMonitor::enableDropMonitor(int32_t limit_rate)
         }
 
         // Reenable drop monitor when rate limit is changed
-        disableDropMonitor();
+        if (!disableDropMonitor())
+        {
+            SWSS_LOG_ERROR("Failed to disable drop monitor for reconfiguration.");
+            return false;
+        }
 
         return enableDropMonitor(limit_rate);
     }
@@ -1008,18 +1013,23 @@ void SflowOrch::sflowStatusSet(Consumer &consumer)
     if (m_sflowStatus != sflow_status ||
         m_sflowDropMonitor.getLimitRate() != sflow_drop_monitor_limit)
     {
+        bool is_succ = true;
+
         // Drop monitor only enabled when sFlow is enabled
         if (sflow_status && sflow_drop_monitor_limit > 0)
         {
-            m_sflowDropMonitor.enableDropMonitor(sflow_drop_monitor_limit);
+            is_succ = m_sflowDropMonitor.enableDropMonitor(sflow_drop_monitor_limit);
         }
         else
         {
-            m_sflowDropMonitor.disableDropMonitor();
+            is_succ = m_sflowDropMonitor.disableDropMonitor();
+        }
+
+        if (is_succ)
+        {
+            m_sflowStatus = sflow_status;
         }
     }
-
-    m_sflowStatus = sflow_status;
 }
 
 uint32_t SflowOrch::sflowSessionGetRate(sai_object_id_t m_sample_id)
