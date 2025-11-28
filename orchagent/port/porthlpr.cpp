@@ -127,6 +127,14 @@ static const std::unordered_map<std::string, sai_port_path_tracing_timestamp_typ
     { PORT_PT_TIMESTAMP_TEMPLATE_4,   SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_20_27 }
 };
 
+static const std::unordered_map<std::string, sai_port_loopback_mode_t> portLoopbackModeMap = {
+    {"none",      SAI_PORT_LOOPBACK_MODE_NONE},
+    {"phy_local", SAI_PORT_LOOPBACK_MODE_PHY},
+    {"mac_local", SAI_PORT_LOOPBACK_MODE_MAC},
+    {"phy_remote", SAI_PORT_LOOPBACK_MODE_PHY_REMOTE},
+    {"mac_remote", SAI_PORT_LOOPBACK_MODE_MAC_REMOTE},
+};
+
 static const std::unordered_map<std::string, sai_redis_link_event_damping_algorithm_t> g_linkEventDampingAlgorithmMap =
 {
     { "disabled", SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_DISABLED },
@@ -256,6 +264,11 @@ std::string PortHelper::getAdminStatusStr(const PortConfig &port) const
 std::string PortHelper::getPtTimestampTemplateStr(const PortConfig &port) const
 {
     return this->getFieldValueStr(port, PORT_PT_TIMESTAMP_TEMPLATE);
+}
+
+std::string PortHelper::getLoopbackModeStr(const PortConfig &port) const
+{
+    return this->getFieldValueStr(port, PORT_LOOPBACK_MODE);
 }
 
 std::string PortHelper::getDampingAlgorithm(const PortConfig &port) const
@@ -969,6 +982,29 @@ bool PortHelper::parsePortPtTimestampTemplate(PortConfig &port, const std::strin
     return true;
 }
 
+bool PortHelper::parsePortLoopbackMode(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    const auto &cit = portLoopbackModeMap.find(value);
+    if (cit == portLoopbackModeMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+
+    port.loopback_mode.value = cit->second;
+    port.loopback_mode.is_set = true;
+
+    return true;
+}
+
 bool PortHelper::parsePortConfig(PortConfig &port) const
 {
     SWSS_LOG_ENTER();
@@ -1247,6 +1283,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_PT_TIMESTAMP_TEMPLATE)
         {
             if (!this->parsePortPtTimestampTemplate(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LOOPBACK_MODE)
+        {
+            if (!this->parsePortLoopbackMode(port, field, value))
             {
                 return false;
             }

@@ -5197,6 +5197,30 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
+                if (pCfg.loopback_mode.is_set)
+                {
+                    if (p.m_loopback_mode != pCfg.loopback_mode.value)
+                    {
+                        auto status = setPortLoopbackMode(p.m_port_id, pCfg.loopback_mode.value);
+                        if (status.ok())
+                        {
+                            SWSS_LOG_NOTICE("Set port %s loopback mode to %s",
+                                            p.m_alias.c_str(),
+                                            m_portHlpr.getLoopbackModeStr(pCfg).c_str());
+                            p.m_loopback_mode = pCfg.loopback_mode.value;
+                            m_portList[p.m_alias] = p;
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR(
+                                "Failed to set port %s loopback mode to %s",
+                                p.m_alias.c_str(), m_portHlpr.getLoopbackModeStr(pCfg).c_str());
+                            it = taskMap.erase(it);
+                            continue;
+                        }
+                    }
+                }
+
                 /* create host_tx_ready field in state-db */
                 initHostTxReadyState(p);
 
@@ -9585,6 +9609,27 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
         lane_val = (uint32_t)std::stoul(lane_str, NULL, base);
         lane_values.push_back(lane_val);
     }
+}
+
+ReturnCode PortsOrch::setPortLoopbackMode(sai_object_id_t id, sai_port_loopback_mode_t loopback_mode)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_LOOPBACK_MODE;
+    attr.value.u32 = loopback_mode;
+
+    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        LOG_ERROR_AND_RETURN(ReturnCode(status)
+                             << "Failed to set loopback mode " << attr.value.u32
+                             << " to port pid 0x" << std::hex << id
+                             << ", rv: " << sai_serialize_status(status));
+    }
+
+    SWSS_LOG_INFO("Set loopback mode %u on port pid: %" PRIx64, attr.value.u32, id);
+    return ReturnCode();
 }
 
 /* Bring up/down Vlan interface associated with L3 VNI*/

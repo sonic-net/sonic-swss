@@ -542,6 +542,7 @@ private:
 
     ReturnCode addSendToIngressHostIf(const std::string &send_to_ingress_name);
     ReturnCode removeSendToIngressHostIf();
+    ReturnCode setPortLoopbackMode(sai_object_id_t id, sai_port_loopback_mode_t loopback_mode);
     void initGearbox();
     bool initGearboxPort(Port &port);
     bool getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) const;

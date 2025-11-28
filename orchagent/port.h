@@ -236,6 +236,7 @@ public:
     uint32_t  m_up_member_count = 0;
     std::set<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
+    sai_port_loopback_mode_t m_loopback_mode = SAI_PORT_LOOPBACK_MODE_NONE;
     std::set<sai_port_interface_type_t> m_adv_interface_types;
     bool      m_mpls = false;
     /*
