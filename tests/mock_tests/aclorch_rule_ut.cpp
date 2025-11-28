@@ -164,10 +164,10 @@ namespace aclorch_rule_test
             static_cast<Orch2*>(m_VxlanTunnelOrch)->doTask(*consumer.get());
         }
 
-        void createTunnelNH(string ip)
+        void createTunnelNH(string ip, uint32_t vni)
         {
             IpAddress mock_nh_ip(ip);
-            ASSERT_EQ(m_VxlanTunnelOrch->createNextHopTunnel(mock_tunnel_name, mock_nh_ip, MacAddress()), nh_oid);
+            ASSERT_EQ(m_VxlanTunnelOrch->createNextHopTunnel(mock_tunnel_name, mock_nh_ip, MacAddress(), vni), nh_oid);
         }
 
         void populateAclTale()
@@ -195,8 +195,14 @@ namespace aclorch_rule_test
             });
         }
 
-        void addTunnelNhRule(string ip, string tunnel_name)
+        void addTunnelNhRule(string ip, string tunnel_name, string vni)
         {
+            string redirect_str = ip + "@" + tunnel_name;
+            if (!vni.empty())
+            {
+                redirect_str = redirect_str + ',' + vni;
+            }
+
             /* Create a rule */
             doAclRuleTask({
                 {
@@ -206,7 +212,7 @@ namespace aclorch_rule_test
                         { RULE_PRIORITY, "9999" },
                         { MATCH_DST_IP, "10.0.0.1/24" },
                         { MATCH_TUNNEL_TERM, "true" },
-                        { ACTION_REDIRECT_ACTION, ip + "@" + tunnel_name }
+                        { ACTION_REDIRECT_ACTION, redirect_str }
                     } 
                 }
             });
@@ -239,7 +245,7 @@ namespace aclorch_rule_test
                 Return(SAI_STATUS_SUCCESS)
         ));
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).WillOnce(testing::Invoke(aclMockState.get(), &SaiMockState::handleCreate));     
-        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name);
+        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name, "1000");
 
         /* Verify SAI attributes and if the rule is created */
         SaiAttributeList attr_list(SAI_OBJECT_TYPE_ACL_ENTRY, vector<swss::FieldValueTuple>({ 
@@ -268,8 +274,8 @@ namespace aclorch_rule_test
                 Return(SAI_STATUS_SUCCESS)
         ));
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).WillOnce(testing::Invoke(aclMockState.get(), &SaiMockState::handleCreate));
-        createTunnelNH(mock_nh_ip_str);
-        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name);
+        createTunnelNH(mock_nh_ip_str, 1000);
+        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name, "1000");
         ASSERT_TRUE(gAclOrch->getAclRule(acl_table, acl_rule));
 
         /* ACL Rule is deleted but nexthop is not deleted */
@@ -282,7 +288,7 @@ namespace aclorch_rule_test
     TEST_F(AclRedirectActionTest, TunnelNH_InvalidTunnel)
     {
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
-        addTunnelNhRule(mock_nh_ip_str, mock_invalid_tunnel_name);
+        addTunnelNhRule(mock_nh_ip_str, mock_invalid_tunnel_name, "");
         ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule));
     }
 
@@ -292,7 +298,7 @@ namespace aclorch_rule_test
                 Return(SAI_STATUS_FAILURE) /* create next hop fails */
         );
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
-        addTunnelNhRule(mock_invalid_nh_ip_str, mock_tunnel_name);
+        addTunnelNhRule(mock_invalid_nh_ip_str, mock_tunnel_name, "");
         ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule));
     }
 }
