@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <unordered_map>
 #include <algorithm>
+#include <sstream>
 #include "aclorch.h"
 #include "logger.h"
 #include "schema.h"
@@ -641,7 +642,7 @@ void AclRule::TunnelNH::load(const std::string& target)
 
 void AclRule::TunnelNH::parse(const std::string& target)
 {
-    /* Supported Format: endpoint_ip@tunnel_name */
+    /* Expected Format: endpoint_ip@tunnel_name[,vni][,mac] */
     auto at_pos = target.find('@');
     if (at_pos == std::string::npos)
     {
@@ -649,7 +650,29 @@ void AclRule::TunnelNH::parse(const std::string& target)
     }
 
     endpoint_ip = swss::IpAddress(target.substr(0, at_pos));
-    tunnel_name = target.substr(at_pos + 1);
+    std::stringstream ss(target.substr(at_pos + 1));
+
+    vector<string> components;
+    while (ss.good())
+    {
+        std::string substr;
+        getline(ss, substr, ',');
+        components.push_back(substr);
+    }
+    if (components.empty())
+    {
+        throw std::logic_error("Invalid format for Tunnel Next Hop");
+    }
+
+    tunnel_name = components[0];
+    if (components.size() >= 2)
+    {
+        vni = static_cast<uint32_t>(std::stoul(components[1]));
+    }
+    if (components.size() == 3)
+    {
+        mac = swss::MacAddress(components[2]);
+    }
 }
 
 void AclRule::TunnelNH::clear()
@@ -3341,9 +3364,10 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
         // work around to avoid syncd termination on SAI error due to max count of ranges reached
         // can be removed when syncd start passing errors to the SAI callers
         char *platform = getenv("platform");
-        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+        if (platform)
         {
-            if (m_ranges.size() >= MLNX_MAX_RANGES_COUNT)
+            if ((strstr(platform, MLNX_PLATFORM_SUBSTRING) && m_ranges.size() >= MLNX_MAX_RANGES_COUNT) ||
+                (strstr(platform, CLX_PLATFORM_SUBSTRING) && m_ranges.size() >= CLNX_MAX_RANGES_COUNT))
             {
                 SWSS_LOG_ERROR("Maximum numbers of ACL ranges reached");
                 return NULL;
@@ -3466,6 +3490,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == MRVL_TL_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
+            platform == CLX_PLATFORM_SUBSTRING ||
             platform == VS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -3520,6 +3545,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
         platform == MRVL_PRST_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
+        platform == CLX_PLATFORM_SUBSTRING ||
         (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
     {
         m_isCombinedMirrorV6Table = false;
