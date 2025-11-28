@@ -286,6 +286,7 @@ class DockerVirtualSwitch:
     CONFIG_DB_ID = 4
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
+    DPU_APPL_DB_ID = 15
 
     # FIXME: Should be broken up into helper methods in a later PR.
     def __init__(
@@ -455,6 +456,7 @@ class DockerVirtualSwitch:
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
+        self.dpu_app_db = None
         self.asic_db = None
         self.counters_db = None
         self.config_db = None
@@ -530,6 +532,7 @@ class DockerVirtualSwitch:
             # Initialize the databases.
             self.init_asic_db_validator()
             self.init_appl_db_validator()
+            self.init_dpu_appl_db_validator()
             self.reset_dbs()
 
             # Verify that SWSS has finished initializing.
@@ -572,6 +575,9 @@ class DockerVirtualSwitch:
 
     def init_appl_db_validator(self) -> None:
         self.appldb = ApplDbValidator(self.APPL_DB_ID, self.redis_sock)
+
+    def init_dpu_appl_db_validator(self) -> None:
+        self.dpu_appldb = ApplDbValidator(self.DPU_APPL_DB_ID, self.redis_sock)
 
     def check_swss_ready(self, timeout: int = 300) -> None:
         """Verify that SWSS is ready to receive inputs.
@@ -794,6 +800,14 @@ class DockerVirtualSwitch:
     # deps: warm_reboot
     def SubscribeAppDbObject(self, objpfx):
         r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB,
+                        encoding="utf-8", decode_responses=True)
+        pubsub = r.pubsub()
+        pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
+        return pubsub
+
+    # deps: warm_reboot
+    def SubscribeDpuAppDbObject(self, objpfx):
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.DPU_APPL_DB,
                         encoding="utf-8", decode_responses=True)
         pubsub = r.pubsub()
         pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
@@ -1257,6 +1271,7 @@ class DockerVirtualSwitch:
     # policer, port_dpb_vlan, vlan
     def setup_db(self):
         self.pdb = swsscommon.DBConnector(swsscommon.APPL_DB, self.redis_sock, 0)
+        self.ddb = swsscommon.DBConnector(swsscommon.DPU_APPL_DB, self.redis_sock, 0)
         self.adb = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, self.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(swsscommon.STATE_DB, self.redis_sock, 0)
@@ -1450,6 +1465,12 @@ class DockerVirtualSwitch:
             self.app_db = DVSDatabase(self.APPL_DB_ID, self.redis_sock)
 
         return self.app_db
+
+    def get_dpu_app_db(self) -> ApplDbValidator:
+        if not self.dpu_app_db:
+            self.dpu_app_db = DVSDatabase(self.DPU_APPL_DB_ID, self.redis_sock)
+
+        return self.dpu_app_db
 
     # FIXME: Now that AsicDbValidator is using DVSDatabase we should converge this with
     # that implementation. Save it for a follow-up PR.
