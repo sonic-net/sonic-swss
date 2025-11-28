@@ -117,6 +117,13 @@ struct queueInfo
     sai_uint8_t index;
 };
 
+struct systemPortMapInfo
+{
+    sai_object_id_t system_port_id;
+    SystemPortInfo system_port_info;
+    bool info_valid = false;
+};
+
 template<typename T>
 struct PortCapability
 {
@@ -264,6 +271,7 @@ private:
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_sendToIngressPortTable;
+    unique_ptr<Table> m_systemPortTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<CounterNameMapUpdater> m_queueCounterNameMapUpdater;
     unique_ptr<Table> m_voqTable;
@@ -543,10 +551,11 @@ private:
     map<string, Port::Role> m_recircPortRole;
 
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
-    map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
+    map<tuple<int, int, int>, systemPortMapInfo> m_systemPortOidMap;
     sai_uint32_t m_systemPortCount;
     bool getSystemPorts();
     bool addSystemPorts();
+    void updateSystemPort(Port &port);
     unique_ptr<Table> m_tableVoqSystemLagTable;
     unique_ptr<Table> m_tableVoqSystemLagMemberTable;
     void voqSyncAddLag(Port &lag);
