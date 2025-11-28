@@ -30,6 +30,12 @@ public:
     TestRequest1() : Request(request_description1, '|') { }
 };
 
+class TestRequest1_Relaxed : public Request
+{
+public:
+    TestRequest1_Relaxed() : Request(request_description1, '|', true) { }
+};
+
 const request_description_t request_description2 = {
     { REQ_T_STRING, REQ_T_MAC_ADDRESS, REQ_T_STRING },
     {
@@ -99,6 +105,37 @@ TEST(request_parser, simpleKey)
         EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
         EXPECT_TRUE(request.getAttrSet("nlist") == (std::set<std::string>{"name1"}));
 
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
+
+TEST(request_parser, relaxedAttrParsing)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     { "v4", "true" },
+                                     { "v6", "true" },
+                                     { "src_mac", "02:03:04:05:06:07" },
+                                     { "ttl_action", "copy" },
+                                     { "ip_opt_action", "drop" },
+                                     { "l3_mc_action", "log" },
+                                     { "nlist", "name1" },
+                                     { "random", "whatever" }
+                                 }
+                             };
+
+    try
+    {
+        TestRequest1_Relaxed request;
+
+        EXPECT_NO_THROW(request.parse(t));
     }
     catch (const std::exception& e)
     {
@@ -1832,6 +1869,151 @@ TEST(request_parser, mac_key_parse_checker)
         EXPECT_STREQ(request.getFullKey().c_str(), "Vnet_1000:ab:b1:ca:dd:e1:f2");
         EXPECT_EQ(request.getKeyString(0), "Vnet_1000");
         EXPECT_EQ(request.getKeyMacAddress(1), MacAddress("ab:b1:ca:dd:e1:f2"));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
+
+/*
+Check STRING_LIST attribute type
+*/
+const request_description_t test_string_list = {
+    { REQ_T_STRING },
+    {
+        { "main_dpu_ids",    REQ_T_STRING_LIST },
+    },
+    { }
+};
+
+class TestRequestStringList: public Request
+{
+public:
+    TestRequestStringList() : Request(test_string_list, '|') { }
+};
+
+TEST(request_parser, string_list_basic)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                {
+                                    { "main_dpu_ids", "dpu0,dpu1,dpu3" },
+                                }
+                            };
+
+    try
+    {
+        TestRequestStringList request;
+
+        EXPECT_NO_THROW(request.parse(t));
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"main_dpu_ids"}));
+
+        auto main_dpu_list = request.getAttrStringList("main_dpu_ids");
+        std::vector<std::string> expected_main{"dpu0", "dpu1", "dpu3"};
+        EXPECT_EQ(main_dpu_list.size(), 3);
+        for (size_t idx = 0; idx < main_dpu_list.size(); idx++)
+        {
+            EXPECT_STREQ(main_dpu_list[idx].c_str(), expected_main[idx].c_str());
+        }
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
+
+TEST(request_parser, string_list_single_item)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                {
+                                    { "main_dpu_ids", "dpu0" },
+                                }
+                            };
+
+    try
+    {
+        TestRequestStringList request;
+        EXPECT_NO_THROW(request.parse(t));
+        auto main_dpu_list = request.getAttrStringList("main_dpu_ids");
+        EXPECT_EQ(main_dpu_list.size(), 1);
+        EXPECT_STREQ(main_dpu_list[0].c_str(), "dpu0");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
+
+TEST(request_parser, string_list_empty)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                {
+                                    { "main_dpu_ids", "" },
+                                }
+                            };
+
+    try
+    {
+        TestRequestStringList request;
+        EXPECT_NO_THROW(request.parse(t));
+        auto main_dpu_list = request.getAttrStringList("main_dpu_ids");
+        EXPECT_EQ(main_dpu_list.size(), 0);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
+
+TEST(request_parser, string_list_clear_test)
+{
+    KeyOpFieldsValuesTuple t1 {"key1", "SET",
+                                {
+                                    { "main_dpu_ids", "dpu0,dpu1,dpu3" },
+                                }
+                            };
+
+    KeyOpFieldsValuesTuple t2 {"key2", "SET",
+                                {
+                                    { "main_dpu_ids", "dpu4,dpu5" },
+                                }
+                            };
+
+    try
+    {
+        TestRequestStringList request;
+
+        // Parse first request
+        EXPECT_NO_THROW(request.parse(t1));
+        auto main_dpu_list1 = request.getAttrStringList("main_dpu_ids");
+        EXPECT_EQ(main_dpu_list1.size(), 3);
+        EXPECT_STREQ(main_dpu_list1[0].c_str(), "dpu0");
+
+        // Clear and parse second request
+        EXPECT_NO_THROW(request.clear());
+        EXPECT_NO_THROW(request.parse(t2));
+        auto main_dpu_list2 = request.getAttrStringList("main_dpu_ids");
+        EXPECT_EQ(main_dpu_list2.size(), 2);
+        EXPECT_STREQ(main_dpu_list2[0].c_str(), "dpu4");
     }
     catch (const std::exception& e)
     {

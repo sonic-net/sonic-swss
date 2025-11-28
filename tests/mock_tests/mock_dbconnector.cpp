@@ -11,6 +11,10 @@
 
 namespace swss
 {
+
+    DBConnector::DBConnector(const DBConnector& other) : DBConnector(other.m_dbName, 0, false)
+    {}
+
     DBConnector::DBConnector(int dbId, const std::string &hostname, int port, unsigned int timeout) :
         m_dbId(dbId)
     {
