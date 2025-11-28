@@ -4033,6 +4033,40 @@ void PortsOrch::registerPort(Port &p)
         wred_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, wred_port_stats);
     }
 
+    // If queue-related flex counters are already enabled, generate queue maps
+    // for the newly added port so that usecases like dynamic port breakout works.
+    bool queueFcEnabled = flex_counters_orch->getQueueCountersState() ||
+                            flex_counters_orch->getQueueWatermarkCountersState() ||
+                            flex_counters_orch->getWredQueueCountersState();
+    if (queueFcEnabled && !p.m_queue_ids.empty())
+    {
+        auto queuesStateVector = flex_counters_orch->getQueueConfigurations();
+
+        auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(p.m_alias);
+        FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+
+        if (queuesStateVector.count(p.m_alias))
+        {
+            flexCounterQueueState = queuesStateVector.at(p.m_alias);
+        }
+        else if (queuesStateVector.count(createAllAvailableBuffersStr))
+        {
+            if (maxQueueNumber > 0)
+            {
+                flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+            }
+        }
+        else
+        {
+            if (p.m_host_tx_queue_configured && p.m_host_tx_queue < maxQueueNumber)
+            {
+                flexCounterQueueState.enableQueueCounter(p.m_host_tx_queue);
+            }
+        }
+
+        generateQueueMapPerPort(p, flexCounterQueueState, false);
+    }
+
     PortUpdate update = { p, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -4056,9 +4090,12 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
         return;
     }
 
-    if (p.m_host_tx_queue_configured && p.m_queue_ids.size() > p.m_host_tx_queue)
+    if (!p.m_queue_ids.empty())
     {
-        removePortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
+        auto skip_host_tx_queue = p.m_host_tx_queue_configured && (p.m_queue_ids.size() > p.m_host_tx_queue);
+        // Remove all queue counters and mappings for this port to avoid stale entries
+        std::string range = "0-" + to_string(p.m_queue_ids.size() - 1);
+        removePortBufferQueueCounters(p, range, skip_host_tx_queue);
     }
 
     /* remove port from flex_counter_table for updating counters  */
