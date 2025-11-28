@@ -107,6 +107,7 @@
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
 
 #define MLNX_MAX_RANGES_COUNT   16
+#define CLNX_MAX_RANGES_COUNT   16
 #define INGRESS_TABLE_DROP      "IngressTableDrop"
 #define EGRESS_TABLE_DROP       "EgressTableDrop"
 #define RULE_OPER_ADD           0
