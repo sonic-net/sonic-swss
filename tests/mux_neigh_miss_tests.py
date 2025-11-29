@@ -76,7 +76,7 @@ STANDBY_MUX_CABLE_TESTS = [
         },
         {
             TEST_ACTION: RESOLVE_ENTRY,
-            EXPECTED_RESULT: {EXPECT_ROUTE: False, EXPECT_NEIGH: True, REAL_MAC: True}
+            EXPECTED_RESULT: {EXPECT_ROUTE: True, EXPECT_NEIGH: True, REAL_MAC: True}
         },
         {
             TEST_ACTION: DELETE_ENTRY,
@@ -98,7 +98,7 @@ STANDBY_MUX_CABLE_TESTS = [
         },
         {
             TEST_ACTION: ACTIVE,
-            EXPECTED_RESULT: {EXPECT_ROUTE: False, EXPECT_NEIGH: True, REAL_MAC: True}
+            EXPECTED_RESULT: {EXPECT_ROUTE: True, EXPECT_NEIGH: True, REAL_MAC: True}
         },
         {
             TEST_ACTION: DELETE_ENTRY,
@@ -155,7 +155,7 @@ ACTIVE_MUX_CABLE_TESTS = [
         },
         {
             TEST_ACTION: RESOLVE_ENTRY,
-            EXPECTED_RESULT: {EXPECT_ROUTE: False, EXPECT_NEIGH: True, REAL_MAC: True}
+            EXPECTED_RESULT: {EXPECT_ROUTE: True, EXPECT_NEIGH: True, REAL_MAC: True}
         },
         {
             TEST_ACTION: STANDBY,
@@ -198,7 +198,7 @@ NEIGH_IP_TESTS = [
         },
         {
             TEST_ACTION: ACTIVE,
-            EXPECTED_RESULT: {EXPECT_ROUTE: False, EXPECT_NEIGH: True, REAL_MAC: True}
+            EXPECTED_RESULT: {EXPECT_ROUTE: True, EXPECT_NEIGH: True, REAL_MAC: True}
         },
         {
             TEST_ACTION: DELETE_ENTRY,
@@ -216,7 +216,7 @@ NEIGH_IP_TESTS = [
         },
         {
             TEST_ACTION: RESOLVE_ENTRY,
-            EXPECTED_RESULT: {EXPECT_ROUTE: False, EXPECT_NEIGH: True, REAL_MAC: True}
+            EXPECTED_RESULT: {EXPECT_ROUTE: True, EXPECT_NEIGH: True, REAL_MAC: True}
         },
         {
             TEST_ACTION: STANDBY,

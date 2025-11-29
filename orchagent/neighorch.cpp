@@ -9,8 +9,11 @@
 #include "subscriberstatetable.h"
 #include "nhgorch.h"
 
+extern sai_object_id_t gVirtualRouterId;
+extern sai_object_id_t gSwitchId;
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
+extern sai_route_api_t*            sai_route_api;
 
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
@@ -22,16 +25,12 @@ extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
-extern size_t gMaxBulkSize;
-extern string gMyHostName;
 
 extern bool isChassisDbInUse();
 
 const int neighorch_pri = 30;
 
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
-        gNeighBulker(sai_neighbor_api, gMaxBulkSize),
-        gNextHopBulker(sai_next_hop_api, gSwitchId, gMaxBulkSize),
         Orch(appDb, tableName, neighorch_pri),
         m_intfsOrch(intfsOrch),
         m_fdbOrch(fdbOrch),
@@ -273,12 +272,6 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
 
     sai_object_id_t next_hop_id;
 
-    if (ctx.bulk_op)
-    {
-        gNextHopBulker.create_entry(&ctx.next_hop_id , (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
-        return true;
-    }
-
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -308,98 +301,6 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
 
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
-    next_hop_entry.ref_count = 0;
-    next_hop_entry.nh_flags = 0;
-    m_syncdNextHops[nexthop] = next_hop_entry;
-
-    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
-
-    if (nexthop.isMplsNextHop())
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_MPLS_NEXTHOP);
-    }
-    else
-    {
-        if (nexthop.ip_address.isV4())
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
-        }
-        else
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-        }
-    }
-
-    gFgNhgOrch->validNextHopInNextHopGroup(nexthop);
-
-    // For nexthop with incoming port which has down oper status, NHFLAGS_IFDOWN
-    // flag should be set on it.
-    // This scenario may happen under race condition where buffered neighbor event
-    // is processed after incoming port is down.
-    if (p.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
-    {
-        if (setNextHopFlag(nexthop, NHFLAGS_IFDOWN) == false)
-        {
-            SWSS_LOG_WARN("Failed to set NHFLAGS_IFDOWN on nexthop %s for interface %s",
-                nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-        }
-    }
-    return true;
-}
-
-bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
-{
-    SWSS_LOG_ENTER();
-
-    const NextHopKey nh = ctx.neighborEntry;
-
-    Port p;
-    if (!gPortsOrch->getPort(nh.alias, p))
-    {
-        SWSS_LOG_ERROR("Neighbor %s seen on port %s which doesn't exist",
-                        nh.ip_address.to_string().c_str(), nh.alias.c_str());
-        return false;
-    }
-    if (p.m_type == Port::SUBPORT)
-    {
-        if (!gPortsOrch->getPort(p.m_parent_port_id, p))
-        {
-            SWSS_LOG_ERROR("Neighbor %s seen on sub interface %s whose parent port doesn't exist",
-                            nh.ip_address.to_string().c_str(), nh.alias.c_str());
-            return false;
-        }
-    }
-
-    NextHopKey nexthop(nh);
-    if (ctx.next_hop_id == SAI_NULL_OBJECT_ID)
-    {
-        sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
-        if (bulker_status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-        {
-            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
-                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-            return true;
-        }
-        SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
-                       nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    SWSS_LOG_NOTICE("Created next hop %s on %s",
-                    nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-    if (m_neighborToResolve.find(nexthop) != m_neighborToResolve.end())
-    {
-        clearResolvedNeighborEntry(nexthop);
-        m_neighborToResolve.erase(nexthop);
-        SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
-    }
-
-    NextHopEntry next_hop_entry;
-    next_hop_entry.next_hop_id = ctx.next_hop_id;
     next_hop_entry.ref_count = 0;
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
@@ -1037,13 +938,11 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     SWSS_LOG_ENTER();
 
     sai_status_t status;
-    auto& object_statuses = ctx.object_statuses;
 
     const MacAddress &macAddress = ctx.mac;
     const NeighborEntry neighborEntry = ctx.neighborEntry;
     IpAddress ip_address = neighborEntry.ip_address;
     string alias = neighborEntry.alias;
-    bool bulk_op = ctx.bulk_op;
 
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
     if (rif_id == SAI_NULL_OBJECT_ID)
@@ -1064,16 +963,33 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     memcpy(neighbor_attr.value.mac, macAddress.getMac(), 6);
     neighbor_attrs.push_back(neighbor_attr);
 
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    bool no_host_route = false;
+    bool prefix_route = false;
+
     if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
     {
         /* Check if this prefix is a configured ip, if not allow */
         IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
         if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
         {
-            neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
-            neighbor_attr.value.booldata = 1;
-            neighbor_attrs.push_back(neighbor_attr);
+            no_host_route = true;
         }
+    }
+
+    // for active muxport neighbors we program with no-host-route
+    // and install full prefix route entry pointing to the neighbor nh
+    if (mux_orch && mux_orch->isMuxPortNeighbor(ip_address, macAddress, alias))
+    {
+        no_host_route = true;
+        prefix_route = true;
+    }
+
+    if (no_host_route)
+    {
+        neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+        neighbor_attr.value.booldata = 1;
+        neighbor_attrs.push_back(neighbor_attr);
     }
 
     PortsOrch* ports_orch = gDirectory.get<PortsOrch*>();
@@ -1122,7 +1038,6 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         }
     }
 
-    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     bool hw_config = isHwConfigured(neighborEntry);
 
     if (gMySwitchType == "voq")
@@ -1133,18 +1048,8 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         }
     }
 
-    if (!hw_config && mux_orch->isNeighborActive(ip_address, macAddress, alias))
+    if (!hw_config)
     {
-        // Using bulker, return and post-process later
-        if (bulk_op)
-        {
-            SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
-            object_statuses.emplace_back();
-            gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
-            addNextHop(ctx);
-            return true;
-        }
-
         status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry,
                                    (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
         if (status != SAI_STATUS_SUCCESS)
@@ -1180,6 +1085,8 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
         }
 
+		auto nhKey = NextHopKey(ip_address, alias);
+
         if (!addNextHop(ctx))
         {
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
@@ -1206,6 +1113,82 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
 
             return false;
         }
+
+        // full prefix route pointing to neighbor nh
+        if (prefix_route)
+        {
+            sai_object_id_t port_vrf_id;
+            port_vrf_id = gVirtualRouterId;
+
+            Port port;
+            if (gPortsOrch->getPort(alias, port))
+            {
+                port_vrf_id = port.m_vr_id;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
+            }
+
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = port_vrf_id;
+            route_entry.switch_id = gSwitchId;
+            IpPrefix ipNeighPfx = ip_address.to_string();
+            copy(route_entry.destination, ipNeighPfx);
+            subnet(route_entry.destination, route_entry.destination);
+
+            sai_object_id_t next_hop_id = m_syncdNextHops[nhKey].next_hop_id;
+            sai_attribute_t rt_attr;
+            vector<sai_attribute_t> rt_attrs;
+
+            // neighbors in mux standby state has DROP action
+            rt_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+            if (mux_orch->isNeighborActive(ip_address, macAddress, alias))
+            {
+                rt_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+            }
+            else {
+                rt_attr.value.s32 = SAI_PACKET_ACTION_DROP;
+            }
+
+            rt_attrs.push_back(rt_attr);
+
+            rt_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            rt_attr.value.oid = next_hop_id;
+            rt_attrs.push_back(rt_attr);
+
+            // if standalone mux route for this neighbor is created, then
+            // set the new attributes
+            if (mux_orch->isStandaloneTunnelRouteInstalled(ip_address))
+            {
+                for (auto& route_attr : rt_attrs)
+                {
+                    status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to set mux neigh route for %s with next_hop_id as 0x%" PRIx64 " rv:%d",
+                                ip_address.to_string().c_str(), next_hop_id, status);
+                        return false;
+                    }
+                }
+
+            }
+            else
+            {
+                status = sai_route_api->create_route_entry(&route_entry, (uint32_t)rt_attrs.size(), rt_attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to add mux neigh route for %s  with next_hop_id as  0x%" PRIx64 " .",
+                    ip_address.to_string().c_str(), next_hop_id);
+                    return false;
+                }
+                else {
+                    SWSS_LOG_INFO(" Successfully added mux neigh route for %s with next_hop_id as 0x%" PRIx64 ". ",
+                    ip_address.to_string().c_str(), next_hop_id);
+                }
+            }
+        }
+
         hw_config = true;
     }
     else if (isHwConfigured(neighborEntry))
@@ -1227,7 +1210,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
 
-    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config };
+    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
@@ -1246,14 +1229,15 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     SWSS_LOG_ENTER();
 
     sai_status_t status;
-    auto& object_statuses = ctx.object_statuses;
 
     const NeighborEntry neighborEntry = ctx.neighborEntry;
     string alias = neighborEntry.alias;
     IpAddress ip_address = neighborEntry.ip_address;
-    bool bulk_op = ctx.bulk_op;
 
     NextHopKey nexthop = { ip_address, alias };
+    sai_object_id_t port_vrf_id;
+    port_vrf_id = gVirtualRouterId;
+
     if(m_intfsOrch->isRemoteSystemPortIntf(alias))
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
@@ -1263,6 +1247,16 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
         nexthop.alias = inbp.m_alias;
     }
+
+	Port port;
+	if(gPortsOrch->getPort(alias, port))
+	{
+		port_vrf_id = port.m_vr_id;
+	}
+	else
+	{
+		SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
+	}
 
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
     {
@@ -1280,20 +1274,32 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     {
         sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
+        // remove the full prefix route
+        if (m_syncdNeighbors[neighborEntry].prefix_route)
+        {
+            IpPrefix ipNeighPfx = ip_address.to_string();
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = port_vrf_id;
+            route_entry.switch_id = gSwitchId;
+            copy(route_entry.destination, ipNeighPfx);
+            subnet(route_entry.destination, route_entry.destination);
+
+            status = sai_route_api->remove_route_entry(&route_entry);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to delete mux neigh route for %s .", ip_address.to_string().c_str());
+            }
+            else {
+                SWSS_LOG_INFO("Successfully Deleted mux neigh route for %s .", ip_address.to_string().c_str());
+            }
+        }
+
         sai_neighbor_entry_t neighbor_entry;
         neighbor_entry.rif_id = rif_id;
         neighbor_entry.switch_id = gSwitchId;
         copy(neighbor_entry.ip_address, ip_address);
 
         sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
-
-        if (bulk_op)
-        {
-            object_statuses.emplace_back();
-            gNextHopBulker.remove_entry(&ctx.nexthop_status, next_hop_id);
-            gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry);
-            return true;
-        }
 
         status = sai_next_hop_api->remove_next_hop(next_hop_id);
         if (status != SAI_STATUS_SUCCESS)
@@ -1390,219 +1396,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     return true;
 }
 
-/* Process bulk ctx entry and enable the neigbor */
-bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
-{
-    SWSS_LOG_ENTER();
-
-    const auto& object_statuses = ctx.object_statuses;
-    auto it_status = object_statuses.begin();
-    sai_status_t status;
-
-    const MacAddress &macAddress = ctx.mac;
-    const NeighborEntry neighborEntry = ctx.neighborEntry;
-    string alias = neighborEntry.alias;
-    IpAddress ip_address = neighborEntry.ip_address;
-
-    if (!ctx.bulk_op)
-    {
-        SWSS_LOG_INFO("Not a bulk entry for %s on %s", ip_address.to_string().c_str(), alias.c_str());
-        return true;
-    }
-
-    SWSS_LOG_INFO("Checking neighbor create entry status %s on %s.", ip_address.to_string().c_str(), alias.c_str());
-
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
-    if (rif_id == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_INFO("Failed to get rif_id for %s", alias.c_str());
-        return false;
-    }
-
-    sai_neighbor_entry_t neighbor_entry;
-    neighbor_entry.rif_id = rif_id;
-    neighbor_entry.switch_id = gSwitchId;
-    copy(neighbor_entry.ip_address, ip_address);
-
-    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
-    if (mux_orch->isNeighborActive(ip_address, macAddress, alias))
-    {
-        status = *it_status++;
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-            {
-                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, skipping: status:%s",
-                           macAddress.to_string().c_str(), alias.c_str(), sai_serialize_status(status).c_str());
-                return true;
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to create neighbor %s on %s, status:%s",
-                           macAddress.to_string().c_str(), alias.c_str(), sai_serialize_status(status).c_str());
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEIGHBOR, status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-        }
-
-        SWSS_LOG_NOTICE("Created neighbor ip %s, %s on %s", ip_address.to_string().c_str(),
-                macAddress.to_string().c_str(), alias.c_str());
-
-        m_intfsOrch->increaseRouterIntfsRefCount(alias);
-
-        if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-        }
-        else
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-        }
-
-        if (!processBulkAddNextHop(ctx))
-        {
-            status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                               macAddress.to_string().c_str(), alias.c_str(), status);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-            m_intfsOrch->decreaseRouterIntfsRefCount(alias);
-
-            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-            }
-            else
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-            }
-
-            return false;
-        }
-    }
-
-    m_syncdNeighbors[neighborEntry] = { macAddress, true };
-
-    NeighborUpdate update = { neighborEntry, macAddress, true };
-    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-
-    return true;
-}
-
-/* Process bulk ctx entry and disable the neigbor */
-bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
-{
-    SWSS_LOG_ENTER();
-
-    const auto& object_statuses = ctx.object_statuses;
-    auto it_status = object_statuses.begin();
-    sai_status_t status;
-
-    const NeighborEntry neighborEntry = ctx.neighborEntry;
-    string alias = neighborEntry.alias;
-    IpAddress ip_address = neighborEntry.ip_address;
-
-    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
-    {
-        return true;
-    }
-
-    SWSS_LOG_INFO("Checking neighbor remove entry status %s on %s.", ip_address.to_string().c_str(), m_syncdNeighbors[neighborEntry].mac.to_string().c_str());
-
-    if (isHwConfigured(neighborEntry))
-    {
-        sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
-
-        sai_neighbor_entry_t neighbor_entry;
-        neighbor_entry.rif_id = rif_id;
-        neighbor_entry.switch_id = gSwitchId;
-        copy(neighbor_entry.ip_address, ip_address);
-
-        if (ctx.nexthop_status != SAI_STATUS_SUCCESS)
-        {
-            /* When next hop is not found, we continue to remove neighbor entry. */
-            if (ctx.nexthop_status == SAI_STATUS_ITEM_NOT_FOUND)
-            {
-                SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
-                               ip_address.to_string().c_str(), alias.c_str(), ctx.nexthop_status);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
-                               ip_address.to_string().c_str(), alias.c_str(), ctx.nexthop_status);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, ctx.nexthop_status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-        }
-
-        if (ctx.nexthop_status != SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
-            }
-            else
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-            }
-        }
-
-        SWSS_LOG_NOTICE("Bulk removed next hop %s on %s", ip_address.to_string().c_str(), alias.c_str());
-
-        status = *it_status++;
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            if (status == SAI_STATUS_ITEM_NOT_FOUND)
-            {
-                SWSS_LOG_NOTICE("Bulk remove entry skipped, neighbor %s on %s already removed, rv:%d",
-                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-        }
-        else
-        {
-            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-            }
-            else
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-            }
-
-            removeNextHop(ip_address, alias);
-            m_intfsOrch->decreaseRouterIntfsRefCount(alias);
-            SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-                    m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
-        }
-    }
-
-    /* Do not delete entry from cache for disable request */
-    m_syncdNeighbors[neighborEntry].hw_configured = false;
-    return true;
-}
-
 bool NeighOrch::isHwConfigured(const NeighborEntry& neighborEntry)
 {
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
@@ -1655,107 +1448,6 @@ bool NeighOrch::disableNeighbor(const NeighborEntry& neighborEntry)
     NeighborContext ctx = NeighborContext(neighborEntry);
 
     return removeNeighbor(ctx, true);
-}
-
-/* enable neighbors using bulker */
-bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
-{
-    bool ret = true;
-
-    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
-    {
-        const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
-        {
-            SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
-            continue;
-        }
-
-        if (isHwConfigured(neighborEntry))
-        {
-            SWSS_LOG_INFO("Neighbor %s is already programmed to HW", neighborEntry.ip_address.to_string().c_str());
-            continue;
-        }
-
-        SWSS_LOG_NOTICE("Neighbor enable request for %s ", neighborEntry.ip_address.to_string().c_str());
-
-        if(!addNeighbor(*ctx))
-        {
-            SWSS_LOG_ERROR("Neighbor %s create entry failed.", neighborEntry.ip_address.to_string().c_str());
-            continue;
-        }
-    }
-
-    gNeighBulker.flush();
-    gNextHopBulker.flush();
-
-    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
-    {
-        if (ctx->object_statuses.empty())
-        {
-            continue;
-        }
-
-        const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        if (!processBulkEnableNeighbor(*ctx))
-        {
-            SWSS_LOG_INFO("Enable neighbor failed for %s", neighborEntry.ip_address.to_string().c_str());
-            /* finish processing bulk entries */
-            ret = false;
-        }
-    }
-
-    gNeighBulker.clear();
-    return ret;
-}
-
-/* disable neighbors using bulker */
-bool NeighOrch::disableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
-{
-    bool ret = true;
-
-    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
-    {
-        const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
-        {
-            SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
-            continue;
-        }
-
-        SWSS_LOG_NOTICE("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
-
-        if(!removeNeighbor(*ctx, true))
-        {
-            SWSS_LOG_ERROR("Neighbor %s remove entry failed.", neighborEntry.ip_address.to_string().c_str());
-        }
-    }
-
-    gNextHopBulker.flush();
-    gNeighBulker.flush();
-
-    for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
-    {
-        if (ctx->object_statuses.empty())
-        {
-            continue;
-        }
-
-        const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        if (!processBulkDisableNeighbor(*ctx))
-        {
-            SWSS_LOG_INFO("Disable neighbor failed for %s", neighborEntry.ip_address.to_string().c_str());
-            /* finish processing bulk entries but return false */
-            ret = false;
-        }
-    }
-
-    gNeighBulker.clear();
-    return ret;
 }
 
 sai_object_id_t NeighOrch::addTunnelNextHop(const NextHopKey& nh)
@@ -2186,6 +1878,136 @@ bool NeighOrch::delInbandNeighbor(string alias, IpAddress ip_address)
     return true;
 }
 
+bool NeighOrch::convertToMuxNeighbor(const NeighborEntry &neighborEntry, sai_object_id_t tunnel_nexthop_id)
+{
+    SWSS_LOG_ENTER();
+
+    // Check if neighbor exists and is properly configured
+    auto neighbor_it = m_syncdNeighbors.find(neighborEntry);
+    if (neighbor_it == m_syncdNeighbors.end())
+    {
+        SWSS_LOG_ERROR("Neighbor %s on %s not found, cannot convert to MUX neighbor",
+                       neighborEntry.ip_address.to_string().c_str(), neighborEntry.alias.c_str());
+        return false;
+    }
+
+    // Check if neighbor is hardware configured before conversion
+    if (!neighbor_it->second.hw_configured)
+    {
+        SWSS_LOG_WARN("Neighbor %s on %s not yet hardware configured, deferring MUX conversion",
+                      neighborEntry.ip_address.to_string().c_str(), neighborEntry.alias.c_str());
+        return false;
+    }
+
+    // Check if already a MUX neighbor (prefix_route = true)
+    if (neighbor_it->second.prefix_route)
+    {
+        SWSS_LOG_INFO("Neighbor %s on %s is already a MUX neighbor",
+                      neighborEntry.ip_address.to_string().c_str(), neighborEntry.alias.c_str());
+        return true;
+    }
+
+    IpAddress ip_address = neighborEntry.ip_address;
+    string alias = neighborEntry.alias;
+
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
+    if (rif_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to get rif_id for %s", alias.c_str());
+        return false;
+    }
+
+    // Get the next hop for this neighbor
+    NextHopKey nhKey = { ip_address, alias };
+    auto nexthop_it = m_syncdNextHops.find(nhKey);
+    if (nexthop_it == m_syncdNextHops.end())
+    {
+        SWSS_LOG_ERROR("Next hop for neighbor %s on %s not found",
+                       ip_address.to_string().c_str(), alias.c_str());
+        return false;
+    }
+
+    // Update neighbor entry to set NO_HOST_ROUTE flag
+    sai_neighbor_entry_t neighbor_entry;
+    neighbor_entry.rif_id = rif_id;
+    neighbor_entry.switch_id = gSwitchId;
+    copy(neighbor_entry.ip_address, ip_address);
+
+    sai_attribute_t neighbor_attr;
+    neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+    neighbor_attr.value.booldata = 1;
+
+    sai_status_t status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set NO_HOST_ROUTE flag for neighbor %s on %s, rv:%d",
+                       ip_address.to_string().c_str(), alias.c_str(), status);
+        return false;
+    }
+
+    // Create prefix route entry pointing to neighbor nexthop or tunnel nexthop
+    sai_object_id_t port_vrf_id = gVirtualRouterId;
+    Port port;
+    if (gPortsOrch->getPort(alias, port))
+    {
+        port_vrf_id = port.m_vr_id;
+    }
+
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = port_vrf_id;
+    route_entry.switch_id = gSwitchId;
+    IpPrefix ipNeighPfx = ip_address.to_string();
+    copy(route_entry.destination, ipNeighPfx);
+    subnet(route_entry.destination, route_entry.destination);
+
+    vector<sai_attribute_t> rt_attrs;
+    sai_attribute_t rt_attr;
+
+    // Set packet action (FORWARD by default, can be changed by MUX state)
+    rt_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    rt_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    rt_attrs.push_back(rt_attr);
+
+    // Set next hop (use tunnel nexthop if provided, otherwise use neighbor nexthop)
+    rt_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    rt_attr.value.oid = (tunnel_nexthop_id != SAI_NULL_OBJECT_ID) ? tunnel_nexthop_id : nexthop_it->second.next_hop_id;
+    rt_attrs.push_back(rt_attr);
+
+    // Create the prefix route
+    status = sai_route_api->create_route_entry(&route_entry, (uint32_t)rt_attrs.size(), rt_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create prefix route for neighbor %s on %s, rv:%d",
+                       ip_address.to_string().c_str(), alias.c_str(), status);
+        return false;
+    }
+
+    // Update the neighbor data to mark it as prefix_route
+    m_syncdNeighbors[neighborEntry].prefix_route = true;
+
+    SWSS_LOG_NOTICE("Successfully converted neighbor %s on %s to MUX neighbor with prefix route",
+                     ip_address.to_string().c_str(), alias.c_str());
+
+    return true;
+}
+
+bool NeighOrch::isPrefixNeighbor(const NeighborEntry &neighborEntry) const
+{
+    auto neighbor_it = m_syncdNeighbors.find(neighborEntry);
+    if (neighbor_it == m_syncdNeighbors.end())
+    {
+        return false;
+    }
+
+    return neighbor_it->second.prefix_route;
+}
+
+bool NeighOrch::isPrefixNeighborNh(const NextHopKey &nextHopKey) const
+{
+    // NextHopKey and NeighborEntry are typedef'd to the same type
+    return isPrefixNeighbor(static_cast<const NeighborEntry &>(nextHopKey));
+}
+
 bool NeighOrch::getSystemPortNeighEncapIndex(string &alias, IpAddress &ip, uint32_t &encap_index)
 {
     string value;
@@ -2429,10 +2251,4 @@ bool NeighOrch::ifChangeInformRemoteNextHop(const string &alias, bool if_up)
         }
     }
     return rc;
-}
-
-void NeighOrch::clearBulkers()
-{
-    gNeighBulker.clear();
-    gNextHopBulker.clear();
 }

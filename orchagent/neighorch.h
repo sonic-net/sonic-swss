@@ -30,6 +30,7 @@ struct NeighborData
     MacAddress    mac;
     bool          hw_configured = false; // False means, entry is not written to HW
     uint32_t      voq_encap_index = 0;
+    bool          prefix_route = false;
 };
 
 /* NeighborTable: NeighborEntry, neighbor MAC address */
@@ -45,24 +46,17 @@ struct NeighborUpdate
 };
 
 /*
- * Keeps track of neighbor entry information primarily for bulk operations
+ * Keeps track of neighbor entry information
  */
 struct NeighborContext
 {
     NeighborEntry                       neighborEntry;              // neighbor entry to process
-    std::deque<sai_status_t>            object_statuses;            // entity bulk statuses for neighbors
     MacAddress                          mac;                        // neighbor mac
-    bool                                bulk_op = false;            // use bulker (only for mux use for now)
     sai_object_id_t                     next_hop_id;                // next hop id
     sai_status_t                        nexthop_status;             // next hop status
 
     NeighborContext(NeighborEntry neighborEntry)
         : neighborEntry(neighborEntry)
-    {
-    }
-
-    NeighborContext(NeighborEntry neighborEntry, bool bulk_op)
-        : neighborEntry(neighborEntry), bulk_op(bulk_op)
     {
     }
 };
@@ -88,10 +82,10 @@ public:
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    const NeighborTable& getNeighborTable() const { return m_syncdNeighbors; }
+
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
-    bool enableNeighbors(std::list<NeighborContext>&);
-    bool disableNeighbors(std::list<NeighborContext>&);
     bool isHwConfigured(const NeighborEntry&);
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
@@ -106,12 +100,14 @@ public:
     bool addInbandNeighbor(string alias, IpAddress ip_address);
     bool delInbandNeighbor(string alias, IpAddress ip_address);
 
+    bool convertToMuxNeighbor(const NeighborEntry &neighborEntry, sai_object_id_t tunnel_nexthop_id = SAI_NULL_OBJECT_ID);
+    bool isPrefixNeighbor(const NeighborEntry &neighborEntry) const;
+    bool isPrefixNeighborNh(const NextHopKey &nextHopKey) const;
+
     void resolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
     bool ifChangeInformRemoteNextHop(const string &, bool);
     void getMuxNeighborsForPort(string port_name, NeighborTable &m_neighbors);
-
-    void clearBulkers();
 
 private:
     PortsOrch *m_portsOrch;
@@ -124,16 +120,10 @@ private:
 
     std::set<NextHopKey> m_neighborToResolve;
 
-    EntityBulker<sai_neighbor_api_t> gNeighBulker;
-    ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
-
     bool removeNextHop(const IpAddress&, const string&);
-    bool processBulkAddNextHop(NeighborContext&);
 
     bool addNeighbor(NeighborContext& ctx);
     bool removeNeighbor(NeighborContext& ctx, bool disable = false);
-    bool processBulkEnableNeighbor(NeighborContext& ctx);
-    bool processBulkDisableNeighbor(NeighborContext& ctx);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
