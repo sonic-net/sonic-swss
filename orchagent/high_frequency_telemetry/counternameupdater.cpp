@@ -40,18 +40,15 @@ void CounterNameMapUpdater::setCounterNameMap(const std::vector<swss::FieldValue
 {
     SWSS_LOG_ENTER();
 
-    if (gHFTOrch)
+    for (const auto& map : counter_name_maps)
     {
-        for (const auto& map : counter_name_maps)
+        const std::string& counter_name = fvField(map);
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        if (!fvValue(map).empty())
         {
-            const std::string& counter_name = fvField(map);
-            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-            if (!fvValue(map).empty())
-            {
-                sai_deserialize_object_id(fvValue(map), oid);
-            }
-            setCounterNameMap(counter_name, oid);
+            sai_deserialize_object_id(fvValue(map), oid);
         }
+        setCounterNameMap(counter_name, oid);
     }
 }
 
