@@ -228,7 +228,7 @@ task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
         return task_process_status::task_need_retry;
     }
 
-    if (!profile_itr->second->isEmpty())
+    if (!profile_itr->second->isEmpty() || isProfileInUse(profile_itr->second))
     {
         return task_process_status::task_need_retry;
     }
@@ -353,6 +353,21 @@ std::shared_ptr<HFTelProfile> HFTelOrch::tryGetProfile(const std::string &profil
     }
 
     return std::shared_ptr<HFTelProfile>();
+}
+
+bool HFTelOrch::isProfileInUse(const std::shared_ptr<HFTelProfile> &profile)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &type_profiles : m_type_profile_mapping)
+    {
+        if (type_profiles.second.find(profile) != type_profiles.second.end())
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
