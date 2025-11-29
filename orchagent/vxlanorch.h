@@ -249,6 +249,7 @@ const request_description_t vxlan_tunnel_request_description = {
             {
                 { "src_ip", REQ_T_IP },
                 { "dst_ip", REQ_T_IP },
+                { "ttl_mode", REQ_T_STRING },
             },
             { "src_ip" }
 };
