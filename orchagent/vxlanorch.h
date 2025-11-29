@@ -139,10 +139,17 @@ typedef std::map<uint32_t, std::pair<sai_object_id_t, sai_object_id_t>> TunnelMa
 typedef std::unordered_map<nh_key_t, nh_tunnel_t, nh_key_hash> TunnelNHs;
 typedef std::map<std::string, tunnel_refcnt_t> TunnelUsers;
 
+enum class VxlanTunnelTTLMode
+{
+    NOT_SET,
+    PIPE,
+    UNIFORM
+};
+
 class VxlanTunnel
 {
 public:
-    VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src);
+    VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src, VxlanTunnelTTLMode ttl_mode = VxlanTunnelTTLMode::NOT_SET);
     ~VxlanTunnel();
 
     bool isActive() const
@@ -232,6 +239,7 @@ private:
     TunnelUsers tnl_users_;
     VxlanTunnel* vtep_ptr=NULL;
     tunnel_creation_src_t src_creation_;
+    VxlanTunnelTTLMode decap_ttl_mode_; // Decap TTL mode: NOT_SET, PIPE, or UNIFORM (default is NOT_SET)
     uint8_t encap_dedicated_mappers_ = 0;
     uint8_t decap_dedicated_mappers_ = 0;
 };
