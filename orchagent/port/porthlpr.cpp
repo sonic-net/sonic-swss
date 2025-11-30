@@ -969,6 +969,22 @@ bool PortHelper::parsePortPtTimestampTemplate(PortConfig &port, const std::strin
     return true;
 }
 
+bool PortHelper::parsePortMediaType(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited", field.c_str());
+        return false;
+    }
+
+    port.media_type.value = value;
+    port.media_type.is_set = true;
+
+    return true;
+}
+
 bool PortHelper::parsePortConfig(PortConfig &port) const
 {
     SWSS_LOG_ENTER();
@@ -1298,6 +1314,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
             /* Placeholder to prevent warning. Not needed to be parsed here.
              * Setting exists in sonic-port.yang with possible values: routed|access|trunk
              */
+        }
+        else if (field == PORT_MEDIA_TYPE)
+        {
+            if (!this->parsePortMediaType(port, field, value))
+            {
+                return false;
+            }
         }
         else
         {
