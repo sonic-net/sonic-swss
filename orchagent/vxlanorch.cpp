@@ -375,6 +375,10 @@ create_tunnel(
 
         if (decap_ttl_mode == VxlanTunnelTTLMode::NOT_SET)
         {
+            /*
+             * If encap TTL mode is set to PIPE and decap ttl mode is not explicitly set in the config,
+             * the decap TTL mode is also set to PIPE.
+             */
             attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
             attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
             tunnel_attrs.push_back(attr);
