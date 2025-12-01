@@ -147,22 +147,26 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
 
     if decap_ttl_mode == "uniform":
         expected_sai_decap_ttl_mode = "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
-    else:
+    elif decap_ttl_mode == "pipe":
         expected_sai_decap_ttl_mode = "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
+    else:
+        expected_sai_decap_ttl_mode = ""
 
-    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id,
-                    {
-                        'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
-                        'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': lo_id,
-                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': decapstr,
-                        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': encapstr,
-                        'SAI_TUNNEL_ATTR_PEER_MODE': 'SAI_TUNNEL_PEER_MODE_P2MP',
-                        'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip,
-                        'SAI_TUNNEL_ATTR_ENCAP_TTL_MODE': 'SAI_TUNNEL_TTL_MODE_PIPE_MODEL',
-                        'SAI_TUNNEL_ATTR_DECAP_TTL_MODE': expected_sai_decap_ttl_mode,  # Since ENCAP_TTL_VAL is not zero, this attribute will be inserted in any case.
-                        'SAI_TUNNEL_ATTR_ENCAP_TTL_VAL': '255'
-                    }
-                )
+    expected_attrs = {
+        'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
+        'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': lo_id,
+        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': decapstr,
+        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': encapstr,
+        'SAI_TUNNEL_ATTR_PEER_MODE': 'SAI_TUNNEL_PEER_MODE_P2MP',
+        'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip,
+        'SAI_TUNNEL_ATTR_ENCAP_TTL_MODE': 'SAI_TUNNEL_TTL_MODE_PIPE_MODEL',
+        'SAI_TUNNEL_ATTR_ENCAP_TTL_VAL': '255'
+    }
+
+    if expected_sai_decap_ttl_mode:
+        expected_attrs['SAI_TUNNEL_ATTR_DECAP_TTL_MODE'] = expected_sai_decap_ttl_mode
+
+    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id, expected_attrs)
 
     tunnel_type = 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2P' if dst_ip != '0.0.0.0' else 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP'
     expected_attributes = {
