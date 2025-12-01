@@ -38,14 +38,11 @@ endif
 
 override_dh_auto_configure:
 	dh_auto_configure -- $(configure_opts)
-	# Configure Rust build for countersyncd
-	cargo fetch
-	cargo update -p swss-common
 
 override_dh_auto_build:
 	dh_auto_build
 	# Build and test countersyncd Rust project
-	cargo build --release
+	cargo build --release --locked
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/swss
