@@ -38,7 +38,7 @@ namespace retrycache_test
                         std::cout << "  CstResolver [Selected]: resolves the constraint and notifies." << std::endl;
                         auto it = consumer.m_toSync.begin();
                         consumer.m_toSync.erase(it);
-                        Constraint cst = make_constraint(RETRY_CST_NHG, "2");
+                        Constraint cst = make_constraint(RETRY_CST_PIC, "2");
                         notifyRetry(this, "Dependent", cst);
                     }
                     else if (consumer.getName() == "Dependent")
@@ -64,7 +64,7 @@ namespace retrycache_test
             TestOrch* testOrch;
             Consumer *oftenFail, *cstResolver;
             RetryCache* cache;
-            Constraint cst = make_constraint(RETRY_CST_NHG, "2");
+            Constraint cst = make_constraint(RETRY_CST_PIC, "2");
 
             void SetUp() override
             {
@@ -103,7 +103,7 @@ namespace retrycache_test
         ASSERT_TRUE(cache->getRetryMap().empty());
 
         cache->insert({"key", "DEL", {}}, cst);
-        Constraint _cst = make_constraint(RETRY_CST_NHG, "3");
+        Constraint _cst = make_constraint(RETRY_CST_PIC, "3");
         cache->insert({"key", "SET", {{"nexthop_index", "3"}}}, _cst);
         tasks = cache->resolve(cst);
         ASSERT_EQ(tasks->size(), 1);
@@ -121,9 +121,9 @@ namespace retrycache_test
         std::cout << "Orchdaemon Event Loop 1: " << std::endl;
 
         // Assume the Dependent Executor receives a task to process
-        Task task{"TEST_ROUTE", "SET", {{"NHG", "2"}}};
+        Task task{"TEST_ROUTE", "SET", {{"PIC", "2"}}};
         oftenFail->addToSync(task);
-        // But it fails because of the constraint: nhg 2 doesn't exist
+        // But it fails because of the constraint: PIC 2 doesn't exist
         // It moves the task from m_toSync to m_toRetry
         oftenFail->drain();
 
@@ -150,7 +150,7 @@ namespace retrycache_test
         std::cout << "Orchdaemon Event Loop 2: " << std::endl;
 
         // Assume in the next event loop, the cstResolver a task to process, which resolves the constraint for oftenFail.
-        cstResolver->addToSync({"TEST_NHG", "SET", {{"ID", "2"}}});
+        cstResolver->addToSync({"TEST_PIC", "SET", {{"ID", "2"}}});
         cstResolver->drain();
 
         // Post-resolution
@@ -221,7 +221,7 @@ namespace retrycache_test
 
         // Assume there are a SET and a DEL task in the retry cache
         cache->insert(setTask, cst);
-        Constraint del_cst = make_constraint(RETRY_CST_NHG_REF, "");
+        Constraint del_cst = make_constraint(RETRY_CST_PIC_REF, "");
         cache->insert(delTask, del_cst);
         ASSERT_EQ(cache->getRetryMap().size(), 2);
 
@@ -239,24 +239,24 @@ namespace retrycache_test
     TEST_F(RetryCacheTest, NewSetTask)
     {
         // Assume there is an old SET task in the retry cache
-        Task setTask{"TEST_ROUTE", "SET", {{"NHG", "1"}}};
-        Constraint cst_nhg_1 = make_constraint(RETRY_CST_NHG, "1");
-        cache->insert(setTask, cst_nhg_1);
+        Task setTask{"TEST_ROUTE", "SET", {{"PIC", "1"}}};
+        Constraint cst_pic_1 = make_constraint(RETRY_CST_PIC, "1");
+        cache->insert(setTask, cst_pic_1);
 
         // Assume there is a new task with same field, received by the consumer
-        Task setTask2{"TEST_ROUTE", "SET", {{"NHG", "2"}}};
+        Task setTask2{"TEST_ROUTE", "SET", {{"PIC", "2"}}};
         oftenFail->addToSync(setTask2);
         // Check if it clears the retrycache
         ASSERT_TRUE(cache->getRetryMap().empty());
-        ASSERT_EQ(cache->m_retryKeys.find(cst_nhg_1), cache->m_retryKeys.end());
+        ASSERT_EQ(cache->m_retryKeys.find(cst_pic_1), cache->m_retryKeys.end());
         // Check if it adds the task 2 into the sync queue
         auto iter = oftenFail->m_toSync.find("TEST_ROUTE");
         ASSERT_EQ(iter->second, setTask2);
 
-        // Assume NHG 2 also doesn't exist, the new task fails too
+        // Assume PIC 2 also doesn't exist, the new task fails too
         oftenFail->m_toSync.erase(iter);
-        Constraint cst_nhg2 = make_constraint(RETRY_CST_NHG, "2");
-        cache->insert(setTask2, cst_nhg2);
+        Constraint cst_pic_2 = make_constraint(RETRY_CST_PIC, "2");
+        cache->insert(setTask2, cst_pic_2);
 
         // Assume there is a new SET task with a new field, received by the consumer
         Task setTask3{"TEST_ROUTE", "SET", {{"VRF", "1"}}};
@@ -274,7 +274,7 @@ namespace retrycache_test
         {
             if (fvField(fv) == "VRF")
                 ASSERT_EQ(fvValue(fv), "1");
-            else if (fvField(fv) == "NHG")
+            else if (fvField(fv) == "PIC")
                 ASSERT_EQ(fvValue(fv), "2");
             else
                 ASSERT_FALSE(true); // unexpected field
@@ -287,8 +287,8 @@ namespace retrycache_test
         // simulate by firstly adding a DEL, then adding a SET into the retry cache
         Task delTask{"TEST_ROUTE", "DEL", {{"", ""}}};
         cache->insert(delTask, DUMMY_CONSTRAINT);
-        Task setTask{"TEST_ROUTE", "SET", {{"NHG", "1"}}};
-        Constraint cst = make_constraint(RETRY_CST_NHG, "1");
+        Task setTask{"TEST_ROUTE", "SET", {{"PIC", "1"}}};
+        Constraint cst = make_constraint(RETRY_CST_PIC, "1");
         cache->insert(setTask, cst);
 
         ASSERT_EQ(cache->getRetryMap().size(), 2);
@@ -308,7 +308,7 @@ namespace retrycache_test
         {
             if (fvField(fv) == "VRF")
                 ASSERT_EQ(fvValue(fv), "1");
-            else if (fvField(fv) == "NHG")
+            else if (fvField(fv) == "PIC")
                 ASSERT_EQ(fvValue(fv), "1");
              else
                 ASSERT_FALSE(true); // unexpected field

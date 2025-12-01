@@ -1171,7 +1171,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                     if (removeRoutePost(ctx) || rc_inserted)
+                    if (removeRoutePost(ctx) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1182,7 +1182,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
-                     if (addRoutePost(ctx, nhg) || rc_inserted)
+                    if (addRoutePost(ctx, nhg) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;

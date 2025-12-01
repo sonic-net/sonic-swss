@@ -189,22 +189,31 @@ bool Orch::addToRetry(const std::string &executorName, const Task &task, const C
     return false;
 }
 
-size_t Orch::retryToSync(const std::string &executorName, size_t threshold)
+/**
+ * @brief Check the consumer's RetryCache, if the set of resolved constraints is not empty,
+ * query RetryMap for failed tasks indexed by these resolved constraints,
+ * and move them back to the consumer's SyncMap, such that they can be retried in the next iteration.
+ * @param executorName - name of the consumer
+ * @param quota - maximum number of tasks to be moved back to SyncMap in a single call
+ * @return number of tasks moved back to SyncMap
+ */
+size_t Orch::retryToSync(const std::string &executorName, size_t quota)
 {
     auto retryCache = getRetryCache(executorName);
 
-    if (!retryCache || threshold <= 0)
+    // directly return 0 if no retry cache for this executor or quota is non-positive
+    if (!retryCache || quota <= 0)
         return 0;
 
     std::unordered_set<Constraint>& constraints = retryCache->getResolvedConstraints();
 
     size_t count = 0;
 
-    while (!constraints.empty() && count < threshold)
+    while (!constraints.empty() && count < quota)
     {
         auto cst = *constraints.begin();
 
-        auto tasks = retryCache->resolve(cst, threshold - count);
+        auto tasks = retryCache->resolve(cst, quota - count);
 
         count += tasks->size();
 
@@ -812,7 +821,8 @@ string Orch::objectReferenceInfo(
 
 void Orch::doTask()
 {
-
+    // limit the number of tasks moved from RetryMap to SyncMap in one iteration 
+    // to avoid starvation of new tasks in SyncMap
     auto threshold = gBatchSize == 0 ? 30000 : gBatchSize;
 
     size_t count = 0;

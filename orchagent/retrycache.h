@@ -10,21 +10,15 @@ using namespace swss;
 enum ConstraintType
 {
     RETRY_CST_DUMMY,
-    RETRY_CST_NHG,          // nhg doesn't exist
-    RETRY_CST_NHG_REF,      // nhg refcnt nonzero
     RETRY_CST_PIC,          // context doesn't exist
-    RETRY_CST_PIC_REF,      // context refcnt nonzero
-    RETRY_CST_ECMP          // ecmp resources exhausted
+    RETRY_CST_PIC_REF      // context refcnt nonzero
 };
 
 static inline std::ostream& operator<<(std::ostream& os, ConstraintType t) {
     switch(t) {
         case ConstraintType::RETRY_CST_DUMMY:   return os << "RETRY_CST_DUMMY";
-        case ConstraintType::RETRY_CST_NHG:   return os << "RETRY_CST_NHG";
-        case ConstraintType::RETRY_CST_NHG_REF:   return os << "RETRY_CST_NHG_REF";
         case ConstraintType::RETRY_CST_PIC: return os << "RETRY_CST_PIC";
         case ConstraintType::RETRY_CST_PIC_REF:  return os << "RETRY_CST_PIC_REF";
-        case ConstraintType::RETRY_CST_ECMP:   return os << "RETRY_CST_ECMP";
         default:           return os << "UNKNOWN";
     }
 }

@@ -183,9 +183,9 @@ public:
     size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
 
     /**
-     * Move a task to retry cache for future processing
-     * @param task a task tuple
-     * @param cst the constraint for the task
+     * @brief Add the failed task and its constraint to the consumer's RetryCache
+     * @param task - the task that has failed due to the unmet constraint
+     * @param cst - the unmet constraint that blocks the task from being retried
      */
     bool addToRetry(const Task &task, const Constraint &cst);
 
@@ -322,19 +322,30 @@ public:
     RetryCache* getRetryCache(const std::string &executorName);
     ConsumerBase* getConsumerBase(const std::string &executorName);
 
-    // Add a task and its constraint to the retry cache 
+    /** 
+     * @brief Add the failed task and its constraint to the consumer's RetryCache
+     * @param executorName - name of the consumer
+     * @param task - the task that has failed due to the unmet constraint
+     * @param cst - the unmet constraint that blocks the task from being retried
+     * @return true only if the consumer has initialized a retry cache and the task is successfully added into it
+     */
     bool addToRetry(const std::string &executorName, const Task &task, const Constraint &cst);
 
-    /** Delete tasks whose constraints are resolved in this executor's retry cache , then add them back to its m_toSync.
-     * @param executorName name of the executor (actually a ConsumerBase instance)
-     * @param cst task constraint **/
-    virtual size_t retryToSync(const std::string &executorName, size_t threshold=30000);
+    /** 
+     * @brief Check the consumer's RetryCache for pending tasks with constraints already resolved.
+     * If any, move them from RetryMap back to SyncMap, such that they can be retried when the consumer's execute() method is invoked.
+     * Make sure to limit the number of tasks added to SyncMap in one call, to avoid starvation of new tasks in SyncMap.
+     * @param executorName - name of the consumer
+     * @param quota - maximum number of tasks to be moved back to SyncMap in a single call
+     */
+    virtual size_t retryToSync(const std::string &executorName, size_t quota=30000);
 
-    /** Notify the executor that the constraint is already resolved
-     * @param retryOrch the orch to be notified
-     * @param executorName name of the executor to be notified
-     * @param cst the constraint that can be resolved
-     * **/
+    /** 
+     * @brief Notify the consumer that the constraint is already resolved
+     * @param retryOrch - the consumer's Orch instance, used to get the consumer's RetryCache
+     * @param executorName - name of the consumer to be notified
+     * @param cst - the constraint that is resolved
+     */
     virtual void notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst);
 
     /**
