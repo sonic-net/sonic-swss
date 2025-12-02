@@ -1321,8 +1321,10 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             if (priority_route_updated)
             {
                 MonitorUpdate update;
+                update.monitoring_type = monitoring;
                 update.prefix = ipPrefix;
                 update.state = MONITOR_SESSION_STATE_UNKNOWN;
+                update.custom_bfd_state = SAI_BFD_SESSION_STATE_INIT;
                 update.vnet = vnet;
                 updateVnetTunnelCustomMonitor(update);
                 return true;
@@ -2316,7 +2318,8 @@ void VNetRouteOrch::updateCustomBfdState(const IpAddress& monitoring_ip, const s
     }
     else
     {
-        SWSS_LOG_WARN("Unknown BFD state: %s", state.c_str());
+        /* VNetRouteOrch only processes Up/Down states from MonitorOrch */
+        SWSS_LOG_DEBUG("Ignoring BFD state: %s", state.c_str());
         return;
     }
 
@@ -2807,7 +2810,15 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
 
     if(monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD)
     {
-        monitor_info_[vnet][prefix][monitor].custom_bfd_state = custom_bfd_state;
+        if (state == SAI_BFD_SESSION_STATE_INIT)
+        {
+            updateRoute = true;
+            config_update = true;
+        }
+        else
+        {
+            monitor_info_[vnet][prefix][monitor].custom_bfd_state = custom_bfd_state;
+        }
     }
 
     auto route = syncd_tunnel_routes_[vnet].find(prefix);
