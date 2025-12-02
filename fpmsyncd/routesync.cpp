@@ -112,10 +112,14 @@ enum {
 
 enum {
     ROUTE_ENCAP_SRV6_UNSPEC            = 0,
-    ROUTE_ENCAP_SRV6_VPN_SID           = 1,
+    ROUTE_ENCAP_SRV6_SIDS              = 1,
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
-    ROUTE_ENCAP_SRV6_PIC_ID            = 3,
-    ROUTE_ENCAP_SRV6_NH_ID             = 4,
+    ROUTE_ENCAP_SRV6_PIC_ID                 = 3,
+    ROUTE_ENCAP_SRV6_NH_ID                  = 4,
+    ROUTE_ENCAP_SRV6_ENCAP_SIDLIST_NAME     = 5,
+    ROUTE_ENCAP_SRV6_ENCAP_SIDLIST_LEN      = 6,
+    ROUTE_ENCAP_SRV6_ENCAP_SIDLIST          = 7,
+    ROUTE_ENCAP_SRV6_NUM_SIDS               = 8,
 };
 
 #define MAX_MULTIPATH_NUM 514
@@ -271,13 +275,32 @@ void RouteSync::parseEncapSrv6SteerRoute(struct rtattr *tb, string &vpn_sid,
     struct rtattr *tb_encap[256] = {};
     char vpn_sid_buf[MAX_ADDR_SIZE + 1] = {0};
     char src_addr_buf[MAX_ADDR_SIZE + 1] = {0};
+    uint8_t num_segs = 1;
+    struct in6_addr segs_buf[256] = {0};
+    bool is_first_sid = true;
 
     parseRtAttrNested(tb_encap, 256, tb);
 
-    if (tb_encap[ROUTE_ENCAP_SRV6_VPN_SID])
+    if (tb_encap[ROUTE_ENCAP_SRV6_NUM_SIDS])
     {
-        vpn_sid += inet_ntop(AF_INET6, RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_VPN_SID]),
-                             vpn_sid_buf, MAX_ADDR_SIZE);
+        num_segs = *(uint8_t *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_NUM_SIDS]);
+    }
+
+    if (tb_encap[ROUTE_ENCAP_SRV6_SIDS])
+    {
+        memset(segs_buf, 0, sizeof(segs_buf));
+        memcpy(segs_buf, (char *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_SIDS]),
+                                          num_segs * 16);
+
+        for (int i = 0; i < num_segs; i++)
+        {
+            if (!is_first_sid)
+                vpn_sid += "|";
+
+            vpn_sid += inet_ntop(AF_INET6, &segs_buf[i], vpn_sid_buf, MAX_ADDR_SIZE);
+
+            is_first_sid = false;
+        }
     }
 
     if (tb_encap[ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR])
@@ -1290,13 +1313,16 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         }
         else
         {
+            string pathStr = vpn_sid_str;
+            boost::algorithm::replace_all(pathStr, "|", ",");
+
             /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
             Srv6SidListTableFieldValueTupleWrapper fvw{srv6SidListTableKey};
-            fvw.path = vpn_sid_str;
+            fvw.path = pathStr;
 
             setTable(fvw, m_srv6SidListTable);
             SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
-                           srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+                           srv6SidListTableKey.c_str(), pathStr.c_str());
 
             m_srv6_sidlist_refcnt[srv6SidListTableKey] = 1;
             SWSS_LOG_INFO("SID list '%s' created and refcount initialized to 1",
