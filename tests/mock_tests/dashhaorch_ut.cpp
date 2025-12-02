@@ -18,6 +18,37 @@ namespace dashhaorch_ut
 
     using namespace mock_orch_test;
 
+    class MockBfdOrch : public BfdOrch
+    {
+    public:
+
+        MockBfdOrch(DBConnector* db, DBConnector* state_db) 
+            : BfdOrch(db, APP_BFD_SESSION_TABLE_NAME, TableConnector(state_db, STATE_BFD_SESSION_TABLE_NAME)) {}
+
+        void createSoftwareBfdSession(
+            const std::string& key,
+            const std::vector<swss::FieldValueTuple>& data) override
+        {
+            createSoftwareBfdSession_invoked_times++;
+        }
+
+        void removeSoftwareBfdSession(
+            const std::string& key) override
+        {
+            removeSoftwareBfdSession_invoked_times++;
+        }
+
+        void removeAllSoftwareBfdSessions() override
+        {
+            removeAllSoftwareBfdSessions_invoked_times++;
+        }
+
+        uint32_t createSoftwareBfdSession_invoked_times = 0;
+        uint32_t removeSoftwareBfdSession_invoked_times = 0;
+        uint32_t removeAllSoftwareBfdSessions_invoked_times = 0;
+
+    };
+
     class DashHaOrchTestable : public DashHaOrch
     {
     public:
@@ -27,6 +58,20 @@ namespace dashhaorch_ut
     class DashHaOrchTest : public MockOrchTest
     {
     protected:
+        std::unique_ptr<MockBfdOrch> m_mockBfdOrch;
+
+        void PostSetUp() override
+        {
+            m_mockBfdOrch = std::make_unique<MockBfdOrch>(m_app_db.get(), m_state_db.get());
+
+            vector<string> dash_ha_tables = {
+                APP_DASH_HA_SET_TABLE_NAME,
+                APP_DASH_HA_SCOPE_TABLE_NAME
+            };
+            m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
+            gDirectory.set(m_dashHaOrch);
+            ut_orch_list.push_back((Orch **)&m_dashHaOrch);
+        }
 
         void ApplySaiMock()
         {
@@ -96,6 +141,31 @@ namespace dashhaorch_ut
                                 {"dp_channel_probe_interval_ms", "1000"},
                                 {"dp_channel_probe_fail_threshold", "3"}
                             }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void UpdatePeerIp(std::string peer_ip)
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            std::vector<std::pair<std::string, std::string>> fields = {{"version", "2"}};
+            if (!peer_ip.empty()) {
+                fields.push_back({"peer_ip", peer_ip});
+            }
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            fields
                         }
                     }
                 )
@@ -463,6 +533,57 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
+        void CreateSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
+        {
+            auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
+
+            vector<FieldValueTuple> bfd_session_data = {
+                {"local_addr", "192.168.1.1"},
+                {"tx_interval", "1000"},
+                {"rx_interval", "1000"},
+                {"multiplier", "3"},
+                {"type", "async_active"},
+                {"multihop", "true"}
+            };
+
+            bfd_consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            bfd_session_key,
+                            SET_COMMAND,
+                            bfd_session_data
+                        }
+                    }
+                )
+            );
+
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*bfd_consumer.get());
+        }
+
+        void deleteSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
+        {
+            auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
+
+            bfd_consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            bfd_session_key,
+                            DEL_COMMAND,
+                            {}
+                        }
+                    }
+                )
+            );
+
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*bfd_consumer.get());
+        }
+
         void HaSetEvent(sai_ha_set_event_t event_type)
         {
             mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
@@ -586,6 +707,23 @@ namespace dashhaorch_ut
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
         RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdatePeerIp)
+    {
+        CreateHaSet();
+        UpdatePeerIp("192.168.2.100");
+
+        auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        dash::types::IpAddress peer_ip;
+        to_pb("192.168.2.100", peer_ip);
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("invalid_ip");
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("");
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
     }
 
     TEST_F(DashHaOrchTest, InvalidIpAddresses)
@@ -852,5 +990,81 @@ namespace dashhaorch_ut
 
         HaSetScopeUnspecified();
         CreateHaScope();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingEni)
+    {
+        CreateEniScopeHaSet();
+        CreateHaScope();
+
+        CreateSoftwareBfdSession();
+
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 0);
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+
+        SetHaScopeHaRole("dead");
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_DEAD, SAI_DASH_HA_STATE_DEAD);
+        EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 0);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingDpu)
+    {
+        CreateHaSet();
+        CreateHaScope();
+
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        // bfd sessions should be created when ha_state is set to active
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        CreateSoftwareBfdSession("default:default:192.168.1.101");
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 2);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 2);
+
+        deleteSoftwareBfdSession("default:default:192.168.1.101");
+        EXPECT_EQ(m_mockBfdOrch->removeSoftwareBfdSession_invoked_times, 1);
+        EXPECT_EQ(m_dashHaOrch->getBfdSessionPendingCreation().size(), 1);
+
+        // bfd sessions should be removed immediately when ha_role is set to dead
+        SetHaScopeHaRole("dead");
+        EXPECT_EQ(m_mockBfdOrch->removeAllSoftwareBfdSessions_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, BfdSessionHandlingNoHaScope)
+    {
+        CreateHaSet();
+
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        CreateHaScope();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        SetHaScopeHaRole();
+        HaScopeEvent(SAI_HA_SCOPE_EVENT_STATE_CHANGED,
+                    SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
     }
 }

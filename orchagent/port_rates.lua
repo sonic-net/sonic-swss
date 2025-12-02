@@ -120,6 +120,24 @@ local function find_lanes_and_serdes(interface_name)
     return count, lane_speed, serdes
 end
 
+-- find the max T - Maximum FEC histogram bin with non-zero count
+-- return max T value
+
+local function find_maxT(port)
+    local maxT = -1
+    for i = 0, 15 do
+        local fec_cwi = 'SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S' .. i
+        local fec_cwi_val = redis.call('HGET', counters_table_name .. ':' .. port, fec_cwi)
+        if fec_cwi_val then
+            fec_cwi_val = tonumber(fec_cwi_val) or 0
+            if fec_cwi_val > 0 then
+                maxT = i
+            end
+        end
+    end
+    return maxT
+end
+
 local function compute_rate(port)
 
     local state_table = rates_table_name .. ':' .. port .. ':' .. 'PORT'
@@ -128,6 +146,7 @@ local function compute_rate(port)
 
     -- FEC BER
     local fec_corr_bits, fec_uncorr_frames
+    local maxT = -1
     local fec_corr_bits_ber_new, fec_uncorr_bits_ber_new = -1, -1
     -- HLD review suggest to use the statistical average when calculate the post fec ber
     local rs_average_frame_ber = 1e-8
@@ -213,6 +232,8 @@ local function compute_rate(port)
         else
             logit("FEC counters or lane info not found on " .. port)
         end
+
+        maxT = find_maxT(port)
     else
         redis.call('HSET', state_table, 'INIT_DONE', 'COUNTERS_LAST')
     end
@@ -226,7 +247,7 @@ local function compute_rate(port)
     redis.call('HSET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_OUT_OCTETS_last', out_octets)
 
     -- do not update FEC related stat if we dont have it
-    
+
     if not fec_corr_bits or not fec_uncorr_frames or not fec_corr_bits_ber_new or
        not fec_uncorr_bits_ber_new then
         logit("FEC counters not found on " .. port)
@@ -243,6 +264,7 @@ local function compute_rate(port)
     redis.call('HSET', rates_table_name .. ':' .. port, 'SAI_PORT_STAT_IF_FEC_NOT_CORRECTABLE_FARMES_last', fec_uncorr_frames)
     redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_PRE_BER', fec_corr_bits_ber_new)
     redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_POST_BER', fec_uncorr_bits_ber_new)
+    redis.call('HSET', rates_table_name .. ':' .. port, 'FEC_MAX_T', maxT)
 end
 
 local n = table.getn(KEYS)
