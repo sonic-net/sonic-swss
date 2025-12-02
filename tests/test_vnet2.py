@@ -106,8 +106,8 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "")
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "", scope="default")
+        vnet_obj.check_default_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1001')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
@@ -240,8 +240,8 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '9.8.8.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '1002', "")
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1002', "", scope="default")
+        vnet_obj.check_default_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1002')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.8.8.9')
         vnet_obj.fetch_exist_entries(dvs)
@@ -342,8 +342,8 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '19.19.19.19')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '1003', "", '', advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1003', "", 'default', advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        vnet_obj.check_default_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1003')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '19.19.19.19')
 
