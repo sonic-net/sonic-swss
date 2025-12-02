@@ -3252,7 +3252,7 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
         check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
 
-        #Route should come up with secondary endpoints.
+        # Route should come up with secondary endpoints.
         update_bfd_session_state(dvs, '9.1.0.3', 'Up')
         update_bfd_session_state(dvs, '9.1.0.4', 'Up')
 
