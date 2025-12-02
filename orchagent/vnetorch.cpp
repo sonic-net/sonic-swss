@@ -2810,7 +2810,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
 
     if(monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD)
     {
-        if (state == SAI_BFD_SESSION_STATE_INIT)
+        if (custom_bfd_state == SAI_BFD_SESSION_STATE_INIT)
         {
             updateRoute = true;
             config_update = true;
