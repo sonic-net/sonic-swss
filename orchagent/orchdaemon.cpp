@@ -377,7 +377,7 @@ bool OrchDaemon::init()
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch, gSwitchOrch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
@@ -647,6 +647,7 @@ bool OrchDaemon::init()
     }
     else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
 	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
+             || (platform == CLX_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
@@ -681,6 +682,7 @@ bool OrchDaemon::init()
 
         if ((platform == MRVL_PRST_PLATFORM_SUBSTRING) ||
 	    (platform == MRVL_TL_PLATFORM_SUBSTRING) ||
+	    (platform == CLX_PLATFORM_SUBSTRING) ||
 	    (platform == NPS_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
@@ -1281,7 +1283,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
-    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_dpu_appDb, dash_vnet_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_vnet_orch);
 
     vector<string> dash_tables = {
@@ -1292,7 +1294,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashOrch *dash_orch = new DashOrch(m_dpu_appDb, dash_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_orch);
 
     vector<string> dash_ha_tables = {
@@ -1310,7 +1312,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_ROUTE_GROUP_TABLE_NAME
     };
 
-    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_dpu_appDb, dash_route_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_route_orch);
 
     vector<string> dash_acl_tables = {
@@ -1320,27 +1322,28 @@ bool DpuOrchDaemon::init()
         APP_DASH_ACL_GROUP_TABLE_NAME,
         APP_DASH_ACL_RULE_TABLE_NAME
     };
-    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_dpu_appDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_acl_orch);
 
     vector<string> dash_tunnel_tables = {
         APP_DASH_TUNNEL_TABLE_NAME
     };
-    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_dpu_appDb, dash_tunnel_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_tunnel_orch);
 
     vector<string> dash_meter_tables = {
         APP_DASH_METER_POLICY_TABLE_NAME,
         APP_DASH_METER_RULE_TABLE_NAME
     };
-    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, m_dpu_appstateDb, dash_zmq_server);
+
+    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_dpu_appDb, dash_meter_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
 
     vector<string> dash_port_map_tables = {
         APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
         APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
     };
-    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_applDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_dpu_appDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_port_map_orch);
 
     addOrchList(dash_acl_orch);
