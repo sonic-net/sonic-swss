@@ -63,14 +63,19 @@ typedef unordered_map<string, vector<string>> mrouter_ports;
 
 enum class L2mcSuppressType {
     UNKNOWN_IPV4,
-    LINK_LOCAL
+    IPV4_LINK_LOCAL,
+    UNKNOWN_IPV6,
+    IPV6_LINK_LOCAL
 };
 
 struct SuppressionGroupInfo 
 {
-    sai_object_id_t group_id;
+    sai_object_id_t ipv4_group_id;
+    sai_object_id_t ipv6_group_id;
     bool unknown_ipv4_enabled = false;
-    bool link_local_enabled = false;
+    bool ipv4_link_local_enabled = false;
+    bool unknown_ipv6_enabled = false;
+    bool ipv6_link_local_enabled = false;
 };
 
 class L2mcOrch : public Orch, public Observer
@@ -86,7 +91,7 @@ public:
     bool hasL2mcGroup(string vlan, const L2mcGroupKey&);
     sai_object_id_t getL2mcGroupId(string vlan, const L2mcGroupKey&);
     
-    bool bake() override;
+    //bool bake() override;
     void increaseL2mcMemberRefCount(string vlan, const L2mcGroupKey&);
     void decreaseL2mcMemberRefCount(string vlan, const L2mcGroupKey&);
     bool isMemberRefCntZero(string vlan, const L2mcGroupKey&) const;
@@ -95,12 +100,13 @@ public:
     bool RemoveL2mcEntrys(Port &vlan);
     bool RemoveL2mcGroupMembers(const L2mcGroupKey&, string vlan);
     bool isSuppressionEnabled(string vlan_alias) const;
-    void removeMrouterPortFromL2mcEntries(string vlan, string mrouterport);
+    void removeMrouterPortFromL2mcEntries(string vlan, string mrouterport,string protocol);
 
 private:
 
     L2mcEntryTables m_syncdL2mcEntries;
-    mrouter_ports mrouter_ports_per_vlan;
+    mrouter_ports mrouter_ports_ipv4_per_vlan;
+    mrouter_ports mrouter_ports_ipv6_per_vlan;
     vector<string> m_snoop_enabled_vlans;
     vector<string> m_pend_snoop_enabled_vlans;
     sai_object_id_t  m_pend_l2mc_group_id = SAI_NULL_OBJECT_ID;  
@@ -123,12 +129,17 @@ private:
 
     bool AddL2mcMrouterPort(const L2mcGroupKey &l2mc_grpKey, string vlan, Port &port);
     bool RemoveL2mcMrouterPort(const L2mcGroupKey &l2mc_grpKey, string vlan, string port);
-    bool addMrouterPortToL2mcEntries(string vlan, Port &port);
+    bool addMrouterPortToL2mcEntries(string vlan, Port &port,string protocol);
     //void removeMrouterPortFromL2mcEntries(string vlan, string mrouterport);
     bool dealOptimisedMuliticastFlood(string vlan,bool flag);
     bool dealLinkLocalGroupsSuppress(string vlan,bool flag);
     bool handleL2mcSuppression(const string& vlan_alias, bool enable, L2mcSuppressType type);
 
+    std::string getSuppressionTypeStr(L2mcSuppressType type);
+    bool setL2mcSuppressionAttribute(L2mcSuppressType type, bool enable, const SuppressionGroupInfo &info, sai_attribute_t &attr);
+    bool createL2mcGroup(const std::string &vlan_alias, const L2mcGroupKey &l2mcKey, Port &vlan, Port &port, bool is_ipv6);
+    bool isSuppressionUnchanged(L2mcSuppressType type, bool enable, const SuppressionGroupInfo &info);
+    void updateSuppressionInfo(L2mcSuppressType type, bool enable, SuppressionGroupInfo &info);
 };
 
 #endif /* SWSS_L2MCORCH_H */

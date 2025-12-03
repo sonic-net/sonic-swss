@@ -19,85 +19,34 @@
 using namespace std;
 using namespace swss;
 
+#define MLD_IP_IPV4_AFI 1
+#define MLD_IP_IPV6_AFI 2
+
 L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
     Orch(tables),
     m_cfgL2McGlobalTable(confDb, CFG_L2MC_TABLE_NAME),
+    m_cfgL2McMldGlobalTable(confDb, CFG_MLD_L2MC_TABLE_NAME),
     m_cfgL2McStaticTable(confDb, CFG_L2MC_STATIC_TABLE_NAME),
+    m_cfgL2McMldStaticTable(confDb, CFG_MLD_L2MC_STATIC_TABLE_NAME),
     m_cfgL2McMrouterTable(confDb, CFG_L2MC_MROUTER_TABLE_NAME),
+    m_cfgL2McMldMrouterTable(confDb, CFG_MLD_L2MC_MROUTER_TABLE_NAME),
     m_stateVlanTable(statDb, STATE_VLAN_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
     m_stateInterfaceTableName(statDb,STATE_INTERFACE_TABLE_NAME),
     m_statel2mcdLocalMemberTable(statDb, STATE_L2MC_MEMBER_TABLE_NAME),
     m_statel2mcdLocalMrouterTable(statDb,STATE_L2MC_MROUTER_TABLE_NAME),
     m_cfgLagMemberTable(confDb, CFG_LAG_MEMBER_TABLE_NAME),
+    m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
     m_appPortTable(applDb, APP_PORT_TABLE_NAME),
     m_appLagTable(applDb,APP_LAG_TABLE_NAME),
     m_appL2mcVlanTable(applDb,APP_L2MC_VLAN_TABLE_NAME),
     m_appL2mcGrpMemTable(applDb,APP_L2MC_MEMBER_TABLE_NAME),
     m_appL2mcMrouterTable(applDb,APP_L2MC_MROUTER_TABLE_NAME),
-    m_appL2mcSuppressTableProducer(applDb,APP_L2MC_SUPPRESS_TABLE_NAME),
-    l2mcMouterReplayDone(false),
-    l2mcGrpMemReplayDone(false),
-    l2mcVlanReplayDone(false),
-    m_warmstart(false)
+    m_appL2mcSuppressTableProducer(applDb,APP_L2MC_SUPPRESS_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
-
-    WarmStart::initialize("l2mcmgrd", "l2mcd");
-    WarmStart::checkWarmStart("l2mcmgrd", "l2mcd");
-    m_warmstart = WarmStart::isWarmStart();
-    if (m_warmstart)
-    {
-        getL2mcVlanEntry(m_l2mcVlanentry);
-        getStateGrpMemEntry(m_l2mcGrpMementry);
-        getStateMrouterEntry(m_l2mcMrouterentry);
-        WarmStart::setWarmStartState("l2mcmgrd", WarmStart::INITIALIZED);
-        SWSS_LOG_NOTICE("Starting in warmstart mode");
-
-        vector<string> l2mcVlanKeys, l2mcGrpMemKeys, l2mcMouterKeys;
-        m_cfgL2McGlobalTable.getKeys(l2mcVlanKeys);
-        m_cfgL2McStaticTable.getKeys(l2mcGrpMemKeys);
-        m_cfgL2McMrouterTable.getKeys(l2mcMouterKeys);
-
-        if (l2mcVlanKeys.empty())
-        {
-            l2mcVlanReplayDone = true;
-        }
-        if (l2mcGrpMemKeys.empty())
-        {
-            l2mcGrpMemReplayDone = true;
-        }
-        if (l2mcMouterKeys.empty())
-        {
-            l2mcMouterReplayDone = true;
-        }
-        if (l2mcVlanReplayDone && l2mcGrpMemReplayDone && l2mcMouterReplayDone)
-        {
-            for (auto itg = m_l2mcGrpMementry.begin(); itg != m_l2mcGrpMementry.end(); itg++)
-            {
-                removeL2mcGrpMemEntry(itg->first);
-            }
-            for (auto itm = m_l2mcMrouterentry.begin(); itm != m_l2mcMrouterentry.end(); itm++)
-            {
-                removeL2mcMrouterEntry(itm->first);
-            }
-            for (auto its = m_l2mcVlanentry.begin(); its != m_l2mcVlanentry.end(); its++)
-            {
-                removeL2mcVlanEntry(its->first);
-            }
-
-            m_l2mcVlanentry.clear();
-            m_l2mcGrpMementry.clear();
-            m_l2mcMrouterentry.clear();
-            WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
-        }
-    }
-    else
-    {
-        WarmStart::setWarmStartState("l2mcmgrd", WarmStart::WSDISABLED);
-    }
 
     SWSS_LOG_INFO("Add REDIS DB L2mc entry notification support");
     m_l2mcNotificationConsumer = new swss::NotificationConsumer(statDb, "L2MC_NOTIFICATIONS_REMOTE");
@@ -113,163 +62,6 @@ L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     auto l2mcCfgparaDoneNotificatier = new Notifier(m_l2mcCfgparaDoneNotificationConsumer, this, "L2MC_CONFIG_PARA_DONE");
     Orch::addExecutor(l2mcCfgparaDoneNotificatier);
 
-}
-
-void L2McMgr::getL2mcVlanEntry(map<string, string> &entry)
-{
-    vector<string> l2mcLocalVlanKeys;
-    string id = "";
-    m_appL2mcVlanTable.getKeys(l2mcLocalVlanKeys);
-    for (auto l2mc_localVlanName : l2mcLocalVlanKeys)
-    {
-        m_appL2mcVlanTable.hget(l2mc_localVlanName, "id", id);
-        entry[l2mc_localVlanName] = id;
-    }
-}
-
-bool L2McMgr::findL2mcVlanEntry(string key)
-{
-    for (char &c: key) {if (c=='|') {c=':';}}
-    for (auto its = m_l2mcVlanentry.begin(); its != m_l2mcVlanentry.end(); its++)
-    {
-        if (its->first == key)
-            return true;
-    }
-
-    return false;
-}
-
-void L2McMgr::removeL2mcVlanEntry(string key)
-{
-    L2MCD_CONFIG_MSG msg;
-    int vlan_id = stoi(key.substr(4).c_str());
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-    msg.op_code = L2MCD_OP_DISABLE;
-    msg.vlan_id = vlan_id;
-    sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
-    m_appL2mcVlanTable.del(key);
-
-    for (auto its = m_l2mcentry.begin(); its != m_l2mcentry.end(); its++)
-    {
-        size_t pos = its->first.find("|");
-        if (key != its->first.substr(0, pos))
-            continue;
-        string tmp_str = its->first.substr(pos+1);
-        pos = tmp_str.find("|");
-        if (pos != std::string::npos)
-            removeL2mcGrpMemEntry(its->first);
-        else
-            removeL2mcMrouterEntry(its->first);
-
-    }
-}
-
-void L2McMgr::getStateGrpMemEntry(map<string, string> &entry)
-{
-    vector<string> l2mcLocalMemKeys;
-    string type_str = "";
-    m_statel2mcdLocalMemberTable.getKeys(l2mcLocalMemKeys);
-    for (auto l2mc_localMemName : l2mcLocalMemKeys)
-    {
-        m_statel2mcdLocalMemberTable.hget(l2mc_localMemName, "type", type_str);
-        if (type_str == "static")
-        {
-            entry[l2mc_localMemName] = type_str;
-            m_l2mcentry[l2mc_localMemName] = type_str;
-        }
-    }
-}
-
-bool L2McMgr::findStateGrpMemEntry(string key)
-{
-    for (auto its = m_l2mcGrpMementry.begin(); its != m_l2mcGrpMementry.end(); its++)
-    {
-        if (its->first == key)
-            return true;
-    }
-
-    return false;
-}
-
-void L2McMgr::removeL2mcGrpMemEntry(string key)
-{
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-    //Vlan100|0.0.0.0|224.10.10.10|Ethernet36
-    size_t pos = key.find(CONFIGDB_KEY_SEPARATOR);
-    string vlanKey = key.substr(4,pos-4);
-    string key2 = key.substr(pos+1);
-    pos = key2.find(CONFIGDB_KEY_SEPARATOR);
-    string sipKey = key2.substr(0,pos);
-    string key3 = key2.substr(pos+1);
-    pos = key3.find(CONFIGDB_KEY_SEPARATOR);
-    string ipKey = key3.substr(0,pos);
-    string iname = key3.substr(pos+1);
-
-    int vlan_id = stoi(vlanKey.c_str());
-    msg.op_code = L2MCD_OP_DISABLE;
-    msg.vlan_id = vlan_id;
-    msg.count=1;
-    memcpy(msg.gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-    memcpy(msg.saddr,sipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-    memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
-
-    sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
-    std::vector<FieldValueTuple> fvVector;
-    if (m_statel2mcdLocalMemberTable.get(key, fvVector))
-        m_statel2mcdLocalMemberTable.del(key);
-    for (char &c : key) { if (c == '|') {c = ':';}}
-    m_appL2mcGrpMemTable.del(key);
-}
-
-void L2McMgr::getStateMrouterEntry(map<string, string> &entry)
-{
-    vector<string> l2mcLocalMrouterKeys;
-    string type_str = "";
-    m_statel2mcdLocalMrouterTable.getKeys(l2mcLocalMrouterKeys);
-    for (auto l2mc_localMrouterName : l2mcLocalMrouterKeys)
-    {
-        m_statel2mcdLocalMrouterTable.hget(l2mc_localMrouterName, "type", type_str);
-        if (type_str == "static")
-        {
-            entry[l2mc_localMrouterName] = type_str;
-            m_l2mcentry[l2mc_localMrouterName] = type_str;
-        }
-    }
-}
-
-bool L2McMgr::findStateMrouterEntry(string key)
-{
-    for (auto its = m_l2mcMrouterentry.begin(); its != m_l2mcMrouterentry.end(); its++)
-    {
-        if (its->first == key)
-            return true;
-    }
-
-    return false;
-}
-
-void L2McMgr::removeL2mcMrouterEntry(string key)
-{
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-    //Vlan100|Ethernet49
-    size_t pos = key.find(CONFIGDB_KEY_SEPARATOR);
-    string vlanKey = key.substr(4,pos-4);
-    string iname = key.substr(pos+1);
-
-    int vlan_id = stoi(vlanKey.c_str());
-    msg.op_code = L2MCD_OP_DISABLE;
-    msg.vlan_id = vlan_id;
-    msg.count=1;
-    memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
-
-    sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
-    std::vector<FieldValueTuple> fvVector;
-    if (m_statel2mcdLocalMrouterTable.get(key, fvVector))
-        m_statel2mcdLocalMrouterTable.del(key);
-    for (char &c : key) { if (c == '|') {c = ':';}}
-    m_appL2mcMrouterTable.del(key);
 }
 
 void L2McMgr::doTask(Consumer &consumer)
@@ -312,33 +104,22 @@ void L2McMgr::doTask(Consumer &consumer)
         SWSS_LOG_NOTICE("enter table %s", table.c_str());
         doL2McSuppressUpdateTask(consumer);
     }
+    else if (table == CFG_MLD_L2MC_TABLE_NAME)
+    {
+        SWSS_LOG_NOTICE("enter table %s", table.c_str());
+        doL2McMldGlobalTask(consumer);
+    }
+    else if (table == CFG_MLD_L2MC_STATIC_TABLE_NAME)
+    {
+        doL2McMldStaticEntryTask(consumer);
+    }
+    else if (table == CFG_MLD_L2MC_MROUTER_TABLE_NAME)
+    {
+        doL2McMldMrouterUpdateTask(consumer);
+    }
     else
     {
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
-    }
-
-    if (m_warmstart && l2mcVlanReplayDone && l2mcGrpMemReplayDone && l2mcMouterReplayDone)
-    {
-        for (auto itg = m_l2mcGrpMementry.begin(); itg != m_l2mcGrpMementry.end(); itg++)
-        {
-            removeL2mcGrpMemEntry(itg->first);
-        }
-        for (auto itm = m_l2mcMrouterentry.begin(); itm != m_l2mcMrouterentry.end(); itm++)
-        {
-            removeL2mcMrouterEntry(itm->first);
-        }
-        for (auto its = m_l2mcVlanentry.begin(); its != m_l2mcVlanentry.end(); its++)
-        {
-            removeL2mcVlanEntry(its->first);
-        }
-
-        m_l2mcVlanentry.clear();
-        m_l2mcGrpMementry.clear();
-        m_l2mcMrouterentry.clear();
-        m_l2mcentry.clear();
-        /* reset flag to avoid action times */
-        m_warmstart = false;
-        WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
     }
 }
 
@@ -356,6 +137,9 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
 
+        bool enabled = false;
+        bool exist_enabled = false;
+
         string key = kfvKey(t);
         string op = kfvOp(t);
         string vlanKey = key.substr(4); // Remove Vlan prefix
@@ -365,6 +149,14 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
         msg.query_max_response_time=10;
         msg.last_member_query_interval=1000;
         msg.version=2;
+        msg.afi = MLD_IP_IPV4_AFI;
+
+        auto vlan_igmp_snooping_it = m_vlanIgmpSnoopMap.find(vlan_id);
+        if (vlan_igmp_snooping_it != m_vlanIgmpSnoopMap.end())
+        {
+            exist_enabled = true;
+        }
+
         if (op == SET_COMMAND)
         {
             msg.op_code = L2MCD_OP_ENABLE;
@@ -382,6 +174,177 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
                 if (fvField(i) == "enabled")
                 {
                     msg.enabled = (fvValue(i) == "true") ? 1 : 0;
+                    if (!msg.enabled)
+                    {
+                        msg.op_code = L2MCD_OP_DISABLE;
+                        enabled = false;
+                        m_vlanIgmpSnoopMap.erase(vlan_id);
+                    }
+                    else
+                    {
+                        enabled = true;
+                        m_vlanIgmpSnoopMap[vlan_id] = true;
+                    }
+                }
+                else if (fvField(i) == "querier")
+                {
+                    msg.querier = (fvValue(i) == "true") ? 1 : 0;
+                }
+                else if (fvField(i) == "fast-leave")
+                {
+                    msg.fast_leave = (fvValue(i) == "true") ? 1 : 0; 
+                }
+                else if (fvField(i) == "version")
+                {
+                    msg.version = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "query-interval")
+                {
+                    msg.query_interval = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "last-member-query-interval")
+                {
+                    msg.last_member_query_interval = stoi(fvValue(i).c_str());
+                }
+                else if (fvField(i) == "query-max-response-time")
+                {
+                    msg.query_max_response_time = stoi(fvValue(i).c_str());
+                }
+                vector<PORT_ATTR> port_list;
+                msg.count =  getVlanMembers(key,port_list);
+                j=0;
+                for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
+                {
+                    memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
+                    SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
+                }
+            }
+
+            if (!exist_enabled && !enabled)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
+        else 
+        {
+            if (!exist_enabled)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            msg.op_code = L2MCD_OP_DISABLE;
+            msg.vlan_id = vlan_id;
+            m_vlanIgmpSnoopMap.erase(vlan_id);
+        }
+
+        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d, afi:%d ,msg sizeof %lu", 
+               op.c_str(), key.c_str(), vlan_id, msg.version, msg.querier,msg.query_interval,
+               msg.last_member_query_interval, msg.query_max_response_time ,
+               msg.fast_leave,msg.count ,msg.afi,sizeof(msg));
+        sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
+
+        /* sync dynamic member entry to l2mcd */
+        // string type_str = "";
+        // int cmd_type = 0;
+        // m_statel2mcdLocalMemberTable.getKeys(l2mcLocalMemKeys);
+        // for (auto l2mc_localMemName : l2mcLocalMemKeys)
+        // {
+        //     m_statel2mcdLocalMemberTable.hget(l2mc_localMemName, "type", type_str);
+        //     if (type_str=="remote")cmd_type = 0;
+        //     if (type_str=="dynamic")cmd_type = 2;
+        //     if (type_str=="static")cmd_type = 3;
+        //     SWSS_LOG_INFO("MEMBER_REPLAY %s %s", l2mc_localMemName.c_str(), type_str.c_str());
+        //     size_t pos=key.find('|');
+        //     auto vlan_name = key.substr(0,pos);
+        //     if (vlan_id == stoi(vlan_name.substr(4)))
+        //     {
+        //         doL2McProcRemoteEntries("SET",l2mc_localMemName,"|", cmd_type);
+        //     }
+        // }
+
+        /* sync dynamic mrouter entry to l2mcd */
+        // string mr_type_str = "";
+        // m_statel2mcdLocalMrouterTable.getKeys(l2mcLocalMrouterKeys);
+        // for (auto l2mc_localMrouterName : l2mcLocalMrouterKeys)
+        // {
+        //     m_statel2mcdLocalMrouterTable.hget(l2mc_localMrouterName, "type", mr_type_str);
+        //     SWSS_LOG_INFO("MROUTER_REPLAY %s %s", l2mc_localMrouterName.c_str(), mr_type_str.c_str());
+        //     if (mr_type_str == "static") continue;
+        //     size_t pos=key.find('|');
+        //     auto vlan_name = key.substr(0,pos);
+        //     if (vlan_id == stoi(vlan_name.substr(4)))
+        //     {
+        //         doL2McProcRemoteMrouterEntries("SET",l2mc_localMrouterName,"|");
+        //     }
+        // }
+        it = consumer.m_toSync.erase(it);
+    }
+
+}
+
+void L2McMgr::doL2McMldGlobalTask(Consumer &consumer)
+{
+    L2MCD_CONFIG_MSG msg;
+    int j=0;      
+    SWSS_LOG_ENTER();
+    vector<string> l2mcLocalMemKeys;
+    vector<string> l2mcLocalMrouterKeys;
+
+    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        bool enabled = false;
+        bool exist_enabled = false;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        string vlanKey = key.substr(4); // Remove Vlan prefix
+        int vlan_id = stoi(vlanKey.c_str());
+        msg.cmd_code=0;
+        msg.query_interval=125;
+        msg.query_max_response_time=10;
+        msg.last_member_query_interval=1000;
+        msg.version=2;
+        msg.afi = MLD_IP_IPV6_AFI;
+
+        auto vlan_mld_snooping_it = m_vlanMldSnoopMap.find(vlan_id);
+        if (vlan_mld_snooping_it != m_vlanMldSnoopMap.end())
+        {
+            exist_enabled = true;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            msg.op_code = L2MCD_OP_ENABLE;
+            msg.vlan_id = vlan_id;
+            auto tuples = kfvFieldsValues(t);
+            auto its = std::find_if( tuples.begin(), tuples.end(), [](const FieldValueTuple& v){ return v.first == "enabled";} );
+            if ( its == tuples.end()) {
+                SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP  %s is not enabled",key.c_str());
+                it = consumer.m_toSync.erase(it);
+                return;
+            }
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "enabled")
+                {
+                    msg.enabled = (fvValue(i) == "true") ? 1 : 0;
+                    if (!msg.enabled)
+                    {
+                        msg.op_code = L2MCD_OP_DISABLE;
+                        enabled = false;
+                        m_vlanMldSnoopMap.erase(vlan_id);
+                    }
+                    else
+                    {
+                        enabled = true;
+                        m_vlanMldSnoopMap[vlan_id] = true;
+                    }
                 }
                 else if (fvField(i) == "querier")
                 {
@@ -416,41 +379,50 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
                     SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
                 }
 
-                if (m_warmstart && findL2mcVlanEntry(key))
-                {
-                    (void)m_l2mcVlanentry.erase(key);
-                }
+            }
+
+            if (!exist_enabled && !enabled)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
         }
         else 
         {
+            if (!exist_enabled)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             msg.op_code = L2MCD_OP_DISABLE;
             msg.vlan_id = vlan_id;
+            m_vlanMldSnoopMap.erase(vlan_id);
         }
-        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d", 
+
+        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d, afi:%d", 
                op.c_str(), key.c_str(), vlan_id, msg.version, msg.querier,msg.query_interval,
                msg.last_member_query_interval, msg.query_max_response_time ,
-               msg.fast_leave,msg.count);
+               msg.fast_leave,msg.count ,msg.afi);
         sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
 
         /* sync dynamic member entry to l2mcd */
-        string type_str = "";
-        int cmd_type = 0;
-        m_statel2mcdLocalMemberTable.getKeys(l2mcLocalMemKeys);
-        for (auto l2mc_localMemName : l2mcLocalMemKeys)
-        {
-            m_statel2mcdLocalMemberTable.hget(l2mc_localMemName, "type", type_str);
-            if (type_str=="remote")cmd_type = 0;
-            if (type_str=="dynamic")cmd_type = 2;
-            if (type_str=="static")cmd_type = 3;
-            SWSS_LOG_INFO("MEMBER_REPLAY %s %s", l2mc_localMemName.c_str(), type_str.c_str());
-            size_t pos=key.find('|');
-            auto vlan_name = key.substr(0,pos);
-            if (vlan_id == stoi(vlan_name.substr(4)))
-            {
-                doL2McProcRemoteEntries("SET",l2mc_localMemName,"|", cmd_type);
-            }
-        }
+        // string type_str = "";
+        // int cmd_type = 0;
+        // m_statel2mcdLocalMemberTable.getKeys(l2mcLocalMemKeys);
+        // for (auto l2mc_localMemName : l2mcLocalMemKeys)
+        // {
+        //     m_statel2mcdLocalMemberTable.hget(l2mc_localMemName, "type", type_str);
+        //     if (type_str=="remote")cmd_type = 0;
+        //     if (type_str=="dynamic")cmd_type = 2;
+        //     if (type_str=="static")cmd_type = 3;
+        //     SWSS_LOG_INFO("MEMBER_REPLAY %s %s", l2mc_localMemName.c_str(), type_str.c_str());
+        //     size_t pos=key.find('|');
+        //     auto vlan_name = key.substr(0,pos);
+        //     if (vlan_id == stoi(vlan_name.substr(4)))
+        //     {
+        //         doL2McProcRemoteEntries("SET",l2mc_localMemName,"|", cmd_type);
+        //     }
+        // }
 
         /* sync dynamic mrouter entry to l2mcd */
         // string mr_type_str = "";
@@ -470,66 +442,73 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 
-    if (m_warmstart && consumer.m_toSync.empty())
-    {
-        l2mcVlanReplayDone = true;
-    }
-
 }
 
-void  L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
+void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
 {
-    vector<string> l2mcMrouterKeys;
-    L2MCD_CONFIG_MSG msg;
     SWSS_LOG_ENTER();
-    string srcip="0.0.0.0";
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
 
-    // "L2MC_MROUTER|Vlan20|Ethernet36"
-    m_cfgL2McMrouterTable.getKeys(l2mcMrouterKeys);
-    if (vlan_id != "")
+    vector<string> l2mcIgmpMrouterKeys, l2mcMldMrouterKeys;
+    //"L2MC_MROUTER|Vlan10|Ethernet5" |"MLD_L2MC_MROUTER|Vlan10|Ethernet5"
+    m_cfgL2McMrouterTable.getKeys(l2mcIgmpMrouterKeys);
+    m_cfgL2McMldMrouterTable.getKeys(l2mcMldMrouterKeys);
+
+    vector<pair<string, int>> l2mcMrouterKeys;
+
+    for (auto &k : l2mcIgmpMrouterKeys)
+        l2mcMrouterKeys.push_back({k, MLD_IP_IPV4_AFI});
+    for (auto &k : l2mcMldMrouterKeys)
+        l2mcMrouterKeys.push_back({k, MLD_IP_IPV6_AFI});
+
+    for (auto &item : l2mcMrouterKeys)
     {
-        for (auto l2mc_Mrouter : l2mcMrouterKeys)
-        {
-            size_t pos = l2mc_Mrouter.find('|');
-            string vlanKey = l2mc_Mrouter.substr(4,pos-4);
-            string iname  = l2mc_Mrouter.substr(pos+1);
-            SWSS_LOG_INFO("vlanKey %s, vlan_id %s", vlanKey.c_str(), vlan_id.c_str());
-            if (vlanKey != vlan_id)
-            {
-                SWSS_LOG_INFO("Vlan not match, continue");
-                continue;
-            }
-            int vlan_id = stoi(vlanKey.c_str());
-            msg.vlan_id = vlan_id;
-            msg.count=1;
-            memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
-            msg.op_code = L2MCD_OP_ENABLE;
-            SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: [key:%s] %s vlan:%d", l2mc_Mrouter.c_str(),msg.ports[0].pnames,vlan_id);
-            sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        const string &entry = item.first;
+        int afi = item.second;
+
+        // entry example: "Vlan10|Ethernet5"
+        vector<string> tokens = swss::tokenize(entry, '|');
+        if (tokens.size() != 2) {
+            SWSS_LOG_ERROR("Invalid MROUTER key: %s", entry.c_str());
+            continue;
         }
-    }
-    else if (ifname != "")
-    {
-        for (auto l2mc_Mrouter : l2mcMrouterKeys)
-        {
-            size_t pos = l2mc_Mrouter.find('|');
-            string vlanKey = l2mc_Mrouter.substr(4,pos-4);
-            string iname  = l2mc_Mrouter.substr(pos+1);
-            SWSS_LOG_INFO("vlanKey %s, vlan_id %s", vlanKey.c_str(), vlan_id.c_str());
-            if (iname != ifname)
-            {
-                SWSS_LOG_INFO("Interface not match, continue");
-                continue;
-            }
-            int vlan_id = stoi(vlanKey.c_str());
-            msg.vlan_id = vlan_id;
-            msg.count=1;
-            memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
-            msg.op_code = L2MCD_OP_ENABLE;
-            SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: [key:%s] %s vlan:%d", l2mc_Mrouter.c_str(),msg.ports[0].pnames,vlan_id);
-            sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        SWSS_LOG_NOTICE("Invalid MROUTER key: %s", entry.c_str());
+
+        string vlanStr = tokens[0];
+        string iname   = tokens[1];
+        SWSS_LOG_NOTICE("MROUTER vlanStr: %s iname : %s", vlanStr.c_str(),iname.c_str());
+
+        
+        const string vlanNum = vlanStr.substr(4);
+        int vlanid = 0;
+
+        try {
+            vlanid = stoi(vlanNum);
         }
+        catch (exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid VLAN number in MROUTER key: %s", vlanStr.c_str());
+            continue;
+        }
+
+
+        //SWSS_LOG_INFO("vlanKey %s, vlan_id %s ,iname %s ", vlanKey.c_str(), vlan_id.c_str(), iname.c_str());
+
+        if (!vlan_id.empty() && vlanNum != vlan_id)
+            continue;
+        if (!ifname.empty()  && iname  != ifname)
+            continue;
+
+        L2MCD_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.vlan_id = vlanid;
+        msg.count   = 1;
+        msg.afi     = afi;
+        msg.op_code = L2MCD_OP_ENABLE;
+
+        memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+
+        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: [key:%s] port:%s vlan:%d afi:%d",entry.c_str(), msg.ports[0].pnames, msg.vlan_id, msg.afi);
+        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
     }
 }
 
@@ -552,14 +531,11 @@ void  L2McMgr::doL2McMrouterUpdateTask(Consumer &consumer)
         int vlan_id = stoi(vlanKey.c_str());
         msg.vlan_id = vlan_id;
         msg.count=1;
+        msg.afi = MLD_IP_IPV4_AFI;
         memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
         if (op == SET_COMMAND)
         {
             msg.op_code = L2MCD_OP_ENABLE;
-            if (m_warmstart && findStateMrouterEntry(key))
-            {
-                (void)m_l2mcMrouterentry.erase(key);
-            }
         }
         else
         {
@@ -567,86 +543,122 @@ void  L2McMgr::doL2McMrouterUpdateTask(Consumer &consumer)
         }
         for (auto i : kfvFieldsValues(t))
         {
-
+            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg.op_code );
         }
         SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: op:%s [key:%s] %s vlan:%d", op.c_str(), key.c_str(),msg.ports[0].pnames,vlan_id);
         sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
         it = consumer.m_toSync.erase(it);
     }
 
-    if (m_warmstart && consumer.m_toSync.empty())
+}
+
+void  L2McMgr::doL2McMldMrouterUpdateTask(Consumer &consumer)
+{
+    L2MCD_CONFIG_MSG msg;
+    SWSS_LOG_ENTER();
+
+    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
     {
-        l2mcMouterReplayDone = true;
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        size_t pos = key.find('|');
+        string vlanKey = key.substr(4,pos-4); 
+        string iname  = key.substr(pos+1);
+        int vlan_id = stoi(vlanKey.c_str());
+        msg.vlan_id = vlan_id;
+        msg.count=1;
+        msg.afi = MLD_IP_IPV6_AFI;
+        memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        if (op == SET_COMMAND)
+        {
+            msg.op_code = L2MCD_OP_ENABLE;
+        }
+        else
+        {
+            msg.op_code = L2MCD_OP_DISABLE;
+        }
+        for (auto i : kfvFieldsValues(t))
+        {
+            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg.op_code );
+        }
+        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: op:%s [key:%s] %s vlan:%d afi:%d", op.c_str(), key.c_str(),msg.ports[0].pnames,vlan_id,msg.afi);
+        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        it = consumer.m_toSync.erase(it);
     }
 }
 
 void L2McMgr::updateGrpStaticEntry(const string vlan_id, const string ifname)
 {
-    //m_cfgL2McMrouterTable
-    vector<string> l2mcGrpStaticKeys;
-    L2MCD_CONFIG_MSG msg;
     SWSS_LOG_ENTER();
-    string srcip="0.0.0.0";
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
 
-    // "L2MC_STATIC_MEMBER|Vlan20|224.10.10.10|Ethernet69"
-    m_cfgL2McStaticTable.getKeys(l2mcGrpStaticKeys);
-    if (vlan_id != "")
-    {
-        for (auto l2mc_GrpStatic : l2mcGrpStaticKeys)
-        {
-            size_t pos = l2mc_GrpStatic.find('|');
-            string vlanKey = l2mc_GrpStatic.substr(4,pos-4);
-            string key2 = l2mc_GrpStatic.substr(pos+1);
-            pos = key2.find('|');
-            string ipKey = key2.substr(0,pos);
-            string iname = key2.substr(pos+1);
-            msg.op_code = L2MCD_OP_ENABLE;
+    vector<string> l2mcGrpStaticKeys, l2mcIgmpGrpStaticKeys , l2mcMldStaticKeys;
+    string srcipv4="0.0.0.0";
+    string srcipv6="0::0";
 
-            SWSS_LOG_INFO("vlanKey %s, vlan_id %s", vlanKey.c_str(), vlan_id.c_str());
-            if (vlanKey != vlan_id)
-            {
-                SWSS_LOG_INFO("Vlan not match, continue");
-                continue;
-            }
-            int vlan_id = stoi(vlanKey.c_str());
-            msg.vlan_id = vlan_id;
-            msg.count=1;
-            memcpy(msg.gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-            memcpy(msg.saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-            memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
-            SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s]  GA:%s Port:%s vlan:%d", l2mc_GrpStatic.c_str(), ipKey.c_str(), iname.c_str(), vlan_id);
-            sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
-        }
-    }
-    else if (ifname != "")
+    m_cfgL2McStaticTable.getKeys(l2mcIgmpGrpStaticKeys);
+    m_cfgL2McMldStaticTable.getKeys(l2mcMldStaticKeys);
+    l2mcGrpStaticKeys.insert(l2mcGrpStaticKeys.end(), l2mcIgmpGrpStaticKeys.begin(), l2mcIgmpGrpStaticKeys.end());
+    l2mcGrpStaticKeys.insert(l2mcGrpStaticKeys.end(), l2mcMldStaticKeys.begin(), l2mcMldStaticKeys.end());
+
+    for (const auto &entry : l2mcGrpStaticKeys)
     {
-        for (auto l2mc_GrpStatic : l2mcGrpStaticKeys)
-        {
-            size_t pos = l2mc_GrpStatic.find('|');
-            string vlanKey = l2mc_GrpStatic.substr(4,pos-4);
-            string key2 = l2mc_GrpStatic.substr(pos+1);
-            pos = key2.find('|');
-            string ipKey = key2.substr(0,pos);
-            string iname = key2.substr(pos+1);
-            msg.op_code = L2MCD_OP_ENABLE;
-            SWSS_LOG_INFO("vlanKey %s, vlan_id %s", vlanKey.c_str(), vlan_id.c_str());
-            if (iname != ifname)
-            {
-                SWSS_LOG_INFO("Interface not match, continue");
-                continue;
-            }
-            int vlan_id = stoi(vlanKey.c_str());
-            msg.vlan_id = vlan_id;
-            msg.count=1;
-            memcpy(msg.gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-            memcpy(msg.saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-            memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
-            SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s]  GA:%s Port:%s vlan:%d", l2mc_GrpStatic.c_str(), ipKey.c_str(), iname.c_str(), vlan_id);
-            sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        SWSS_LOG_NOTICE("StaticEntry entry");
+        vector<string> tokens = swss::tokenize(entry, '|'); 
+
+        string vlanKey = tokens[0];
+        string ipKey   = tokens[1];
+        string iname   = tokens[2];
+        SWSS_LOG_NOTICE("StaticEntry entry vlanKey %s ipKey %s iname %s",vlanKey.c_str(),ipKey.c_str(),iname.c_str());
+
+        const string vlanNum = vlanKey.substr(4);
+        int vlanid = 0;
+
+        try {
+            vlanid = stoi(vlanNum);
         }
+        catch (exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid VLAN number in MROUTER key: %s", vlanNum.c_str());
+            continue;
+        }
+
+
+        if (!vlan_id.empty() && vlanNum != vlan_id)
+            continue;
+        if (!ifname.empty()  && iname   != ifname)
+            continue;
+
+        L2MCD_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(msg));
+
+        msg.op_code = L2MCD_OP_ENABLE;
+        msg.vlan_id = vlanid;
+        msg.count   = 1;
+
+        memcpy(msg.gaddr, ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+
+        if (IpAddress(ipKey).isV4())
+        {
+            msg.afi = MLD_IP_IPV4_AFI;
+            memcpy(msg.saddr, srcipv4.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        }
+        else
+        {
+            msg.afi = MLD_IP_IPV6_AFI;
+            memcpy(msg.saddr, srcipv6.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        }
+
+        memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+
+        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s] GA:%s Port:%s vlan:%d afi:%d", entry.c_str(), ipKey.c_str(), iname.c_str(), msg.vlan_id, msg.afi);
+        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s] GA:%s Port:%s vlan:%d afi:%d", entry.c_str(), ipKey.c_str(), iname.c_str(), msg.vlan_id, msg.afi);
+
+        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
     }
-    
 }
 
 void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
@@ -675,10 +687,6 @@ void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
             msg.op_code = L2MCD_OP_ENABLE;
             size_t idx = key.find('|');
             string tmp_key = key.substr(0, idx+1) + srcip + key.substr(idx);
-            if (m_warmstart && findStateGrpMemEntry(tmp_key))
-            {
-                (void)m_l2mcGrpMementry.erase(key);
-            }
         }
         else
         {
@@ -688,6 +696,7 @@ void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
         msg.count=1;
         memcpy(msg.gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
         memcpy(msg.saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        msg.afi = MLD_IP_IPV4_AFI;
         memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
         for (auto i : kfvFieldsValues(t))
         {
@@ -698,106 +707,189 @@ void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 
-    if (m_warmstart && consumer.m_toSync.empty())
-    {
-        l2mcGrpMemReplayDone = true;
-    }
 }
 
-void L2McMgr::doVlanUpdateTask (Consumer &consumer)
+void L2McMgr::doL2McMldStaticEntryTask(Consumer &consumer)
 {
     L2MCD_CONFIG_MSG msg;
-    int j=0;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-
     SWSS_LOG_ENTER();
+    string srcip="0::0";
+    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        size_t pos = key.find('|');
+        string vlanKey = key.substr(4,pos-4); 
+        string key2 = key.substr(pos+1);
+        pos = key2.find('|');
+        string ipKey = key2.substr(0,pos);
+        string iname = key2.substr(pos+1);
+        msg.cmd_code=0;
+        int vlan_id = stoi(vlanKey.c_str());
+        if (op == SET_COMMAND)
+        {
+            msg.op_code = L2MCD_OP_ENABLE;
+        }
+        else
+        {
+            msg.op_code = L2MCD_OP_DISABLE;
+        }
+        msg.vlan_id = vlan_id;
+        msg.count=1;
+        msg.afi = MLD_IP_IPV6_AFI;
+        memcpy(msg.gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        memcpy(msg.saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        for (auto i : kfvFieldsValues(t))
+        {
+            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg.op_code );
+        }
+        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC op:%s [key:%s]  GA:%s Port:%s vlan:%d afi %d", op.c_str(), key.c_str(), ipKey.c_str(), iname.c_str(), vlan_id, msg.afi);
+        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        
+        
+        it = consumer.m_toSync.erase(it);
+    }
+
+}
+void L2McMgr::sendL2McSnoopConfig(
+        const std::string &key,
+        int vlan_id,
+        int afi,
+        const std::string &op,
+        const std::vector<FieldValueTuple> &tuples)
+{
+    L2MCD_CONFIG_MSG msg;
+    memset(&msg, 0, sizeof(msg));
+
+    msg.afi = afi;
+    msg.vlan_id = vlan_id;
+    msg.cmd_code=0;
+    msg.query_interval=125;
+    msg.query_max_response_time=10;
+    msg.last_member_query_interval=1000;
+    msg.version=2;
+
+    if (op == SET_COMMAND)
+    {
+        msg.op_code = L2MCD_OP_ENABLE;
+
+        for (auto &i : tuples)
+        {
+            if (fvField(i) == "enabled")
+                msg.enabled = (fvValue(i) == "true") ? 1 : 0;
+
+            else if (fvField(i) == "querier")
+                msg.querier = (fvValue(i) == "true") ? 1 : 0;
+
+            else if (fvField(i) == "fast-leave")
+                msg.fast_leave = (fvValue(i) == "true") ? 1 : 0;
+
+            else if (fvField(i) == "version")
+                msg.version = stoi(fvValue(i));
+
+            else if (fvField(i) == "query-interval")
+                msg.query_interval = stoi(fvValue(i));
+
+            else if (fvField(i) == "query-max-response-time")
+                msg.query_max_response_time = stoi(fvValue(i));
+
+            else if (fvField(i) == "last-member-query-interval")
+                msg.last_member_query_interval = stoi(fvValue(i));
+        }
+
+        /* get port members */
+        vector<PORT_ATTR> port_list;
+        msg.count =  getVlanMembers(key,port_list);
+        int j=0;
+        for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
+        {
+            memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
+            SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
+        }
+    }
+    else
+    {
+        msg.op_code = L2MCD_OP_DISABLE;
+    }
+
+    SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d, afi:%d", 
+               op.c_str(), key.c_str(), vlan_id, msg.version, msg.querier,msg.query_interval,
+               msg.last_member_query_interval, msg.query_max_response_time ,
+               msg.fast_leave,msg.count,afi);
+
+    sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
+}
+
+void L2McMgr::doVlanUpdateTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+    auto it = consumer.m_toSync.begin();
+
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
         auto key = kfvKey(t);
-        auto op = kfvOp(t);
-        /* Ensure the key starts with "Vlan" otherwise ignore */
+        auto op  = kfvOp(t);
+
         if (strncmp(key.c_str(), VLAN_PREFIX, 4))
         {
             SWSS_LOG_ERROR("Invalid key format. No 'Vlan' prefix: %s", key.c_str());
             return;
         }
 
-        string vlanKey = key.substr(4); // Remove Vlan prefix
-        std::vector<FieldValueTuple> tuples;
-        m_cfgL2McGlobalTable.get(key.c_str(), tuples);
-        auto its = std::find_if( tuples.begin(), tuples.end(), [](const FieldValueTuple& v){ return v.first == "enabled";} );
-        if ( its == tuples.end() ) {
-            SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP  %s is not enabled",key.c_str());
+        string vlanKey = key.substr(4);
+        int vlan_id = stoi(vlanKey);
+
+        bool has_IGMP = false;
+        bool has_MLD = false;
+
+        std::vector<FieldValueTuple> tuples_IGMP;
+        std::vector<FieldValueTuple> tuples_MLD;
+
+        /* IGMP snooping */
+        if (m_cfgL2McGlobalTable.get(key, tuples_IGMP))
+        {
+            auto it_en = std::find_if(
+                tuples_IGMP.begin(), tuples_IGMP.end(),
+                [](auto &t){ return t.first == "enabled"; });
+
+            if (it_en != tuples_IGMP.end() && fvValue(*it_en) == "true")
+                has_IGMP = true;
+        }
+
+        /* MLD snooping */
+        if (m_cfgL2McMldGlobalTable.get(key, tuples_MLD))
+        {
+            auto it_en = std::find_if(
+                tuples_MLD.begin(), tuples_MLD.end(),
+                [](auto &t){ return t.first == "enabled"; });
+
+            if (it_en != tuples_MLD.end() && fvValue(*it_en) == "true")
+                has_MLD = true;
+        }
+
+        if (!has_IGMP && !has_MLD)
+        {
+            SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s has no IPv4 nor IPv6 snooping enabled", key.c_str());
             it = consumer.m_toSync.erase(it);
-            return;
+            continue;
         }
-        
-        int vlan_id = stoi(vlanKey.c_str());
-        msg.cmd_code=0;
-        msg.query_interval=125;
-        msg.query_max_response_time=10;
-        msg.last_member_query_interval=1000;
-        msg.version=2;
-        if (op == SET_COMMAND)
-        {
-            msg.op_code = L2MCD_OP_ENABLE;
-            msg.vlan_id = vlan_id;
-            for (auto i : tuples)
-            {
-                if (fvField(i) == "enabled")
-                {
-                    msg.enabled = (fvValue(i) == "true") ? 1 : 0;
-                }
-                else if (fvField(i) == "querier")
-                {
-                    msg.querier = (fvValue(i) == "true") ? 1 : 0;
-                }
-                else if (fvField(i) == "fast-leave")
-                {
-                    msg.fast_leave = (fvValue(i) == "true") ? 1 : 0; 
-                }
-                else if (fvField(i) == "version")
-                {
-                    msg.version = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "query-interval")
-                {
-                    msg.query_interval = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "last-member-query-interval")
-                {
-                    msg.last_member_query_interval = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "query-max-response-time")
-                {
-                    msg.query_max_response_time = stoi(fvValue(i).c_str());
-                }
-                vector<PORT_ATTR> port_list;
-                msg.count =  getVlanMembers(key,port_list);
-                j=0;
-                for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
-                {
-                    memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
-                    SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
-                }
-            }
-        }
-        else 
-        {
-            msg.op_code = L2MCD_OP_DISABLE;
-            msg.vlan_id = vlan_id;
-        }
-        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d", 
-               op.c_str(), key.c_str(), vlan_id, msg.version, msg.querier,msg.query_interval,
-               msg.last_member_query_interval, msg.query_max_response_time ,
-               msg.fast_leave,msg.count);
-        sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        if (has_IGMP)
+            sendL2McSnoopConfig(
+                key, vlan_id, MLD_IP_IPV4_AFI, op, tuples_IGMP);
+
+        if (has_MLD)
+            sendL2McSnoopConfig(
+                key, vlan_id, MLD_IP_IPV6_AFI, op, tuples_MLD);
+
         it = consumer.m_toSync.erase(it);
     }
 }
-
 
 void L2McMgr::ipcInitL2McMgr()
 {
@@ -853,7 +945,8 @@ int L2McMgr::sendMsgL2Mcd(L2MCD_MSG_TYPE msgType, uint32_t msgLen, void *data)
     if (rc == -1)
     {
 		SWSS_LOG_ERROR("tx_msg send error type:%d len%d",msgType,(int)len);
-    }   
+    }
+    SWSS_LOG_NOTICE("sendMsgL2Mcd tx_msg send type:%d len%d",msgType,(int)len);
     free(tx_msg);
     return rc;
 }
@@ -903,7 +996,6 @@ int L2McMgr::getPortOperState(string if_name)
     if (oper_status.compare(oper_up) == 0) return 1;
     return 0;
 }
-
 
 int  L2McMgr::getL2McPortList(DBConnector *state_db)
 {   
@@ -1219,7 +1311,7 @@ void L2McMgr::doL2McSuppressUpdateTask(Consumer &consumer)
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
-                if (field == "optimised-multicast-flood" || field == "link-local-groups-suppression")
+                if (field == "ipv4-optimised-multicast-flood" || field == "ipv4-link-local-groups-suppression" ||field == "ipv6-optimised-multicast-flood" || field == "ipv6-link-local-groups-suppression")
                 {
                     validFields.push_back(fv);
                     SWSS_LOG_NOTICE("doL2McSuppressUpdateTask : Set %s: %s = %s", vlan_name.c_str(), field.c_str(), value.c_str());
@@ -1274,15 +1366,31 @@ void L2McMgr::doL2McProcRemoteEntries(string op, string key, string key_seperato
     msg.vlan_id = (unsigned int) stoi(vlan_name.substr(4));
     memcpy(msg.saddr,saddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
     memcpy(msg.gaddr,gaddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-    msg.count=1;
-    memcpy(msg.ports[0].pnames, portname.c_str(), L2MCD_IFNAME_SIZE);
-    if (saddr != "0.0.0.0")
+    if (IpAddress(gaddr).isV4())
     {
-        msg.version = IGMP_VERSION_3;
+        msg.afi = MLD_IP_IPV4_AFI;
     }
     else
     {
+        msg.afi = MLD_IP_IPV6_AFI;
+    }
+    msg.count=1;
+    memcpy(msg.ports[0].pnames, portname.c_str(), L2MCD_IFNAME_SIZE);
+    if (IpAddress(gaddr).isV4() && saddr != "0.0.0.0")
+    {
+        msg.version = IGMP_VERSION_3;
+    }
+    else if (IpAddress(gaddr).isV4() && saddr == "0.0.0.0")
+    {
         msg.version = IGMP_VERSION_2;
+    }
+    else if (!IpAddress(gaddr).isV4() && saddr != "0000:0000:0000:0000:0000:0000:0000:0000")
+    {
+        msg.version = MLD_VERSION_2;
+    }
+    else
+    {
+        msg.version = MLD_VERSION_1;
     }
 
     if (op =="SET")
@@ -1313,8 +1421,14 @@ void L2McMgr::doL2McProcRemoteMrouterEntries(string op, string key, string key_s
     auto type = key.substr(pos1+1, pos2-pos1-1);
     auto pos3 = key.find(key_seperator.c_str(), pos2+1);
     auto leave = key.substr(pos2+1, pos3-pos2-1);
+    auto pos4 = key.find(key_seperator.c_str(), pos3+1);
+    auto proctol = key.substr(pos3+1, pos4-pos3-1);
     msg.vlan_id = (unsigned int) stoi(vlan_name.substr(4));
     msg.count=1;
+    if(proctol == "V4")
+        msg.afi = MLD_IP_IPV4_AFI;
+    else
+        msg.afi = MLD_IP_IPV6_AFI;
     memcpy(msg.ports[0].pnames, portname.c_str(), L2MCD_IFNAME_SIZE);
     if (op =="SET")
     {
@@ -1349,13 +1463,20 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
     }
     else if (&consumer == m_l2mcCfgparaDoneNotificationConsumer)
     {
+        SWSS_LOG_INFO("Received l2mc cfgpara notification");
         consumer.pop(op, data, values);
+        SWSS_LOG_INFO("Received l2mcd_sync op  %s data %s",op.c_str(), data.c_str());
         size_t pos = data.find('|');
+        if (pos == string::npos) 
+        {
+            SWSS_LOG_ERROR("Invalid l2mcd_sync data: %s", data.c_str());
+            return;
+        }
         string option = data.substr(0,pos);
         string param = data.substr(pos+1);
         string vlan_id = "";
         string ifname = "";
-        SWSS_LOG_INFO("Received l2mcd_sync option %s vlan_id %s", option.c_str(), param.c_str());
+        SWSS_LOG_INFO("Received l2mcd_sync op  %s option %s vlan_id %s",op.c_str(), option.c_str(), param.c_str());
         if (op == "SNP" && option == "enable")
         {
             vlan_id = param;

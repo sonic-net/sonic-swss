@@ -33,6 +33,9 @@
 
 #define IGMP_VERSION_2 2
 #define IGMP_VERSION_3 3
+#define MLD_VERSION_1 1
+#define MLD_VERSION_2 2
+#define RESTORE_MAX_WAIT_TIME 120
 
 using namespace std;
 using namespace swss;
@@ -51,6 +54,7 @@ public:
     int isPortInitComplete(DBConnector *app_db);
     int getL2McPortList(DBConnector *state_db);
     int getL2McCfgParams(DBConnector *cfgDb);
+    bool isRestoreDone();
   
 
 private:
@@ -65,11 +69,16 @@ private:
     Table m_stateLagTable;
     Table m_appPortTable;
     Table m_appLagTable;
+    Table m_statePortTable;
     Table m_appL2mcVlanTable;
     Table m_appL2mcGrpMemTable;
     Table m_appL2mcMrouterTable;
     Table m_statel2mcdLocalMemberTable;
     Table m_statel2mcdLocalMrouterTable;
+    Table m_cfgL2McMldGlobalTable;
+    Table m_cfgL2McMldStaticTable;
+    Table m_cfgL2McMldMrouterTable;
+
     NotificationConsumer* m_l2mcNotificationConsumer;
     NotificationConsumer* m_l2mcMrouterNotificationConsumer;
     NotificationConsumer* m_l2mcCfgparaDoneNotificationConsumer;
@@ -79,6 +88,8 @@ private:
     map<string, string> m_l2mcVlanentry;
     map<string, string> m_l2mcGrpMementry;
     map<string, string> m_l2mcMrouterentry;
+    map<int, bool> m_vlanIgmpSnoopMap;
+    map<int, bool> m_vlanMldSnoopMap;
     bool l2mcVlanReplayDone;
     bool l2mcGrpMemReplayDone;
     bool l2mcMouterReplayDone;
@@ -87,9 +98,12 @@ private:
     void doTask(Consumer &consumer);
     void doTask(NotificationConsumer &consumer);
     void doL2McGlobalTask(Consumer &consumer);
+    void doL2McMldGlobalTask(Consumer &consumer);
     void doL2McStaticEntryTask(Consumer &consumer);
+    void doL2McMldStaticEntryTask(Consumer &consumer);
     void doVlanUpdateTask (Consumer &consumer);
     void doL2McMrouterUpdateTask(Consumer &consumer);
+    void doL2McMldMrouterUpdateTask(Consumer &consumer);
     void doL2McVlanMemUpdateTask(Consumer &consumer);
     void updateVlanMember(const string vlan_id);
     void updateMrouterEntry(const string vlan_id, const string ifname);
@@ -102,15 +116,8 @@ private:
     void doL2McProcRemoteMrouterEntries(string op, string key, string key_seperator);
     int getVlanMembers(const string &vlanKey, vector<PORT_ATTR>&port_list);
     int getPortOperState(string if_name);
-    void getL2mcVlanEntry(map<string, string> &entry);
-    void getStateMrouterEntry(map<string, string> &entry);
-    void getStateGrpMemEntry(map<string, string> &entry);
-    bool findStateMrouterEntry(string key);
-    bool findStateGrpMemEntry(string key);
-    bool findL2mcVlanEntry(string key);
-    void removeL2mcMrouterEntry(string key);
-    void removeL2mcGrpMemEntry(string key);
-    void removeL2mcVlanEntry(string key);
+    void sendL2McSnoopConfig(const string &key,int vlan_id,int afi,const string &op,const vector<FieldValueTuple> &tuples);
+
 };
 
 }

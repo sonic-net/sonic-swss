@@ -36,7 +36,6 @@ int main(int argc, char **argv)
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting l2mcmgrd ---");
-    SWSS_LOG_NOTICE("lqq enter Starting l2mcmgrd");
 
     try
     {
@@ -44,12 +43,21 @@ int main(int argc, char **argv)
         DBConnector app_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
+        WarmStart::initialize("l2mcmgrd", "l2mcmgrd");
+        WarmStart::checkWarmStart("l2mcmgrd", "l2mcmgrd");
+
+        // SelectableTimer replayCheckTimer(timespec{0, 0});
+        // int pasttime = 0;
+
         // Config DB Tables
         TableConnector conf_l2mc_global_table(&conf_db, CFG_L2MC_TABLE_NAME);
         TableConnector conf_l2mc_static_table(&conf_db, CFG_L2MC_STATIC_TABLE_NAME);
         TableConnector conf_l2mc_mrouter_table(&conf_db, CFG_L2MC_MROUTER_TABLE_NAME);
         TableConnector conf_lag_member_table(&conf_db,  CFG_LAG_MEMBER_TABLE_NAME);
         TableConnector conf_l2mc_suppress_table(&conf_db,  CFG_L2MC_SUPPRESS_TABLE_NAME);
+        TableConnector conf_l2mc_mld_global_table(&conf_db, CFG_MLD_L2MC_TABLE_NAME);
+        TableConnector conf_l2mc_mld_static_table(&conf_db, CFG_MLD_L2MC_STATIC_TABLE_NAME);
+        TableConnector conf_l2mc_mld_mrouter_table(&conf_db,CFG_MLD_L2MC_MROUTER_TABLE_NAME);
         TableConnector state_interface_table(&state_db, STATE_INTERFACE_TABLE_NAME);
         TableConnector state_vlan_table(&state_db, STATE_VLAN_TABLE_NAME);
         TableConnector state_vlan_member_table(&state_db,  STATE_VLAN_MEMBER_TABLE_NAME);
@@ -65,10 +73,14 @@ int main(int argc, char **argv)
             conf_l2mc_mrouter_table,
             conf_lag_member_table,
             conf_l2mc_suppress_table,
+            conf_l2mc_mld_global_table,
+            conf_l2mc_mld_static_table,
+            conf_l2mc_mld_mrouter_table,
             state_interface_table,
             state_vlan_table,
             state_vlan_member_table,
             state_lag_table,
+            state_port_table,
             appl_l2mc_vlan_table,
             appl_l2mc_grpmem_table,
             appl_l2mc_mouter_table,
@@ -85,6 +97,15 @@ int main(int argc, char **argv)
         {
             s.addSelectables(o->getSelectables());
         }
+
+        // bool m_warmstart = WarmStart::isWarmStart();
+        // if (m_warmstart)
+        // {
+        //     replayCheckTimer.setInterval(timespec{1, 0});
+        //     replayCheckTimer.start();
+        //     s.addSelectable(&replayCheckTimer);   
+        // }
+
         SWSS_LOG_NOTICE("L2MCMGrd Start main loop log_debug:%d",swss::Logger::getInstance().getMinPrio());
         while (true)
         {
@@ -102,6 +123,25 @@ int main(int argc, char **argv)
                 l2mcmgr.doTask();
                 continue;
             }
+            // if (sel == &replayCheckTimer)
+            // {
+
+            //     if (pasttime > RESTORE_MAX_WAIT_TIME)
+            //     {
+            //         SWSS_LOG_NOTICE("L2MCMGrd Start RECONCILED ");
+            //         WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
+            //         s.removeSelectable(&replayCheckTimer);
+            //     }
+            //     else
+            //     {
+            //         SWSS_LOG_NOTICE("L2MCMGrd Start pasttime :%d",pasttime);
+            //         pasttime++;
+            //         replayCheckTimer.setInterval(timespec{1, 0});
+            //         // re-start replay check timer
+            //         replayCheckTimer.start();
+            //     }
+            //     continue;
+            // }
 
             auto *c = (Executor *)sel;
             c->execute();
