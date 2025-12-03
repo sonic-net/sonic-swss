@@ -1349,54 +1349,6 @@ void DashOrch::removeEniMapEntry(sai_object_id_t oid, const string &name)
     SWSS_LOG_INFO("Removing ENI map entry for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
 }
 
-void DashOrch::addEniToFC(sai_object_id_t oid, const string &name)
-{
-    if (!m_eni_fc_status)
-    {
-       return ;
-    }
-    auto was_empty = m_eni_stat_work_queue.empty();
-    m_eni_stat_work_queue[oid] = name;
-    if (was_empty)
-    {
-        m_fc_update_timer->start();
-    }
-}
-
-void DashOrch::doTask(SelectableTimer &timer)
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_eni_fc_status)
-    {
-        m_fc_update_timer->stop();
-        return ;
-    }
-
-    for (auto it = m_eni_stat_work_queue.begin(); it != m_eni_stat_work_queue.end(); )
-    {
-        string value;
-        const auto id = sai_serialize_object_id(it->first);
-
-        if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
-        {
-            SWSS_LOG_INFO("Registering FC for ENI: %s, id %s", it->second.c_str(), id.c_str());
-
-            m_eni_stat_manager.setCounterIdList(it->first, CounterType::ENI, m_counter_stats);
-            it = m_eni_stat_work_queue.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
-
-    if (m_eni_stat_work_queue.empty())
-    {
-        m_fc_update_timer->stop();
-    }
-}
-
 dash::types::IpAddress DashOrch::getApplianceVip()
 {
     SWSS_LOG_ENTER();
