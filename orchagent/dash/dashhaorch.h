@@ -74,6 +74,7 @@ protected:
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
     bool register_ha_set_notifier();
     bool register_ha_scope_notifier();
+    bool updateExistingHaSetEntry(const std::string &key, const dash::ha_set::HaSet &entry, sai_object_id_t sai_ha_set_oid);
 
     bool has_dpu_scope();
     bool has_eni_scope();
@@ -98,7 +99,7 @@ protected:
 
     std::unique_ptr<swss::Table> dash_ha_set_result_table_;
     std::unique_ptr<swss::Table> dash_ha_scope_result_table_;
-    
+
     std::unique_ptr<swss::DBConnector> m_dpuStateDbConnector;
     std::unique_ptr<swss::Table> m_dpuStateDbHaSetTable;
     std::unique_ptr<swss::Table> m_dpuStateDbHaScopeTable;
@@ -110,6 +111,7 @@ public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
     const DashBfdSessionTable& getBfdSessionPendingCreation() const { return m_bfd_session_pending_creation; };
+    virtual HaScopeEntry getHaScopeForEni(const std::string& eni);
 };
 
 #endif // DASHHAORCH_H
