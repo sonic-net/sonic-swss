@@ -484,6 +484,20 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 
         ts.push_back(s);
     }
+
+    // check pending tasks in m_toRetry if orch has allocated a retry cache for this consumer
+    auto rc = getOrch() ? getOrch()->getRetryCache(getTableName()) : nullptr;
+    if (rc)
+    {
+        for (auto &tm : rc->getRetryMap())
+        {
+            KeyOpFieldsValuesTuple& tuple = tm.second.second;
+
+            string s = dumpTuple(tuple);
+
+            ts.push_back(s);
+        }
+    }
 }
 
 void Consumer::execute()
