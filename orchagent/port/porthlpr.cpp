@@ -708,6 +708,25 @@ bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std:
         return false;
     }
 
+    // Use SFINAE with enable_if for extensible type handling for serdes.value
+    return parseSerdesValueImpl(serdes, field, value);
+}
+
+// Helper function for JSON string-based serdes (custom_collection)
+template<typename T>
+typename std::enable_if<std::is_same<decltype(T::value), std::string>::value, bool>::type
+PortHelper::parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const
+{
+    serdes.value = value;
+    serdes.is_set = true;
+    return true;
+}
+
+// Helper function for vector<uint32_t>-based serdes (most serdes attributes)
+template<typename T>
+typename std::enable_if<std::is_same<decltype(T::value), std::vector<std::uint32_t>>::value, bool>::type
+PortHelper::parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const
+{
     const auto &serdesList = tokenize(value, ',');
 
     try
@@ -745,6 +764,7 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obplev) &serdes
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obnlev) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1p) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1n) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
 
 
 
@@ -1178,6 +1198,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_REGN_BFM1N)
         {
             if (!this->parsePortSerdes(port.serdes.regn_bfm1n, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_CUSTOM_SERDES_ATTRS)
+        {
+            if (!this->parsePortSerdes(port.serdes.custom_collection, field, value))
             {
                 return false;
             }
