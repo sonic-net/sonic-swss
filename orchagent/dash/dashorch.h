@@ -171,10 +171,8 @@ private:
     std::unique_ptr<swss::Table> m_eni_name_table;
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
-    swss::SelectableTimer* m_fc_update_timer = nullptr;
     DashHaOrch* m_dash_ha_orch = nullptr;
 
-    void doTask(swss::SelectableTimer&);
     void addEniMapEntry(sai_object_id_t oid, const std::string& name);
     void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
     DashCounter<CounterType::ENI> EniCounter;
