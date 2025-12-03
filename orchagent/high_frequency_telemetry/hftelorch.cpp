@@ -355,7 +355,7 @@ std::shared_ptr<HFTelProfile> HFTelOrch::tryGetProfile(const std::string &profil
     return std::shared_ptr<HFTelProfile>();
 }
 
-bool HFTelOrch::isProfileInUse(const std::shared_ptr<HFTelProfile> &profile)
+bool HFTelOrch::isProfileInUse(const std::shared_ptr<HFTelProfile> &profile) const
 {
     SWSS_LOG_ENTER();
 
