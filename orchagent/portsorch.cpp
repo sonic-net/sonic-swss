@@ -7524,7 +7524,8 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
         return removeVlanEndPointIp(vlan, port, end_point_ip);
     }
 
-    gL2mcOrch->removeMrouterPortFromL2mcEntries(vlan.m_alias,port.m_alias);
+    gL2mcOrch->removeMrouterPortFromL2mcEntries(vlan.m_alias,port.m_alias,"V4");
+    gL2mcOrch->removeMrouterPortFromL2mcEntries(vlan.m_alias,port.m_alias,"V6");
     
     sai_object_id_t vlan_member_id;
     sai_vlan_tagging_mode_t sai_tagging_mode;

@@ -25,6 +25,20 @@ extern PortsOrch *gPortsOrch;
 extern L2mcOrch *gL2mcOrch;
 extern PortsOrch*        gPortsOrch;
 
+std::map<std::string, L2mcSuppressType> suppress_type_map = {
+    {"ipv4-optimised-multicast-flood", L2mcSuppressType::UNKNOWN_IPV4},
+    {"ipv4-link-local-groups-suppression", L2mcSuppressType::IPV4_LINK_LOCAL},
+    {"ipv6-optimised-multicast-flood", L2mcSuppressType::UNKNOWN_IPV6},
+    {"ipv6-link-local-groups-suppression", L2mcSuppressType::IPV6_LINK_LOCAL}
+};
+
+std::vector<L2mcSuppressType> suppress_types = {
+    L2mcSuppressType::UNKNOWN_IPV4,
+    L2mcSuppressType::IPV4_LINK_LOCAL,
+    L2mcSuppressType::UNKNOWN_IPV6,
+    L2mcSuppressType::IPV6_LINK_LOCAL
+};
+
 L2mcOrch::L2mcOrch(DBConnector * appDb, vector<string> &tableNames) :
     Orch(appDb, tableNames)
 {
@@ -63,19 +77,20 @@ bool L2mcOrch::isSuppressionEnabled(string vlan_alias) const
 {
     auto it = m_vlan_suppress_info.find(vlan_alias);
     return it != m_vlan_suppress_info.end() &&
-           (it->second.unknown_ipv4_enabled || it->second.link_local_enabled);
+           (it->second.unknown_ipv4_enabled || it->second.ipv4_link_local_enabled 
+            ||it->second.unknown_ipv6_enabled || it->second.ipv6_link_local_enabled );
 }
 
-bool L2mcOrch::bake()
-{
-    SWSS_LOG_ENTER();
+// bool L2mcOrch::bake()
+// {
+//     SWSS_LOG_ENTER();
 
-    addExistingData(APP_L2MC_VLAN_TABLE_NAME);
-    addExistingData(APP_L2MC_MEMBER_TABLE_NAME);
-    addExistingData(APP_L2MC_MROUTER_TABLE_NAME);
+//     // addExistingData(APP_L2MC_VLAN_TABLE_NAME);
+//     // addExistingData(APP_L2MC_MEMBER_TABLE_NAME);
+//     // addExistingData(APP_L2MC_MROUTER_TABLE_NAME);
 
-    return true;
-}
+//     return true;
+// }
 
 bool L2mcOrch::AddL2mcGroupMember(const L2mcGroupKey &l2mc_GrpKey, string vlan_alias, Port &port)
 {
@@ -157,7 +172,12 @@ bool L2mcOrch::RemoveL2mcGroupMember(const L2mcGroupKey &l2mc_GrpKey, string vla
     
     /* Retain l2mc group member from deletion if mrouter port learnt on the
      * same member port where delete request recieved due to IGMP leave*/
-    auto mrouter_ports = mrouter_ports_per_vlan[vlan_alias];
+    vector<string> mrouter_ports;
+    if(l2mc_GrpKey.group_address.isV4())
+        mrouter_ports = mrouter_ports_ipv4_per_vlan[vlan_alias];
+    else
+        mrouter_ports = mrouter_ports_ipv6_per_vlan[vlan_alias];
+
     if(!mrouter_ports.empty())
     {
         auto v = find(mrouter_ports.begin(), mrouter_ports.end(), port.m_alias);
@@ -321,8 +341,15 @@ bool L2mcOrch::AddL2mcEntry(const L2mcGroupKey &l2mcGrpKey, Port &vlan, Port &po
     l2mc_entry.switch_id = gSwitchId;
     copy(l2mc_entry.source, l2mcGrpKey.source_address);
     copy(l2mc_entry.destination, l2mcGrpKey.group_address);
-    l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+
+    if (l2mcGrpKey.group_address.isV4()) {
+        l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    } else {
+        l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+        l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+    }
+
     l2mc_entry.bv_id = vlan.m_vlan_info.vlan_oid;
 
     if(IpAddress(l2mcGrpKey.source_address.to_string()).isZero())
@@ -380,8 +407,13 @@ bool L2mcOrch::RemoveL2mcEntry(const L2mcGroupKey &key, Port &vlan)
     l2mc_entry.switch_id = gSwitchId;
     copy(l2mc_entry.source, key.source_address);
     copy(l2mc_entry.destination, key.group_address);
-    l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    if (key.group_address.isV4()) {
+        l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    } else {
+        l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+        l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+    }
     l2mc_entry.bv_id = vlan.m_vlan_info.vlan_oid;
 
     if(IpAddress(key.source_address.to_string()).isZero())
@@ -447,8 +479,13 @@ bool L2mcOrch::RemoveL2mcEntrys(Port &vlan)
         l2mc_entry.switch_id = gSwitchId;
         copy(l2mc_entry.source, key.source_address);
         copy(l2mc_entry.destination, key.group_address);
-        l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-        l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        if (key.group_address.isV4()) {
+            l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+            l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        } else {
+            l2mc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+            l2mc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+        }
         l2mc_entry.bv_id = vlan.m_vlan_info.vlan_oid;
 
         if(IpAddress(key.source_address.to_string()).isZero())
@@ -644,11 +681,144 @@ bool L2mcOrch::DisableIgmpSnooping(string vlan_alias)
     return true;
 }
 
+// Helper function to set VLAN suppression attributes
+bool L2mcOrch::setL2mcSuppressionAttribute(L2mcSuppressType type, bool enable, const SuppressionGroupInfo &info, sai_attribute_t &attr)
+{
+    switch (type)
+    {
+        case L2mcSuppressType::UNKNOWN_IPV4:
+            attr.value.oid = enable ? info.ipv4_group_id : SAI_NULL_OBJECT_ID;
+            attr.id = SAI_VLAN_ATTR_UNKNOWN_IPV4_MCAST_OUTPUT_GROUP_ID;
+            break;
+        case L2mcSuppressType::IPV4_LINK_LOCAL:
+            attr.value.oid = enable ? info.ipv4_group_id : SAI_NULL_OBJECT_ID;
+            attr.id = SAI_VLAN_ATTR_UNKNOWN_LINKLOCAL_MCAST_OUTPUT_GROUP_ID;
+            break;
+        case L2mcSuppressType::UNKNOWN_IPV6:
+            attr.value.oid = enable ? info.ipv6_group_id : SAI_NULL_OBJECT_ID;
+            attr.id = SAI_VLAN_ATTR_UNKNOWN_IPV6_MCAST_OUTPUT_GROUP_ID;
+            break;
+        case L2mcSuppressType::IPV6_LINK_LOCAL:
+            attr.value.oid = enable ? info.ipv6_group_id : SAI_NULL_OBJECT_ID;
+            attr.id = SAI_VLAN_ATTR_UNKNOWN_LINKLOCAL_MCAST_OUTPUT_GROUP_ID;
+            break;
+        default:
+            SWSS_LOG_ERROR("Unknown L2MC suppression type");
+            return false;
+    }
+
+    return true;
+}
+
+bool L2mcOrch::createL2mcGroup(const std::string &vlan_alias, const L2mcGroupKey &l2mcKey, Port &vlan, Port &port, bool is_ipv6)
+{
+    bool groupCreated = false;
+    Port  mrport;
+    // Create L2MC entry if it's not already present
+    if (m_syncdL2mcEntries.find(vlan.m_alias) == m_syncdL2mcEntries.end())
+    {
+        m_syncdL2mcEntries.emplace(vlan.m_alias, L2mcEntryTable());
+    }
+
+    // Determine which set of router ports to use (IPv4 or IPv6)
+    auto &mrouter_ports = is_ipv6 ? mrouter_ports_ipv6_per_vlan[vlan_alias] : mrouter_ports_ipv4_per_vlan[vlan_alias];
+
+    if (mrouter_ports.empty())
+    {
+        // No router ports, directly add L2MC entry
+        if (!hasL2mcGroup(vlan_alias, l2mcKey))
+        {
+            if (!AddL2mcEntry(l2mcKey, vlan, port))
+            {
+                return false;
+            }
+        }
+    }
+    else
+    {
+        // Iterate over the router ports and add them as group members
+        for (const auto &mrouter : mrouter_ports)
+        {
+            if (!hasL2mcGroup(vlan_alias, l2mcKey))
+            {
+                // If L2MC group doesn't exist, create it and add the first router port
+                if (gPortsOrch->getPort(mrouter, mrport))
+                {
+                    if (AddL2mcEntry(l2mcKey, vlan, mrport))
+                    {
+                        groupCreated = true;
+                    }
+                }
+            }
+            else if (gPortsOrch->getPort(mrouter, mrport) && groupCreated)
+            {
+                // If group is created, add more router ports as members
+                AddL2mcGroupMember(l2mcKey, vlan_alias, mrport);
+            }
+        }
+    }
+
+    return true;
+}
+// Helper function to check if suppression status has changed
+bool L2mcOrch::isSuppressionUnchanged(L2mcSuppressType type, bool enable, const SuppressionGroupInfo &info)
+{
+    switch (type)
+    {
+        case L2mcSuppressType::UNKNOWN_IPV4:
+            return info.unknown_ipv4_enabled == enable;
+        case L2mcSuppressType::IPV4_LINK_LOCAL:
+            return info.ipv4_link_local_enabled == enable;
+        case L2mcSuppressType::UNKNOWN_IPV6:
+            return info.unknown_ipv6_enabled == enable;
+        case L2mcSuppressType::IPV6_LINK_LOCAL:
+            return info.ipv6_link_local_enabled == enable;
+        default:
+            return false;
+    }
+}
+
+// Helper function to update suppression info
+void L2mcOrch::updateSuppressionInfo(L2mcSuppressType type, bool enable, SuppressionGroupInfo &info)
+{
+    switch (type)
+    {
+        case L2mcSuppressType::UNKNOWN_IPV4:
+            info.unknown_ipv4_enabled = enable;
+            break;
+        case L2mcSuppressType::IPV4_LINK_LOCAL:
+            info.ipv4_link_local_enabled = enable;
+            break;
+        case L2mcSuppressType::UNKNOWN_IPV6:
+            info.unknown_ipv6_enabled = enable;
+            break;
+        case L2mcSuppressType::IPV6_LINK_LOCAL:
+            info.ipv6_link_local_enabled = enable;
+            break;
+    }
+}
+
+std::string L2mcOrch::getSuppressionTypeStr(L2mcSuppressType type) 
+{
+    switch (type) {
+        case L2mcSuppressType::UNKNOWN_IPV4:
+            return "UNKNOWN_IPV4";
+        case L2mcSuppressType::IPV4_LINK_LOCAL:
+            return "IPV4_LINK_LOCAL";
+        case L2mcSuppressType::UNKNOWN_IPV6:
+            return "UNKNOWN_IPV6";
+        case L2mcSuppressType::IPV6_LINK_LOCAL:
+            return "IPV6_LINK_LOCAL";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 bool L2mcOrch::handleL2mcSuppression(const std::string &vlan_alias, bool enable, L2mcSuppressType type)
 {
     SWSS_LOG_ENTER();
 
-    Port vlan, port, mrport;
+    Port vlan, port;
     sai_attribute_t attr;
     bzero(&attr, sizeof(attr));
 
@@ -665,7 +835,8 @@ bool L2mcOrch::handleL2mcSuppression(const std::string &vlan_alias, bool enable,
         {
             SWSS_LOG_WARN("VLAN %s not enable IGMP Snooping", vlan_alias.c_str());
             return false;
-        } else 
+        } 
+        else 
         {
             SWSS_LOG_WARN("VLAN %s disable IGMP Snooping, L2MC suppression false, ignore", vlan_alias.c_str());
             return true;
@@ -674,8 +845,7 @@ bool L2mcOrch::handleL2mcSuppression(const std::string &vlan_alias, bool enable,
     
     auto &info = m_vlan_suppress_info[vlan_alias];
 
-    if ((type == L2mcSuppressType::UNKNOWN_IPV4 && info.unknown_ipv4_enabled == enable) ||
-        (type == L2mcSuppressType::LINK_LOCAL && info.link_local_enabled == enable))
+    if (isSuppressionUnchanged(type,enable,info))
     {
         SWSS_LOG_NOTICE("L2MC suppression status unchanged for VLAN %s [%s]", 
                         vlan_alias.c_str(),
@@ -683,67 +853,35 @@ bool L2mcOrch::handleL2mcSuppression(const std::string &vlan_alias, bool enable,
         return true;
     }
 
-
-    if (type == L2mcSuppressType::UNKNOWN_IPV4 )
-    {
-        info.unknown_ipv4_enabled = enable;
-    }
-    else if (type == L2mcSuppressType::LINK_LOCAL)
-    {
-        info.link_local_enabled = enable;
-    }  
-
+    updateSuppressionInfo(type, enable,info);
     
-    if (enable && info.group_id == SAI_NULL_OBJECT_ID)
+    if (enable && info.ipv4_group_id == SAI_NULL_OBJECT_ID)
     {
-        auto l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0.0.0.0"), IpAddress("0.0.0.0"));
-        if (m_syncdL2mcEntries.find(vlan.m_alias) == m_syncdL2mcEntries.end())
+        auto ipv4_l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0.0.0.0"), IpAddress("0.0.0.0"));
+
+        if(!createL2mcGroup(vlan_alias, ipv4_l2mcKey,vlan,port,false))
         {
-            m_syncdL2mcEntries.emplace(vlan.m_alias, L2mcEntryTable());
+            return false;
         }
 
-        auto &mrouter_ports = mrouter_ports_per_vlan[vlan_alias];
-        bool groupCreated = false;
+        info.ipv4_group_id = getL2mcGroupId(vlan_alias, ipv4_l2mcKey);
 
-        if (mrouter_ports.empty())
-        {
-            if (!hasL2mcGroup(vlan_alias, l2mcKey))
-            {
-                if (!AddL2mcEntry(l2mcKey, vlan, port))
-                {
-                    return false;
-                }
-            }
-        }
-        else
-        {
-            for (const auto &mrouter : mrouter_ports)
-            {
-                if (!hasL2mcGroup(vlan_alias, l2mcKey))
-                {
-                    if (gPortsOrch->getPort(mrouter, mrport))
-                    {
-                        if (AddL2mcEntry(l2mcKey, vlan, mrport))
-                        {
-                            groupCreated = true;
-                        }
-                    }
-                }
-                else if (gPortsOrch->getPort(mrouter, mrport) && groupCreated)
-                {
-                    AddL2mcGroupMember(l2mcKey, vlan_alias, mrport);
-                }
-            }
-        }
 
-        info.group_id = getL2mcGroupId(vlan_alias, l2mcKey);
+        auto ipv6_l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0::0"), IpAddress("0::0"));
+
+
+        if(!createL2mcGroup(vlan_alias, ipv6_l2mcKey,vlan,port,true))
+        {
+            return false;
+        }
+        info.ipv6_group_id = getL2mcGroupId(vlan_alias, ipv6_l2mcKey);     
+
     }
 
-    
-    attr.value.oid = enable ? info.group_id : SAI_NULL_OBJECT_ID;
-    attr.id = (type == L2mcSuppressType::UNKNOWN_IPV4) ?
-              SAI_VLAN_ATTR_UNKNOWN_IPV4_MCAST_OUTPUT_GROUP_ID :
-              SAI_VLAN_ATTR_UNKNOWN_LINKLOCAL_MCAST_OUTPUT_GROUP_ID;
+    if (!setL2mcSuppressionAttribute(type, enable, info,attr))
+    {
+        return false;
+    }
 
     sai_status_t status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -754,15 +892,14 @@ bool L2mcOrch::handleL2mcSuppression(const std::string &vlan_alias, bool enable,
     }
 
     
-    if (!info.unknown_ipv4_enabled && !info.link_local_enabled)
+    if (!info.unknown_ipv4_enabled && !info.ipv4_link_local_enabled && !info.unknown_ipv6_enabled && !info.ipv6_link_local_enabled)
     {
         
         m_vlan_suppress_info.erase(vlan_alias);
         SWSS_LOG_NOTICE("Suppression group for VLAN %s fully disabled and removed", vlan_alias.c_str());
     }
 
-    SWSS_LOG_NOTICE("L2MC suppression %s for VLAN %s: %s",
-                    (type == L2mcSuppressType::UNKNOWN_IPV4) ? "Unknown IPv4" : "Link-local",
+    SWSS_LOG_NOTICE("L2MC suppression %s for VLAN %s: %s", getSuppressionTypeStr(type).c_str(),
                     vlan_alias.c_str(), enable ? "enabled" : "disabled");
 
     return true;
@@ -867,10 +1004,10 @@ void L2mcOrch::doL2mcMemberTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
         vector<string> keys = tokenize(kfvKey(t), ':');
-        /* Key: <VLAN_name>:<source_address> <group_address> <member_port> */
+        /* Key: <VLAN_name>:<source_address>:<group_address>:<member_port> */
 
-        /* Ensure the key size is 4 otherwise ignore */
-        if (keys.size() != 4)
+        /* Ensure the key has at least 4 fields otherwise ignore */
+        if (keys.size() < 4)
         {
             SWSS_LOG_ERROR("doL2mcMemberTask: Invalid key size, skipping %s", key.c_str());
             it = consumer.m_toSync.erase(it);
@@ -891,11 +1028,13 @@ void L2mcOrch::doL2mcMemberTask(Consumer &consumer)
 
         vlan_id = (unsigned short) stoi(keys[0].substr(4));
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
-        port_alias = keys[3];
+        
+        port_alias = keys[keys.size() - 1];
 
         if (!gPortsOrch->getPort(port_alias, port))
         {
             SWSS_LOG_ERROR("doL2mcMemberTask: Failed to get port for %s alias", port_alias.c_str());
+            it = consumer.m_toSync.erase(it);
             continue;
         }
 
@@ -906,7 +1045,52 @@ void L2mcOrch::doL2mcMemberTask(Consumer &consumer)
             continue;
         }
 
-        auto l2mcKey = L2mcGroupKey(vlan_alias, IpAddress(keys[1]), IpAddress(keys[2]));
+        string source_addr, group_addr;
+        
+        if (keys.size() == 4)
+        {
+            /*IPv4 addresses*/
+            source_addr = keys[1];
+            group_addr = keys[2];
+        }
+        else
+        {
+            /*IPv6 addresses*/
+            vector<string> address_parts(keys.begin() + 1, keys.end() - 1);
+
+            SWSS_LOG_NOTICE("doL2mcMemberTask: address_parts size %lu", address_parts.size());
+            
+            if (address_parts.size() == 16)
+            {
+                size_t mid_point = 8;
+                
+                source_addr = address_parts[0];
+                for (size_t i = 1; i < mid_point; i++)
+                {
+                    source_addr += ":" + address_parts[i];
+                }
+                
+                group_addr = address_parts[mid_point];
+                for (size_t i = mid_point + 1; i < address_parts.size(); i++)
+                {
+                    group_addr += ":" + address_parts[i];
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("doL2mcMemberTask: Invalid IPv6 address format in key %s", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
+
+        bool is_ipv4 = IpAddress(group_addr).isV4();
+
+        SWSS_LOG_NOTICE("doL2mcMemberTask: Processing %s vlan %s, source %s, group %s, port %s", 
+                       is_ipv4 ? "IPv4" : "IPv6", vlan_alias.c_str(), 
+                       source_addr.c_str(), group_addr.c_str(), port_alias.c_str());
+
+        auto l2mcKey = L2mcGroupKey(vlan_alias, IpAddress(source_addr), IpAddress(group_addr));
 
         if (m_syncdL2mcEntries.find(vlan.m_alias) == m_syncdL2mcEntries.end())
         {
@@ -920,8 +1104,12 @@ void L2mcOrch::doL2mcMemberTask(Consumer &consumer)
             {
                 if (AddL2mcEntry(l2mcKey, vlan, port))
                 {
+                    vector<string> mrouter_ports;
                     /* Add all mrouter ports to the newly added l2mc entry */
-                    auto mrouter_ports = mrouter_ports_per_vlan[vlan_alias];
+                    if(is_ipv4)
+                        mrouter_ports = mrouter_ports_ipv4_per_vlan[vlan_alias];
+                    else
+                        mrouter_ports = mrouter_ports_ipv6_per_vlan[vlan_alias];
         
                     if(!mrouter_ports.empty())
                     {
@@ -969,7 +1157,7 @@ void L2mcOrch::doL2mcMemberTask(Consumer &consumer)
     }
 }
 
-bool L2mcOrch::addMrouterPortToL2mcEntries(string vlan, Port &port)
+bool L2mcOrch::addMrouterPortToL2mcEntries(string vlan, Port &port ,string protocol)
 {
     if (m_syncdL2mcEntries.find(vlan) == m_syncdL2mcEntries.end())
         return true;
@@ -984,38 +1172,43 @@ bool L2mcOrch::addMrouterPortToL2mcEntries(string vlan, Port &port)
     while (itr != m_syncdL2mcEntries.at(vlan).end())
     {
         auto l2mcKey = itr->first;
-        AddL2mcMrouterPort(l2mcKey, vlan, port);
+        if((protocol == "V4" && l2mcKey.group_address.isV4()) || (protocol == "V6" && !l2mcKey.group_address.isV4()))
+            AddL2mcMrouterPort(l2mcKey, vlan, port);
         itr++;
     }
     return true;
 }
 
-void L2mcOrch::removeMrouterPortFromL2mcEntries(string vlan, string mrouterport)
+void L2mcOrch::removeMrouterPortFromL2mcEntries(string vlan, string mrouterport, string protocol)
 {
-    auto iter = mrouter_ports_per_vlan[vlan].begin();
-    while(iter != mrouter_ports_per_vlan[vlan].end())
+    std::vector<string>* mrouter_ports = nullptr;
+    if (protocol == "V4")
     {
-        if (*iter == mrouterport)
-        {
-            mrouter_ports_per_vlan[vlan].erase(iter);
-            SWSS_LOG_NOTICE("removeMrouterPortFromL2mcEntries: Mrouter port %s deleted from vlan %s", mrouterport.c_str(), vlan.c_str());
-
-            /* When no l2mc entries learnt on this vlan*/
-            if (m_syncdL2mcEntries.find(vlan) == m_syncdL2mcEntries.end())
-                return;
-           
-            /* Remove mrouter port from all the groups learnt on this vlan if present*/
-            auto itr = m_syncdL2mcEntries.at(vlan).begin(); 
-            while (itr != m_syncdL2mcEntries.at(vlan).end())
-            {
-                auto l2mcKey = itr->first;
-                RemoveL2mcMrouterPort(l2mcKey, vlan, mrouterport);
-                itr++;
-            }            
-            break;
-        }
-        iter++;
+        mrouter_ports = &mrouter_ports_ipv4_per_vlan[vlan];
     }
+    else
+    {
+        mrouter_ports = &mrouter_ports_ipv6_per_vlan[vlan];
+    }
+
+    auto iter = std::find(mrouter_ports->begin(), mrouter_ports->end(), mrouterport);
+    if (iter != mrouter_ports->end())
+    {
+        mrouter_ports->erase(iter);
+        SWSS_LOG_NOTICE("removeMrouterPortFromL2mcEntries: Mrouter port %s deleted from vlan %s", mrouterport.c_str(), vlan.c_str());
+
+        if (m_syncdL2mcEntries.find(vlan) == m_syncdL2mcEntries.end())
+            return;
+        auto itr = m_syncdL2mcEntries.at(vlan).begin(); 
+        while (itr != m_syncdL2mcEntries.at(vlan).end())
+        {
+            auto l2mcKey = itr->first;
+            if((protocol == "V4" && l2mcKey.group_address.isV4()) || (protocol == "V6" && !l2mcKey.group_address.isV4()))
+            RemoveL2mcMrouterPort(l2mcKey, vlan, mrouterport);
+            itr++;
+        }
+    }
+
     return;
 }
 
@@ -1036,7 +1229,7 @@ void L2mcOrch::doL2mcMrouterTask(Consumer &consumer)
         /* Key: <VLAN_name>:<mrouter_port> */
 
         /* Ensure the key size is 1 otherwise ignore */
-        if (keys.size() != 2)
+        if (keys.size() != 3)
         {
             SWSS_LOG_ERROR("Invalid key size, skipping %s", key.c_str());
             it = consumer.m_toSync.erase(it);
@@ -1052,12 +1245,13 @@ void L2mcOrch::doL2mcMrouterTask(Consumer &consumer)
         }
 
         unsigned short vlan_id;
-        std::string port_alias, vlan_alias;
+        std::string port_alias, vlan_alias , protocol;
         Port port, vlan;
 
         vlan_id = (unsigned short) stoi(keys[0].substr(4));
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
         port_alias = keys[1];
+        protocol = keys[2];
 
         if (!gPortsOrch->getPort(port_alias, port))
         {
@@ -1071,42 +1265,63 @@ void L2mcOrch::doL2mcMrouterTask(Consumer &consumer)
             continue;
         }
 
+        L2mcGroupKey l2mcKey;
+        vector<string> *mrouter_ports = nullptr;
+
+        if (protocol == "V4")
+        {
+            l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0.0.0.0"), IpAddress("0.0.0.0"));
+            mrouter_ports = &mrouter_ports_ipv4_per_vlan[vlan_alias];
+        }
+        else if (protocol == "V6")
+        {
+            l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0::0"), IpAddress("0::0"));
+            mrouter_ports = &mrouter_ports_ipv6_per_vlan[vlan_alias];
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid protocol %s for VLAN %s", protocol.c_str(), vlan_alias.c_str());
+            return;
+        }
+
         if (op == SET_COMMAND)
         {
-            mrouter_ports_per_vlan[vlan_alias].push_back(port_alias);
+            mrouter_ports->push_back(port_alias);
+
             if (isSuppressionEnabled(vlan_alias))
             {
-                auto l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0.0.0.0"), IpAddress("0.0.0.0"));
-
                 if (!AddL2mcGroupMember(l2mcKey, vlan_alias, port))
                 {
                     SWSS_LOG_WARN("Failed to add L2MC group member for VLAN %s port %s", vlan_alias.c_str(), port_alias.c_str());
                 }
             }
 
-            if (addMrouterPortToL2mcEntries(vlan_alias, port))
+            if (addMrouterPortToL2mcEntries(vlan_alias, port, protocol))
             {
                 SWSS_LOG_NOTICE("doL2mcMrouterTask: Mrouter port %s added to vlan %s", port_alias.c_str(), vlan_alias.c_str());
                 it = consumer.m_toSync.erase(it);
             }
             else 
+            {
                 it++;
+            }
         }
         else if (op == DEL_COMMAND)
-        { 
-            auto mrouter_ports = mrouter_ports_per_vlan[vlan_alias];
-
-            if (!mrouter_ports.empty() && isSuppressionEnabled(vlan_alias))
+        {
+            if (std::find(mrouter_ports->begin(), mrouter_ports->end(), port.m_alias) != mrouter_ports->end() 
+                && isSuppressionEnabled(vlan_alias))
             {
-                auto l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0.0.0.0"), IpAddress("0.0.0.0"));
                 if (!RemoveL2mcGroupMember(l2mcKey, vlan_alias, port))
                 {
                     SWSS_LOG_WARN("Failed to remove L2MC group member for VLAN %s port %s", vlan_alias.c_str(), port_alias.c_str());
                 }
             }
 
-            if(!mrouter_ports.empty())
-                removeMrouterPortFromL2mcEntries(vlan_alias, port_alias);
+            if (!mrouter_ports->empty())
+            {
+                removeMrouterPortFromL2mcEntries(vlan_alias, port_alias, protocol);
+            }
+
             it = consumer.m_toSync.erase(it);
         }
         else
@@ -1160,23 +1375,12 @@ void L2mcOrch::doL2mcSuppressTask(Consumer &consumer)
                     continue;
                 }
 
-                if (attr == "optimised-multicast-flood")
-                {
-                    SWSS_LOG_NOTICE("Setting handleL2mcSuppression-multicast-flood on %s to %s", vlan_alias.c_str(), value.c_str());
-                    if(!handleL2mcSuppression(vlan_alias, enable, L2mcSuppressType::UNKNOWN_IPV4))
-                    {
-                        SWSS_LOG_NOTICE("Retry Setting optimised-multicast-flood on %s to %s", vlan_alias.c_str(), value.c_str());
-                        need_retry  = true;
-                    }
-                }
-                else if (attr == "link-local-groups-suppression")
-                {
-                    SWSS_LOG_NOTICE("Setting link-local-groups-suppression on %s to %s", vlan_alias.c_str(), value.c_str());
-
-                    if(!handleL2mcSuppression(vlan_alias, enable, L2mcSuppressType::LINK_LOCAL))
-                    {
-                        SWSS_LOG_NOTICE("Retry Setting link-local-groups-suppression on %s to %s", vlan_alias.c_str(), value.c_str());
-                        need_retry  = true;
+                auto it = suppress_type_map.find(attr);
+                if (it != suppress_type_map.end()) {
+                    SWSS_LOG_NOTICE("Setting %s on %s to %s", attr.c_str(), vlan_alias.c_str(), value.c_str());
+                    if (!handleL2mcSuppression(vlan_alias, enable, it->second)) {
+                        SWSS_LOG_NOTICE("Retry Setting %s on %s to %s", attr.c_str(), vlan_alias.c_str(), value.c_str());
+                        need_retry = true;
                     }
                 }
                 else
@@ -1195,19 +1399,21 @@ void L2mcOrch::doL2mcSuppressTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            SWSS_LOG_NOTICE("Deleting suppression config for VLAN %s (reset to default)", vlan_alias.c_str());
-            // Reset both suppression types and track failures
-            bool retry_unknown = !handleL2mcSuppression(vlan_alias, false, L2mcSuppressType::UNKNOWN_IPV4);
-            bool retry_link_local = !handleL2mcSuppression(vlan_alias, false, L2mcSuppressType::LINK_LOCAL);
-            
-            if (retry_unknown || retry_link_local)
-            {
-                SWSS_LOG_NOTICE("Retry Deleting suppression config for VLAN %s (reset to default)", vlan_alias.c_str());
-                ++it;
+            bool need_retry = false;
+
+            // Loop through each suppression type and attempt to reset
+            for (const auto& type : suppress_types) {
+                if (!handleL2mcSuppression(vlan_alias, false, type)) {
+                    need_retry = true;
+                    continue;  // If one fails, no need to continue further
+                }
             }
-            else
-            {
-                it = consumer.m_toSync.erase(it);
+
+            if (need_retry) {
+                SWSS_LOG_NOTICE("Retry Deleting suppression config for VLAN %s (reset to default)", vlan_alias.c_str());
+                ++it;  // retry by advancing the iterator
+            } else {
+                it = consumer.m_toSync.erase(it);  // remove entry if no retry is needed
             }
         }
         else
