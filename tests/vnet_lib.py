@@ -954,6 +954,7 @@ class VnetVxlanVrfTunnel(object):
         self.rifs.remove(old_rif[0])
 
     def check_default_vrf_route(self, dvs, ip_pref):
+        global def_vr_id
 
         def _access_function():
             route_entries = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
@@ -1283,7 +1284,7 @@ class VnetVxlanVrfTunnel(object):
             del self.nhg_ids[endpoint_str_primary]
             return new_route
 
-    def check_del_vnet_route_in_vnet(self, dvs, vnet_name, prefixes, absent=False):
+    def check_del_vnet_route_in_vnet(self, dvs, vnet_name, prefix):
         vr_id = self.vr_map[vnet_name].get('ing')
 
         def _access_function():

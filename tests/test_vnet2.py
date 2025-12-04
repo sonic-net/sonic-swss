@@ -441,7 +441,7 @@ class TestVnet2Orch(object):
         dvs.servers[0].runcmd("ip address add 20.20.20.5/24 dev eth0")
         dvs.servers[0].runcmd("ip route add default via 20.20.20.1") 
 
-        # create vxlan tunnel and verfiy it
+        # create vxlan tunnel and verify it
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
         create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "")
         vnet_obj.check_vnet_entry(dvs, vnet_name)
@@ -460,7 +460,7 @@ class TestVnet2Orch(object):
         # State DB route should show non existent endpoints as bfd state is down
         check_state_db_routes(dvs, vnet_name, "106.100.1.1/32", ['9.8.0.1', '9.8.0.2', '9.8.0.3'])
 
-        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['9.8.0.1','9.8.0.2', '9.8.0.3'], tunnel_name)
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['9.8.0.1','9.8.0.2', '9.8.0.3'], tunnel_name)
 
         # Default vrf route should still be present
         vnet_obj.check_default_vrf_route(dvs, "106.100.1.1/32")
