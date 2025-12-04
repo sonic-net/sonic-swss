@@ -444,6 +444,10 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
                 doSpeedUpdateTask(port_name);
             }
         }
+        else if (op == DEL_COMMAND)
+        {
+            m_portPfcStatus.erase(port_name);
+        }
         it = consumer.m_toSync.erase(it);
     }
 
