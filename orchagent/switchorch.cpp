@@ -191,6 +191,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
+    querySwitchPortMirrorCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
 
@@ -1883,6 +1884,63 @@ void SwitchOrch::querySwitchPortEgressSampleCapability()
         }
         SWSS_LOG_NOTICE("port egress Sample capability %d", capability.set_implemented);
     }
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchPortMirrorCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port ingress mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_INGRESS_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port ingress mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "true");
+        m_portIngressMirrorSupported = true;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "true");
+            m_portIngressMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "false");
+            m_portIngressMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port ingress mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling Port egress mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "true");
+        m_portEgressMirrorSupported = true;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "true");
+            m_portEgressMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "false");
+            m_portEgressMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port egress mirror capability %d", capability.set_implemented);
+    }
+
     set_switch_capability(fvVector);
 }
 

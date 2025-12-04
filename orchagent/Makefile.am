@@ -28,6 +28,7 @@ dist_swss_DATA = \
 		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
+		 pfc_detect_clounix.lua  \
 		 port_rates.lua \
 		 port_flr.lua \
 		 drop_monitor.lua \
@@ -132,6 +133,7 @@ orchagent_SOURCES = \
             twamporch.cpp \
             stporch.cpp \
             nexthopkey.cpp \
+            macsecpost.cpp \
             high_frequency_telemetry/hftelorch.cpp \
             high_frequency_telemetry/hftelprofile.cpp \
             high_frequency_telemetry/counternameupdater.cpp \

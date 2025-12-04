@@ -44,6 +44,8 @@ NUM_PORTS = 32
 # Voq asics will have 16 fabric ports created (defined in Azure/sonic-buildimage#7629).
 FABRIC_NUM_PORTS = 16
 
+SINGLE_ASIC_VOQ_FS = "single_asic_voq_fs"
+
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
     if rc:
@@ -111,6 +113,12 @@ def pytest_addoption(parser):
                      action="store_true",
                      default=False,
                      help="Collect the test coverage information")
+
+    parser.addoption("--switch-mode",
+                     action="store",
+                     default=None,
+                     type=str,
+                     help="Set switch mode information")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -278,6 +286,7 @@ class DockerVirtualSwitch:
     CONFIG_DB_ID = 4
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
+    DPU_APPL_DB_ID = 15
 
     # FIXME: Should be broken up into helper methods in a later PR.
     def __init__(
@@ -293,7 +302,8 @@ class DockerVirtualSwitch:
         newctnname: str = None,
         ctnmounts: Dict[str, str] = None,
         buffer_model: str = None,
-        enable_coverage: bool = False
+        enable_coverage: bool = False,
+        switch_mode: str = None
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -316,6 +326,7 @@ class DockerVirtualSwitch:
         self.vct = vct
         self.ctn = None
         self.enable_coverage = enable_coverage
+        self.switch_mode = switch_mode
 
         self.cleanup = not keeptb
 
@@ -445,6 +456,7 @@ class DockerVirtualSwitch:
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
+        self.dpu_app_db = None
         self.asic_db = None
         self.counters_db = None
         self.config_db = None
@@ -520,6 +532,7 @@ class DockerVirtualSwitch:
             # Initialize the databases.
             self.init_asic_db_validator()
             self.init_appl_db_validator()
+            self.init_dpu_appl_db_validator()
             self.reset_dbs()
 
             # Verify that SWSS has finished initializing.
@@ -563,6 +576,9 @@ class DockerVirtualSwitch:
     def init_appl_db_validator(self) -> None:
         self.appldb = ApplDbValidator(self.APPL_DB_ID, self.redis_sock)
 
+    def init_dpu_appl_db_validator(self) -> None:
+        self.dpu_appldb = ApplDbValidator(self.DPU_APPL_DB_ID, self.redis_sock)
+
     def check_swss_ready(self, timeout: int = 300) -> None:
         """Verify that SWSS is ready to receive inputs.
 
@@ -577,7 +593,10 @@ class DockerVirtualSwitch:
         self.get_config_db()
         metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            num_ports = NUM_PORTS + FABRIC_NUM_PORTS
+            if self.switch_mode and self.switch_mode == SINGLE_ASIC_VOQ_FS:
+                num_ports = NUM_PORTS
+            else:
+                num_ports = NUM_PORTS + FABRIC_NUM_PORTS
 
         # Verify that all ports have been initialized and configured
         app_db = self.get_app_db()
@@ -597,8 +616,9 @@ class DockerVirtualSwitch:
 
         # Verify that fabric ports are monitored in STATE_DB
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            self.get_state_db()
-            self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
+            if not self.switch_mode or (self.switch_mode and self.switch_mode != SINGLE_ASIC_VOQ_FS):
+                self.get_state_db()
+                self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
 
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""
@@ -780,6 +800,14 @@ class DockerVirtualSwitch:
     # deps: warm_reboot
     def SubscribeAppDbObject(self, objpfx):
         r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB,
+                        encoding="utf-8", decode_responses=True)
+        pubsub = r.pubsub()
+        pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
+        return pubsub
+
+    # deps: warm_reboot
+    def SubscribeDpuAppDbObject(self, objpfx):
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.DPU_APPL_DB,
                         encoding="utf-8", decode_responses=True)
         pubsub = r.pubsub()
         pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
@@ -1243,6 +1271,7 @@ class DockerVirtualSwitch:
     # policer, port_dpb_vlan, vlan
     def setup_db(self):
         self.pdb = swsscommon.DBConnector(swsscommon.APPL_DB, self.redis_sock, 0)
+        self.ddb = swsscommon.DBConnector(swsscommon.DPU_APPL_DB, self.redis_sock, 0)
         self.adb = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, self.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(swsscommon.STATE_DB, self.redis_sock, 0)
@@ -1436,6 +1465,12 @@ class DockerVirtualSwitch:
             self.app_db = DVSDatabase(self.APPL_DB_ID, self.redis_sock)
 
         return self.app_db
+
+    def get_dpu_app_db(self) -> ApplDbValidator:
+        if not self.dpu_app_db:
+            self.dpu_app_db = DVSDatabase(self.DPU_APPL_DB_ID, self.redis_sock)
+
+        return self.dpu_app_db
 
     # FIXME: Now that AsicDbValidator is using DVSDatabase we should converge this with
     # that implementation. Save it for a follow-up PR.
@@ -1669,6 +1704,11 @@ class DockerVirtualChassisTopology:
             vol = {}
             vol[chassis_config_dir] = {"bind": "/usr/share/sonic/virtual_chassis", "mode": "ro"}
 
+            # Mount database_config.json when connect_to_chassis_db is set to 1
+            if defcfg.get("connect_to_chassis_db") == 1:
+                database_config_file = cwd + "/virtual_chassis/database_config.json"
+                vol[database_config_file] = {"bind": "/etc/sonic/database_config.json", "mode": "ro"}
+
             # pass self.ns into the vs to be use for vs restarts by swss conftest.
             # connection to chassbr is setup by chassis_connect.py within the vs
             data = {}
@@ -1859,6 +1899,7 @@ def manage_dvs(request) -> str:
     force_recreate = request.config.getoption("--force-recreate-dvs")
     graceful_stop = request.config.getoption("--graceful-stop")
     enable_coverage = request.config.getoption("--enable-coverage")
+    switch_mode = request.config.getoption("--switch-mode")
 
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
@@ -1890,7 +1931,13 @@ def manage_dvs(request) -> str:
                 dvs.get_logs()
                 dvs.destroy()
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage)
+            vol = {}
+            if switch_mode and switch_mode == SINGLE_ASIC_VOQ_FS:
+                cwd = os.getcwd()
+                voq_configs = cwd + "/single_asic_voq_fs"
+                vol[voq_configs] = {"bind": "/usr/share/sonic/single_asic_voq_fs", "mode": "ro"}
+
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage, ctnmounts=vol, switch_mode=switch_mode)
 
             curr_dvs_env = new_dvs_env
 

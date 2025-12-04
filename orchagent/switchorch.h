@@ -27,6 +27,8 @@
 #define SWITCH_CAPABILITY_TABLE_REG_FATAL_ASIC_SDK_HEALTH_CATEGORY     "REG_FATAL_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_REG_WARNING_ASIC_SDK_HEALTH_CATEGORY   "REG_WARNING_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY    "REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY"
+#define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE            "PORT_INGRESS_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE             "PORT_EGRESS_MIRROR_CAPABLE"
 
 #define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
 
@@ -80,6 +82,10 @@ public:
     // Statistics
     void generateSwitchCounterIdList();
 
+    // Mirror capability interface for MirrorOrch
+    bool isPortIngressMirrorSupported() const { return m_portIngressMirrorSupported; }
+    bool isPortEgressMirrorSupported() const { return m_portEgressMirrorSupported; }
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
@@ -91,6 +97,7 @@ private:
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+    void querySwitchPortMirrorCapability();
 
     // Statistics
     void generateSwitchCounterNameMap() const;
@@ -149,6 +156,10 @@ private:
     bool m_vxlanSportUserModeEnabled = false;
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
+
+    // Port mirror capabilities
+    bool m_portIngressMirrorSupported = false;
+    bool m_portEgressMirrorSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
