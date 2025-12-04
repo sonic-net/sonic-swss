@@ -37,6 +37,28 @@ once_cell = { workspace = true }
 clap = { workspace = true }
 color-eyre = { workspace = true }
 
+# OTEL
+tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_info"] }
+tracing-opentelemetry = "0.25"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+opentelemetry = { version = "0.25", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.25", features = ["rt-tokio"]}
+opentelemetry-stdout = "0.25"
+opentelemetry-semantic-conventions = "0.25"
+opentelemetry-http = "0.25"
+opentelemetry-otlp = { version = "0.25", features = ["tonic", "metrics"] }
+opentelemetry-proto = { version = "0.25", features = ["tonic", "metrics", "gen-tonic"] }
+
+# gRPC and HTTP 
+tonic = "0.12"
+tonic-health = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest-middleware = "0.3"
+reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
+
 # SONiC specific dependencies
 swss-common = { workspace = true }
 
