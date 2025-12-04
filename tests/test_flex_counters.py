@@ -13,6 +13,7 @@ counter_group_meta = {
         'key': 'PORT',
         'group_name': 'PORT_STAT_COUNTER',
         'name_map': 'COUNTERS_PORT_NAME_MAP',
+        'pre_test': 'pre_port_counter_test',
         'post_test':  'post_port_counter_test',
     },
     'queue_counter': {
@@ -98,6 +99,29 @@ counter_group_meta = {
     }
 }
 
+port_stat_fec_ids = [
+    "SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES",
+    "SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES",
+    "SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S0",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S1",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S2",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S3",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S4",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S5",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S6",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S7",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S8",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S9",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S10",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S11",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S12",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S13",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14",
+    "SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15",
+    "SAI_PORT_STAT_IF_IN_FEC_CORRECTED_BITS"
+ ]
+
 
 class TestFlexCounters(TestFlexCountersBase):
 
@@ -135,6 +159,49 @@ class TestFlexCounters(TestFlexCountersBase):
         port_counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + meta_data['group_name'])
         for port_stat in port_counters_stat_keys:
             assert port_stat in dict(port_counters_keys.items()).values(), "Non PHY port created on PORT_STAT_COUNTER group: {}".format(port_stat)
+
+    def wait_for_port_attribute_set(self, port, field, value):
+        attr_value = None
+        for retry in range(NUMBER_OF_RETRIES):
+            attr_value = self.config_db.db_connection.hget("PORT|" + port, field)
+            if attr_value == value:
+                return
+            else:
+                time.sleep(1)
+        assert False, "Port Attribute {} is not applied to Port {}, expect={}, actual={}".format(field, port, value, attr_value)
+
+    def set_port_attribute(self, meta_data, port, field, value):
+        entry = {field: value}
+        self.config_db.create_entry("PORT", port, entry)
+        #wait for the orchagent to get the config update
+        time.sleep(2)
+        self.wait_for_port_attribute_set(port, field, value)
+
+    def verify_fec_counters(self, meta_data, test_port, is_fec_none=False):
+        port_name = 'None'
+        if (is_fec_none == True):
+            port_name = test_port
+        port_oid = None
+        port_counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map']).items()
+        for counter_key in port_counters_keys:
+            if counter_key[0] == port_name:
+                port_oid = counter_key[1]
+            port_counters_stats = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + meta_data['group_name']+ ":" + counter_key[1]).values()
+            for fec_stat in port_stat_fec_ids:
+                for flex_stat in port_counters_stats:
+                    if counter_key[0] == port_name:
+                        assert fec_stat not in flex_stat, "fec_stat {} found in flex_counter stats for FEC disabled port :{} ".format(fec_stat,counter_key[0])
+                    else:
+                        assert fec_stat in flex_stat, "fec_stat {} not found in flex_counter stats for FEC enabled port:{} ".format(fec_stat,counter_key[0])
+        #Enable fec and check the FEC counters are added to FLEX_COUNTER_DB
+        self.set_port_attribute(meta_data, port_name, 'fec', 'rs')
+        if port_oid is not None:
+            port_counters_stats = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + meta_data['group_name']+ ":" + port_oid).values()
+            for fec_stat in port_stat_fec_ids:
+                for flex_stat in port_counters_stats:
+                    assert fec_stat in flex_stat, "fec_stat {} not found in flex_counter stats for FEC enabled port:{} ".format(fec_stat,port_name)
+        #Remove the FEC config since the original PORT config did not have FEC configured
+        self.config_db.delete_field("PORT", port_name, "fec")
 
     def set_only_config_db_buffers_field(self, value):
         fvs = {'create_only_config_db_buffers' : value}
@@ -217,8 +284,22 @@ class TestFlexCounters(TestFlexCountersBase):
     def post_rif_counter_test(self, meta_data):
         self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")
 
+    def pre_port_counter_test(self, meta_data):
+        #set FEC to none to verify the FEC counters in FLEX_COUNTER_DB
+        self.set_port_attribute(meta_data, 'Ethernet0', 'fec', 'none')
+
     def post_port_counter_test(self, meta_data):
         self.verify_only_phy_ports_created(meta_data)
+        self.verify_fec_counters(meta_data, 'Ethernet0', True)
+        self.set_port_attribute(meta_data, 'Ethernet0', 'fec', 'rs')
+        self.verify_fec_counters(meta_data, 'Ethernet0', False)
+        attr_dict = {
+            "lanes": "1000,1001,1002,1003",
+            "speed": "100000",
+            "fec": "none"
+        }
+        self.config_db.create_entry("PORT", "Ethernet1000", attr_dict)
+        self.verify_fec_counters(meta_data, 'Ethernet1000', True)
 
     def post_trap_flow_counter_test(self, meta_data):
         """Post verification for test_flex_counters for trap_flow_counter. Steps:
