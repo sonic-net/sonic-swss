@@ -306,9 +306,6 @@ bool BfdOrch::register_bfd_state_change_notification(void)
 
 void BfdOrch::updateNextHopId(string alias, IpAddress peer_address, sai_object_id_t next_hop_id)
 {
-    SWSS_LOG_NOTICE("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
-                    peer_address.to_string().c_str(), alias.c_str(), static_cast<unsigned long long>(next_hop_id));
-
     const string key = get_app_db_key("default", alias, peer_address);
     if (bfd_inject_next_hop_lookup.find(key) == bfd_inject_next_hop_lookup.end())
     {
@@ -317,6 +314,7 @@ void BfdOrch::updateNextHopId(string alias, IpAddress peer_address, sai_object_i
     }
     if ((bfd_inject_next_hop_lookup[key].next_hop_id == next_hop_id)) //no update
     {
+        SWSS_LOG_DEBUG("BFD session %s no change on next_hop_id, skip", key.c_str());
         return;
     }
 
@@ -326,6 +324,9 @@ void BfdOrch::updateNextHopId(string alias, IpAddress peer_address, sai_object_i
         SWSS_LOG_ERROR("Failed to update next hop id, bfd session %s id is null", key.c_str());
         return;
     }
+
+    SWSS_LOG_NOTICE("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
+                    peer_address.to_string().c_str(), alias.c_str(), static_cast<unsigned long long>(next_hop_id));
 
     sai_attribute_t attr;
     attr.id = SAI_BFD_SESSION_ATTR_NEXT_HOP_ID;
