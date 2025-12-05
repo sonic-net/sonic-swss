@@ -147,15 +147,177 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
+void Orch::createRetryCache(const std::string &executorName) {
+    if (m_retryCaches.find(executorName) == m_retryCaches.end())
+        m_retryCaches[executorName] = std::make_shared<RetryCache>(executorName);
+}
+
+RetryCache *Orch::getRetryCache(const std::string &executorName)
+{
+    if (m_retryCaches.find(executorName) == m_retryCaches.end())
+        return nullptr;
+    else
+        return m_retryCaches[executorName].get();
+}
+
+ConsumerBase* Orch::getConsumerBase(const std::string &executorName)
+{
+    if (m_consumerMap.find(executorName) == m_consumerMap.end())
+        return nullptr;
+    return dynamic_cast<ConsumerBase*>(m_consumerMap[executorName].get());
+}
+
+bool ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
+    auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
+    if (retryCache)
+    {
+        Recorder::Instance().retry.record(dumpTuple(task).append(CACHE));
+        retryCache->insert(task, cst);
+        return true;
+    }
+    return false;
+}
+
+bool Orch::addToRetry(const std::string &executorName, const Task &task, const Constraint &cst) {
+    auto retryCache = getRetryCache(executorName);
+    if (retryCache)
+    {
+        Recorder::Instance().retry.record(getConsumerBase(executorName)->dumpTuple(task).append(CACHE));
+        retryCache->insert(task, cst);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Check the consumer's RetryCache, if the set of resolved constraints is not empty,
+ * query RetryMap for failed tasks indexed by these resolved constraints,
+ * and move them back to the consumer's SyncMap, such that they can be retried in the next iteration.
+ * @param executorName - name of the consumer
+ * @param quota - maximum number of tasks to be moved back to SyncMap in a single call
+ * @return number of tasks moved back to SyncMap
+ */
+size_t Orch::retryToSync(const std::string &executorName, size_t quota)
+{
+    auto retryCache = getRetryCache(executorName);
+
+    // directly return 0 if no retry cache for this executor or quota is non-positive
+    if (!retryCache || quota <= 0)
+        return 0;
+
+    std::unordered_set<Constraint>& constraints = retryCache->getResolvedConstraints();
+
+    size_t count = 0;
+
+    while (!constraints.empty() && count < quota)
+    {
+        auto cst = *constraints.begin();
+
+        auto tasks = retryCache->resolve(cst, quota - count);
+
+        count += tasks->size();
+
+        getConsumerBase(executorName)->addToSync(tasks, true);
+
+    }
+    return count;
+}
+
+void Orch::notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst)
+{
+    auto retryCache = retryOrch->getRetryCache(executorName);
+    if (!retryCache)
+    {
+        SWSS_LOG_ERROR("RetryCache not initialized for %s", executorName.c_str());
+    }
+    else
+    {
+        retryCache->mark_resolved(cst);
+    }
+}
+
+size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry) {
+    return addToSync(*entries, onRetry);
+}
+
+void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
 {
     SWSS_LOG_ENTER();
 
     string key = kfvKey(entry);
     string op  = kfvOp(entry);
 
-    /* Record incoming tasks */
-    Recorder::Instance().swss.record(dumpTuple(entry));
+    if (!onRetry)
+        /* Record incoming tasks */
+        Recorder::Instance().swss.record(dumpTuple(entry));
+    else
+        Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+
+    auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
+
+    if (retryCache && !onRetry)
+    {
+        size_t count = retryCache->getRetryMap().count(key);
+
+        switch (count)
+        {
+        case 0:
+            // No task with the same key found in the retrycache
+            break;
+
+        case 1:
+        {
+            // Single task found
+            auto it = retryCache->getRetryMap().find(key);
+            if (it->second.second == entry) // skip duplicate task
+            {
+                SWSS_LOG_DEBUG("Skip, already in retry cache: %s", dumpTuple(entry).c_str());
+                return;
+            }
+
+            if (op == DEL_COMMAND)
+            {
+                if (kfvOp(it->second.second) == SET_COMMAND)
+                {
+                    auto old_task = retryCache->evict(key);
+                    Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                }
+            }
+            else if (op == SET_COMMAND)
+            {
+                if (kfvOp(it->second.second) == SET_COMMAND)
+                {
+                    // move the old SET back to m_toSync for later merge
+                    auto old_task = retryCache->evict(key);
+                    m_toSync.emplace(key, *old_task);
+                    Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                }
+            }
+            break;
+        }
+        case 2:
+        {
+            // 2 tasks found, must be a DEL + a SET
+            if (op == DEL_COMMAND)
+            {
+                // remove the SET task from the cache, reuse the DEL task
+                auto old_task = retryCache->evict(key);
+                Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                return;
+            }
+            else if (op == SET_COMMAND)
+            {
+                // Keep the DEL task, move the old SET back to m_toSync for later merge
+                auto old_task = retryCache->evict(key);
+                Recorder::Instance().retry.record(dumpTuple(*old_task).append(DECACHE));
+                m_toSync.emplace(key, *old_task);
+            }
+            break;
+        }
+        default:
+            SWSS_LOG_ERROR("Maximum two values per key, found: %zu", count);
+        }
+    }
 
     /*
     * m_toSync is a multimap which will allow one key with multiple values,
@@ -230,20 +392,16 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 
 }
 
-size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries, bool onRetry)
 {
     SWSS_LOG_ENTER();
 
     for (auto& entry: entries)
     {
-        addToSync(entry);
+        addToSync(entry, onRetry);
     }
 
     return entries.size();
-}
-
-size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries) {
-    return addToSync(*entries);
 }
 
 // TODO: Table should be const
@@ -325,6 +483,20 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
         string s = dumpTuple(tuple);
 
         ts.push_back(s);
+    }
+
+    // check pending tasks in m_toRetry if orch has allocated a retry cache for this consumer
+    auto rc = getOrch() ? getOrch()->getRetryCache(getTableName()) : nullptr;
+    if (rc)
+    {
+        for (auto &tm : rc->getRetryMap())
+        {
+            KeyOpFieldsValuesTuple& tuple = tm.second.second;
+
+            string s = dumpTuple(tuple);
+
+            ts.push_back(s);
+        }
     }
 }
 
@@ -663,8 +835,15 @@ string Orch::objectReferenceInfo(
 
 void Orch::doTask()
 {
+    // limit the number of tasks moved from RetryMap to SyncMap in one iteration 
+    // to avoid starvation of new tasks in SyncMap
+    auto threshold = gBatchSize == 0 ? 30000 : gBatchSize;
+
+    size_t count = 0;
+
     for (auto &it : m_consumerMap)
     {
+        count += retryToSync(it.first, threshold - count);
         it.second->drain();
     }
 }
