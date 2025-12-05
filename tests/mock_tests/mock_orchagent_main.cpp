@@ -24,9 +24,3 @@ sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION
 VRFOrch *gVrfOrch;
 
 void syncd_apply_view() {}
-
-bool gMultiAsicVoq = false;
-bool isChassisDbInUse()
-{
-    return gMultiAsicVoq;
-}
