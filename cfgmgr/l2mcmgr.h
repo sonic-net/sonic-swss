@@ -1,10 +1,3 @@
-/*
- * Copyright 2019 Broadcom. All rights reserved.
- * The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
- * 
- * cfgmgr/l2mcmgr.h
- */ 
-
 #pragma once
 
 #include <set>
@@ -61,6 +54,7 @@ private:
     ProducerStateTable m_appL2mcSuppressTableProducer;
     Table m_cfgL2McGlobalTable;
     Table m_cfgL2McStaticTable;
+    Table m_cfgVlanMemberTable;
     Table m_stateVlanTable;
     Table m_cfgL2McMrouterTable;
     Table m_stateVlanMemberTable;
