@@ -213,6 +213,19 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
                 j=0;
                 for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
                 {
+                    vector<FieldValueTuple> tupEntry;
+                    string vlanmemkey = key + "|" + pentry->pnames;
+                    if (m_cfgVlanMemberTable.get(vlanmemkey, tupEntry))
+                    {
+                        auto tag  = std::find_if(
+                        tupEntry.begin(), tupEntry.end(),
+                        [](auto &t){ return t.first == "tagging_mode"; });
+
+                        if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
+                            msg.ports[j].tagged = UNTAGGED;
+                        else
+                            msg.ports[j].tagged = TAGGED; 
+                    }
                     memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
                     SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
                 }
@@ -373,6 +386,19 @@ void L2McMgr::doL2McMldGlobalTask(Consumer &consumer)
                 j=0;
                 for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
                 {
+                    vector<FieldValueTuple> tupEntry;
+                    string vlanmemkey = key + "|" + pentry->pnames;
+                    if (m_cfgVlanMemberTable.get(vlanmemkey, tupEntry))
+                    {
+                        auto tag  = std::find_if(
+                        tupEntry.begin(), tupEntry.end(),
+                        [](auto &t){ return t.first == "tagging_mode"; });
+
+                        if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
+                            msg.ports[j].tagged = UNTAGGED;
+                        else
+                            msg.ports[j].tagged = TAGGED; 
+                    }
                     memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
                     SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
                 }
@@ -806,6 +832,19 @@ void L2McMgr::sendL2McSnoopConfig(
         int j=0;
         for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
         {
+            vector<FieldValueTuple> tupEntry;
+            string vlanmemkey = key + "|" + pentry->pnames;
+            if (m_cfgVlanMemberTable.get(vlanmemkey, tupEntry))
+            {
+                auto tag  = std::find_if(
+                tupEntry.begin(), tupEntry.end(),
+                [](auto &t){ return t.first == "tagging_mode"; });
+
+                if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
+                    msg.ports[j].tagged = UNTAGGED;
+                else
+                    msg.ports[j].tagged = TAGGED; 
+            }
             memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
             SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
         }
