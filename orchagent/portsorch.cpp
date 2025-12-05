@@ -3812,9 +3812,9 @@ bool PortsOrch::initPort(const PortConfig &port)
                 }
                 if (flex_counters_orch->getPortAttrCountersState())
                 {
-                    if (p.m_type == Port::Type::PHY && supportsPortAttr(p.m_port_id, p.m_alias.c_str()))
+                    if (!m_supported_phy_attrs.empty())
                     {
-                        if (!m_supported_phy_attrs.empty())
+                        if (p.m_type == Port::Type::PHY && supportsPortAttr(p.m_port_id, p.m_alias.c_str()))
                         {
                             auto port_attr_stats = generateCounterStats(m_supported_phy_attrs, sai_serialize_port_attr);
                             port_attr_manager.setCounterIdList(p.m_port_id,
@@ -3906,9 +3906,9 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         wred_port_stat_manager.clearCounterIdList(p.m_port_id);
     }
-    if (p.m_type == Port::Type::PHY && supportsPortAttr(p.m_port_id, p.m_alias.c_str()))
+    if (!m_supported_phy_attrs.empty())
     {
-        if (!m_supported_phy_attrs.empty())
+        if (p.m_type == Port::Type::PHY && supportsPortAttr(p.m_port_id, p.m_alias.c_str()))
         {
             port_attr_manager.clearCounterIdList(p.m_port_id);
         }
@@ -8422,8 +8422,6 @@ void PortsOrch::queryPortAttrCapabilities()
             SWSS_LOG_NOTICE("PORT_ATTR: Attribute %s is NOT supported (status=%d, get_implemented=%d)",
                             attr_name, status, capability.get_implemented);
         }
-        //TODO: remove the next line once brcm support attribute query capability
-        m_supported_phy_attrs.push_back(attr_id);
     }
 
     m_phy_attr_capability_checked = true;

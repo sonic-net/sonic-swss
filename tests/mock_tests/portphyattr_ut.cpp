@@ -247,4 +247,23 @@ namespace portphyattr_test
         // Verify the operations completed without crashes
         SUCCEED() << "All PORT_ATTR counter map operations completed successfully";
     }
+
+    TEST_F(PortAttrTest, QueryPortAttrCapabilitiesWithMockedSAI)
+    {
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        EXPECT_FALSE(gPortsOrch->m_phy_attr_capability_checked);
+        EXPECT_TRUE(gPortsOrch->m_supported_phy_attrs.empty());
+
+        gPortsOrch->queryPortAttrCapabilities();
+
+        EXPECT_TRUE(gPortsOrch->m_phy_attr_capability_checked);
+
+        for (const auto& attr : gPortsOrch->m_supported_phy_attrs)
+        {
+            EXPECT_TRUE(attr == SAI_PORT_ATTR_RX_SIGNAL_DETECT ||
+                       attr == SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK ||
+                       attr == SAI_PORT_ATTR_RX_SNR);
+        }
+    }
 } // namespace portphyattr_test
