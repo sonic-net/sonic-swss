@@ -1,10 +1,3 @@
-/*
- * Copyright 2019 Broadcom. All rights reserved.
- * The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
- * 
- * cfgmgr/l2mcmgr.cpp
- */
-
 #include "exec.h"
 #include "l2mcmgr.h"
 #include "tokenize.h"
@@ -22,6 +15,10 @@ using namespace swss;
 #define MLD_IP_IPV4_AFI 1
 #define MLD_IP_IPV6_AFI 2
 
+#define TAGGED 1
+#define UNTAGGED 0
+
+
 L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
     Orch(tables),
@@ -31,6 +28,7 @@ L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_cfgL2McMldStaticTable(confDb, CFG_MLD_L2MC_STATIC_TABLE_NAME),
     m_cfgL2McMrouterTable(confDb, CFG_L2MC_MROUTER_TABLE_NAME),
     m_cfgL2McMldMrouterTable(confDb, CFG_MLD_L2MC_MROUTER_TABLE_NAME),
+    m_cfgVlanMemberTable(confDb, CFG_VLAN_MEMBER_TABLE_NAME),
     m_stateVlanTable(statDb, STATE_VLAN_TABLE_NAME),
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
     m_stateInterfaceTableName(statDb,STATE_INTERFACE_TABLE_NAME),
@@ -1163,6 +1161,18 @@ void L2McMgr::doL2McVlanMemUpdateTask(Consumer &consumer)
             msg.vlan_id = vlanid;
             msg.count =1;
             memcpy(msg.ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
+            vector<FieldValueTuple> tupEntry;
+            if (m_cfgVlanMemberTable.get(key, tupEntry))
+            {
+                auto tag  = std::find_if(
+                tupEntry.begin(), tupEntry.end(),
+                [](auto &t){ return t.first == "tagging_mode"; });
+
+                if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
+                    msg.ports[0].tagged = UNTAGGED;
+                else
+                    msg.ports[0].tagged = TAGGED; 
+            }
             if (op == SET_COMMAND)
             {
                 msg.op_code = L2MCD_OP_ENABLE;
@@ -1171,7 +1181,7 @@ void L2McMgr::doL2McVlanMemUpdateTask(Consumer &consumer)
             {
                 msg.op_code = L2MCD_OP_DISABLE;
             }
-            SWSS_LOG_NOTICE("L2MCD_CFG:VLAN_MEMBER op:%s iname:%s %s vlan:%d", op.c_str(), msg.ports[0].pnames, intfName.c_str(), msg.vlan_id);
+            SWSS_LOG_NOTICE("L2MCD_CFG:VLAN_MEMBER op:%s iname:%s %s vlan:%d tagged:%d", op.c_str(), msg.ports[0].pnames, intfName.c_str(), msg.vlan_id, msg.ports[0].tagged);
             sendMsgL2Mcd(L2MCD_VLAN_MEM_TABLE_UPDATE, sizeof(msg), (void *)&msg);
         }
         it = consumer.m_toSync.erase(it);
