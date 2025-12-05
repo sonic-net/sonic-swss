@@ -87,20 +87,25 @@ class GreTunnelManager : public ObjectManagerInterface
     ReturnCodeOr<P4GreTunnelAppDbEntry> deserializeP4GreTunnelAppDbEntry(
         const std::string &key, const std::vector<swss::FieldValueTuple> &attributes);
 
-    // Processes add operation for an entry.
-    ReturnCode processAddRequest(const P4GreTunnelAppDbEntry &app_db_entry);
+  ReturnCode validateGreTunnelAppDbEntry(
+    const P4GreTunnelAppDbEntry& app_db_entry);
 
-    // Creates an GRE tunnel in the GRE tunnel table. Return true on success.
-    ReturnCode createGreTunnel(P4GreTunnelEntry &gre_tunnel_entry);
+  ReturnCode validateGreTunnelAppDbEntry(
+    const P4GreTunnelAppDbEntry& app_db_entry,
+    const std::string& operation);
 
-    // Processes update operation for an entry.
-    ReturnCode processUpdateRequest(const P4GreTunnelAppDbEntry &app_db_entry, P4GreTunnelEntry *gre_tunnel_entry);
+  // Creates GRE tunnels in the GRE tunnel table.
+  std::vector<ReturnCode> createGreTunnels(
+      const std::vector<P4GreTunnelAppDbEntry>& gre_tunnel_entries);
 
-    // Processes delete operation for an entry.
-    ReturnCode processDeleteRequest(const std::string &gre_tunnel_key);
+  // Deletes GRE tunnels in the GRE tunnel table.
+  std::vector<ReturnCode> removeGreTunnels(
+      const std::vector<P4GreTunnelAppDbEntry>& gre_tunnel_entries);
 
-    // Deletes a GRE tunnel in the GRE tunnel table. Return true on success.
-    ReturnCode removeGreTunnel(const std::string &gre_tunnel_key);
+  ReturnCode processEntries(
+      const std::vector<P4GreTunnelAppDbEntry>& entries,
+      const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+      const std::string& op, bool update);
 
     std::string verifyStateCache(const P4GreTunnelAppDbEntry &app_db_entry, const P4GreTunnelEntry *gre_tunnel_entry);
     std::string verifyStateAsicDb(const P4GreTunnelEntry *gre_tunnel_entry);
