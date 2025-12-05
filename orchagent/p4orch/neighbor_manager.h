@@ -60,16 +60,22 @@ class NeighborManager : public ObjectManagerInterface
     ReturnCodeOr<P4NeighborAppDbEntry> deserializeNeighborEntry(const std::string &key,
                                                                 const std::vector<swss::FieldValueTuple> &attributes);
     ReturnCode validateNeighborAppDbEntry(const P4NeighborAppDbEntry &app_db_entry);
+    ReturnCode validateNeighborEntryOperation(
+        const P4NeighborAppDbEntry& app_db_entry, const std::string& operation);
     P4NeighborEntry *getNeighborEntry(const std::string &neighbor_key);
-    ReturnCode createNeighbor(P4NeighborEntry &neighbor_entry);
-    ReturnCode removeNeighbor(const std::string &neighbor_key);
-    ReturnCode setDstMacAddress(P4NeighborEntry *neighbor_entry, const swss::MacAddress &mac_address);
-    ReturnCode processAddRequest(const P4NeighborAppDbEntry &app_db_entry, const std::string &neighbor_key);
-    ReturnCode processUpdateRequest(const P4NeighborAppDbEntry &app_db_entry, P4NeighborEntry *neighbor_entry);
-    ReturnCode processDeleteRequest(const std::string &neighbor_key);
+    std::vector<ReturnCode> createNeighbors(
+        const std::vector<P4NeighborAppDbEntry>& neighbor_entries);
+    std::vector<ReturnCode> removeNeighbors(
+        const std::vector<P4NeighborAppDbEntry>& neighbor_entries);
+    std::vector<ReturnCode> updateNeighbors(
+        const std::vector<P4NeighborAppDbEntry>& neighbor_entries);
+    ReturnCode processEntries(
+        const std::vector<P4NeighborAppDbEntry>& entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update);
     std::string verifyStateCache(const P4NeighborAppDbEntry &app_db_entry, const P4NeighborEntry *neighbor_entry);
     std::string verifyStateAsicDb(const P4NeighborEntry *neighbor_entry);
-    ReturnCodeOr<sai_neighbor_entry_t> getSaiEntry(const P4NeighborEntry &neighbor_entry);
+    sai_neighbor_entry_t prepareSaiEntry(const P4NeighborEntry& neighbor_entry);
 
     P4OidMapper *m_p4OidMapper;
     P4NeighborTable m_neighborTable;
