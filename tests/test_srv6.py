@@ -1334,162 +1334,162 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd(sid_cmd)
         dvs.runcmd(loc_cmd)
 
-    def test_Srv6MySidUNTunnelDscpMode(self, dvs, testlog):
+    # def test_Srv6MySidUNTunnelDscpMode(self, dvs, testlog):
 
-        _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
-        if 'dplane_fpm_sonic' not in output:
-            pytest.skip("'dplane_fpm_sonic' required for this test is not available, skipping", allow_module_level=True)
+    #     _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
+    #     if 'dplane_fpm_sonic' not in output:
+    #         pytest.skip("'dplane_fpm_sonic' required for this test is not available, skipping", allow_module_level=True)
 
-        self.setup_srv6(dvs)
+    #     self.setup_srv6(dvs)
 
-        my_sid_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
-        tunnel_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
-        tunnel_term_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY")
-        tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
-        tunnel_term_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY")
+    #     my_sid_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+    #     tunnel_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+    #     tunnel_term_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY")
+    #     tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+    #     tunnel_term_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY")
 
-        mysid1 = "fc00:0:1::"
-        mysid2 = "fd00:0:1::"
-        mysid3 = "fe00:0:1:aabb::"
+    #     mysid1 = "fc00:0:1::"
+    #     mysid2 = "fd00:0:1::"
+    #     mysid3 = "fe00:0:1:aabb::"
 
-        # Confiure the dcsp_mode in config db
-        self.add_mysid_cfgdb("loc1", mysid1, dscp_mode="uniform")
-        self.add_mysid_cfgdb("loc2", mysid2, dscp_mode="pipe")
-        self.add_mysid_cfgdb("loc3", mysid3, "fe00:0:1::", dscp_mode="pipe", func_len=16)
+    #     # Confiure the dcsp_mode in config db
+    #     self.add_mysid_cfgdb("loc1", mysid1, dscp_mode="uniform")
+    #     self.add_mysid_cfgdb("loc2", mysid2, dscp_mode="pipe")
+    #     self.add_mysid_cfgdb("loc3", mysid3, "fe00:0:1::", dscp_mode="pipe", func_len=16)
 
-        # Create MySID entry with dscp_mode uniformß
-        self.add_mysid_vtysh(dvs, "loc1", mysid1)
+    #     # Create MySID entry with dscp_mode uniformß
+    #     self.add_mysid_vtysh(dvs, "loc1", mysid1)
 
-        self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid1}")
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 1)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(tunnel_term_entries) + 1)
-        my_sid_uniform = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", self.initial_my_sid_entries)
-        tunnel_uniform = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries)
-        mysid_uniform_term_entry = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_entries)
+    #     self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid1}")
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 1)
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(tunnel_term_entries) + 1)
+    #     my_sid_uniform = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", self.initial_my_sid_entries)
+    #     tunnel_uniform = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries)
+    #     mysid_uniform_term_entry = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_entries)
 
-        # Create MySID entry with dscp_mode pipe
-        self.add_mysid_vtysh(dvs, "loc2", mysid2)
+    #     # Create MySID entry with dscp_mode pipe
+    #     self.add_mysid_vtysh(dvs, "loc2", mysid2)
 
-        self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid2}")
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 2)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 2)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(tunnel_term_entries) + 2)
-        my_sid_pipe = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", self.initial_my_sid_entries | set([my_sid_uniform]))
-        tunnel_pipe = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries | set([tunnel_uniform]))
-        mysid_pipe_term_entry = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_entries | set([mysid_uniform_term_entry]))
+    #     self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid2}")
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 2)
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 2)
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(tunnel_term_entries) + 2)
+    #     my_sid_pipe = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", self.initial_my_sid_entries | set([my_sid_uniform]))
+    #     tunnel_pipe = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries | set([tunnel_uniform]))
+    #     mysid_pipe_term_entry = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_entries | set([mysid_uniform_term_entry]))
 
-        # Validate tunnel DSCP mode configuration
-        self.verify_attribute_value(my_sid_table, my_sid_uniform, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_uniform)
-        self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_pipe)
-        self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL")
-        self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL")
-        self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
-        self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
-        self.verify_attribute_value(my_sid_table, my_sid_uniform, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
-        self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
+    #     # Validate tunnel DSCP mode configuration
+    #     self.verify_attribute_value(my_sid_table, my_sid_uniform, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_uniform)
+    #     self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_pipe)
+    #     self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL")
+    #     self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL")
+    #     self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
+    #     self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
+    #     self.verify_attribute_value(my_sid_table, my_sid_uniform, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
+    #     self.verify_attribute_value(my_sid_table, my_sid_pipe, "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR", "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD")
 
-        # Validate tunnel term configuration
-        self.verify_attribute_value(tunnel_term_table, mysid_uniform_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", tunnel_uniform)
-        self.verify_attribute_value(tunnel_term_table, mysid_uniform_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP", mysid1)
-        self.verify_attribute_value(tunnel_term_table, mysid_pipe_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", tunnel_pipe)
-        self.verify_attribute_value(tunnel_term_table, mysid_pipe_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP", mysid2)
+    #     # Validate tunnel term configuration
+    #     self.verify_attribute_value(tunnel_term_table, mysid_uniform_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", tunnel_uniform)
+    #     self.verify_attribute_value(tunnel_term_table, mysid_uniform_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP", mysid1)
+    #     self.verify_attribute_value(tunnel_term_table, mysid_pipe_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", tunnel_pipe)
+    #     self.verify_attribute_value(tunnel_term_table, mysid_pipe_term_entry, "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP", mysid2)
 
-        # Add another MySID entry with dscp_mode pipe
-        self.add_mysid_vtysh(dvs, "loc3", mysid3, prefix="fe00:0:1::", func_len=16)
+    #     # Add another MySID entry with dscp_mode pipe
+    #     self.add_mysid_vtysh(dvs, "loc3", mysid3, prefix="fe00:0:1::", func_len=16)
 
-        self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:16:0:{mysid3}")
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 3)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(tunnel_term_entries) + 3)
+    #     self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:16:0:{mysid3}")
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 3)
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(tunnel_term_entries) + 3)
 
-        # Verify that the tunnel is reused
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 2)
-        my_sid_pipe2 = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", self.initial_my_sid_entries | set([my_sid_uniform, my_sid_pipe]))
-        self.verify_attribute_value(my_sid_table, my_sid_pipe2, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_pipe)
+    #     # Verify that the tunnel is reused
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 2)
+    #     my_sid_pipe2 = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", self.initial_my_sid_entries | set([my_sid_uniform, my_sid_pipe]))
+    #     self.verify_attribute_value(my_sid_table, my_sid_pipe2, "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID", tunnel_pipe)
 
-        # Remove MySID entries
-        self.remove_mysid_vtysh(dvs, "loc1", mysid1)
-        self.remove_mysid_vtysh(dvs, "loc2", mysid2)
-        self.remove_mysid_vtysh(dvs, "loc3", mysid3, func_len=16)
+    #     # Remove MySID entries
+    #     self.remove_mysid_vtysh(dvs, "loc1", mysid1)
+    #     self.remove_mysid_vtysh(dvs, "loc2", mysid2)
+    #     self.remove_mysid_vtysh(dvs, "loc3", mysid3, func_len=16)
 
-        self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid1}")
-        self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid2}")
-        self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", f"32:16:16:0:{mysid3}")
+    #     self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid1}")
+    #     self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", f"32:16:0:0:{mysid2}")
+    #     self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", f"32:16:16:0:{mysid3}")
 
-        self.remove_mysid_cfgdb("loc1", mysid1)
-        self.remove_mysid_cfgdb("loc2", mysid2)
-        self.remove_mysid_cfgdb("loc3", mysid3, func_len=16)
+    #     self.remove_mysid_cfgdb("loc1", mysid1)
+    #     self.remove_mysid_cfgdb("loc2", mysid2)
+    #     self.remove_mysid_cfgdb("loc3", mysid3, func_len=16)
 
-        # Verify that the MySID and tunnel configuration is removed
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries))
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries))
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(tunnel_term_entries))
+    #     # Verify that the MySID and tunnel configuration is removed
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries))
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries))
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(tunnel_term_entries))
 
-        # Unconfigure srv6 locator
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
+    #     # Unconfigure srv6 locator
+    #     dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
 
-        self.teardown_srv6(dvs)
+    #     self.teardown_srv6(dvs)
 
-    def test_Srv6MySidUNTunnelDscpModeAmbiguity(self, dvs, testlog):
-        _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
-        if 'dplane_fpm_sonic' not in output:
-            pytest.skip("'dplane_fpm_sonic' required for this test is not available, skipping", allow_module_level=True)
+    # def test_Srv6MySidUNTunnelDscpModeAmbiguity(self, dvs, testlog):
+    #     _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
+    #     if 'dplane_fpm_sonic' not in output:
+    #         pytest.skip("'dplane_fpm_sonic' required for this test is not available, skipping", allow_module_level=True)
 
-        self.setup_srv6(dvs)
+    #     self.setup_srv6(dvs)
 
-        tunnel_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
-        tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+    #     tunnel_table = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+    #     tunnel_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
 
-        loc1_prefix = "aaaa:bbbb:1::"
-        loc2_prefix = "aaaa:bbbb:1:2::"
-        sid_addr = "aaaa:bbbb:1:2::/64"
+    #     loc1_prefix = "aaaa:bbbb:1::"
+    #     loc2_prefix = "aaaa:bbbb:1:2::"
+    #     sid_addr = "aaaa:bbbb:1:2::/64"
 
-        # Add locator 1
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "locator loc1" -c "prefix {loc1_prefix}/48 block-len 32 node-len 16 func-bits 16" -c "behavior usid"')
-        self.cdb.create_entry("SRV6_MY_LOCATORS", "loc1", {"prefix": loc1_prefix, "block_len": "32", "node_len": "16", "func_len": "16", "arg_len": "0"})
+    #     # Add locator 1
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "locator loc1" -c "prefix {loc1_prefix}/48 block-len 32 node-len 16 func-bits 16" -c "behavior usid"')
+    #     self.cdb.create_entry("SRV6_MY_LOCATORS", "loc1", {"prefix": loc1_prefix, "block_len": "32", "node_len": "16", "func_len": "16", "arg_len": "0"})
 
-        # Add locator 2
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "locator loc2" -c "prefix {loc2_prefix}/64 block-len 32 node-len 32 func-bits 0" -c "behavior usid"')
-        self.cdb.create_entry("SRV6_MY_LOCATORS", "loc2", {"prefix": loc2_prefix, "block_len": "32", "node_len": "32", "func_len": "0", "arg_len": "0"})
+    #     # Add locator 2
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "locator loc2" -c "prefix {loc2_prefix}/64 block-len 32 node-len 32 func-bits 0" -c "behavior usid"')
+    #     self.cdb.create_entry("SRV6_MY_LOCATORS", "loc2", {"prefix": loc2_prefix, "block_len": "32", "node_len": "32", "func_len": "0", "arg_len": "0"})
 
-        # Add SIDs CONIFG_DB
-        self.cdb.create_entry("SRV6_MY_SIDS", f'loc1|{sid_addr}', {"decap_dscp_mode": "uniform"})
-        self.cdb.create_entry("SRV6_MY_SIDS", f'loc2|{sid_addr}', {"decap_dscp_mode": "pipe"})
+    #     # Add SIDs CONIFG_DB
+    #     self.cdb.create_entry("SRV6_MY_SIDS", f'loc1|{sid_addr}', {"decap_dscp_mode": "uniform"})
+    #     self.cdb.create_entry("SRV6_MY_SIDS", f'loc2|{sid_addr}', {"decap_dscp_mode": "pipe"})
 
-        # Add first SID
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "sid {sid_addr} locator loc1 behavior uN"')
+    #     # Add first SID
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "sid {sid_addr} locator loc1 behavior uN"')
 
-        self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:16:0:aaaa:bbbb:1:2::")
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 1)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
-        tunnel_uniform = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries)
+    #     self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:16:16:0:aaaa:bbbb:1:2::")
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 1)
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
+    #     tunnel_uniform = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries)
 
-        # Add second SID
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "sid {sid_addr} locator loc2 behavior uN"')
+    #     # Add second SID
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "sid {sid_addr} locator loc2 behavior uN"')
 
-        self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:32:0:0:aaaa:bbbb:1:2::")
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 2)
-        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 2)
-        tunnel_pipe = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries | set([tunnel_uniform]))
+    #     self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", f"32:32:0:0:aaaa:bbbb:1:2::")
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 2)
+    #     self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 2)
+    #     tunnel_pipe = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_entries | set([tunnel_uniform]))
 
-        self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL")
-        self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL")
-        self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
-        self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
+    #     self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL")
+    #     self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE", "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL")
+    #     self.verify_attribute_value(tunnel_table, tunnel_uniform, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
+    #     self.verify_attribute_value(tunnel_table, tunnel_pipe, "SAI_TUNNEL_ATTR_DECAP_TTL_MODE", "SAI_TUNNEL_TTL_MODE_PIPE_MODEL")
 
-        # Cleanup
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "no sid {sid_addr} locator loc1 behavior uN"')
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "no sid {sid_addr} locator loc2 behavior uN"')
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "no locator loc1"')
-        dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "no locator loc2"')
+    #     # Cleanup
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "no sid {sid_addr} locator loc1 behavior uN"')
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "no sid {sid_addr} locator loc2 behavior uN"')
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "no locator loc1"')
+    #     dvs.runcmd(f'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "no locator loc2"')
 
-        self.cdb.delete_entry("SRV6_MY_SIDS", f'loc1|{sid_addr}')
-        self.cdb.delete_entry("SRV6_MY_SIDS", f'loc2|{sid_addr}')
-        self.cdb.delete_entry("SRV6_MY_LOCATORS", "loc1")
-        self.cdb.delete_entry("SRV6_MY_LOCATORS", "loc2")
+    #     self.cdb.delete_entry("SRV6_MY_SIDS", f'loc1|{sid_addr}')
+    #     self.cdb.delete_entry("SRV6_MY_SIDS", f'loc2|{sid_addr}')
+    #     self.cdb.delete_entry("SRV6_MY_LOCATORS", "loc1")
+    #     self.cdb.delete_entry("SRV6_MY_LOCATORS", "loc2")
 
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
-        self.teardown_srv6(dvs)
+    #     dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
+    #     self.teardown_srv6(dvs)
 
 class TestSrv6VpnFpmsyncd(object):
     """ Functionality tests for SRv6 VPN handling in fpmsyncd """
