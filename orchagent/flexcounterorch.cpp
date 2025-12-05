@@ -34,6 +34,7 @@ extern sai_object_id_t gSwitchId;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
+#define PORT_ATTR_KEY               "PORT_ATTR"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
 #define QUEUE_WATERMARK             "QUEUE_WATERMARK"
@@ -52,6 +53,7 @@ extern sai_object_id_t gSwitchId;
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_ATTR", PORT_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
@@ -215,17 +217,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_pg_watermark_enabled = true;
                             gPortsOrch->addPriorityGroupWatermarkFlexCounters(getPgConfigurations());
                         }
-			else if(key == WRED_PORT_KEY)
-			{
+                        else if(key == WRED_PORT_KEY)
+                        {
                             gPortsOrch->generateWredPortCounterMap();
                             m_wred_port_counter_enabled = true;
-			}
-			else if(key == WRED_QUEUE_KEY)
-			{
+                        }
+                        else if(key == WRED_QUEUE_KEY)
+                        {
                             gPortsOrch->generateQueueMap(getQueueConfigurations());
                             m_wred_queue_counter_enabled = true;
                             gPortsOrch->addWredQueueFlexCounters(getQueueConfigurations());
-			}
+                        }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
                     {
@@ -276,6 +278,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (gSrv6Orch && (key == SRV6_KEY))
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
+                    }
+                    if (gPortsOrch && (key == PORT_ATTR_KEY))
+                    {
+                        if(value == "enable" && !m_port_attr_enabled)
+                        {
+                            m_port_attr_enabled = true;
+                            gPortsOrch->generatePortAttrCounterMap();
+                        }
+                        if (value == "disable" && m_port_attr_enabled)
+                        {
+                            gPortsOrch->clearPortAttrCounterMap();
+                            m_port_attr_enabled = false;
+                        }
                     }
 
                     if (gPortsOrch)
@@ -334,6 +349,11 @@ void FlexCounterOrch::doTask(SelectableTimer&)
 bool FlexCounterOrch::getPortCountersState() const
 {
     return m_port_counter_enabled;
+}
+
+bool FlexCounterOrch::getPortAttrCountersState() const
+{
+    return m_port_attr_enabled;
 }
 
 bool FlexCounterOrch::getPortBufferDropCountersState() const
