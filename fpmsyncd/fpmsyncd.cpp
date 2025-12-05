@@ -96,6 +96,8 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
+    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWTFILTER, &sync);
+    NetDispatcher::getInstance().registerMessageHandler(RTM_DELTFILTER, &sync);
 
     rtnl_route_read_protocol_names(DefaultRtProtoPath);
     nlmsg_set_default_size(FPM_MAX_MSG_LEN);

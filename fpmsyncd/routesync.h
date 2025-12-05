@@ -47,6 +47,8 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
+    virtual ~RouteSync();
+
     RouteSync(RedisPipeline *pipeline);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
@@ -71,9 +73,13 @@ public:
     /* Mark all routes from DB with offloaded flag */
     void markRoutesOffloaded(swss::DBConnector& db);
 
+    WarmStartHelper  m_warmStartHelper;
+
     void onFpmConnected(FpmInterface& fpm)
     {
-        m_fpmInterface = &fpm;
+        if (m_fpmInterface) {
+            m_fpmInterface = &fpm;
+        }
     }
 
     void onFpmDisconnected()
@@ -97,6 +103,8 @@ private:
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable;
+    /* EVPN Split Horizon Table */
+    ProducerStateTable  m_evpn_shlTable;
     /* Warm start helper */
     WarmStartHelper m_warmStartHelper;
     /* srv6 mySid table */
@@ -139,6 +147,8 @@ private:
 
     /* Handle prefix route */
     void onEvpnRouteMsg(struct nlmsghdr *h, int len);
+    void onEvpnShlMsg(int msg_type, struct tcmsg *tcm, struct rtattr *tca_options);
+    void onTcFilterMsg(struct nlmsghdr *h, int len);
 
     /* Handle routes containing an SRv6 nexthop */
     void onSrv6SteerRouteMsg(struct nlmsghdr *h, int len);
