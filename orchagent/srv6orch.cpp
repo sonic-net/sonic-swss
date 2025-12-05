@@ -1416,8 +1416,7 @@ bool Srv6Orch::mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t e
 
 bool Srv6Orch::mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode)
 {
-    if (end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN &&
-        end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46)
+    if (end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46)
     {
         return false;
     }
