@@ -593,7 +593,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
             handleSaiFailure(api, "create", status);
             break;
     }
-    return task_failed;
+    return task_need_retry;
 }
 
 task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
@@ -640,7 +640,7 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
             handleSaiFailure(api, "set", status);
             break;
     }
-    return task_failed;
+    return task_need_retry;
 }
 
 task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
@@ -683,7 +683,7 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
             handleSaiFailure(api, "remove", status);
             break;
     }
-    return task_failed;
+    return task_need_retry;
 }
 
 task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
@@ -735,6 +735,29 @@ bool parseHandleSaiStatusFailure(task_process_status status)
             SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
     }
     return true;
+}
+
+/*
+ * Optional sai failure handling to abort orchagent for some critical failures
+   like create switch failure.
+ */
+void handleSaiFailure(bool abort_on_failure)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
+    attr.value.s32 =  SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to take sai failure dump %d", status);
+    }
+    if (abort_on_failure)
+    {
+        abort();
+    }
 }
 
 /* Handling SAI failure. Request redis to invoke SAI failure dump */
