@@ -778,6 +778,7 @@ static inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
 static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_parameter_t &flex_counter_group_param)
 {
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.poll_interval);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.secondary_poll_factor);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.operation);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugin_name);
@@ -832,6 +833,7 @@ static inline void operateFlexCounterDbSingleField(std::vector<FieldValueTuple> 
 
 static inline void operateFlexCounterGroupDatabase(const string &group,
                                             const string &poll_interval,
+                                            const string &secondary_poll_factor,
                                             const string &stats_mode,
                                             const string &plugin_name,
                                             const string &plugins,
@@ -841,6 +843,7 @@ static inline void operateFlexCounterGroupDatabase(const string &group,
     std::vector<FieldValueTuple> fvTuples;
     auto &flexCounterGroupTable = is_gearbox ? gGearBoxFlexCounterGroupTable : gFlexCounterGroupTable;
 
+    operateFlexCounterDbSingleField(fvTuples, SECONDARY_POLL_FACTOR_FIELD, secondary_poll_factor);
     operateFlexCounterDbSingleField(fvTuples, POLL_INTERVAL_FIELD, poll_interval);
     operateFlexCounterDbSingleField(fvTuples, STATS_MODE_FIELD, stats_mode);
     operateFlexCounterDbSingleField(fvTuples, plugin_name, plugins);
@@ -848,8 +851,10 @@ static inline void operateFlexCounterGroupDatabase(const string &group,
 
     flexCounterGroupTable->set(group, fvTuples);
 }
+
 void setFlexCounterGroupParameter(const string &group,
                                   const string &poll_interval,
+                                  const string &secondary_poll_factor,
                                   const string &stats_mode,
                                   const string &plugin_name,
                                   const string &plugins,
@@ -858,7 +863,7 @@ void setFlexCounterGroupParameter(const string &group,
 {
     if (gTraditionalFlexCounter)
     {
-        operateFlexCounterGroupDatabase(group, poll_interval, stats_mode, plugin_name, plugins, operation, is_gearbox);
+        operateFlexCounterGroupDatabase(group, poll_interval, secondary_poll_factor, stats_mode, plugin_name, plugins, operation, is_gearbox);
         return;
     }
 
@@ -872,6 +877,7 @@ void setFlexCounterGroupParameter(const string &group,
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size_per_prefix);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.poll_interval, poll_interval);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.secondary_poll_factor, secondary_poll_factor);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.operation, operation);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.stats_mode, stats_mode);
     initSaiRedisCounterParameterFromString(flex_counter_group_param.plugin_name, plugin_name);
@@ -886,7 +892,7 @@ void setFlexCounterGroupOperation(const string &group,
 {
     if (gTraditionalFlexCounter)
     {
-        operateFlexCounterGroupDatabase(group, "", "", "", "", operation, is_gearbox);
+        operateFlexCounterGroupDatabase(group, "", "", "", "", "", operation, is_gearbox);
         return;
     }
 
@@ -909,7 +915,7 @@ void setFlexCounterGroupPollInterval(const string &group,
 {
     if (gTraditionalFlexCounter)
     {
-        operateFlexCounterGroupDatabase(group, poll_interval, "", "", "", "", is_gearbox);
+        operateFlexCounterGroupDatabase(group, poll_interval, "", "", "", "", "", is_gearbox);
         return;
     }
 
@@ -926,13 +932,36 @@ void setFlexCounterGroupPollInterval(const string &group,
     notifySyncdCounterOperation(is_gearbox, attr);
 }
 
+void setFlexCounterGroupSecondaryPollFactor(const std::string &group,
+                                            const std::string &secondary_poll_factor,
+                                            bool is_gearbox)
+{
+    if (gTraditionalFlexCounter)
+    {
+        operateFlexCounterGroupDatabase(group, "", secondary_poll_factor, "", "", "", "", is_gearbox);
+        return;
+    }
+
+    sai_attribute_t attr;
+    sai_redis_flex_counter_group_parameter_t flex_counter_group_param;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+    attr.value.ptr = &flex_counter_group_param;
+
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.counter_group_name, group);
+    initSaiRedisCounterParameterFromString(flex_counter_group_param.secondary_poll_factor, secondary_poll_factor);
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
 void setFlexCounterGroupStatsMode(const std::string &group,
                                   const std::string &stats_mode,
                                   bool is_gearbox)
 {
     if (gTraditionalFlexCounter)
     {
-        operateFlexCounterGroupDatabase(group, "", stats_mode, "", "", "", is_gearbox);
+        operateFlexCounterGroupDatabase(group, "", "", stats_mode, "", "", "", is_gearbox);
         return;
     }
 
