@@ -29,7 +29,11 @@ using namespace swss;
 #define STR(s) _STR(s)
 
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+#if defined(__arm__)
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT ((480*1000)*2)
+#else
 #define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT (480*1000)
+#endif
 
 // hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
 #define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
