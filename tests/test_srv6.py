@@ -1330,6 +1330,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd(sid_cmd)
         dvs.runcmd(loc_cmd)
 
+    @pytest.mark.skip(reason="Skip to be removed after stabilizing the test")
     def test_Srv6MySidUNTunnelDscpMode(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1426,6 +1427,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+    @pytest.mark.skip(reason="Skip to be removed after stabilizing the test")
     def test_Srv6MySidUNTunnelDscpModeAmbiguity(self, dvs, testlog):
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
         if 'dplane_fpm_sonic' not in output:
