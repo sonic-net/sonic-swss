@@ -78,6 +78,7 @@ private:
     NotificationConsumer* m_l2mcCfgparaDoneNotificationConsumer;
     
     bool m_warmstart;
+    std::unordered_set<std::string> m_operUpPorts;
     map<string, string> m_l2mcentry;
     map<string, string> m_l2mcVlanentry;
     map<string, string> m_l2mcGrpMementry;
