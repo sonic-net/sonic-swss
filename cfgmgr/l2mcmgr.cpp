@@ -1173,6 +1173,18 @@ void L2McMgr::updateVlanMember(const string vlan_id)
         msg.count =1;
         memcpy(msg.ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
         msg.op_code = L2MCD_OP_ENABLE;
+        vector<FieldValueTuple> tupEntry;
+        if (m_cfgVlanMemberTable.get(l2mc_localMemName, tupEntry))
+        {
+            auto tag  = std::find_if(
+            tupEntry.begin(), tupEntry.end(),
+            [](auto &t){ return t.first == "tagging_mode"; });
+
+            if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
+                msg.ports[0].tagged = UNTAGGED;
+            else
+                msg.ports[0].tagged = TAGGED; 
+        }
         sendMsgL2Mcd(L2MCD_VLAN_MEM_TABLE_UPDATE, sizeof(msg), (void *)&msg);
     }
 }
@@ -1526,18 +1538,51 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
         string vlan_id = "";
         string ifname = "";
         SWSS_LOG_INFO("Received l2mcd_sync op  %s option %s vlan_id %s",op.c_str(), option.c_str(), param.c_str());
-        if (op == "SNP" && option == "enable")
+        if (op == "SNP")
         {
             vlan_id = param;
-            updateVlanMember(vlan_id);
-            updateMrouterEntry(vlan_id, ifname);
-            updateGrpStaticEntry(vlan_id, ifname);
+            if (option == "enable")
+            {
+                auto res = m_operUpPorts.insert(ifname);
+
+                if (!res.second)
+                {
+                    SWSS_LOG_INFO("Vlan %s already enable, skip", ifname.c_str());
+                    return;
+                }
+                SWSS_LOG_INFO("Vlan %s changed to enable", ifname.c_str());
+                updateVlanMember(vlan_id);
+                updateMrouterEntry(vlan_id, ifname);
+                updateGrpStaticEntry(vlan_id, ifname);
+            }
+            else if (option == "disable")
+            {
+                SWSS_LOG_INFO("Vlan %s changed to disable", ifname.c_str());
+                m_operUpPorts.erase(ifname);
+            }
         }
-        else if (op == "LINK_STATUS" && option == "up")
+        else if (op == "LINK_STATUS")
         {
             ifname = param;
-            updateMrouterEntry(vlan_id, ifname);
-            updateGrpStaticEntry(vlan_id, ifname);
+
+            if (option == "up")
+            {
+                auto res = m_operUpPorts.insert(ifname);
+
+                if (!res.second)
+                {
+                    SWSS_LOG_INFO("Port %s already UP, skip", ifname.c_str());
+                    return;
+                }
+                SWSS_LOG_INFO("Port %s changed to UP", ifname.c_str());
+                updateMrouterEntry(vlan_id, ifname);
+                updateGrpStaticEntry(vlan_id, ifname);
+            }
+            else if (option == "down")
+            {
+                m_operUpPorts.erase(ifname);
+            }
         }
+            
     }
 }
