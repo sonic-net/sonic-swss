@@ -1,6 +1,6 @@
 /**
  * @file portphyattr_ut.cpp
- * @brief Unit tests for PORT_ATTR flex counter orchestration
+ * @brief Unit tests for PORT_PHY_ATTR flex counter orchestration
  *
  * Tests the end-to-end integration of PHY attribute collection from
  * FlexCounterOrch through PortsOrch to the FlexCounter infrastructure.
@@ -161,7 +161,7 @@ namespace portphyattr_test
     };
 
     /**
-     * PORT_ATTR flex counter enable/disable via doTask
+     * PORT_PHY_ATTR flex counter enable/disable via doTask
      */
     TEST_F(PortAttrTest, EnablePortAttrFlexCounterDoTask)
     {
@@ -178,11 +178,11 @@ namespace portphyattr_test
         vector<FieldValueTuple> fvs;
         fvs.push_back(FieldValueTuple("FLEX_COUNTER_STATUS", "enable"));
         fvs.push_back(FieldValueTuple("POLL_INTERVAL", "1000"));
-        flexCounterTable.set("PORT_ATTR", fvs);
+        flexCounterTable.set("PORT_PHY_ATTR", fvs);
         std::cout << " CONFIG_DB configured: FLEX_COUNTER_STATUS=enable, POLL_INTERVAL=1000" << std::endl;
 
         std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"PORT_ATTR", "SET", {
+        entries.push_back({"PORT_PHY_ATTR", "SET", {
             {"FLEX_COUNTER_STATUS", "enable"},
             {"POLL_INTERVAL", "1000"}
         }});
@@ -192,21 +192,21 @@ namespace portphyattr_test
 
         bool state = m_flexCounterOrch->getPortAttrCountersState();
         EXPECT_TRUE(state);
-        std::cout << " PORT_ATTR enablement verified: state = " << (state ? "ENABLED" : "DISABLED") << std::endl;
+        std::cout << " PORT_PHY_ATTR enablement verified: state = " << (state ? "ENABLED" : "DISABLED") << std::endl;
 
         entries.clear();
-        entries.push_back({"PORT_ATTR", "SET", {{"FLEX_COUNTER_STATUS", "disable"}}});
+        entries.push_back({"PORT_PHY_ATTR", "SET", {{"FLEX_COUNTER_STATUS", "disable"}}});
 
         consumer->addToSync(entries);
         static_cast<Orch *>(m_flexCounterOrch)->doTask(*consumer);
 
         bool disabledState = m_flexCounterOrch->getPortAttrCountersState();
         EXPECT_FALSE(disabledState);
-        std::cout << " PORT_ATTR disablement verified: state = " << (disabledState ? "ENABLED" : "DISABLED") << std::endl;
+        std::cout << " PORT_PHY_ATTR disablement verified: state = " << (disabledState ? "ENABLED" : "DISABLED") << std::endl;
     }
 
     /**
-     * Validates that generatePortAttrCounterMap works with PORT_ATTR counter type
+     * Validates that generatePortAttrCounterMap works with PORT_PHY_ATTR counter type
      */
     TEST_F(PortAttrTest, generatePortAttrCounterMap)
     {
@@ -245,7 +245,7 @@ namespace portphyattr_test
         }
 
         // Verify the operations completed without crashes
-        SUCCEED() << "All PORT_ATTR counter map operations completed successfully";
+        SUCCEED() << "All PORT_PHY_ATTR counter map operations completed successfully";
     }
 
     TEST_F(PortAttrTest, QueryPortAttrCapabilitiesWithMockedSAI)
