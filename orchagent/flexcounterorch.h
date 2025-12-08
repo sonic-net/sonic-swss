@@ -75,7 +75,7 @@ public:
 private:
     void handleDeviceMetadataTable(Consumer &consumer);
     bool m_port_counter_enabled = false;
-    bool m_port_attr_enabled = false;
+    bool m_port_phy_attr_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
     bool m_queue_enabled = false;
     bool m_queue_watermark_enabled = false;

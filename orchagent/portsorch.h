@@ -29,7 +29,7 @@
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
-#define PORT_ATTR_FLEX_COUNTER_GROUP "PORT_ATTR"
+#define PORT_PHY_ATTR_FLEX_COUNTER_GROUP "PORT_PHY_ATTR"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -134,7 +134,7 @@ struct PortCapability
 
 typedef PortCapability<PortSupportedFecModes> PortFecModeCapability_t;
 
-extern const std::vector<sai_port_attr_t> port_attr_ids;
+extern const std::vector<sai_port_attr_t> port_phy_attr_ids;
 
 // Forward declaration for unit test friend class
 namespace portphyattr_test
@@ -311,7 +311,7 @@ private:
     shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterTaggedCachedManager<void> port_stat_manager;
-    FlexCounterTaggedCachedManager<void> port_attr_manager;
+    FlexCounterTaggedCachedManager<void> port_phy_attr_manager;
     FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
