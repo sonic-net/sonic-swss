@@ -138,12 +138,12 @@ class DashDB(object):
         else:
             pb_string = value
 
-        table = ProducerStateTable(self.dvs.get_app_db().db_connection, table_name)
+        table = ProducerStateTable(self.dvs.get_dpu_app_db().db_connection, table_name)
         table[key] = {'pb': pb_string}
 
     def remove_app_db_entry(self, table_name, *key_parts):
         key = ":".join(key_parts)
-        table = ProducerStateTable(self.dvs.get_app_db().db_connection, table_name)
+        table = ProducerStateTable(self.dvs.get_dpu_app_db().db_connection, table_name)
         del table[key]
 
     def get_asic_db_entry(self, table_name, key):
@@ -204,7 +204,7 @@ class DashDB(object):
         return attr_to_sai_object_map
 
     def get_app_db_keys(self, table_name):
-        table = Table(self.dvs.get_app_db().db_connection, table_name)
+        table = Table(self.dvs.get_dpu_app_db().db_connection, table_name)
         return table.get_keys()
 
     def get_asic_db_keys(self, table_name):
@@ -214,27 +214,27 @@ class DashDB(object):
     def __init__(self, dvs):
         self.dvs = dvs
         self.app_dash_routing_type_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_ROUTING_TYPE_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_ROUTING_TYPE_TABLE")
         self.app_dash_appliance_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_APPLIANCE_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_APPLIANCE_TABLE")
         self.app_dash_vnet_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_VNET_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_VNET_TABLE")
         self.app_dash_eni_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_ENI_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_ENI_TABLE")
         self.app_dash_vnet_map_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_VNET_MAPPING_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_VNET_MAPPING_TABLE")
         self.app_dash_route_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_ROUTE_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_ROUTE_TABLE")
         self.app_dash_route_rule_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_ROUTE_RULE_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_ROUTE_RULE_TABLE")
         self.app_dash_eni_route_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_ENI_ROUTE_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_ENI_ROUTE_TABLE")
         self.app_dash_route_group_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_ROUTE_GROUP_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_ROUTE_GROUP_TABLE")
         self.app_dash_meter_policy_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_METER_POLICY_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_METER_POLICY_TABLE")
         self.app_dash_meter_rule_table = ProducerStateTable(
-            self.dvs.get_app_db().db_connection, "DASH_METER_RULE_TABLE")
+            self.dvs.get_dpu_app_db().db_connection, "DASH_METER_RULE_TABLE")
 
         self.asic_dash_appliance_table = Table(
             self.dvs.get_asic_db().db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_DASH_APPLIANCE")

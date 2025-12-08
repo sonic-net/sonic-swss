@@ -95,7 +95,7 @@ struct PortAttrValue
 };
 
 typedef PortAttrValue PortAttrValue_t;
-typedef std::map<sai_port_serdes_attr_t, std::vector<std::uint32_t>> PortSerdesAttrMap_t;
+typedef std::map<sai_port_serdes_attr_t, SerdesValue> PortSerdesAttrMap_t;
 
 struct PortBulker
 {
@@ -434,90 +434,93 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
 {
     if (port.serdes.preemphasis.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_PREEMPHASIS] = port.serdes.preemphasis.value;
+        map[SAI_PORT_SERDES_ATTR_PREEMPHASIS] = SerdesValue(port.serdes.preemphasis.value);
     }
 
     if (port.serdes.idriver.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_IDRIVER] = port.serdes.idriver.value;
+        map[SAI_PORT_SERDES_ATTR_IDRIVER] = SerdesValue(port.serdes.idriver.value);
     }
 
     if (port.serdes.ipredriver.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_IPREDRIVER] = port.serdes.ipredriver.value;
+        map[SAI_PORT_SERDES_ATTR_IPREDRIVER] = SerdesValue(port.serdes.ipredriver.value);
     }
 
     if (port.serdes.pre1.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1] = port.serdes.pre1.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1] = SerdesValue(port.serdes.pre1.value);
     }
 
     if (port.serdes.pre2.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2] = port.serdes.pre2.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2] = SerdesValue(port.serdes.pre2.value);
     }
 
     if (port.serdes.pre3.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3] = port.serdes.pre3.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3] = SerdesValue(port.serdes.pre3.value);
     }
 
     if (port.serdes.main.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN] = port.serdes.main.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN] = SerdesValue(port.serdes.main.value);
     }
 
     if (port.serdes.post1.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST1] = port.serdes.post1.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST1] = SerdesValue(port.serdes.post1.value);
     }
 
     if (port.serdes.post2.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST2] = port.serdes.post2.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST2] = SerdesValue(port.serdes.post2.value);
     }
 
     if (port.serdes.post3.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST3] = port.serdes.post3.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST3] = SerdesValue(port.serdes.post3.value);
     }
 
     if (port.serdes.attn.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_FIR_ATTN] = port.serdes.attn.value;
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_ATTN] = SerdesValue(port.serdes.attn.value);
     }
 
     if (port.serdes.ob_m2lp.is_set)
     {
-
-        map[SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO] = port.serdes.ob_m2lp.value;
+        map[SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO] = SerdesValue(port.serdes.ob_m2lp.value);
     }
 
     if (port.serdes.ob_alev_out.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE] = port.serdes.ob_alev_out.value;
+        map[SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE] = SerdesValue(port.serdes.ob_alev_out.value);
     }
 
     if (port.serdes.obplev.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE] = port.serdes.obplev.value;
+        map[SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE] = SerdesValue(port.serdes.obplev.value);
     }
 
     if (port.serdes.obnlev.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE] = port.serdes.obnlev.value;
+        map[SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE] = SerdesValue(port.serdes.obnlev.value);
     }
 
     if (port.serdes.regn_bfm1p.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG] = port.serdes.regn_bfm1p.value;
+        map[SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG] = SerdesValue(port.serdes.regn_bfm1p.value);
     }
 
     if (port.serdes.regn_bfm1n.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG] = port.serdes.regn_bfm1n.value;
+        map[SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG] = SerdesValue(port.serdes.regn_bfm1n.value);
     }
 
+    if (port.serdes.custom_collection.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION] = SerdesValue(port.serdes.custom_collection.value);
+    }
 
 }
 
@@ -715,6 +718,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
     m_sendToIngressPortTable = unique_ptr<Table>(new Table(db, APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
+    m_systemPortTable = unique_ptr<Table>(new Table(db, APP_SYSTEM_PORT_TABLE_NAME));
 
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
@@ -3986,6 +3990,7 @@ void PortsOrch::registerPort(Port &p)
 
     /* Create associated Gearbox lane mapping */
     initGearboxPort(p);
+    updateSystemPort(p);
 
     /* Add port to port list */
     m_portList[alias] = p;
@@ -4028,6 +4033,40 @@ void PortsOrch::registerPort(Port &p)
         wred_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, wred_port_stats);
     }
 
+    // If queue-related flex counters are already enabled, generate queue maps
+    // for the newly added port so that usecases like dynamic port breakout works.
+    bool queueFcEnabled = flex_counters_orch->getQueueCountersState() ||
+                            flex_counters_orch->getQueueWatermarkCountersState() ||
+                            flex_counters_orch->getWredQueueCountersState();
+    if (queueFcEnabled && !p.m_queue_ids.empty())
+    {
+        auto queuesStateVector = flex_counters_orch->getQueueConfigurations();
+
+        auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(p.m_alias);
+        FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+
+        if (queuesStateVector.count(p.m_alias))
+        {
+            flexCounterQueueState = queuesStateVector.at(p.m_alias);
+        }
+        else if (queuesStateVector.count(createAllAvailableBuffersStr))
+        {
+            if (maxQueueNumber > 0)
+            {
+                flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+            }
+        }
+        else
+        {
+            if (p.m_host_tx_queue_configured && p.m_host_tx_queue < maxQueueNumber)
+            {
+                flexCounterQueueState.enableQueueCounter(p.m_host_tx_queue);
+            }
+        }
+
+        generateQueueMapPerPort(p, flexCounterQueueState, false);
+    }
+
     PortUpdate update = { p, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -4051,9 +4090,12 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
         return;
     }
 
-    if (p.m_host_tx_queue_configured && p.m_queue_ids.size() > p.m_host_tx_queue)
+    if (!p.m_queue_ids.empty())
     {
-        removePortBufferQueueCounters(p, to_string(p.m_host_tx_queue), false);
+        auto skip_host_tx_queue = p.m_host_tx_queue_configured && (p.m_queue_ids.size() > p.m_host_tx_queue);
+        // Remove all queue counters and mappings for this port to avoid stale entries
+        std::string range = "0-" + to_string(p.m_queue_ids.size() - 1);
+        removePortBufferQueueCounters(p, range, skip_host_tx_queue);
     }
 
     /* remove port from flex_counter_table for updating counters  */
@@ -4598,10 +4640,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         m_portList[p.m_alias] = p;
                         updatePortStatePoll(p, PORT_STATE_POLL_LT, pCfg.link_training.value);
 
-                        // Restore pre-emphasis when LT is transitioned from ON to OFF
+                        // Restore serdes attributes when LT is transitioned from ON to OFF
                         if (!p.m_link_training && serdes_attr.empty())
                         {
-                            serdes_attr = p.m_preemphasis;
+                            serdes_attr = p.m_serdes_attrs;
                         }
 
                         SWSS_LOG_NOTICE(
@@ -5118,8 +5160,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (p.m_link_training)
                     {
-                        SWSS_LOG_NOTICE("Save port %s preemphasis for LT", p.m_alias.c_str());
-                        p.m_preemphasis = serdes_attr;
+                        SWSS_LOG_NOTICE("Save port %s serdes attributes for LT", p.m_alias.c_str());
+                        p.m_serdes_attrs = serdes_attr;
                         m_portList[p.m_alias] = p;
                     }
                     else
@@ -5141,7 +5183,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
                         {
                             SWSS_LOG_NOTICE("Set port %s SI settings is successful", p.m_alias.c_str());
-                            p.m_preemphasis = serdes_attr;
+                            p.m_serdes_attrs = serdes_attr;
                             m_portList[p.m_alias] = p;
                         }
                         else
@@ -9419,7 +9461,7 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
 }
 
 bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
-                                       map<sai_port_serdes_attr_t, vector<uint32_t>> &serdes_attr)
+                                       map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr)
 {
     SWSS_LOG_ENTER();
 
@@ -9466,12 +9508,15 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
     for (auto it = serdes_attr.begin(); it != serdes_attr.end(); it++)
     {
         port_serdes_attr.id = it->first;
-        port_serdes_attr.value.u32list.count = (uint32_t)it->second.size();
-        port_serdes_attr.value.u32list.list = it->second.data();
+
+        // Use boost::variant visitor to handle both vector and string types
+        boost::apply_visitor(SerdesValueVisitor(port_serdes_attr), it->second);
+
         attr_list.emplace_back(port_serdes_attr);
     }
+    assert(serdes_attr.size() + 1 == attr_list.size());
     status = sai_port_api->create_port_serdes(&port_serdes_id, switch_id,
-                                              static_cast<uint32_t>(serdes_attr.size()+1),
+                                              static_cast<uint32_t>(attr_list.size()),
                                               attr_list.data());
 
     if (status != SAI_STATUS_SUCCESS)
@@ -9871,8 +9916,8 @@ bool PortsOrch::initGearboxPort(Port &port)
             m_gbcounterTable->set("", fields);
 
             /* Set serdes tx taps on system and line side */
-            map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
-            typedef pair<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr_pair;
+            map<sai_port_serdes_attr_t, SerdesValue> serdes_attr;
+            typedef pair<sai_port_serdes_attr_t, SerdesValue> serdes_attr_pair;
             vector<uint32_t> attr_val;
             for (auto pair: tx_fir_strings_system_side) {
                 if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
@@ -9885,11 +9930,11 @@ bool PortsOrch::initGearboxPort(Port &port)
             {
                 if (setPortSerdesAttribute(systemPort, phyOid, serdes_attr))
                 {
-                    SWSS_LOG_NOTICE("Set port %s system side preemphasis is success", port.m_alias.c_str());
+                    SWSS_LOG_NOTICE("Set port %s system side serdes attributes is success", port.m_alias.c_str());
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Failed to set port %s system side pre-emphasis", port.m_alias.c_str());
+                    SWSS_LOG_ERROR("Failed to set port %s system side serdes attributes", port.m_alias.c_str());
                     return false;
                 }
             }
@@ -9905,11 +9950,11 @@ bool PortsOrch::initGearboxPort(Port &port)
             {
                 if (setPortSerdesAttribute(linePort, phyOid, serdes_attr))
                 {
-                    SWSS_LOG_NOTICE("Set port %s line side preemphasis is success", port.m_alias.c_str());
+                    SWSS_LOG_NOTICE("Set port %s line side serdes attributes is success", port.m_alias.c_str());
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Failed to set port %s line side pre-emphasis", port.m_alias.c_str());
+                    SWSS_LOG_ERROR("Failed to set port %s line side serdes attributes", port.m_alias.c_str());
                     return false;
                 }
             }
@@ -10049,7 +10094,9 @@ bool PortsOrch::getSystemPorts()
                     attr.value.sysportconfig.attached_core_index,
                     attr.value.sysportconfig.attached_core_port_index);
 
-            m_systemPortOidMap[sp_key] = system_port_list[i];
+            systemPortMapInfo system_port_info;
+            system_port_info.system_port_id = system_port_list[i];
+            m_systemPortOidMap[sp_key] = system_port_info;
         }
     }
 
@@ -10135,7 +10182,8 @@ bool PortsOrch::addSystemPorts()
             sai_status_t status;
 
             //Retrive system port config info and enable
-            system_port_oid = m_systemPortOidMap[sp_key];
+            system_port_oid = m_systemPortOidMap[sp_key].system_port_id;
+
 
             attr.id = SAI_SYSTEM_PORT_ATTR_TYPE;
             attrs.push_back(attr);
@@ -10198,6 +10246,10 @@ bool PortsOrch::addSystemPorts()
             port.m_system_port_info.speed = attrs[1].value.sysportconfig.speed;
             port.m_system_port_info.num_voq = attrs[1].value.sysportconfig.num_voq;
 
+            //Update the system Port Info to the m_systemPortOidMap to be used later when the Port Speed is changed dynamically
+            m_systemPortOidMap[sp_key].system_port_info = port.m_system_port_info;
+            m_systemPortOidMap[sp_key].info_valid = true;
+
             initializeVoqs( port );
             setPort(port.m_alias, port);
             /* Add system port name map to counter table */
@@ -10225,6 +10277,73 @@ bool PortsOrch::addSystemPorts()
 
     return true;
 }
+
+void PortsOrch::updateSystemPort(Port &port)
+{
+     if (!m_initDone)
+     {
+         //addSystemPorts will update the system port
+         return;
+     }
+
+     if ((gMySwitchType == "voq") && (port.m_type == Port::PHY))
+     {
+        auto system_port_alias = gMyHostName + "|" + gMyAsicName + "|" + port.m_alias;
+        vector<FieldValueTuple> spFv;
+
+        m_systemPortTable->get(system_port_alias, spFv);
+
+        //Retrieve system port configurations from APP DB
+        int32_t switch_id = -1;
+        int32_t core_index = -1;
+        int32_t core_port_index = -1;
+
+        for ( auto &fv : spFv )
+        {
+             if(fv.first == "switch_id")
+             {
+                switch_id = stoi(fv.second);
+                continue;
+             }
+             if(fv.first == "core_index")
+             {
+                core_index = stoi(fv.second);
+                continue;
+             }
+             if(fv.first == "core_port_index")
+             {
+                core_port_index = stoi(fv.second);
+                continue;
+             }
+             if(switch_id < 0 || core_index < 0 || core_port_index < 0)
+             {
+                continue;
+             }
+             tuple<int, int, int> sp_key(switch_id, core_index, core_port_index);
+
+             if(m_systemPortOidMap.find(sp_key) != m_systemPortOidMap.end())
+             {
+                 auto system_port = m_systemPortOidMap[sp_key];
+                 // Check if the system_port_info is already populated in m_systemPortOidMap.
+                 if(system_port.info_valid)
+                 {
+                     port.m_system_port_oid = system_port.system_port_id;
+                     port.m_system_port_info = system_port.system_port_info;
+                     port.m_system_port_info.local_port_oid = port.m_port_id;
+                     //initializeVoqs(port);
+                     SWSS_LOG_NOTICE("Updated system port for %s with  system_port_alias:%s switch_id:%d, core_index:%d, core_port_index:%d",
+                                port.m_alias.c_str(), system_port.system_port_info.alias.c_str(), system_port.system_port_info.switch_id,
+                                system_port.system_port_info.core_index, system_port.system_port_info.core_port_index);
+                 }
+             }
+        }
+        if(port.m_system_port_info.alias.empty())
+        {
+            SWSS_LOG_ERROR("SYSTEM PORT Information is not updated for %s", port.m_alias.c_str());
+        }
+     }
+}
+
 
 bool PortsOrch::getInbandPort(Port &port)
 {
