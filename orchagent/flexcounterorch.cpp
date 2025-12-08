@@ -43,7 +43,7 @@ int gFlexCounterDelaySec;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
-#define PORT_ATTR_KEY               "PORT_ATTR"
+#define PORT_PHY_ATTR_KEY           "PORT_PHY_ATTR"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
 #define QUEUE_WATERMARK             "QUEUE_WATERMARK"
@@ -64,7 +64,7 @@ int gFlexCounterDelaySec;
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {"PORT_ATTR", PORT_ATTR_FLEX_COUNTER_GROUP},
+    {"PORT_PHY_ATTR", PORT_PHY_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_MONITOR_COUNTER", DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP},
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
@@ -324,17 +324,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
                     }
-                    if (gPortsOrch && (key == PORT_ATTR_KEY))
+                    if (gPortsOrch && (key == PORT_PHY_ATTR_KEY))
                     {
-                        if(value == "enable" && !m_port_attr_enabled)
+                        if(value == "enable" && !m_port_phy_attr_enabled)
                         {
-                            m_port_attr_enabled = true;
+                            m_port_phy_attr_enabled = true;
                             gPortsOrch->generatePortAttrCounterMap();
                         }
-                        if (value == "disable" && m_port_attr_enabled)
+                        if (value == "disable" && m_port_phy_attr_enabled)
                         {
                             gPortsOrch->clearPortAttrCounterMap();
-                            m_port_attr_enabled = false;
+                            m_port_phy_attr_enabled = false;
                         }
                     }
                     if (gSwitchOrch && (key == SWITCH_KEY) && (value == "enable"))
@@ -402,7 +402,7 @@ bool FlexCounterOrch::getPortCountersState() const
 
 bool FlexCounterOrch::getPortAttrCountersState() const
 {
-    return m_port_attr_enabled;
+    return m_port_phy_attr_enabled;
 }
 
 bool FlexCounterOrch::getPortBufferDropCountersState() const
