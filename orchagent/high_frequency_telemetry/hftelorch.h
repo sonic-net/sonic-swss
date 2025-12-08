@@ -46,6 +46,7 @@ private:
     task_process_status groupTableDel(const std::string &profile_name, const std::string &group_name);
     std::shared_ptr<HFTelProfile> getProfile(const std::string &profile_name);
     std::shared_ptr<HFTelProfile> tryGetProfile(const std::string &profile_name);
+    bool isProfileInUse(const std::shared_ptr<HFTelProfile> &profile) const;
 
     void doTask(swss::NotificationConsumer &consumer);
     void doTask(Consumer &consumer);
