@@ -106,8 +106,8 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "")
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "", scope="default")
+        vnet_obj.check_default_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1001')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
@@ -240,8 +240,8 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '9.8.8.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '1002', "")
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1002', "", scope="default")
+        vnet_obj.check_default_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1002')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.8.8.9')
         vnet_obj.fetch_exist_entries(dvs)
@@ -342,8 +342,8 @@ class TestVnet2Orch(object):
         
         # create vxlan tunnel and verfiy it
         create_vxlan_tunnel(dvs, tunnel_name, '19.19.19.19')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '1003', "", '', advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1003', "", 'default', advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        vnet_obj.check_default_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1003')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '19.19.19.19')
 
@@ -416,6 +416,63 @@ class TestVnet2Orch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 105.100.1.1/32\"")
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 4 - Test that conflicting IP space does not result in deletion on default VRF for vnets which are not in default scope
+    '''
+    def test_vnet_orch_conflicting_route_non_default_vnet(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_1'
+        vnet_name = 'Vnet1'
+        self.setup_db(dvs)
+        vnet_obj.fetch_exist_entries(dvs)
+        # create l3 interface and bring it up
+        self.create_l3_intf("Ethernet0", "")
+        self.add_ip_address("Ethernet0", "20.20.20.1/24")
+        self.set_admin_status("Ethernet0", "down")
+        time.sleep(1)
+        self.set_admin_status("Ethernet0", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 20.20.20.5/24 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 20.20.20.1") 
+
+        # create vxlan tunnel and verify it
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "")
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1001')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        # add conflicting route
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 106.100.1.1/32 20.20.20.5\"")
+        # check ASIC route database
+        self.check_route_entries(["106.100.1.1/32"])
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vnet_routes(dvs, "106.100.1.1/32", vnet_name, '9.8.0.1,9.8.0.2,9.8.0.3')
+        # Default vrf route should be present
+        vnet_obj.check_default_vrf_route(dvs, "106.100.1.1/32")
+        # State DB route should show non existent endpoints as bfd state is down
+        check_state_db_routes(dvs, vnet_name, "106.100.1.1/32", ['9.8.0.1', '9.8.0.2', '9.8.0.3'])
+
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['9.8.0.1','9.8.0.2', '9.8.0.3'], tunnel_name)
+
+        # Default vrf route should still be present
+        vnet_obj.check_default_vrf_route(dvs, "106.100.1.1/32")
+
+        delete_vnet_routes(dvs, "106.100.1.1/32", vnet_name)
+        vnet_obj.check_del_vnet_route_in_vnet(dvs, vnet_name, "106.100.1.1/32")
+        check_remove_state_db_routes(dvs, vnet_name, "106.100.1.1/32")
+
+        # Default vrf route should still be present
+        vnet_obj.check_default_vrf_route(dvs, "106.100.1.1/32")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 106.100.1.1/32\"")
+        self.check_route_entries(["106.100.1.1/32"], absent=True)
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
