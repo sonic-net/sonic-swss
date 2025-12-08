@@ -26,8 +26,7 @@ tokio = { version = "1.37", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 
-# Netlink for network operations
-# Using genetlink and netlink-packet-generic for better stability and generic netlink support
+# Using genetlink and netlink-packet-generic for netlink support
 genetlink = "0.2"
 netlink-packet-core = "0.7"
 netlink-packet-generic = "0.3"

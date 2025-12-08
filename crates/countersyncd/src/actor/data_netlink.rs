@@ -563,7 +563,7 @@ impl DataNetlinkActor {
         if !force {
             if let Some(_socket) = &self.socket {
                 let time_since_last_data = Instant::now().duration_since(self.last_data_time);
-                if Instant::now().duration_since(self.last_data_time) > Duration::from_secs(SOCKET_HEALTH_TIMEOUT_SECS) {
+                if time_since_last_data > Duration::from_secs(SOCKET_HEALTH_TIMEOUT_SECS) {
                     warn!(
                         "Socket unhealthy - no data received for {} seconds, forcing reconnection",
                         time_since_last_data.as_secs()

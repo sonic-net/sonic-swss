@@ -37,6 +37,8 @@ const CTRL_CMD_DELFAMILY: u8 = 2;
 const CTRL_ATTR_FAMILY_NAME: u16 = 2;
 /// Size of generic netlink header in bytes
 const GENL_HEADER_SIZE: usize = 20;
+/// Netlink control notify multicast group ID
+const NLCTRL_NOTIFY_GROUP_ID: u32 = 1;
 
 /// Actor responsible for monitoring netlink family registration/unregistration.
 ///
@@ -115,7 +117,7 @@ impl ControlNetlinkActor {
 
         // Subscribe to nlctrl notify group (group ID 1 for nlctrl notify)
         // The nlctrl family uses a well-known multicast group ID
-        if let Err(e) = socket.add_membership(1) {
+        if let Err(e) = socket.add_membership(NLCTRL_NOTIFY_GROUP_ID) {
             warn!("Failed to add multicast membership: {:?}", e);
             return None;
         }

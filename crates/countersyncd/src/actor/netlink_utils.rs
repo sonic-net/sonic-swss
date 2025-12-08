@@ -75,8 +75,7 @@ pub fn resolve_family_id(socket: &mut Socket, family_name: &str) -> Result<u16, 
     // This prevents reading stale responses
     let mut drain_buf = vec![0; 8192];
     loop {
-        match socket.recv_from(&mut drain_buf, 0x40 as i32) {
-            // MSG_DONTWAIT = 0x40
+        match socket.recv_from(&mut drain_buf, libc::MSG_DONTWAIT) {
             Ok((n, _addr)) if n > 0 => {
                 debug!(
                     "resolve_family_id: Drained {} stale bytes from socket",
@@ -247,8 +246,7 @@ pub fn resolve_multicast_group(
     // Drain any pending data from socket before sending request
     let mut drain_buf = vec![0; 8192];
     loop {
-        match socket.recv_from(&mut drain_buf, 0x40 as i32) {
-            // MSG_DONTWAIT = 0x40
+        match socket.recv_from(&mut drain_buf, libc::MSG_DONTWAIT) {
             Ok((n, _addr)) if n > 0 => {
                 debug!(
                     "resolve_multicast_group: Drained {} stale bytes from socket",
