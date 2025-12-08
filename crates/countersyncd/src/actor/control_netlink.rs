@@ -2,21 +2,16 @@ use std::{thread::sleep, time::Duration};
 
 use log::{debug, info, warn};
 
-#[allow(unused_imports)]
-use neli::{
-    consts::socket::{Msg, NlFamily},
-    router::synchronous::NlRouter,
-    socket::NlSocket,
-    utils::Groups,
-};
+use netlink_sys::{Socket, SocketAddr, protocols::NETLINK_GENERIC};
 use tokio::sync::mpsc::Sender;
 
 use std::io;
 
 use super::super::message::netlink::NetlinkCommand;
+use super::netlink_utils;
 
 #[cfg(not(test))]
-type SocketType = NlSocket;
+type SocketType = Socket;
 #[cfg(test)]
 type SocketType = test::MockSocket;
 
@@ -58,9 +53,9 @@ pub struct ControlNetlinkActor {
     command_sender: Sender<NetlinkCommand>,
     /// Last time we checked if the family exists
     last_family_check: std::time::Instant,
-    /// Reusable netlink resolver for family existence checks
+    /// Reusable netlink socket for family existence checks
     #[cfg(not(test))]
-    resolver: Option<NlRouter>,
+    resolver: Option<Socket>,
     #[cfg(test)]
     #[allow(dead_code)]
     resolver: Option<()>,
@@ -99,42 +94,37 @@ impl ControlNetlinkActor {
         actor
     }
 
-    /// Establishes a connection to the netlink control socket (legacy interface).
+    /// Establishes a connection to the netlink control socket.
     #[cfg(not(test))]
     fn connect_control_socket() -> Option<SocketType> {
-        // Create a router to resolve the control group
-        let (router, _) = match NlRouter::connect(NlFamily::Generic, Some(0), Groups::empty()) {
-            Ok(result) => result,
+        // Create a raw netlink socket
+        let mut socket = match Socket::new(NETLINK_GENERIC) {
+            Ok(s) => s,
             Err(e) => {
-                warn!("Failed to connect control router: {:?}", e);
+                warn!("Failed to create netlink socket: {:?}", e);
                 return None;
             }
         };
 
-        // Resolve the "notify" multicast group for nlctrl family
-        let notify_group_id = match router.resolve_nl_mcast_group("nlctrl", "notify") {
-            Ok(group_id) => {
-                debug!("Resolved nlctrl notify group ID: {}", group_id);
-                group_id
-            }
-            Err(e) => {
-                warn!("Failed to resolve nlctrl notify group: {:?}", e);
-                return None;
-            }
-        };
+        // Bind the socket with automatic port assignment
+        let addr = SocketAddr::new(0, 0);
+        if let Err(e) = socket.bind(&addr) {
+            warn!("Failed to bind control socket: {:?}", e);
+            return None;
+        }
 
-        // Connect to NETLINK_GENERIC with the notify group
-        let socket = match SocketType::connect(
-            NlFamily::Generic,
-            Some(0),
-            Groups::new_groups(&[notify_group_id]),
-        ) {
-            Ok(socket) => socket,
-            Err(e) => {
-                warn!("Failed to connect control socket: {:?}", e);
-                return None;
-            }
-        };
+        // Subscribe to nlctrl notify group (group ID 1 for nlctrl notify)
+        // The nlctrl family uses a well-known multicast group ID
+        if let Err(e) = socket.add_membership(1) {
+            warn!("Failed to add multicast membership: {:?}", e);
+            return None;
+        }
+
+        // Set non-blocking mode
+        if let Err(e) = socket.set_non_blocking(true) {
+            warn!("Failed to set non-blocking mode: {:?}", e);
+            return None;
+        }
 
         debug!("Successfully connected control socket and subscribed to nlctrl notifications");
         Some(socket)
@@ -147,30 +137,17 @@ impl ControlNetlinkActor {
         None
     }
 
-    /// Creates a netlink resolver for family/group resolution.
-    ///
-    /// # Returns
-    ///
-    /// Some(router) if creation is successful, None otherwise
+    /// Creates a netlink socket for family/group resolution.
+    /// Now delegates to netlink_utils module.
     #[cfg(not(test))]
-    fn create_nl_resolver() -> Option<NlRouter> {
-        match NlRouter::connect(NlFamily::Generic, Some(0), Groups::empty()) {
-            Ok((router, _)) => {
-                debug!("Created netlink resolver for family/group resolution");
-                Some(router)
-            }
-            Err(e) => {
-                warn!("Failed to create netlink resolver: {:?}", e);
-                None
-            }
-        }
+    fn create_nl_resolver() -> Option<Socket> {
+        netlink_utils::create_nl_resolver()
     }
 
     /// Mock netlink resolver for testing.
     #[cfg(test)]
     #[allow(dead_code)]
-    fn create_nl_resolver() -> Option<NlRouter> {
-        // Return None for tests to avoid complexity
+    fn create_nl_resolver() -> Option<()> {
         None
     }
 
@@ -194,18 +171,18 @@ impl ControlNetlinkActor {
             }
         }
 
-        if let Some(ref resolver) = self.resolver {
-            match resolver.resolve_genl_family(&self.family) {
-                Ok(family_info) => {
-                    debug!("Family '{}' exists with ID: {}", self.family, family_info);
+        if let Some(ref mut resolver) = self.resolver {
+            match netlink_utils::resolve_family_id(resolver, &self.family) {
+                Ok(family_id) => {
+                    debug!("Family '{}' exists with ID: {}", self.family, family_id);
                     true
                 }
                 Err(e) => {
                     debug!("Family '{}' resolution failed: {:?}", self.family, e);
                     // Only clear resolver on specific errors that indicate it's stale
-                    // For "family not found" errors, keep the resolver as it's still valid
-                    if e.to_string().contains("No such file or directory")
-                        || e.to_string().contains("Connection refused")
+                    let err_str = format!("{:?}", e);
+                    if err_str.contains("No such file or directory")
+                        || err_str.contains("Connection refused")
                     {
                         debug!("Clearing resolver due to connection error");
                         self.resolver = None;
@@ -233,13 +210,14 @@ impl ControlNetlinkActor {
         socket: Option<&mut SocketType>,
         target_family: &str,
     ) -> Result<bool, io::Error> {
+        debug!("Attempting to receive control message");
         let socket = socket.ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotConnected, "No control socket available")
         })?;
 
         let mut buffer = vec![0; BUFFER_SIZE];
-        match socket.recv(&mut buffer, Msg::DONTWAIT) {
-            Ok((size, _)) => {
+        match socket.recv_from(&mut buffer, 0) {
+            Ok((size, _addr)) => {
                 if size == 0 {
                     return Ok(false);
                 }
@@ -410,8 +388,9 @@ impl ControlNetlinkActor {
             // Log heartbeat every minute to show the actor is running
             if heartbeat_counter % HEARTBEAT_LOG_INTERVAL == 0 {
                 info!(
-                    "ControlNetlinkActor is running normally - monitoring family '{}'",
-                    actor.family
+                    "ControlNetlinkActor is running normally - monitoring family '{}', family_was_available={}",
+                    actor.family,
+                    family_was_available,
                 );
             }
 
@@ -470,16 +449,16 @@ impl ControlNetlinkActor {
                     family_was_available = family_available;
                 } else if family_available {
                     // Family is available but we haven't sent a reconnect recently
-                    // Send periodic reconnect commands to ensure DataNetlinkActor stays connected
+                    // Send periodic soft reconnect commands to ensure DataNetlinkActor stays connected
                     // This handles cases where DataNetlinkActor disconnected due to socket errors
-                    // Since DataNetlinkActor.connect() now skips unnecessary reconnects, we can be more conservative
+                    // SoftReconnect only reconnects if socket is unhealthy, avoiding unnecessary reconnections
                     if heartbeat_counter - last_periodic_reconnect_counter
                         >= PERIODIC_RECONNECT_INTERVAL
                     {
-                        debug!("Sending periodic reconnect command to ensure data socket stays connected (counter: {}, last: {}, interval: {})", 
+                        debug!("Sending periodic soft reconnect command to check data socket health (counter: {}, last: {}, interval: {})", 
                                heartbeat_counter, last_periodic_reconnect_counter, PERIODIC_RECONNECT_INTERVAL);
-                        if let Err(e) = actor.command_sender.send(NetlinkCommand::Reconnect).await {
-                            warn!("Failed to send periodic reconnect command: {:?}", e);
+                        if let Err(e) = actor.command_sender.send(NetlinkCommand::SoftReconnect).await {
+                            warn!("Failed to send periodic soft reconnect command: {:?}", e);
                             break; // Channel is closed, exit
                         }
                         last_periodic_reconnect_counter = heartbeat_counter;
@@ -512,7 +491,7 @@ pub mod test {
     pub struct MockSocket;
 
     impl MockSocket {
-        pub fn recv(&mut self, _buf: &mut [u8], _flags: Msg) -> Result<(usize, Groups), io::Error> {
+        pub fn recv_from(&mut self, _buf: &mut [u8], _flags: i32) -> Result<(usize, SocketAddr), io::Error> {
             // Always return WouldBlock to simulate no control messages
             Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
