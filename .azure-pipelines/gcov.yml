@@ -8,7 +8,7 @@ parameters:
 - name: pool
   type: string
   values:
-  - sonicbld-1es
+  - sonicso1ES-amd64
   - default
   default: default
 
