@@ -2964,11 +2964,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     return true;
 }
 
-bool RouteOrch::isRouteExists(const IpPrefix& prefix)
+bool RouteOrch::isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix)
 {
     SWSS_LOG_ENTER();
-
-    sai_object_id_t& vrf_id = gVirtualRouterId;
 
     sai_route_entry_t route_entry;
     route_entry.vr_id = vrf_id;
@@ -2978,7 +2976,7 @@ bool RouteOrch::isRouteExists(const IpPrefix& prefix)
     if (it_route_table == m_syncdRoutes.end())
     {
         SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%" PRIx64 "\n", vrf_id);
-        return true;
+        return false;
     }
     auto it_route = it_route_table->second.find(prefix);
     size_t creating = gRouteBulker.creating_entries_count(route_entry);
