@@ -1699,6 +1699,11 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
         return;
     }
 
+    if(alias.empty())
+    {
+        SWSS_LOG_ERROR("System Port/LAG alias is empty for %s!", port.m_alias.c_str());
+        return;
+    }
 
     string oper_status = port.m_oper_status == SAI_PORT_OPER_STATUS_UP ? "up" : "down";
 
