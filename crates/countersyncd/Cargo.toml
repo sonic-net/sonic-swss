@@ -16,7 +16,11 @@ tokio = { workspace = true }
 yaml-rust = { workspace = true }
 
 # Netlink for network operations
-neli = { workspace = true }
+genetlink = { workspace = true }
+netlink-packet-core = { workspace = true }
+netlink-packet-generic = { workspace = true }
+netlink-sys = { workspace = true }
+libc = "0.2"
 
 # IPFIX parser for traffic flow analysis
 ipfixrw = { workspace = true }
