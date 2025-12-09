@@ -316,67 +316,67 @@ namespace saihelper_test
         status = handleSaiCreateStatus(SAI_API_ROUTE, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_PORT, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_TUNNEL, SAI_STATUS_NOT_SUPPORTED);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_TUNNEL, SAI_STATUS_NOT_IMPLEMENTED);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_INVALID_PARAMETER);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_SWITCH, SAI_STATUS_UNINITIALIZED);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, SAI_STATUS_INVALID_OBJECT_ID);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_ACL, SAI_STATUS_MANDATORY_ATTRIBUTE_MISSING);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_QOS_MAP, SAI_STATUS_INVALID_ATTR_VALUE_MAX);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_TUNNEL, SAI_STATUS_ATTR_NOT_IMPLEMENTED_6);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, SAI_STATUS_UNKNOWN_ATTRIBUTE_0);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, SAI_STATUS_ATTR_NOT_SUPPORTED_0);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiCreateStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         _unhook_sai_apis();
     }
@@ -396,37 +396,37 @@ namespace saihelper_test
         status = handleSaiSetStatus(SAI_API_ROUTE, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_ROUTE, SAI_STATUS_NOT_EXECUTED);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_TUNNEL, SAI_STATUS_NOT_IMPLEMENTED);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_HOSTIF, SAI_STATUS_INVALID_PARAMETER);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_ATTR_NOT_SUPPORTED_0);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(status, task_need_retry);
 
         _unhook_sai_apis();
     }
