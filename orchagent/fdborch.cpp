@@ -287,6 +287,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
     update.entry.bv_id = entry->bv_id;
     update.type = "dynamic";
     Port vlan;
+    char *platform = getenv("platform");
 
     SWSS_LOG_INFO("FDB event:%d, MAC: %s , BVID: 0x%" PRIx64 " , \
                    bridge port ID: 0x%" PRIx64 ".",
@@ -305,6 +306,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
             */
             SWSS_LOG_INFO("Flush event: Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
+        }
+        else if (((NULL != platform) && (strstr(platform, BRCM_PLATFORM_SUBSTRING))) &&
+                   (type == SAI_FDB_EVENT_AGED)) 
+        {
+            /* Some Platforms like Broadcom, sends the BCM L2 delete call back as Aged event.
+             * if the bridge port is already deleted, to clean up the stale entries,
+             * consider it as FLUSH event */
+            SWSS_LOG_INFO("Flush event:Bridge port ID 0x%" PRIx64 " not available, considering age event as flush.",
+                           bridge_port_id);
+            type = SAI_FDB_EVENT_FLUSHED;
         } else {
             SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
