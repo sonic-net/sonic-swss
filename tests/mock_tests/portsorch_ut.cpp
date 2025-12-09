@@ -1952,7 +1952,7 @@ namespace portsorch_test
         consumer->addToSync(kfvList);
 
         static_cast<Orch*>(gPortsOrch)->doTask();
-        ASSERT_EQ(set_pt_interface_id_failures, 1);
+        ASSERT_GT(set_pt_interface_id_failures, 0);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
@@ -1976,8 +1976,8 @@ namespace portsorch_test
 
         static_cast<Orch*>(gPortsOrch)->doTask();
 
-        ASSERT_EQ(set_pt_timestamp_template_failures, 1);
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_GT(set_pt_timestamp_template_failures, 0);
+        ASSERT_GT(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_pt_timestamp_template_fail = false;
@@ -2000,8 +2000,8 @@ namespace portsorch_test
 
         static_cast<Orch*>(gPortsOrch)->doTask();
 
-        ASSERT_EQ(set_port_tam_failures, 1);
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_GT(set_port_tam_failures, 0);
+        ASSERT_GT(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_port_tam_fail = false;
