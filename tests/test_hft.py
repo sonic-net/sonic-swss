@@ -535,7 +535,6 @@ class TestHFT(object):
         # Clean up profile
         self.delete_hft_profile(dvs)
 
-
     def test_hft_invalid_counters_no_orchagent_restart(self, dvs, testlog):
         """Test that invalid object_counters don't cause orchagent to restart."""
         # Get orchagent PID inside the DVS container and record it
@@ -593,6 +592,44 @@ class TestHFT(object):
         # Clean up created config
         self.delete_hft_group_empty_group_name(dvs)
         self.delete_hft_profile(dvs)
+
+    def test_hft_empty_default_config_cleanup(self, dvs, testlog):
+        """Test that TAM_TELEMETRY objects are properly cleaned up when deleting 
+        a default HFT profile with empty object_names and object_counters."""  
+        # Create default HFT profile
+        self.create_hft_profile(dvs, name="default", status="enabled")
+        
+        # Create HFT group with empty object_names and object_counters
+        self.create_hft_group(dvs,
+                              profile_name="default",
+                              group_name="PORT",
+                              object_names="",
+                              object_counters="")
+
+        # Wait for processing
+        time.sleep(3)
+
+        # Get ASIC DB objects and verify TAM_TELEMETRY exists
+        asic_db = self.get_asic_db_objects(dvs)
+        assert len(asic_db["tam_telemetry"]) > 0, \
+            "Expected TAM_TELEMETRY object to exist before deletion"
+
+        # Delete profile first
+        self.delete_hft_profile(dvs, name="default")
+        
+        # Sleep for 1 second
+        time.sleep(1)
+        
+        # Delete group
+        self.delete_hft_group(dvs, profile_name="default", group_name="PORT")
+
+        # Wait for cleanup
+        time.sleep(2)
+
+        # Verify TAM_TELEMETRY object is deleted
+        asic_db = self.get_asic_db_objects(dvs)
+        assert len(asic_db["tam_telemetry"]) == 0, \
+            "Expected TAM_TELEMETRY object to be deleted after profile and group deletion"
 
 
 # Add Dummy always-pass test at end as workaroud
