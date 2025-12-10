@@ -218,7 +218,7 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
 
 bool isChassisAppDbPresent()
 {
-    std::ifstream file("/etc/sonic/database_config.json");
+    std::ifstream file(SonicDBConfig::DEFAULT_SONIC_DB_CONFIG_FILE);
     if (!file.is_open()) return false;
 
     nlohmann::json db_config;
