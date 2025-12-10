@@ -607,6 +607,40 @@ namespace ut_fpmsyncd
         return nhg;
     }
 
+    NextHopGroupFull createSingleSRv6VPNNextHopNHGFull(const char *vpnSid, const char *src_addr, const char *gateway, std::uint32_t id)
+    {
+        std::call_once(srand_flag, srand_init);
+        std::uint32_t id_in = id;
+        std::uint32_t key_in = rand() % 10000 + 1;
+        fib::nexthop_types_t type_in = fib::NEXTHOP_TYPE_IPV6;
+        fib::vrf_id_t vrf_id_in = rand() % 10000 + 1;
+        fib::ifindex_t ifindex_t_in = rand() % 10000 + 1;
+        std::string ifname_in = "Ethernet" + to_string(ifindex_t_in);
+        fib::lsp_types_t label_type_in = fib::ZEBRA_LSP_NONE;
+        fib::blackhole_type bh_type_in = fib::BLACKHOLE_UNSPEC;
+        fib::g_addr gateway_in;
+        inet_pton(AF_INET6, gateway, &gateway_in.ipv6);
+        fib::g_addr src_in;
+        inet_pton(AF_INET6, src_addr, &src_in.ipv6);
+        fib::g_addr rmap_src_in;
+        std::uint8_t weight_in = 1;
+        std::uint8_t flags_in = 0;
+        bool has_srv6 = true;
+        bool has_seg6_segs = true;
+        fib::nexthop_srv6 *nh_srv6_in = new fib::nexthop_srv6();
+        fib::seg6_seg_stack *nh_seg6_segs_in = new fib::seg6_seg_stack();
+        std::vector<struct in6_addr> nh_segs_in;
+        struct in6_addr sid;
+        inet_pton(AF_INET6, vpnSid, &sid);
+        nh_segs_in.push_back(sid);
+        nh_seg6_segs_in->num_segs = 1;
+        std::vector<uint32_t> dependents_in;
+        std::vector<uint32_t> depends_in;
+        NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
+                                                label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
+                                                flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
+        return nhg;
+    }
     vector<string> splitResults(string result, string delimiter)
     {
         vector<string> ret;

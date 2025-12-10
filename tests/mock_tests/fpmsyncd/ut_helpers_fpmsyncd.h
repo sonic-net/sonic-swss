@@ -10,64 +10,68 @@ using namespace swss;
     (reinterpret_cast<struct rtattr *>(static_cast<void *>((((uint8_t *)nmsg)) + NLMSG_ALIGN((nmsg)->nlmsg_len))))
 
 /* Values copied from fpmsyncd/fpmlink.h */
-#define RTM_NEWSRV6LOCALSID		1000
-#define RTM_DELSRV6LOCALSID		1001
+#define RTM_NEWSRV6LOCALSID 1000
+#define RTM_DELSRV6LOCALSID 1001
 
 /* Values copied from fpmsyncd/routesync.cpp */
-#define NH_ENCAP_SRV6_ROUTE         101
+#define NH_ENCAP_SRV6_ROUTE 101
 
-enum {  /* Values copied from fpmsyncd/routesync.cpp */
-	ROUTE_ENCAP_SRV6_UNSPEC            = 0,
-	ROUTE_ENCAP_SRV6_VPN_SID           = 1,
-	ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
+enum
+{ /* Values copied from fpmsyncd/routesync.cpp */
+  ROUTE_ENCAP_SRV6_UNSPEC = 0,
+  ROUTE_ENCAP_SRV6_VPN_SID = 1,
+  ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR = 2,
 };
 
-enum srv6_localsid_action {  /* Values copied from fpmsyncd/routesync.cpp */
-	SRV6_LOCALSID_ACTION_UNSPEC				= 0,
-	SRV6_LOCALSID_ACTION_END				= 1,
-	SRV6_LOCALSID_ACTION_END_X				= 2,
-	SRV6_LOCALSID_ACTION_END_T				= 3,
-	SRV6_LOCALSID_ACTION_END_DX2			= 4,
-	SRV6_LOCALSID_ACTION_END_DX6			= 5,
-	SRV6_LOCALSID_ACTION_END_DX4			= 6,
-	SRV6_LOCALSID_ACTION_END_DT6			= 7,
-	SRV6_LOCALSID_ACTION_END_DT4			= 8,
-	SRV6_LOCALSID_ACTION_END_DT46			= 9,
-	SRV6_LOCALSID_ACTION_B6_ENCAPS			= 10,
-	SRV6_LOCALSID_ACTION_B6_ENCAPS_RED		= 11,
-	SRV6_LOCALSID_ACTION_B6_INSERT			= 12,
-	SRV6_LOCALSID_ACTION_B6_INSERT_RED		= 13,
-	SRV6_LOCALSID_ACTION_UN					= 14,
-	SRV6_LOCALSID_ACTION_UA					= 15,
-	SRV6_LOCALSID_ACTION_UDX2				= 16,
-	SRV6_LOCALSID_ACTION_UDX6				= 17,
-	SRV6_LOCALSID_ACTION_UDX4				= 18,
-	SRV6_LOCALSID_ACTION_UDT6				= 19,
-	SRV6_LOCALSID_ACTION_UDT4				= 20,
-	SRV6_LOCALSID_ACTION_UDT46				= 21,
+enum srv6_localsid_action
+{ /* Values copied from fpmsyncd/routesync.cpp */
+  SRV6_LOCALSID_ACTION_UNSPEC = 0,
+  SRV6_LOCALSID_ACTION_END = 1,
+  SRV6_LOCALSID_ACTION_END_X = 2,
+  SRV6_LOCALSID_ACTION_END_T = 3,
+  SRV6_LOCALSID_ACTION_END_DX2 = 4,
+  SRV6_LOCALSID_ACTION_END_DX6 = 5,
+  SRV6_LOCALSID_ACTION_END_DX4 = 6,
+  SRV6_LOCALSID_ACTION_END_DT6 = 7,
+  SRV6_LOCALSID_ACTION_END_DT4 = 8,
+  SRV6_LOCALSID_ACTION_END_DT46 = 9,
+  SRV6_LOCALSID_ACTION_B6_ENCAPS = 10,
+  SRV6_LOCALSID_ACTION_B6_ENCAPS_RED = 11,
+  SRV6_LOCALSID_ACTION_B6_INSERT = 12,
+  SRV6_LOCALSID_ACTION_B6_INSERT_RED = 13,
+  SRV6_LOCALSID_ACTION_UN = 14,
+  SRV6_LOCALSID_ACTION_UA = 15,
+  SRV6_LOCALSID_ACTION_UDX2 = 16,
+  SRV6_LOCALSID_ACTION_UDX6 = 17,
+  SRV6_LOCALSID_ACTION_UDX4 = 18,
+  SRV6_LOCALSID_ACTION_UDT6 = 19,
+  SRV6_LOCALSID_ACTION_UDT4 = 20,
+  SRV6_LOCALSID_ACTION_UDT46 = 21,
 };
 
-enum {  /* Values copied from fpmsyncd/routesync.cpp */
-	SRV6_LOCALSID_UNSPEC			= 0,
-	SRV6_LOCALSID_SID_VALUE			= 1,
-	SRV6_LOCALSID_FORMAT			= 2,
-	SRV6_LOCALSID_ACTION			= 3,
-	SRV6_LOCALSID_VRFNAME			= 4,
-	SRV6_LOCALSID_NH6				= 5,
-	SRV6_LOCALSID_NH4				= 6,
-	SRV6_LOCALSID_IIF				= 7,
-	SRV6_LOCALSID_OIF				= 8,
-	SRV6_LOCALSID_BPF				= 9,
-	SRV6_LOCALSID_SIDLIST			= 10,
-	SRV6_LOCALSID_ENCAP_SRC_ADDR	= 11,
+enum
+{ /* Values copied from fpmsyncd/routesync.cpp */
+  SRV6_LOCALSID_UNSPEC = 0,
+  SRV6_LOCALSID_SID_VALUE = 1,
+  SRV6_LOCALSID_FORMAT = 2,
+  SRV6_LOCALSID_ACTION = 3,
+  SRV6_LOCALSID_VRFNAME = 4,
+  SRV6_LOCALSID_NH6 = 5,
+  SRV6_LOCALSID_NH4 = 6,
+  SRV6_LOCALSID_IIF = 7,
+  SRV6_LOCALSID_OIF = 8,
+  SRV6_LOCALSID_BPF = 9,
+  SRV6_LOCALSID_SIDLIST = 10,
+  SRV6_LOCALSID_ENCAP_SRC_ADDR = 11,
 };
 
-enum {  /* Values copied from fpmsyncd/routesync.cpp */
-	SRV6_LOCALSID_FORMAT_UNSPEC			= 0,
-	SRV6_LOCALSID_FORMAT_BLOCK_LEN		= 1,
-	SRV6_LOCALSID_FORMAT_NODE_LEN		= 2,
-	SRV6_LOCALSID_FORMAT_FUNC_LEN		= 3,
-	SRV6_LOCALSID_FORMAT_ARG_LEN		= 4,
+enum
+{ /* Values copied from fpmsyncd/routesync.cpp */
+  SRV6_LOCALSID_FORMAT_UNSPEC = 0,
+  SRV6_LOCALSID_FORMAT_BLOCK_LEN = 1,
+  SRV6_LOCALSID_FORMAT_NODE_LEN = 2,
+  SRV6_LOCALSID_FORMAT_FUNC_LEN = 3,
+  SRV6_LOCALSID_FORMAT_ARG_LEN = 4,
 };
 
 namespace ut_fpmsyncd
@@ -127,6 +131,9 @@ namespace ut_fpmsyncd
     /* Create ipv6 singleton NextHopGroupFull */
     NextHopGroupFull createSingleIPv6NextHopNHGFull(
         const char *gateway, const char *src_addr, uint32_t id_in = 0);
+
+    NextHopGroupFull createSingleSRv6VPNNextHopNHGFull(
+        const char *vpnSid, const char *src_addr, const char *nexthop, std::uint32_t id);
 
     vector<string> splitResults(string result, string delimiter);
 }
