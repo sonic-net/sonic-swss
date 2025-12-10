@@ -1704,11 +1704,6 @@ class DockerVirtualChassisTopology:
             vol = {}
             vol[chassis_config_dir] = {"bind": "/usr/share/sonic/virtual_chassis", "mode": "ro"}
 
-            # Mount database_config.json when connect_to_chassis_db is set to 1
-            if defcfg.get("connect_to_chassis_db") == 1:
-                database_config_file = cwd + "/virtual_chassis/database_config.json"
-                vol[database_config_file] = {"bind": "/etc/sonic/database_config.json", "mode": "ro"}
-
             # pass self.ns into the vs to be use for vs restarts by swss conftest.
             # connection to chassbr is setup by chassis_connect.py within the vs
             data = {}
