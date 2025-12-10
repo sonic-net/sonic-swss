@@ -132,5 +132,8 @@ namespace ut_fpmsyncd
     NextHopGroupFull createSingleIPv6NextHopNHGFull(
         const char *gateway, const char *src_addr, uint32_t id_in = 0);
 
+    NextHopGroupFull createSingleSRv6VPNNextHopNHGFull(
+        const char *vpnSid, const char *src_addr, const char *nexthop, std::uint32_t id);
+
     vector<string> splitResults(string result, string delimiter);
 }
