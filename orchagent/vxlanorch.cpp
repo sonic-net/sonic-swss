@@ -275,6 +275,7 @@ create_tunnel(
     sai_ip_address_t *dst_ip,
     sai_object_id_t underlay_rif,
     bool p2p,
+    VxlanTunnelTTLMode decap_ttl_mode,
     sai_uint8_t encap_ttl=0)
 {
     sai_attribute_t attr;
@@ -346,6 +347,19 @@ create_tunnel(
     {
         attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
         attr.value.s32 = SAI_TUNNEL_PEER_MODE_P2MP;
+        tunnel_attrs.push_back(attr);
+    }
+
+    if (decap_ttl_mode == VxlanTunnelTTLMode::PIPE)
+    {
+        attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+        tunnel_attrs.push_back(attr);
+    }
+    else if (decap_ttl_mode == VxlanTunnelTTLMode::UNIFORM)
+    {
+        attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+        attr.value.s32 = SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL;
         tunnel_attrs.push_back(attr);
     }
 
@@ -470,8 +484,8 @@ remove_tunnel_termination(sai_object_id_t term_table_id)
 
 //------------------- VxlanTunnel Implementation --------------------------//
 
-VxlanTunnel::VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src)
-                :tunnel_name_(name), src_ip_(srcIp), dst_ip_(dstIp), src_creation_(src)
+VxlanTunnel::VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src, VxlanTunnelTTLMode decap_ttl_mode)
+                :tunnel_name_(name), src_ip_(srcIp), dst_ip_(dstIp), src_creation_(src), decap_ttl_mode_(decap_ttl_mode)
 {
    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
@@ -849,7 +863,7 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
             SWSS_LOG_WARN("creation src = %d",src_creation_);
         }
 
-        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p, encap_ttl);
+        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p, decap_ttl_mode_, encap_ttl);
 
         if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
         {
@@ -1524,6 +1538,24 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
 	}
     }
     const auto& tunnel_name = request.getKeyString(0);
+    VxlanTunnelTTLMode ttl_mode = VxlanTunnelTTLMode::NOT_SET;
+    if (attr_names.find("ttl_mode") != attr_names.end())
+    {
+        string ttl_mode_str = request.getAttrString("ttl_mode");
+        if (ttl_mode_str == "uniform")
+        {
+            ttl_mode = VxlanTunnelTTLMode::UNIFORM;
+        }
+        else if (ttl_mode_str == "pipe")
+        {
+            ttl_mode = VxlanTunnelTTLMode::PIPE;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid ttl_mode '%s' for the VxLAN tunnel '%s'", ttl_mode_str.c_str(), tunnel_name.c_str());
+            return true;
+        }
+    }
 
     if (isTunnelExists(tunnel_name))
     {
@@ -1531,7 +1563,7 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
         return true;
     }
 
-    vxlan_tunnel_table_[tunnel_name] = std::unique_ptr<VxlanTunnel>(new VxlanTunnel(tunnel_name, src_ip, dst_ip, TNL_CREATION_SRC_CLI));
+    vxlan_tunnel_table_[tunnel_name] = std::unique_ptr<VxlanTunnel>(new VxlanTunnel(tunnel_name, src_ip, dst_ip, TNL_CREATION_SRC_CLI, ttl_mode));
 
     SWSS_LOG_NOTICE("Vxlan tunnel '%s' was added", tunnel_name.c_str());
     return true;

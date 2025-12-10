@@ -61,15 +61,10 @@ else
         qos_cmd="-j /tmp/qos.json"
     fi
 
-    if [ -f /usr/share/sonic/single_asic_voq_fs/default_config.json ]; then
-        sonic-cfggen -j /usr/share/sonic/single_asic_voq_fs/default_config.json --print-data > /tmp/voq.json
-        voq_cmd="-j /tmp/voq.json"
-    fi
-
     sonic-cfggen -p /usr/share/sonic/device/$PLATFORM/$PLATFORM_CONF -k $HWSKU --print-data > /tmp/ports.json
     # change admin_status from up to down; Test cases dependent
     sed -i "s/up/down/g" /tmp/ports.json
-    sonic-cfggen -j /etc/sonic/init_cfg.json $buffers_cmd $qos_cmd $voq_cmd -j /tmp/ports.json --print-data > /etc/sonic/config_db.json
+    sonic-cfggen -j /etc/sonic/init_cfg.json $buffers_cmd $qos_cmd -j /tmp/ports.json --print-data > /etc/sonic/config_db.json
 fi
 
 sonic-cfggen -t /usr/share/sonic/templates/copp_cfg.j2 > /etc/sonic/copp_cfg.json
