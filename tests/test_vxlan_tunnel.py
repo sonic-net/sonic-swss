@@ -122,7 +122,7 @@ def create_vlan(dvs, vlan_name, vlan_ids):
     return
 
 
-def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id):
+def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id, decap_ttl_mode="not_set"):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     tunnel_map_id  = get_created_entry_mapid(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
     tunnel_id      = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_ids)
@@ -145,18 +145,28 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
     decapstr = '2:' + tunnel_map_id[0] + ',' + tunnel_map_id[2]
     encapstr = '2:' + tunnel_map_id[1] + ',' + tunnel_map_id[3]
 
-    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id,
-                    {
-                        'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
-                        'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': lo_id,
-                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': decapstr,
-                        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': encapstr,
-                        'SAI_TUNNEL_ATTR_PEER_MODE': 'SAI_TUNNEL_PEER_MODE_P2MP',
-                        'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip,
-                        'SAI_TUNNEL_ATTR_ENCAP_TTL_MODE': 'SAI_TUNNEL_TTL_MODE_PIPE_MODEL',
-                        'SAI_TUNNEL_ATTR_ENCAP_TTL_VAL': '255'
-                    }
-                )
+    if decap_ttl_mode == "uniform":
+        expected_sai_decap_ttl_mode = "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
+    elif decap_ttl_mode == "pipe":
+        expected_sai_decap_ttl_mode = "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
+    else:
+        expected_sai_decap_ttl_mode = ""
+
+    expected_attrs = {
+        'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
+        'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': lo_id,
+        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': decapstr,
+        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': encapstr,
+        'SAI_TUNNEL_ATTR_PEER_MODE': 'SAI_TUNNEL_PEER_MODE_P2MP',
+        'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip,
+        'SAI_TUNNEL_ATTR_ENCAP_TTL_MODE': 'SAI_TUNNEL_TTL_MODE_PIPE_MODEL',
+        'SAI_TUNNEL_ATTR_ENCAP_TTL_VAL': '255'
+    }
+
+    if expected_sai_decap_ttl_mode:
+        expected_attrs['SAI_TUNNEL_ATTR_DECAP_TTL_MODE'] = expected_sai_decap_ttl_mode
+
+    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id, expected_attrs)
 
     tunnel_type = 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2P' if dst_ip != '0.0.0.0' else 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP'
     expected_attributes = {
@@ -179,7 +189,7 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
     return tunnel_map_id[0]
 
 
-def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id, skip_dst_ip=False):
+def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id, skip_dst_ip=False, decap_ttl_mode="not_set"):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
@@ -195,6 +205,8 @@ def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_en
 
     if not skip_dst_ip:
         attrs.append(("dst_ip", dst_ip))
+    if decap_ttl_mode != "not_set":  # "uniform" or "pipe"
+        attrs.append(("ttl_mode", decap_ttl_mode))
 
     # create the VXLAN tunnel Term entry in Config DB
     create_entry_tbl(
@@ -300,22 +312,22 @@ class TestVxlan(object):
                                   tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
 
         create_vxlan_tunnel(dvs, 'tunnel_2', '11.0.0.2', '101.101.101.2',
-                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
+                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id, decap_ttl_mode="uniform")
 
         create_vxlan_tunnel_entry(dvs, 'tunnel_2', 'entry_1', tunnel_map_map, 'Vlan51', '851',
                                   tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
         tunnel_map_map['tunnel_2'] = check_vxlan_tunnel(dvs,'11.0.0.2', '101.101.101.2',
-                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
+                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id, decap_ttl_mode="uniform")
 
         create_vxlan_tunnel(dvs, 'tunnel_3', '12.0.0.3', '0.0.0.0',
-                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
+                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id, decap_ttl_mode="pipe")
 
         create_vxlan_tunnel_entry(dvs, 'tunnel_3', 'entry_1', tunnel_map_map, 'Vlan52', '852',
                                   tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
         tunnel_map_map['tunnel_3'] = check_vxlan_tunnel(dvs, '12.0.0.3', '0.0.0.0',
-                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
+                                  tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id, decap_ttl_mode="pipe")
 
         create_vxlan_tunnel(dvs, 'tunnel_4', '15.0.0.5', '0.0.0.0',
                                   tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id, True)
