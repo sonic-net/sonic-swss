@@ -97,6 +97,8 @@ extern bool gTraditionalFlexCounter;
 extern bool gSyncMode;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 extern event_handle_t g_events_handle;
+extern bool gOrchUnhealthy;
+extern string gSaiErrorString;
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -334,7 +336,7 @@ void initSaiRedis()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set communication mode, rv:%d", status);
-        return handleSaiFailure(SAI_API_SWITCH, "set", status);
+        return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 
     auto record_filename = Recorder::Instance().sairedis.getFile();
@@ -352,7 +354,7 @@ void initSaiRedis()
         {
             SWSS_LOG_ERROR("Failed to set SAI Redis recording output folder to %s, rv:%d",
                 record_location.c_str(), status);
-            return handleSaiFailure(SAI_API_SWITCH, "set", status);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
         attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_FILENAME;
@@ -364,7 +366,7 @@ void initSaiRedis()
         {
             SWSS_LOG_ERROR("Failed to set SAI Redis recording logfile to %s, rv:%d",
                 record_filename.c_str(), status);
-            return handleSaiFailure(SAI_API_SWITCH, "set", status);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
     }
@@ -378,7 +380,7 @@ void initSaiRedis()
     {
         SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
             Recorder::Instance().sairedis.isRecord() ? "enable" : "disable", status);
-        return handleSaiFailure(SAI_API_SWITCH, "set", status);
+        return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC)
@@ -391,7 +393,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
-            return handleSaiFailure(SAI_API_SWITCH, "set", status);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
     }
 
@@ -409,7 +411,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
-            return handleSaiFailure(SAI_API_SWITCH, "set", status);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
         SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
@@ -422,7 +424,7 @@ void initSaiRedis()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %" PRIx64, status, gSwitchId);
-        return handleSaiFailure(SAI_API_SWITCH, "set", status);
+        return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
@@ -436,7 +438,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
-            return handleSaiFailure(SAI_API_SWITCH, "set", status);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
         SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
@@ -590,10 +592,10 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
         case SAI_STATUS_NV_STORAGE_FULL:
             return task_need_retry;
         default:
-            handleSaiFailure(api, "create", status);
+            handleSaiFailure(api, "create", status, false);
             break;
     }
-    return task_need_retry;
+    return task_failed;
 }
 
 task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
@@ -637,10 +639,10 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
         case SAI_STATUS_NV_STORAGE_FULL:
             return task_need_retry;
         default:
-            handleSaiFailure(api, "set", status);
+            handleSaiFailure(api, "set", status, false);
             break;
     }
-    return task_need_retry;
+    return task_failed;
 }
 
 task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
@@ -680,10 +682,10 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
         case SAI_STATUS_OBJECT_IN_USE:
             return task_need_retry;
         default:
-            handleSaiFailure(api, "remove", status);
+            handleSaiFailure(api, "remove", status, false);
             break;
     }
-    return task_need_retry;
+    return task_failed;
 }
 
 task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
@@ -737,38 +739,16 @@ bool parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
-/*
- * Optional sai failure handling to abort orchagent for some critical failures
-   like create switch failure.
- */
-void handleSaiFailure(bool abort_on_failure)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
-    attr.value.s32 =  SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP;
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to take sai failure dump %d", status);
-    }
-    if (abort_on_failure)
-    {
-        abort();
-    }
-}
-
 /* Handling SAI failure. Request redis to invoke SAI failure dump */
-void handleSaiFailure(sai_api_t api, string oper, sai_status_t status)
+void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abort_on_failure)
 {
     SWSS_LOG_ENTER();
 
     string s_api = sai_serialize_api(api);
     string s_status = sai_serialize_status(status);
-    SWSS_LOG_ERROR("Encountered failure in %s operation, SAI API: %s, status: %s",
-                        oper.c_str(), s_api.c_str(), s_status.c_str());
+    gOrchUnhealthy = true;
+    gSaiErrorString = "Encountered failure in " + oper + " operation, SAI API: " + s_api + ", status: " + s_status;
+    SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
 
     // Publish a structured syslog event
     event_params_t params = {
@@ -778,13 +758,18 @@ void handleSaiFailure(sai_api_t api, string oper, sai_status_t status)
     event_publish(g_events_handle, "sai-operation-failure", &params);
 
     sai_attribute_t attr;
-
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 =  SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP;
+
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to take sai failure dump %d", status);
+    }
+    if (abort_on_failure)
+    {
+        SWSS_LOG_ERROR("Aborting orchagent due to critical SAI API failure...");
+        abort();
     }
 }
 
