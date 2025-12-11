@@ -336,7 +336,7 @@ void initSaiRedis()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set communication mode, rv:%d", status);
-        return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 
     auto record_filename = Recorder::Instance().sairedis.getFile();
@@ -354,7 +354,7 @@ void initSaiRedis()
         {
             SWSS_LOG_ERROR("Failed to set SAI Redis recording output folder to %s, rv:%d",
                 record_location.c_str(), status);
-            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+            handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
         attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_FILENAME;
@@ -366,7 +366,7 @@ void initSaiRedis()
         {
             SWSS_LOG_ERROR("Failed to set SAI Redis recording logfile to %s, rv:%d",
                 record_filename.c_str(), status);
-            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+            handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
     }
@@ -380,7 +380,7 @@ void initSaiRedis()
     {
         SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
             Recorder::Instance().sairedis.isRecord() ? "enable" : "disable", status);
-        return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC)
@@ -393,7 +393,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
-            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+            handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
     }
 
@@ -411,7 +411,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
-            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+            handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
         SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
@@ -424,7 +424,7 @@ void initSaiRedis()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %" PRIx64, status, gSwitchId);
-        return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
@@ -438,7 +438,7 @@ void initSaiRedis()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
-            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+            handleSaiFailure(SAI_API_SWITCH, "set", status, true);
         }
 
         SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
