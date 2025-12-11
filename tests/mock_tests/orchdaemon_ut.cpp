@@ -167,21 +167,14 @@ namespace orchdaemon_test
         orchd->disableRingBuffer();
     }
 
-	TEST_F(OrchDaemonTest, TestRedisFlushFailure)
-	{
+    TEST_F(OrchDaemonTest, TestRedisFlushFailure)
+    {
+        InSequence s;
 
-		ASSERT_DEATH(
-			{
-				InSequence s;
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute( _, _)).WillOnce(Return(SAI_STATUS_FAILURE));
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
 
-				EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _))
-				.WillOnce(Return(SAI_STATUS_FAILURE));
-				EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
-
-				orchd->flush();
-			},
-			".*"
-		);
-	}
+        orchd->flush();
+    }
 
 }
