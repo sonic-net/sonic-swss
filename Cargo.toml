@@ -64,7 +64,7 @@ itertools = "0.13"
 uuid = { version = "1.15", features = ["v4"] }
 
 # SONiC specific dependencies
-swss-common = { git = "https://github.com/sonic-net/sonic-swss-common.git", branch = "master" }
+swss-common = { git = "https://github.com/sonic-net/sonic-swss-common.git", branch = "202511" }
 
 # Development dependencies
 tempfile = "3.12"
