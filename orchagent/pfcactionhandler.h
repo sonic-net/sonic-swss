@@ -100,6 +100,7 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdAclHandler(void);
+        virtual bool getHwCounters(PfcWdHwStats& counters);
 
         // class shared cleanup
         static void clear();
