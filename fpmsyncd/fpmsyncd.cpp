@@ -74,8 +74,7 @@ std::string get_zmq_vrf(DBConnector &cfgDb) {
 
     try
     {
-        swss::DBConnector config_db("CONFIG_DB", 0);
-        mgmt_vrf_enabled = config_db.hget("MGMT_VRF_CONFIG|vrf_global",
+        mgmt_vrf_enabled = cfgDb.hget("MGMT_VRF_CONFIG|vrf_global",
                                           "mgmtVrfEnabled");
     }
     catch (const std::runtime_error &e)
@@ -83,14 +82,11 @@ std::string get_zmq_vrf(DBConnector &cfgDb) {
         return std::string();
     }
 
-    if (!mgmt_vrf_enabled)
+    if (!mgmt_vrf_enabled || *mgmt_vrf_enabled != "true")
     {
         return std::string();
     }
 
-    if( *mgmt_vrf_enabled != "true") {
-        return std::string();
-    }
     return std::string("mgmt");
 }
 

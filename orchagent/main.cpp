@@ -922,7 +922,7 @@ int main(int argc, char **argv)
         // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
         // use lazy binding and call bind() only after the handler has been registered.
         zmq_server->bind();
-        SWSS_LOG_NOTICE("ZMQ channel on the northbound side of Orchagent successfully bound: %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        SWSS_LOG_NOTICE("ZMQ channel on the northbound side of Orchagent successfully bound: %s, %s", zmq_server_address.c_str(), zmq_vrf.c_str());
     }
 
     orchDaemon->start(heartBeatInterval);
