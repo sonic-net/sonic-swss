@@ -327,9 +327,12 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                         auto &poolObj = poolSearchRef->second;
                         if (poolObj.zero_profile_name.empty())
                         {
+                        if(poolObj.direction>= 0 && poolObj.direction <= 2) // ensuring the poolpbj.direction will not get out of boundaries
+                                 {
                             poolObj.zero_profile_name = key;
                             if (m_bufferZeroProfileName[poolObj.direction].empty())
                                 m_bufferZeroProfileName[poolObj.direction] = poolObj.zero_profile_name;
+                        }
                         }
                         else
                         {
