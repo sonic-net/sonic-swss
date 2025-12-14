@@ -44,7 +44,7 @@ fn create_realistic_ipfix_data(
     stats_per_interface: usize,
     scenario: PipelineScenario,
 ) -> (Vec<String>, Vec<(FieldSpecifier, DataRecordValue)>) {
-    let object_names = (0..interface_count)
+    let object_names: Vec<String> = (0..interface_count)
         .map(|i| match i % 5 {
             0 => format!("Ethernet{}", i),
             1 => format!("Port-Channel{}", i / 5),

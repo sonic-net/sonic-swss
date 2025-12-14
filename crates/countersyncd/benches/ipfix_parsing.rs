@@ -222,7 +222,7 @@ fn bench_field_size_parsing(c: &mut Criterion) {
                     let mut stats = Vec::new();
                     for i in 0..1000 {
                         let field_spec = create_field_spec(1 + (i % 10), Some(0x00010001));
-                        let value = create_byte_value(1000 + i, field_size);
+                        let value = create_byte_value(1000 + i as u64, field_size);
                         
                         let stat = SAIStat::from_ipfix(
                             black_box(&field_spec),
@@ -261,7 +261,7 @@ fn bench_enterprise_number_parsing(c: &mut Criterion) {
                     let mut stats = Vec::new();
                     for i in 0..1000 {
                         let field_spec = create_field_spec(1 + (i % 10), Some(enterprise));
-                        let value = create_byte_value(1000 + i, 8);
+                        let value = create_byte_value((1000 + i).into(), 8);
                         
                         let stat = SAIStat::from_ipfix(
                             black_box(&field_spec),
@@ -294,7 +294,7 @@ fn bench_object_name_resolution(c: &mut Criterion) {
                     for i in 0..1000 {
                         let label = 1 + (i % (names.len().min(1000))) as u16; // Valid label range
                         let field_spec = create_field_spec(label, Some(0x00010001));
-                        let value = create_byte_value(1000 + i, 8);
+                        let value = create_byte_value((1000 + i).try_into().unwrap(), 8);
                         
                         let stat = SAIStat::from_ipfix(
                             black_box(&field_spec),

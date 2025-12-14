@@ -2,10 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Benchmark
 use countersyncd::message::{
     saistats::{SAIStat, SAIStats, SAIStatsMessage, SAIStatsMessageExt},
     otel::{OtelMetrics, OtelMetricsMessageExt},
-    ipfix::IpfixMessage,
-    netlink::NetlinkMessage,
-    buffer::BufferMessage,
-    swss::SwssMessage,
+    ipfix::IPFixTemplatesMessage,
+    buffer::SocketBufferMessage,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration, Instant};
@@ -32,7 +30,7 @@ fn create_test_sai_stats_message(stat_count: usize, sequence: u64) -> SAIStatsMe
         })
         .collect();
     
-    SAIStats::from_parts(1672531200000000000u64 + sequence, stats)
+    Arc::new(SAIStats::new(1672531200000000000u64 + sequence, stats))
 }
 
 /// Helper function to create various message types for testing
@@ -223,8 +221,6 @@ fn bench_single_producer_multi_consumer(c: &mut Criterion) {
                         let producer_handle = tokio::spawn(async move {
                             for i in 0..total_msg {
                                 let msg = create_test_sai_stats_message(50, i as u64);
-                                let msg = Arc::new(msg);
-                                
                                 // Send to all consumers
                                 for sender in &senders {
                                     if sender.send(msg.clone()).await.is_err() {
@@ -277,26 +273,30 @@ fn bench_actor_pipeline_simulation(c: &mut Criterion) {
                 |b, &(stages, buf_size, msg_count)| {
                     b.to_async(&rt).iter(|| async {
                         // Create pipeline of channels
-                        let mut channels = Vec::new();
-                        let mut stage_handles = Vec::new();
+                        let mut senders = Vec::new();
+                        let mut receivers = Vec::new();
                         
                         // Create channels between stages
-                        for stage_id in 0..stages {
+                        for _ in 0..stages {
                             let (tx, rx) = mpsc::channel::<SAIStatsMessage>(buf_size);
-                            channels.push((tx, rx));
+                            senders.push(tx);
+                            receivers.push(Some(rx)); // Use Option to allow taking ownership
                         }
                         
                         // Create processing stages
                         for stage_id in 0..(stages - 1) {
-                            let (_, mut input_rx) = channels[stage_id].clone();
-                            let (output_tx, _) = channels[stage_id + 1].clone();
+                            // Take ownership of receivers (move out of Option)
+                            let input_rx = receivers[stage_id].take().unwrap();
+                            let output_tx = senders[stage_id + 1].clone();
                             
                             let handle = tokio::spawn(async move {
                                 let mut processed = 0;
+                                let mut input_rx = input_rx; // Move receiver into the async block
+                                
                                 while let Some(mut msg) = input_rx.recv().await {
                                     // Simulate processing work
-                                    if let Some(stats) = Arc::get_mut(&mut msg) {
-                                        for stat in &mut stats.stats {
+                                    if let Some(sai_stats) = Arc::get_mut(&mut msg) {
+                                        for stat in &mut sai_stats.stats {
                                             stat.counter += stage_id as u64; // Simulate modification
                                         }
                                     }
@@ -315,23 +315,22 @@ fn bench_actor_pipeline_simulation(c: &mut Criterion) {
                         let start_time = Instant::now();
                         
                         // Input producer
-                        let (first_tx, _) = &channels[0];
-                        let producer_handle = tokio::spawn({
-                            let first_tx = first_tx.clone();
-                            async move {
-                                for i in 0..msg_count {
-                                    let msg = create_test_sai_stats_message(50, i as u64);
-                                    if first_tx.send(black_box(msg)).await.is_err() {
-                                        break;
-                                    }
+                        let first_tx = senders[0].clone();
+                        let producer_handle = tokio::spawn(async move {
+                            for i in 0..msg_count {
+                                let msg = create_test_sai_stats_message(50, i as u64);
+                                if first_tx.send(black_box(msg)).await.is_err() {
+                                    break;
                                 }
                             }
                         });
                         
                         // Final consumer
-                        let (_, mut final_rx) = channels[stages - 1].clone();
+                        let final_rx = receivers[stages - 1].take().unwrap();
                         let consumer_handle = tokio::spawn(async move {
                             let mut received = 0;
+                            let mut final_rx = final_rx;
+                            
                             while let Some(msg) = final_rx.recv().await {
                                 black_box(msg);
                                 received += 1;
@@ -469,7 +468,7 @@ fn bench_actor_memory_patterns(c: &mut Criterion) {
         
         // Test Arc cloning cost
         group.bench_with_input(
-            BenchmarkId::new("arc_cloning", format("{}stats", message_size)),
+            BenchmarkId::new("arc_cloning", format!("{}stats", message_size)),
             &(message_size, message_count),
             |b, &(msg_size, msg_count)| {
                 b.to_async(&rt).iter(|| async {

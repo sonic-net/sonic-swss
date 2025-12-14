@@ -44,8 +44,8 @@ serde_yaml = "0.9"
 # Logging and error handling
 log = "0.4.22"
 env_logger = "0.11.6"
-tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "serde"] }
+tracing = { version = "0.1", features = ["log", "max_level_debug", "release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "serde"] }
 thiserror = "1"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -64,9 +64,7 @@ itertools = "0.13"
 uuid = { version = "1.15", features = ["v4"] }
 
 # OTEL
-tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_info"] }
 tracing-opentelemetry = "0.25"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 opentelemetry = { version = "0.25", features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.25", features = ["rt-tokio"]}
@@ -92,7 +90,6 @@ swss-common = { git = "https://github.com/sonic-net/sonic-swss-common.git", bran
 tempfile = "3.12"
 serial_test = "3.1"
 async-trait = "0.1"
-criterion = "0.5"
 pretty_assertions = "1"
 
 # Build dependencies
@@ -101,27 +98,3 @@ vergen = { version = "8.2", features = ["build", "git", "gitoxide", "cargo", "ru
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
-
-[[bench]]
-name = "message_conversions"
-harness = false
-
-[[bench]]
-name = "actor_throughput"
-harness = false
-
-[[bench]]
-name = "ipfix_parsing"
-harness = false
-
-[[bench]]
-name = "otel_export"
-harness = false
-
-[[bench]]
-name = "memory_efficiency"
-harness = false
-
-[[bench]]
-name = "end_to_end"
-harness = false
