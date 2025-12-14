@@ -1701,6 +1701,47 @@ class TestSrv6VpnFpmsyncd(object):
             if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
                 assert fv[1] == nexthop_id
 
+        # check ASIC SAI_OBJECT_TYPE_NEXT_HOP database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        (status, fvs) = tbl.get(nexthop_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEXT_HOP_ATTR_TYPE":
+                assert fv[1] == "SAI_NEXT_HOP_TYPE_SRV6_SIDLIST"
+            if fv[0] == "SAI_NEXT_HOP_ATTR_SRV6_SIDLIST_ID":
+                assert fv[1] == sidlist_id
+            elif fv[0] == "SAI_NEXT_HOP_ATTR_TUNNEL_ID":
+                assert fv[1] == tunnel_id
+
+        # check ASIC SAI_OBJECT_TYPE_TUNNEL database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
+        (status, fvs) = tbl.get(tunnel_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_TUNNEL_ATTR_TYPE":
+                assert fv[1] == "SAI_TUNNEL_TYPE_SRV6"
+            elif fv[0] == "SAI_TUNNEL_ATTR_ENCAP_SRC_IP":
+                assert fv[1] == "fc00:0:2::1"
+
+        # remove v4 route with vpn sid
+        dvs.runcmd("ip route del 2001:db8:1:1::/64 encap seg6 mode encap segs fc00:0:1:e000:: dev sr0 vrf Vrf13")
+
+        time.sleep(3)
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
+
+        # verify that the route has been removed from the ASIC
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries))
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", len(route_entries))
+
+        # unconfigure srv6 locator
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"no srv6\"")
+
+        self.teardown_srv6(dvs)
+
     def test_AddRemoveSrv6SteeringRouteIpv4MultipleSids(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1853,10 +1894,6 @@ class TestSrv6VpnFpmsyncd(object):
         expected_fields = {"segment": "fc00:0:3:4:5:6:7:8|fc00:0:9:a::", "seg_src": "fc00:0:2::1"}
         self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:2001:db8:3:3::/64", expected_fields)
 
-        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
-        expected_fields = {"path": "fc00:0:1:e000::"}
-        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::", expected_fields)
-
         self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:3:4:5:6:7:8|fc00:0:9:a::")
         expected_fields = {"path": "fc00:0:3:4:5:6:7:8,fc00:0:9:a::"}
         self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:3:4:5:6:7:8|fc00:0:9:a::", expected_fields)
@@ -1907,7 +1944,6 @@ class TestSrv6VpnFpmsyncd(object):
                 elif fv[0] == "SAI_NEXT_HOP_ATTR_TUNNEL_ID":
                     assert fv[1] == tunnel_id
         assert nexthop_id_1 is not None
-        assert nexthop_id_2 is not None
 
         # check ASIC SAI_OBJECT_TYPE_ROUTE_ENTRY database
         tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
