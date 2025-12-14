@@ -66,10 +66,16 @@ int main(int argc, char **argv)
             while (true)
             {
                 Selectable *temps;
+                int ret;
 
                 /* Reading MCLAG messages forever (and calling "readData" to read them) */
-                s.select(&temps);
+                ret = s.select(&temps);
 
+                if (ret == Select::ERROR)
+                {
+                    SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
+                    continue;
+                }
 
                 if(temps == (Selectable *)mclag.getStateFdbTable())
                 {
