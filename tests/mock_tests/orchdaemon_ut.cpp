@@ -86,7 +86,7 @@ namespace orchdaemon_test
     {
         orchd->enableRingBuffer();
 
-        // verify ring buffer is created  
+        // verify ring buffer is created
         EXPECT_TRUE(Executor::gRingBuffer != nullptr);
         EXPECT_TRUE(Executor::gRingBuffer == Orch::gRingBuffer);
 
@@ -169,12 +169,19 @@ namespace orchdaemon_test
 
     TEST_F(OrchDaemonTest, TestRedisFlushFailure)
     {
-        InSequence s;
 
-        EXPECT_CALL(mock_sai_switch_, set_switch_attribute( _, _)).WillOnce(Return(SAI_STATUS_FAILURE));
-        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
+        ASSERT_DEATH(
+            {
+                InSequence s;
 
-        orchd->flush();
+                EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _))
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+                EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
+
+                orchd->flush();
+            },
+            ".*"
+        );
     }
 
 }
