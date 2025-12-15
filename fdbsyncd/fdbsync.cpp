@@ -26,6 +26,7 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
+    m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
@@ -33,6 +34,7 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     {
         m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
         m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
+        m_AppRestartAssist->registerAppTable(APP_L2_NEXTHOP_GROUP_TABLE_NAME, &m_l2NhgTable);
     }
 }
 
@@ -647,7 +649,7 @@ void FdbSync::macDelVxlanDB(string key)
 
 }
 
-void FdbSync::macAddVxlan(string key, struct in_addr vtep, string type, uint32_t vni, string intf_name)
+void FdbSync::macAddVxlan(string key, struct in_addr vtep, string type, uint32_t vni, string intf_name, int nhid)
 {
     string svtep = inet_ntoa(vtep);
     string svni = to_string(vni);
@@ -656,16 +658,27 @@ void FdbSync::macAddVxlan(string key, struct in_addr vtep, string type, uint32_t
     m_mac[key] = {svtep, type, vni, intf_name};
 
     std::vector<FieldValueTuple> fvVector;
+    if (nhid > 0)
+    {
+        string nhid_str = to_string(nhid);
+        FieldValueTuple rv("nexthop_group", nhid_str);
+        fvVector.push_back(rv);
+    }
+    else
+    {
+        FieldValueTuple rv("remote_vtep", svtep);
+        fvVector.push_back(rv);
+    }
+
     FieldValueTuple rv("remote_vtep", svtep);
     FieldValueTuple t("type", type);
     FieldValueTuple v("vni", svni);
-    fvVector.push_back(rv);
     fvVector.push_back(t);
     fvVector.push_back(v);
 
-    SWSS_LOG_INFO("%sVXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s", 
+    SWSS_LOG_INFO("%sVXLAN_FDB_TABLE: ADD_KEY %s vtep:%s NHID:%d type:%s",
             m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
-            key.c_str(), svtep.c_str(), type.c_str());
+            key.c_str(), svtep.c_str(), nhid, type.c_str());
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
     {
@@ -704,6 +717,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
     string type = "";
     string vlan_id = "";
     bool isVxlanIntf = false;
+    int nhid = -1;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
@@ -772,16 +786,24 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    vtep_addr = rtnl_neigh_get_dst(neigh);
-    if (vtep_addr == NULL)
+    nhid = rtnl_neigh_get_nh_id(neigh);
+    if (nhid < 0)
     {
-        return;
+        vtep_addr = rtnl_neigh_get_dst(neigh);
+        if (vtep_addr == NULL)
+        {
+            return;
+        }
+        else
+        {
+            /* Currently we only support ipv4 tunnel endpoints */
+            vtep.s_addr = *(uint32_t *)nl_addr_get_binary_addr(vtep_addr);
+            SWSS_LOG_INFO("Tunnel IP %s Int%d", inet_ntoa(vtep), *(uint32_t *)nl_addr_get_binary_addr(vtep_addr));
+        }
     }
     else
     {
-        /* Currently we only support ipv4 tunnel endpoints */
-        vtep.s_addr = *(uint32_t *)nl_addr_get_binary_addr(vtep_addr);
-        SWSS_LOG_INFO("Tunnel IP %s Int%d", inet_ntoa(vtep), *(uint32_t *)nl_addr_get_binary_addr(vtep_addr));
+        SWSS_LOG_INFO("L2 NHID %d", nhid);
     }
 
     int state = rtnl_neigh_get_state(neigh);
@@ -826,7 +848,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
 
     if (!delete_key)
     {
-        macAddVxlan(key, vtep, type, vni, ifname);
+        macAddVxlan(key, vtep, type, vni, ifname, nhid);
     }
     else
     {
@@ -883,3 +905,221 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
+void FdbSync::nhgDelDB(struct m_nhg_info *nhg_info)
+{
+    string key = to_string(nhg_info->nhid);
+
+    std::vector<FieldValueTuple> fvVector;
+    FieldValueTuple grp("nexthop_group", nhg_info->group_str);
+    FieldValueTuple vtep("remote_vtep", nhg_info->vtep_str);
+
+    SWSS_LOG_NOTICE("%sL2_NHG_TABLE: DEL_KEY %s vtep:%s grp:%s",
+                    m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
+                    key.c_str(), nhg_info->vtep_str.c_str(), nhg_info->group_str.c_str());
+    if (m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_AppRestartAssist->insertToMap(APP_L2_NEXTHOP_GROUP_TABLE_NAME, key, fvVector, true);
+        return;
+    }
+
+    m_l2NhgTable.del(key);
+    return;
+}
+
+
+void FdbSync::nhgUpdateDB(struct m_nhg_info *nhg_info)
+{
+    int nhid = nhg_info->nhid;
+    std::vector<FieldValueTuple> fvVector;
+    string key = to_string(nhid);
+
+    FieldValueTuple vtep("remote_vtep",    nhg_info->vtep_str);
+    FieldValueTuple group("nexthop_group", nhg_info->group_str);
+
+    fvVector.push_back(vtep);
+    fvVector.push_back(group);
+
+    SWSS_LOG_NOTICE("%sL2_NEXTHOP_GROUP_TABLE: ADD_KEY %s vtep:%s group: %s",
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
+            key.c_str(), nhg_info->vtep_str.c_str(), nhg_info->group_str.c_str());
+
+    // If warmstart is in progress, we take all netlink changes into the cache map
+    if (m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_AppRestartAssist->insertToMap(APP_L2_NEXTHOP_GROUP_TABLE_NAME, key, fvVector, false);
+        return;
+    }
+
+    m_l2NhgTable.set(key, fvVector);
+    return;
+}
+
+void FdbSync::processNhgNetlinkData(struct m_nhg_info *entry)
+{
+    if (entry->op == NH_ADD)
+    {
+        nhgUpdateDB(entry);
+    }
+    else
+    {
+        nhgDelDB(entry);
+    }
+    return;
+}
+
+void FdbSync::netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
+                                            int len)
+{
+    while (RTA_OK(rta, len)) {
+        if (rta->rta_type <= max)
+        {
+            tb[rta->rta_type] = rta;
+        }
+        else
+        {
+            if (rta->rta_type & NLA_F_NESTED)
+            {
+                int rta_type = rta->rta_type & ~NLA_F_NESTED;
+                if (rta_type <= max)
+                {
+                   tb[rta_type] = rta;
+                }
+            }
+        }
+        rta = RTA_NEXT(rta, len);
+    }
+}
+
+void FdbSync::nhgAddGroup(int nhid, struct nexthop_grp *nhid_grp, long unsigned int count,
+                                 string &nh_id_grp_str)
+{
+   char nh_id_grp[IFNAMSIZ + 1] = {0};
+
+    for (long unsigned int i = 0; i < count; i++)
+    {
+        memset(nh_id_grp,0, IFNAMSIZ);
+        snprintf(nh_id_grp, IFNAMSIZ,"%d", nhid_grp[i].id);
+        if (i > 0)
+        {
+            nh_id_grp_str += ",";
+        }
+        nh_id_grp_str += nh_id_grp;
+    }
+    return;
+}
+
+void FdbSync::onMsgNhg(struct nlmsghdr *h, int len)
+{
+    struct nhmsg *nhm;
+    struct rtattr *tb[NHA_MAX + 1];
+    void *gw = NULL;
+    char anyaddr[MAX_ADDR_SIZE] = {0};
+    char gwaddr[MAX_ADDR_SIZE] = {0};
+    char nexthopaddr[MAX_ADDR_SIZE] = {0};
+    int gw_af;
+    int nlmsg_type = h->nlmsg_type;
+    unsigned int id = 0;
+    struct m_nhg_info nhg_entry;
+    nhm = (struct nhmsg *)NLMSG_DATA(h);
+    char op = NH_ADD;
+
+    /* Parse attributes and extract fields of interest. */
+    memset(tb, 0, sizeof(tb));
+    netlink_parse_rtattr(tb, NHA_MAX, NHA_RTA(nhm), len);
+
+    if (!tb[NHA_FDB])
+        return;
+
+    if (tb[NHA_ID])
+    {
+        id = *(uint32_t *) RTA_DATA(tb[NHA_ID]);
+    }
+
+    if( RTM_DELNEXTHOP == nlmsg_type)
+    {
+        SWSS_LOG_NOTICE("NHG DELETE MSG type %d nhid %d",
+                nlmsg_type, id);
+        op = NH_DEL;
+    }
+
+    if (tb[NHA_GROUP])
+    {
+        //Recursive/ECMP NHG
+        long unsigned int count = 0;
+        struct nexthop_grp *grp;
+        string nh_id_grp_str = "";
+
+        count =   RTA_PAYLOAD(tb[NHA_GROUP])/(sizeof (struct nexthop_grp));
+        grp = (struct nexthop_grp *) RTA_DATA(tb[NHA_GROUP]);
+        SWSS_LOG_NOTICE("NHA_GROUP MSG type %d zebra_nhid %d count %ld", nlmsg_type, id, count);
+
+        nhgAddGroup(id, grp, count, nh_id_grp_str);
+
+        nhg_entry.nhid      = id;
+        nhg_entry.vtep_str  = string("");
+        nhg_entry.group_str = nh_id_grp_str;
+
+        SWSS_LOG_NOTICE("Set Grp nhid %d nhg:%s op:%d", id, nh_id_grp_str.c_str(), op);
+    }
+    else
+    {
+        if(tb[NHA_GATEWAY])
+        {
+            gw = RTA_DATA(tb[NHA_GATEWAY]);
+        }
+        else
+        {
+            gw = anyaddr;
+        }
+
+        gw_af = nhm->nh_family;
+        if (gw_af == AF_INET)
+        {
+            memcpy(gwaddr, gw, IPV4_MAX_BYTE);
+        }
+        else if (gw_af == AF_INET6)
+        {
+            memcpy(gwaddr, gw, IPV6_MAX_BYTE);
+        }
+        inet_ntop(gw_af, gwaddr, nexthopaddr, MAX_ADDR_SIZE);
+
+        nhg_entry.nhid      = id;
+        nhg_entry.vtep_str  = string(nexthopaddr);
+        nhg_entry.group_str = string("");
+
+        SWSS_LOG_NOTICE("set nhid %d gw:%s op:%d",
+                id, nexthopaddr, op);
+    }
+
+    nhg_entry.op = op;
+
+    processNhgNetlinkData(&nhg_entry);
+
+    return;
+}
+
+void FdbSync::onMsgRaw(struct nlmsghdr *h)
+{
+    int len;
+    int nlmsg_type = h->nlmsg_type;
+
+    if ((h->nlmsg_type != RTM_NEWNEXTHOP)
+        && (h->nlmsg_type != RTM_DELNEXTHOP))
+        return;
+
+    if( nlmsg_type == RTM_NEWNEXTHOP
+            || nlmsg_type == RTM_DELNEXTHOP)
+    {
+        /* Length validity. */
+        len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+        if (len < 0)
+        {
+            SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
+                    __PRETTY_FUNCTION__, h->nlmsg_len,
+                    (size_t)NLMSG_LENGTH(sizeof(struct nhmsg)));
+            return;
+        }
+        onMsgNhg(h, len);
+    }
+    return;
+}
