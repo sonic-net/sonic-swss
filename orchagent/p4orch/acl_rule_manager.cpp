@@ -32,6 +32,8 @@ extern sai_hostif_api_t *sai_hostif_api;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern P4Orch *gP4Orch;
+extern sai_object_id_t gVirtualRouterId;
+extern IntfsOrch* gIntfsOrch;
 
 namespace p4orch
 {
@@ -259,8 +261,8 @@ ReturnCode AclRuleManager::setUpUserDefinedTraps()
 
     const auto trapGroupMap = m_coppOrch->getTrapGroupMap();
     const auto trapGroupHostIfMap = m_coppOrch->getTrapGroupHostIfMap();
-    for (int queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
-    {
+    for (int queue_num = P4_CPU_QUEUE_MIN_NUM + 1; queue_num <= P4_CPU_QUEUE_MAX_NUM;
+         queue_num++) {
         auto trap_group_it = trapGroupMap.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
         if (trap_group_it == trapGroupMap.end())
         {
@@ -333,14 +335,20 @@ ReturnCode AclRuleManager::cleanUpUserDefinedTraps()
 {
     SWSS_LOG_ENTER();
 
-    for (size_t queue_num = 1; queue_num <= m_userDefinedTraps.size(); queue_num++)
-    {
+    for (size_t queue_num = P4_CPU_QUEUE_MIN_NUM;
+         queue_num < m_userDefinedTraps.size() + P4_CPU_QUEUE_MIN_NUM;
+         queue_num++) {
         CHECK_ERROR_AND_LOG_AND_RETURN(
-            sai_hostif_api->remove_hostif_table_entry(m_userDefinedTraps[queue_num - 1].hostif_table_entry),
+            sai_hostif_api->remove_hostif_table_entry(
+                m_userDefinedTraps[queue_num - P4_CPU_QUEUE_MIN_NUM]
+                    .hostif_table_entry),
             "Failed to create hostif table entry.");
-        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num));
-        sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTraps[queue_num - 1].user_defined_trap);
-        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num));
+        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                        std::to_string(queue_num));
+        sai_hostif_api->remove_hostif_user_defined_trap(
+            m_userDefinedTraps[queue_num - P4_CPU_QUEUE_MIN_NUM].user_defined_trap);
+        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                std::to_string(queue_num));
     }
     m_userDefinedTraps.clear();
     return ReturnCode();
@@ -1377,14 +1385,20 @@ ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name
         try
         {
             uint32_t queue_num = to_uint<uint32_t>(attr_value);
-            if (queue_num < 1 || queue_num > m_userDefinedTraps.size())
-            {
+            // comment out due to temp value of
+            // P4_CPU_QUEUE_MIN_NUM is 0 and throw warning during compile, should
+            // uncomment it when setting P4_CPU_QUEUE_MIN_NUM to 7
+            if (  // queue_num < P4_CPU_QUEUE_MIN_NUM ||
+            queue_num > P4_CPU_QUEUE_MAX_NUM) {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                        << "Invalid CPU queue number " << QuotedVar(attr_value) << " for "
                        << QuotedVar(acl_rule->acl_table_name)
-                       << ". Queue number should >= 1 and <= " << m_userDefinedTraps.size();
+                       << ". Queue number should >= " << P4_CPU_QUEUE_MIN_NUM
+                       << " and <= " << P4_CPU_QUEUE_MAX_NUM;
             }
-            value->aclaction.parameter.oid = m_userDefinedTraps[queue_num - 1].user_defined_trap;
+            value->aclaction.parameter.oid = 
+                m_userDefinedTraps[queue_num - P4_CPU_QUEUE_MIN_NUM]
+                    .user_defined_trap;
             acl_rule->action_qos_queue_num = queue_num;
         }
         catch (std::exception &e)
@@ -2078,6 +2092,102 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
     acl_rule.match_fvs = std::move(old_acl_rule.match_fvs);
     m_aclRuleTables[acl_rule.acl_table_name][acl_rule.acl_rule_key] = std::move(acl_rule);
     return ReturnCode();
+}
+
+ReturnCode AclRuleManager::addDefaultAclRuleInPreIngressTable(
+    const std::string& table_name) {
+  SWSS_LOG_ENTER();
+
+  const std::string cLoopbackAlias = "Loopback0";
+  const auto* acl_table =
+      gP4Orch->getAclTableManager()->getAclTable(table_name);
+  if (acl_table == nullptr) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "ACL table " << QuotedVar(table_name)
+                         << " was not found when creating default ACL rule in "
+                            "PreIngress table.");
+  }
+  std::vector<sai_attribute_t> acl_entry_attrs;
+  sai_attribute_t acl_entry_attr;
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
+  acl_entry_attr.value.oid = acl_table->table_oid;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  // Priority: max uint32
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
+  acl_entry_attr.value.u32 = 0x7FFFFFFF;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
+  acl_entry_attr.value.booldata = true;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  // Match: DIP = Loopback IP
+  const auto& intfs_table = gIntfsOrch->getSyncdIntfses();
+  const auto& lo_intfs_iter = intfs_table.find(cLoopbackAlias);
+  if (lo_intfs_iter == intfs_table.end()) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "Loopback interface with alias "
+                         << QuotedVar(cLoopbackAlias)
+                         << " was not found in IntfsOrch.");
+  }
+  if (lo_intfs_iter->second.ip_addresses.empty() ||
+      lo_intfs_iter->second.ip_addresses.size() > 1) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+        << "Loopback interface with alias " << QuotedVar(cLoopbackAlias)
+        << " should have and only have 1 ip prefix defined in IntfsOrch, but "
+        << lo_intfs_iter->second.ip_addresses.size() << " was found.");
+  }
+  // SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6 is not available in PRE_INGRESS ACL table
+  // definition SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3 and
+  // SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2 are used
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3;
+  memcpy(&acl_entry_attr.value.aclfield.data.ip6[0],
+         &lo_intfs_iter->second.ip_addresses.begin()->getIp().getV6Addr()[0],
+         IPV6_SINGLE_WORD_BYTES_LENGTH);
+  memcpy(&acl_entry_attr.value.aclfield.mask.ip6[0],
+         &swss::IpAddress("ffff:ffff:ffff:ffff::").getV6Addr()[0],
+         IPV6_SINGLE_WORD_BYTES_LENGTH);
+  acl_entry_attr.value.aclfield.enable = true;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2;
+  memcpy(&acl_entry_attr.value.aclfield.data.ip6[IPV6_SINGLE_WORD_BYTES_LENGTH],
+         &lo_intfs_iter->second.ip_addresses.begin()
+             ->getIp()
+             .getV6Addr()[IPV6_SINGLE_WORD_BYTES_LENGTH],
+         IPV6_SINGLE_WORD_BYTES_LENGTH);
+  memcpy(&acl_entry_attr.value.aclfield.mask.ip6[IPV6_SINGLE_WORD_BYTES_LENGTH],
+         &swss::IpAddress("ffff:ffff:ffff:ffff::")
+             .getV6Addr()[IPV6_SINGLE_WORD_BYTES_LENGTH],
+         IPV6_SINGLE_WORD_BYTES_LENGTH);
+  acl_entry_attr.value.aclfield.enable = true;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  // Action: SET_VRF = default VRF
+  acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF;
+  acl_entry_attr.value.aclaction.parameter.oid = gVirtualRouterId;
+  acl_entry_attr.value.aclaction.enable = true;
+  acl_entry_attrs.push_back(acl_entry_attr);
+
+  sai_object_id_t acl_entry_oid;
+  auto sai_status = sai_acl_api->create_acl_entry(
+      &acl_entry_oid, gSwitchId, (uint32_t)acl_entry_attrs.size(),
+      acl_entry_attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    ReturnCode status = ReturnCode(sai_status)
+                        << "Failed to create ACL entry in table "
+                        << QuotedVar(table_name);
+    SWSS_LOG_ERROR("%s SAI_STATUS: %s", status.message().c_str(),
+                   sai_serialize_status(sai_status).c_str());
+    return status;
+  }
+
+  SWSS_LOG_NOTICE(
+      "Suceeded to create default ACL rule in PRE_INGRESS table %s : %s",
+      table_name.c_str(), sai_serialize_object_id(acl_entry_oid).c_str());
+  return ReturnCode();
 }
 
 std::string AclRuleManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
