@@ -1510,6 +1510,27 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             {
                 SWSS_LOG_ERROR("macUpdate-Failed for attr.id=0x%x for FDB %s in %s on %s, rv:%d",
                             itr.id, entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(), status);
+                /*
+                 * The requested FDB could have been deleted in h/w via a bulk flush operation
+                 * i.e. deleted in SAI & h/w but, OA FDB cache not deleted yet. when MCLAG
+                 * reprograms the destination port for such FDB entry, SAI throws an not found error.
+                 * Recreate the FDB entry instead of modify.
+                 */
+                if ((SAI_STATUS_ITEM_NOT_FOUND  == status) && (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
+                {
+                    status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+                    if (SAI_STATUS_SUCCESS == status)
+                    {
+                        SWSS_LOG_INFO("MAC-Update re-create success for FDB %s in %s on %s",
+                            entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
+                        break;
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("MAC-Update re-create failed for FDB %s in %s on %s",
+                            entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
+                    }
+                }
                 task_process_status handle_status = handleSaiSetStatus(SAI_API_FDB, status);
                 if (handle_status != task_success)
                 {
@@ -1700,7 +1721,12 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     fdb_entry.bv_id = entry.bv_id;
 
     status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    /*
+     * If the FDB entry deleted via a bulk flush operation, it could have been
+     * already deleted in SAI and H/W but exist in OA FDB cache.
+     * Considering not found error from SAI as delete success.
+     */
+    if ((status != SAI_STATUS_SUCCESS) && (status != SAI_STATUS_ITEM_NOT_FOUND))
     {
         SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                        entry.mac.to_string().c_str(), entry.bv_id);
