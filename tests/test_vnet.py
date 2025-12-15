@@ -185,13 +185,13 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet_2000')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000', "100.100.3.0/24")
 
         delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet_2000')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000', "100.100.4.0/24")
 
         delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet_2001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2001', "100.102.1.0/24")
 
         delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2001')
@@ -300,10 +300,10 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "2.2.10.0/24", 'Vnet_2')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2', "2.2.10.0/24")
 
         delete_vnet_local_routes(dvs, "1.1.10.0/24", 'Vnet_1')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_1')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_1', "1.1.10.0/24")
 
         delete_vnet_routes(dvs, "2.2.2.11/32", 'Vnet_2')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2')
@@ -403,10 +403,10 @@ class TestVnetOrch(object):
         # Clean-up and verify remove flows
 
         delete_vnet_local_routes(dvs, "5.5.10.0/24", 'Vnet_10')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_10')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_10', "5.5.10.0/24")
 
         delete_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_20')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_20', "8.8.10.0/24")
 
         delete_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_10')
@@ -541,7 +541,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.2.1/24")
 
         delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002', "100.102.1.0/24")
 
         delete_phy_interface(dvs, "Ethernet60", "100.102.1.1/24")
         vnet_obj.check_del_router_interface(dvs, "Ethernet60")
@@ -550,10 +550,10 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3002')
 
         delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001', "100.100.3.0/24")
 
         delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001')
-        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001', "100.100.4.0/24")
 
         delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet3001')
@@ -2685,14 +2685,14 @@ class TestVnetOrch(object):
         self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.3,9.1.0.4', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
         # verify tunnel term acl 
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
         }
-        intf_id = dvs.asic_db.port_name_map["Ethernet8"]
-        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, intf_id, priority="9998")
+        nh_id = dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)[0]
+        dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, nh_id, priority="9998")
 
         # default monitor session status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
@@ -2700,8 +2700,8 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
 
         # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
         time.sleep(2)
         nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP,set())
         tbl_nh =  swsscommon.Table(asic_db, vnet_obj.ASIC_NEXT_HOP)
@@ -2723,7 +2723,7 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
         time.sleep(2)
 
         route = get_created_entries(asic_db, vnet_obj.ASIC_ROUTE_ENTRY, vnet_obj.routes, 1)
@@ -2735,8 +2735,8 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
 
         time.sleep(2)
 
@@ -2761,7 +2761,7 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.2'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
         time.sleep(2)
 
         nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP,set())
@@ -2784,8 +2784,8 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
         check_routes_advertisement(dvs, "100.100.1.0/24", "Test_profile")
 
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
-        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
 
         time.sleep(2)
 
@@ -2800,8 +2800,8 @@ class TestVnetOrch(object):
         check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
 
-        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.1")
-        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.3")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.4")
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
@@ -2956,6 +2956,304 @@ class TestVnetOrch(object):
         vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
         vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.3")
         vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.4")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        self.remove_neighbor("Ethernet8", "9.1.0.3")
+        self.remove_ip_address("Ethernet8", "9.1.0.3/32")
+        self.set_admin_status("Ethernet8", "down")
+
+        self.remove_neighbor("Ethernet12", "9.1.0.4")
+        self.remove_ip_address("Ethernet12", "9.1.0.4/32")
+        self.set_admin_status("Ethernet12", "down")
+
+    '''
+    Test 30 - Test vnet local route with single nexthop
+    '''
+    def test_vnet_local_route_single(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_30'
+
+        vnet_obj.fetch_exist_entries(dvs)
+        vnet_name = "Vnet5000"
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '30.30.30.30')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5000', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5000')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '30.30.30.30')
+
+        # setup interface under vnet
+        create_phy_interface(dvs, "Ethernet20", vnet_name, "10.10.0.8/31")
+        vnet_obj.check_router_interface(dvs, "Ethernet20", vnet_name)
+
+        # bring up interface
+        self.set_admin_status("Ethernet20", "up")
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet20", "10.10.0.9", "00:01:02:03:04:05")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        num_nh = len(vnet_obj.nhops)
+        num_nhg = len(vnet_obj.nhgs)
+        num_nhgm = len(vnet_obj.nhgms)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
+        route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9"])
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name, "10.10.0.0/24")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == num_nh
+        assert len(vnet_obj.nhgs) == num_nhg
+        assert len(vnet_obj.nhgms) == num_nhgm
+
+        self.remove_neighbor("Ethernet20", "10.10.0.9")
+        self.set_admin_status("Ethernet20", "down")
+
+        delete_phy_interface(dvs, "Ethernet20", "10.10.0.8/31")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet20")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+    '''
+    Test 31 - Test ecmp vnet local route with multiple nexthops
+    '''
+    def test_vnet_local_route_ecmp(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_31'
+        vnet_name = "Vnet5001"
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # setup vnet and vlan
+        create_vxlan_tunnel(dvs, tunnel_name, '31.31.31.31')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5001', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5001')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '31.31.31.31')
+
+        # setup interfaces under vnet
+        create_phy_interface(dvs, "Ethernet20", vnet_name, "10.10.0.8/31")
+        vnet_obj.check_router_interface(dvs, "Ethernet20", vnet_name)
+
+        create_phy_interface(dvs, "Ethernet16", vnet_name, "10.10.0.10/31")
+        vnet_obj.check_router_interface(dvs, "Ethernet16", vnet_name)
+
+        # bring up interface
+        self.set_admin_status("Ethernet20", "up")
+        self.set_admin_status("Ethernet16", "up")
+
+        # setup vnet neighbor
+        self.add_neighbor("Ethernet20", "10.10.0.9", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet16", "10.10.0.11", "00:01:02:03:04:06")
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        num_nh = len(vnet_obj.nhops)
+        num_nhg = len(vnet_obj.nhgs)
+        num_nhgm = len(vnet_obj.nhgms)
+
+        # create vnet local route
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
+        route_keys = vnet_obj.check_vnet_local_routes(dvs, vnet_name)
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9", "10.10.0.11"])
+
+        # update vnet local route to single nexthop
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20', "10.10.0.9")
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9"])
+
+        # update vnet local route back to ecmp
+        create_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name, 'Ethernet20,Ethernet16', "10.10.0.9,10.10.0.11")
+        vnet_obj.check_vnet_local_route_nexthops(dvs, route_keys[0], ["10.10.0.9", "10.10.0.11"])
+
+        # Clean-up and verify remove flows
+        delete_vnet_local_routes(dvs, "10.10.0.0/24", vnet_name)
+        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name, "10.10.0.0/24")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == num_nh
+        assert len(vnet_obj.nhgs) == num_nhg
+        assert len(vnet_obj.nhgms) == num_nhgm
+
+        self.remove_neighbor("Ethernet20", "10.10.0.9")
+        self.remove_neighbor("Ethernet16", "10.10.0.11")
+        self.set_admin_status("Ethernet20", "down")
+        self.set_admin_status("Ethernet16", "down")
+
+        delete_phy_interface(dvs, "Ethernet20", "10.10.0.8/31")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet20")
+        delete_phy_interface(dvs, "Ethernet16", "10.10.0.10/31")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet16")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+
+    '''
+    Test 32 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover + bfd monitoring + rx and tx timer.
+    '''
+    def test_vnet_orch_32(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_32'
+        vnet_name = 'vnet32'
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10029', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10029')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet8", "")
+        self.create_l3_intf("Ethernet12", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet8", "9.1.0.3/32")
+        self.add_ip_address("Ethernet12", "9.1.0.4/32")
+
+        # bring up interface
+        self.set_admin_status("Ethernet8", "up")
+        self.set_admin_status("Ethernet12", "up")
+
+        # add neighbor for directly connected endpoint
+        self.add_neighbor("Ethernet8", "9.1.0.3", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet12", "9.1.0.4", "00:01:02:03:04:06")
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', primary ='9.1.0.1,9.1.0.2', monitoring='custom_bfd', adv_prefix='100.100.1.0/24', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100)
+
+        # default monitor status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Remove second primary endpoint from group.
+        update_bfd_session_state(dvs, '9.1.0.2', 'Down')
+
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Switch to secondary if both primary down
+        update_bfd_session_state(dvs, '9.1.0.1', 'Down')
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # removing first endpoint of secondary. route should remain on secondary NHG
+        update_bfd_session_state(dvs, '9.1.0.3', 'Down')
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # removing last endpoint of secondary. route should be removed
+        update_bfd_session_state(dvs, '9.1.0.4', 'Down')
+        time.sleep(2)
+
+        new_nhgs = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP_GROUP, [])
+        assert len(new_nhgs) == 0
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+
+        # Route should come up with secondary endpoints.
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Up')
+
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should be switched to the primary endpoint.
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should be updated with the second primary endpoint.
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should not be impacted by seconday endpoints going down.
+        update_bfd_session_state(dvs, '9.1.0.3', 'Down')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Down')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should not be impacted by seconday endpoints coming back up.
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Confirm the monitor sessions are removed
+        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3', '9.1.0.4'])
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
