@@ -80,10 +80,6 @@ name = "actor_throughput"
 harness = false
 
 [[bench]]
-name = "ipfix_parsing"
-harness = false
-
-[[bench]]
 name = "otel_export"
 harness = false
 
@@ -93,4 +89,8 @@ harness = false
 
 [[bench]]
 name = "end_to_end"
+harness = false
+
+[[bench]]
+name = "ipfix_actor_perf"
 harness = false

@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use log::{info, error, debug, warn};
 
 /// Test patterns for generating different types of workloads
 #[derive(Clone, Copy)]
@@ -272,9 +273,10 @@ fn bench_actor_pipeline_simulation(c: &mut Criterion) {
                 &(pipeline_length, buffer_size, messages_count),
                 |b, &(stages, buf_size, msg_count)| {
                     b.to_async(&rt).iter(|| async {
-                        // Create pipeline of channels
+                        // Create separate sender and receiver collections
                         let mut senders = Vec::new();
                         let mut receivers = Vec::new();
+                        let mut stage_handles = Vec::new(); 
                         
                         // Create channels between stages
                         for _ in 0..stages {
@@ -309,7 +311,7 @@ fn bench_actor_pipeline_simulation(c: &mut Criterion) {
                                 }
                                 processed
                             });
-                            stage_handles.push(handle);
+                            stage_handles.push(handle); 
                         }
                         
                         let start_time = Instant::now();
