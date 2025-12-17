@@ -48,6 +48,8 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
+bool gOrchUnhealthy = false;
+string gSaiErrorString;
 
 extern size_t gMaxBulkSize;
 
@@ -349,6 +351,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
+    gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
 

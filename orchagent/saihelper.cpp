@@ -99,6 +99,8 @@ extern bool gTraditionalFlexCounter;
 extern bool gSyncMode;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 extern event_handle_t g_events_handle;
+extern bool gOrchUnhealthy;
+extern string gSaiErrorString;
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -748,8 +750,10 @@ void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abor
 
     string s_api = sai_serialize_api(api);
     string s_status = sai_serialize_status(status);
-    SWSS_LOG_ERROR("Encountered failure in %s operation, SAI API: %s, status: %s",
-                        oper.c_str(), s_api.c_str(), s_status.c_str());
+    gOrchUnhealthy = true;
+    gSaiErrorString = "Encountered failure in " + oper +
+                      " operation, SAI API: " + s_api + ", status: " + s_status;
+    SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
 
     // Publish a structured syslog event
     event_params_t params = {
